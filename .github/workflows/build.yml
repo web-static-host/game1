@@ -48,11 +48,10 @@ jobs:
           sed -i -E "s/^config\/version=.*/config\/version=\"$VERSION\"/" project.godot
           grep -E '^version/(code|name)=' export_presets.cfg
           grep '^config/version=' project.godot
-      - name: Отладочный ключ подписи
-        run: keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore "$GITHUB_WORKSPACE/debug.keystore" -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
       - name: Сборка APK
         run: |
-          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$GITHUB_WORKSPACE/debug.keystore"
+          # Постоянный отладочный ключ: подпись одинаковая, APK ставится поверх старого.
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$GITHUB_WORKSPACE/ci/debug.keystore"
           export GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey
           export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android
           mkdir -p build
