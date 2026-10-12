@@ -23,6 +23,8 @@ jobs:
   android:
     needs: tests
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     container:
       image: barichello/godot-ci:4.4.1
     steps:
@@ -43,10 +45,24 @@ jobs:
           export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android
           mkdir -p build
           godot --headless --path . --import
-          godot --headless --path . --export-debug "Android" build/vertikal-debug.apk
+          godot --headless --path . --export-debug "Android" build/vertikal.apk
           ls -la build
       - uses: actions/upload-artifact@v4
         with:
           name: vertikal-debug-apk
-          path: build/vertikal-debug.apk
+          path: build/vertikal.apk
           if-no-files-found: error
+      # Прямая ссылка на APK без архива:
+      # https://github.com/<владелец>/<репозиторий>/releases/latest/download/vertikal.apk
+      - name: Публикация APK в Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Сборка ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          files: build/vertikal.apk
+          make_latest: true
+          body: |
+            Отладочная сборка из ветки `${{ github.ref_name }}`, коммит ${{ github.sha }}.
+            Скачайте `vertikal.apk` ниже и установите на Android-телефон.

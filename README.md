@@ -42,7 +42,7 @@ godot --headless --path . -s res://tests/render_map.gd -- map.png -300 -60 600 5
 
 ### Сборка APK
 
-При каждом push GitHub Actions (`.github/workflows/build.yml`) запускает тесты и собирает отладочный APK. Скачать его можно на вкладке Actions → нужный запуск → Artifacts → `vertikal-debug-apk`. Для публикации в RuStore понадобится release-ключ: настроим перед релизом.
+При каждом push GitHub Actions (`.github/workflows/build.yml`) запускает тесты и собирает отладочный APK. Последний APK скачивается напрямую: https://github.com/web-static-host/game1/releases/latest/download/vertikal.apk (все сборки — в разделе Releases). Для публикации в RuStore понадобится release-ключ: настроим перед релизом.
 
 ### Структура
 
