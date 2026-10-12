@@ -5,13 +5,15 @@ extends Camera2D
 
 signal tapped(screen_pos: Vector2)
 signal painted(screen_pos: Vector2, first: bool)
+signal paint_ended(screen_pos: Vector2)
+signal paint_cancelled
 
 const MIN_ZOOM := 0.3
 const MAX_ZOOM := 3.0
 const TAP_DISTANCE := 14.0
 const TAP_TIME_MS := 450
 
-## Если true, одиночный палец ставит заказы, а камера двигается двумя пальцами.
+## Если true, одиночный палец рисует (рамку стройки), а камера двигается двумя пальцами.
 var paint_mode := false
 
 var _touches := {}
@@ -50,13 +52,17 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			if paint_mode:
 				painted.emit(e.position, true)
 		else:
+			if paint_mode and not _multi:
+				paint_cancelled.emit()
 			_multi = true
 			_start_pinch()
 	else:
 		_touches.erase(e.index)
 		if _touches.is_empty():
 			var quick := Time.get_ticks_msec() - _press_time < TAP_TIME_MS
-			if not _moved and not _multi and quick and not paint_mode:
+			if paint_mode and not _multi:
+				paint_ended.emit(e.position)
+			elif not _moved and not _multi and quick and not paint_mode:
 				tapped.emit(e.position)
 		elif _touches.size() >= 2:
 			_start_pinch()

@@ -11,8 +11,10 @@ func _initialize() -> void:
 	test_generation_deterministic()
 	test_surface_and_layers()
 	test_deep_geology()
-	test_dig_and_reveal()
-	test_order_rules()
+	test_project_rules()
+	test_offline_build()
+	test_pause_and_materials()
+	test_units_realtime()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -102,72 +104,155 @@ func test_deep_geology() -> void:
 		ores_shallow, ores_mid, deep.get(Mat.BASALT, 0), mantle.get(Mat.MAGMA, 0)])
 
 
-func _find_solid_column(world: WorldData) -> int:
-	for x in range(0, 400):
+func _find_solid_column(world: WorldData, from := 0) -> int:
+	for x in range(from, from + 400):
 		var s := world.gen.surface_y(x)
-		var ok := true
-		for d in range(0, 12):
-			if not Mat.is_diggable(world.get_mat(x, s + d)):
-				ok = false
+		var ok := world.gen.feature_at(x) == WorldGen.FEATURE_NONE
+		for d in range(0, 14):
+			for dx in range(0, 6):
+				if not Mat.is_diggable(world.get_mat(x + dx, s + d)):
+					ok = false
 		if ok:
 			return x
-	return 0
+	return from
 
 
-func test_dig_and_reveal() -> void:
-	var world := WorldData.new(WorldGen.new(99))
-	var dig := DigSystem.new(world)
-	var x := _find_solid_column(world)
-	var s := world.gen.surface_y(x)
-	check(not world.is_revealed(x, s + 3), "глубже поверхности — неизвестность")
-	for d in range(0, 6):
-		check(dig.add_order(Vector2i(x, s + d)), "заказ шахты, клетка %d" % d)
-	dig.advance(100000.0)
-	for d in range(0, 6):
-		check(world.is_dug(x, s + d), "клетка %d выкопана" % d)
-	check(world.is_revealed(x + 1, s + 3), "стены шахты открыты")
-	check(not world.is_revealed(x + 3, s + 3), "дальше стен — по-прежнему неизвестно")
-	check(dig.order.is_empty(), "очередь опустела")
-	check(dig.cells_dug == 6 and not dig.inventory.is_empty(), "ресурсы добыты")
+func _new_colony(seed_value: int) -> Colony:
+	var world := WorldData.new(WorldGen.new(seed_value))
+	var colony := Colony.new(world)
+	colony.inventory = Colony.START_INVENTORY.duplicate()
+	return colony
 
 
-func test_order_rules() -> void:
-	var world := WorldData.new(WorldGen.new(5))
-	var dig := DigSystem.new(world)
-	var s := world.gen.surface_y(0)
-	check(not dig.add_order(Vector2i(0, s + 10)), "нельзя копать в толще без доступа")
-	check(not dig.add_order(Vector2i(0, s - 3)), "нельзя копать воздух")
-	check(dig.add_order(Vector2i(0, s)), "можно копать поверхность")
-	check(dig.add_order(Vector2i(0, s + 1)), "можно продолжить цепочку заказов")
-	dig.toggle_order(Vector2i(0, s + 1))
-	check(not dig.has_job(Vector2i(0, s + 1)), "повторное нажатие отменяет заказ")
+func test_project_rules() -> void:
+	var colony := _new_colony(5)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	var T := Project.Kind.TUNNEL
+	var R := Project.Kind.ROOM
+	check(not colony.validate(T, Rect2i(x, s, 5, 1)).is_empty(), "тоннель высотой 1 м запрещён")
+	check(colony.validate(T, Rect2i(x, s, 1, 6)).is_empty(), "шахта 1×6 разрешена")
+	check(colony.validate(T, Rect2i(x, s, 8, 2)).is_empty(), "штрек 8×2 разрешён")
+	check(not colony.validate(T, Rect2i(x, s, 5, 5)).is_empty(), "тоннель 5×5 — это уже комната")
+	check(not colony.validate(R, Rect2i(x, s, 2, 2)).is_empty(), "комната 2×2 слишком мала")
+	check(colony.validate(R, Rect2i(x, s - 3, 4, 3)).is_empty(), "комната на земле разрешена")
+	check(not colony.validate(R, Rect2i(x, s - 20, 4, 3)).is_empty(), "висящая в воздухе комната запрещена")
+	colony.create_project(T, Rect2i(x, s, 1, 6))
+	check(not colony.validate(R, Rect2i(x - 1, s + 2, 4, 3)).is_empty(), "стройки не пересекаются")
+
+
+func test_offline_build() -> void:
+	var colony := _new_colony(99)
+	var w := colony.world
+	colony.start_new(0)
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	check(not w.is_revealed(x, s + 3), "глубже поверхности — неизвестность")
+	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x + 1, s + 3, 4, 3))
+	check(shaft != null and room != null, "стройки заложены")
+	var wood_before: int = colony.inventory["wood"]
+	var dug := colony.advance_offline(20000.0)
+	check(dug == 6 + 12, "выкопаны шахта и комната (%d)" % dug)
+	check(shaft.phase == Project.Phase.DONE and room.phase == Project.Phase.DONE, "обе стройки завершены")
+	check(colony.inventory["wood"] < wood_before + 20, "дерево потрачено на стройку")
+	check(not room.found.is_empty(), "при копке найдены ресурсы")
+	check(colony.interior.has(Vector2i(x + 2, s + 4)), "клетки комнаты стали интерьером")
+	check(w.is_revealed(x + 5, s + 4), "стены комнаты открыты")
+	check(not w.is_revealed(x + 8, s + 4), "дальше стен — по-прежнему неизвестно")
+
+
+func test_pause_and_materials() -> void:
+	var colony := _new_colony(7)
+	var w := colony.world
+	colony.start_new(0)
+	colony.inventory = {}
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	var p := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 4))
+	colony.set_paused(p, true)
+	check(colony.advance_offline(5000.0) == 0, "на паузе работы не идут")
+	colony.set_paused(p, false)
+	colony.advance_offline(5000.0)
+	check(p.phase == Project.Phase.BUILD and not p.paid, "без дерева стройка ждёт материалы")
+	check(p.blocked.begins_with("Не хватает"), "игрок видит, чего не хватает")
+	# Ищем дерево и отмечаем его на сбор.
+	var tree := 0
+	for tx in range(-200, 200):
+		if w.feature_at(tx) == WorldGen.FEATURE_TREE:
+			tree = tx
+			break
+	check(colony.toggle_harvest(tree), "дерево отмечено на сбор")
+	colony.advance_offline(5000.0)
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE, "дерево срублено")
+	check(p.phase == Project.Phase.DONE, "после сбора дерева стройка завершена")
+
+
+func test_units_realtime() -> void:
+	var colony := _new_colony(31)
+	var w := colony.world
+	var x := _find_solid_column(w, 0)
+	colony.start_new(x)
+	var s := w.gen.surface_y(x)
+	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 5))
+	var drift := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 1, s + 3, 4, 2))
+	var t := 0.0
+	while t < 3000.0 and drift.phase != Project.Phase.DONE:
+		colony.update(1.0)
+		t += 1.0
+	check(shaft.phase == Project.Phase.DONE, "жители выкопали и укрепили шахту")
+	check(drift.phase == Project.Phase.DONE, "жители прошли по шахте и сделали штрек (%.0f с)" % t)
+	var below := 0
+	for u in colony.units:
+		if u.pos.y > s:
+			below += 1
+	check(below > 0, "жители спустились под землю")
+	for u in colony.units:
+		check(colony.pathing.standable(u.cell()), "%s стоит на опоре" % u.name)
+	# Сбор дерева онлайн.
+	var tree := 0
+	for tx in range(x - 60, x + 60):
+		if w.feature_at(tx) == WorldGen.FEATURE_TREE:
+			tree = tx
+			break
+	colony.toggle_harvest(tree)
+	var wood: int = colony.inventory.get("wood", 0)
+	t = 0.0
+	while t < 1500.0 and w.feature_at(tree) != WorldGen.FEATURE_NONE:
+		colony.update(1.0)
+		t += 1.0
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE and colony.inventory["wood"] > wood, "житель дошёл и срубил дерево (%.0f с)" % t)
 
 
 func test_save_roundtrip() -> void:
 	var path := "user://test_save.json"
-	var world := WorldData.new(WorldGen.new(4242))
-	var dig := DigSystem.new(world)
-	var x := _find_solid_column(world)
-	var s := world.gen.surface_y(x)
-	for d in range(0, 4):
-		dig.add_order(Vector2i(x, s + d))
-	dig.advance(100000.0)
-	dig.add_order(Vector2i(x, s + 4))
-	dig.advance(0.5)
-	check(SaveSystem.save(world, dig, Vector2i(x, s), path), "сохранение записано")
+	var colony := _new_colony(4242)
+	var w := colony.world
+	colony.start_new(0)
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 4))
+	colony.advance_offline(20000.0)
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x + 1, s + 1, 3, 3))
+	room.paused = true
+	w.set_feature_mark(x - 3, true)
+	check(SaveSystem.save(w, colony, Vector2i(x, s), path), "сохранение записано")
 
 	var data := SaveSystem.load_data(path)
 	check(int(data.get("seed", 0)) == 4242, "seed сохранён")
-	var world2 := WorldData.new(WorldGen.new(int(data["seed"])))
-	var dig2 := DigSystem.new(world2)
-	SaveSystem.apply(data, world2, dig2)
+	var w2 := WorldData.new(WorldGen.new(int(data["seed"])))
+	var c2 := Colony.new(w2)
+	SaveSystem.apply(data, w2, c2)
 	for d in range(0, 4):
-		check(world2.is_dug(x, s + d), "раскопка %d восстановлена" % d)
-	check(dig2.inventory == dig.inventory, "склад восстановлен")
-	check(dig2.has_job(Vector2i(x, s + 4)) and absf(dig2.progress[Vector2i(x, s + 4)] - 0.5) < 0.01, "очередь и прогресс восстановлены")
-	# Изменения переживают выгрузку чанков из памяти.
-	world2.evict_outside(Rect2i(1000, 1000, 1, 1))
-	check(world2.chunks.is_empty() and world2.is_dug(x, s + 1), "выгрузка не теряет раскопки")
+		check(w2.is_dug(x, s + d), "раскопка %d восстановлена" % d)
+	check(c2.inventory == colony.inventory, "склад восстановлен")
+	check(c2.units.size() == 5 and c2.units[0].name == colony.units[0].name, "жители восстановлены")
+	check(c2.projects.size() == 2 and c2.projects[1].paused, "стройки и пауза восстановлены")
+	check(c2.interior.has(Vector2i(x, s + 1)), "готовые постройки восстановлены")
+	check(w2.feature_marks.has(x - 3), "отметки сбора восстановлены")
+	w2.evict_outside(Rect2i(1000, 1000, 1, 1))
+	check(w2.chunks.is_empty() and w2.is_dug(x, s + 1), "выгрузка не теряет раскопки")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 

@@ -2,10 +2,19 @@ class_name Hud
 extends Control
 ## Интерфейс поверх мира. Строится кодом, чтобы легко менять раскладку.
 
-signal mode_changed(dig_mode: bool)
+signal mode_changed(mode: int)
 signal home_pressed
 signal speed_pressed
 
+enum Mode { LOOK, TUNNEL, ROOM, HARVEST }
+
+const MODE_NAMES := ["Осмотр", "Тоннель", "Комната", "Сбор"]
+const MODE_HINTS := [
+	"",
+	"Тоннель: проведите пальцем рамку (высота от 2 м). Двумя пальцами — двигать карту.",
+	"Комната: проведите пальцем рамку от 3×3 до 24×8. Двумя пальцами — двигать карту.",
+	"Сбор: нажимайте на деревья и валуны, жители их соберут.",
+]
 const LOG_LINES := 4
 const PANEL_WIDTH := 600
 const KIND_COLORS := {
@@ -18,10 +27,10 @@ const KIND_COLORS := {
 var _status: Label
 var _resources: Label
 var _log: VBoxContainer
-var _cell_panel: PanelContainer
-var _cell_label: Label
-var _btn_look: Button
-var _btn_dig: Button
+var _info_panel: PanelContainer
+var _info_label: Label
+var _info_buttons: HBoxContainer
+var _mode_buttons: Array[Button] = []
 var _btn_speed: Button
 var _dialog: PanelContainer
 var _dialog_title: Label
@@ -54,11 +63,11 @@ func _make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font_size = 22
 	var panel := StyleBoxFlat.new()
-	panel.bg_color = Color(0.06, 0.07, 0.1, 0.78)
+	panel.bg_color = Color(0.06, 0.07, 0.1, 0.8)
 	panel.set_corner_radius_all(14)
 	panel.set_content_margin_all(12)
 	t.set_stylebox("panel", "PanelContainer", panel)
-	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+	for state in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
 		var sb := StyleBoxFlat.new()
 		sb.set_corner_radius_all(14)
 		sb.set_content_margin_all(10)
@@ -67,7 +76,7 @@ func _make_theme() -> Theme:
 				sb.bg_color = Color(0.16, 0.18, 0.24, 0.92)
 			"hover":
 				sb.bg_color = Color(0.22, 0.25, 0.33, 0.95)
-			"pressed":
+			"pressed", "hover_pressed":
 				sb.bg_color = Color(0.85, 0.62, 0.18, 0.95)
 			"focus":
 				sb.bg_color = Color(0, 0, 0, 0)
@@ -92,6 +101,7 @@ func _build_top(column: VBoxContainer) -> void:
 	var inner := VBoxContainer.new()
 	panel.add_child(inner)
 	_status = Label.new()
+	_status.add_theme_font_size_override("font_size", 20)
 	inner.add_child(_status)
 	_resources = Label.new()
 	_resources.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -105,41 +115,47 @@ func _build_top(column: VBoxContainer) -> void:
 
 
 func _build_bottom(box: VBoxContainer) -> void:
-
-	_cell_panel = PanelContainer.new()
-	_cell_panel.visible = false
-	_cell_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_cell_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
-	box.add_child(_cell_panel)
-	_cell_label = Label.new()
-	_cell_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cell_label.add_theme_font_size_override("font_size", 20)
-	_cell_panel.add_child(_cell_label)
-	_cell_panel.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventScreenTouch and e.pressed or e is InputEventMouseButton and e.pressed:
-			_cell_panel.visible = false)
+	_info_panel = PanelContainer.new()
+	_info_panel.visible = false
+	_info_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_info_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
+	box.add_child(_info_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	_info_panel.add_child(v)
+	_info_label = Label.new()
+	_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_info_label.add_theme_font_size_override("font_size", 20)
+	v.add_child(_info_label)
+	_info_buttons = HBoxContainer.new()
+	_info_buttons.add_theme_constant_override("separation", 8)
+	v.add_child(_info_buttons)
 
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
-	bar.size_flags_horizontal = Control.SIZE_SHRINK_END
-	bar.custom_minimum_size = Vector2(760, 0)
 	box.add_child(bar)
-	_btn_look = _button(bar, "Осмотр")
-	_btn_dig = _button(bar, "Копать")
+	var group := ButtonGroup.new()
+	for i in MODE_NAMES.size():
+		var b := _button(bar, MODE_NAMES[i])
+		b.toggle_mode = true
+		b.button_group = group
+		b.pressed.connect(_on_mode.bind(i))
+		_mode_buttons.append(b)
+	_mode_buttons[Mode.LOOK].button_pressed = true
+	var sep := Control.new()
+	sep.custom_minimum_size = Vector2(12, 0)
+	bar.add_child(sep)
 	var home := _button(bar, "К базе")
 	_btn_speed = _button(bar, "×1")
-	_btn_look.toggle_mode = true
-	_btn_dig.toggle_mode = true
-	_btn_look.button_pressed = true
-	var group := ButtonGroup.new()
-	_btn_look.button_group = group
-	_btn_dig.button_group = group
-	_btn_look.pressed.connect(func() -> void: mode_changed.emit(false))
-	_btn_dig.pressed.connect(func() -> void:
-		_cell_panel.visible = false
-		mode_changed.emit(true))
 	home.pressed.connect(func() -> void: home_pressed.emit())
 	_btn_speed.pressed.connect(func() -> void: speed_pressed.emit())
+
+
+func _on_mode(i: int) -> void:
+	hide_info()
+	if not MODE_HINTS[i].is_empty():
+		log_event(MODE_HINTS[i], "info")
+	mode_changed.emit(i)
 
 
 func _button(parent: Control, text: String) -> Button:
@@ -178,9 +194,8 @@ func _build_dialog() -> void:
 	v.add_child(ok)
 
 
-func set_dig_mode(on: bool) -> void:
-	_btn_dig.button_pressed = on
-	_btn_look.button_pressed = not on
+func set_mode(mode: int) -> void:
+	_mode_buttons[mode].button_pressed = true
 
 
 func set_speed_text(text: String) -> void:
@@ -192,20 +207,42 @@ func set_status(text: String) -> void:
 
 
 func set_resources(inventory: Dictionary) -> void:
-	if inventory.is_empty():
-		_resources.text = "Склад пуст"
-		return
 	var parts: PackedStringArray = []
+	# Дерево и камень — всегда первыми, это основа стройки.
+	for k in ["wood", "stone"]:
+		parts.append("%s %s" % [Mat.resource_name(k), Fmt.int_spaced(inventory.get(k, 0))])
 	var keys := inventory.keys()
 	keys.sort()
 	for k in keys:
-		parts.append("%s %s" % [Mat.resource_name(k), Fmt.int_spaced(inventory[k])])
+		if k != "wood" and k != "stone" and inventory[k] > 0:
+			parts.append("%s %s" % [Mat.resource_name(k), Fmt.int_spaced(inventory[k])])
 	_resources.text = " · ".join(parts)
 
 
-func show_cell(text: String) -> void:
-	_cell_label.text = text
-	_cell_panel.visible = true
+## Панель с описанием и кнопками. actions: [[текст, Callable], ...]
+func show_info(text: String, actions: Array = []) -> void:
+	_info_label.text = text
+	for c in _info_buttons.get_children():
+		c.queue_free()
+	for a in actions:
+		var b := _button(_info_buttons, a[0])
+		b.custom_minimum_size = Vector2(0, 56)
+		var cb: Callable = a[1]
+		b.pressed.connect(cb)
+	_info_buttons.visible = not actions.is_empty()
+	_info_panel.visible = true
+
+
+func update_info_text(text: String) -> void:
+	_info_label.text = text
+
+
+func hide_info() -> void:
+	_info_panel.visible = false
+
+
+func info_visible() -> bool:
+	return _info_panel.visible
 
 
 func show_message(title: String, text: String) -> void:

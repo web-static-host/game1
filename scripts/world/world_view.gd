@@ -12,22 +12,29 @@ const SHIFT_DISTANCE := 16 * CHUNK_PX
 const GEN_BUDGET_USEC := 6000
 
 var world: WorldData
-var dig: DigSystem
+var colony: Colony
 var camera: Camera2D
+var structures: StructureLayer
+var units_layer: UnitLayer
 ## Клетка мира, находящаяся в локальной точке (0, 0).
 var origin := Vector2i.ZERO
 var _views := {}
-var _jobs_layer: JobOverlay
 
 
-func setup(p_world: WorldData, p_dig: DigSystem, p_camera: Camera2D) -> void:
+func setup(p_world: WorldData, p_colony: Colony, p_camera: Camera2D) -> void:
 	world = p_world
-	dig = p_dig
+	colony = p_colony
 	camera = p_camera
-	_jobs_layer = JobOverlay.new()
-	_jobs_layer.view = self
-	_jobs_layer.z_index = 10
-	add_child(_jobs_layer)
+	structures = StructureLayer.new()
+	structures.view = self
+	structures.colony = colony
+	structures.z_index = 5
+	add_child(structures)
+	units_layer = UnitLayer.new()
+	units_layer.view = self
+	units_layer.colony = colony
+	units_layer.z_index = 10
+	add_child(units_layer)
 
 
 func cell_to_local(c: Vector2i) -> Vector2:
@@ -41,6 +48,12 @@ func local_to_cell(p: Vector2) -> Vector2i:
 func screen_to_cell(screen_pos: Vector2) -> Vector2i:
 	var local := get_viewport().get_canvas_transform().affine_inverse() * screen_pos
 	return local_to_cell(to_local(local))
+
+
+## Точка экрана в координатах мира (в клетках, дробно).
+func screen_to_world_cells(screen_pos: Vector2) -> Vector2:
+	var local := to_local(get_viewport().get_canvas_transform().affine_inverse() * screen_pos)
+	return Vector2(origin) + local / TILE
 
 
 ## Клетка мира в центре экрана.

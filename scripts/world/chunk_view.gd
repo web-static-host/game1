@@ -114,6 +114,15 @@ func _draw() -> void:
 				_draw_open_cell(lx, ly, r, m, dug, depth, v)
 				continue
 			_draw_solid_cell(lx, ly, r, m, v, x, y, surf)
+	# Деревья и валуны — после рельефа, чтобы рисоваться поверх.
+	for lx in SIZE:
+		var x := x0 + lx
+		var base := gen.surface_y(x) - 1
+		if base < y0 or base >= y0 + SIZE:
+			continue
+		var f := world.feature_at(x)
+		if f != WorldGen.FEATURE_NONE:
+			_draw_feature(f, x, Vector2(lx * TILE + TILE * 0.5, (base - y0 + 1) * TILE))
 
 
 func _draw_open_cell(lx: int, ly: int, r: Rect2, m: int, dug: bool, depth: int, v: float) -> void:
@@ -238,3 +247,48 @@ static func _rounded_rect(r: Rect2, mask: int) -> PackedVector2Array:
 			var t := a0 + float(s) / 5.0 * PI * 0.5
 			pts.append(center + Vector2(cos(t), sin(t)) * ROUND)
 	return pts
+
+
+const TRUNK := Color(0.42, 0.29, 0.18)
+const LEAVES := Color(0.24, 0.52, 0.24)
+const LEAVES_LIGHT := Color(0.33, 0.63, 0.3)
+const BOULDER := Color(0.55, 0.53, 0.52)
+const MARK := Color(1.0, 0.82, 0.25)
+
+
+## foot — точка на земле под объектом.
+func _draw_feature(f: int, x: int, foot: Vector2) -> void:
+	var marked := world.feature_marks.has(x)
+	var gen := world.gen
+	if f == WorldGen.FEATURE_TREE:
+		var h := gen.tree_height(x) * TILE
+		var lean := (WorldGen.hash01(x, 21, 0) - 0.5) * 8.0
+		draw_colored_polygon(PackedVector2Array([
+			foot + Vector2(-5, 0), foot + Vector2(5, 0),
+			foot + Vector2(3 + lean, -h * 0.75), foot + Vector2(-3 + lean, -h * 0.75)]), TRUNK)
+		var top := foot + Vector2(lean, -h * 0.75)
+		var r := TILE * (0.9 + WorldGen.hash01(x, 22, 0) * 0.5)
+		for k in 5:
+			var a := k * TAU / 5.0 + WorldGen.hash01(x, 23 + k, 0)
+			draw_circle(top + Vector2(cos(a), sin(a) * 0.7) * r * 0.7, r * 0.75, LEAVES)
+		draw_circle(top + Vector2(-r * 0.2, -r * 0.3), r * 0.6, LEAVES_LIGHT)
+		if marked:
+			_draw_mark(top + Vector2(0, -r * 1.6))
+	elif f == WorldGen.FEATURE_BOULDER:
+		var w := TILE * (0.8 + WorldGen.hash01(x, 31, 0) * 0.5)
+		var hh := TILE * (0.55 + WorldGen.hash01(x, 32, 0) * 0.3)
+		var pts := PackedVector2Array()
+		for k in 9:
+			var a := PI + k * PI / 8.0
+			pts.append(foot + Vector2(cos(a) * w * 0.5, sin(a) * hh))
+		draw_colored_polygon(pts, BOULDER)
+		draw_circle(foot + Vector2(-w * 0.15, -hh * 0.6), hh * 0.25, BOULDER.lightened(0.2))
+		if marked:
+			_draw_mark(foot + Vector2(0, -hh - TILE * 0.7))
+
+
+## Значок «собрать»: жёлтый кружок со стрелкой вниз.
+func _draw_mark(p: Vector2) -> void:
+	draw_circle(p, 11, Color(0, 0, 0, 0.5))
+	draw_circle(p, 9, MARK)
+	draw_colored_polygon(PackedVector2Array([p + Vector2(-5, -3), p + Vector2(5, -3), p + Vector2(0, 5)]), Color(0.2, 0.15, 0.05))

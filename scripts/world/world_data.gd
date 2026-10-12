@@ -15,6 +15,10 @@ var chunks := {}
 var pending_flags := {}
 ## Чанки, которые нужно перерисовать: Vector2i -> true
 var dirty := {}
+## Собранные объекты поверхности: x -> true
+var removed_features := {}
+## Объекты, помеченные игроком на сбор: x -> true
+var feature_marks := {}
 
 
 func _init(p_gen: WorldGen) -> void:
@@ -100,6 +104,32 @@ func _touch(x: int, y: int) -> void:
 		dirty[key + Vector2i(0, -1)] = true
 	elif ly == MASK:
 		dirty[key + Vector2i(0, 1)] = true
+
+
+func feature_at(x: int) -> int:
+	if removed_features.has(x):
+		return WorldGen.FEATURE_NONE
+	return gen.feature_at(x)
+
+
+func remove_feature(x: int) -> void:
+	removed_features[x] = true
+	feature_marks.erase(x)
+	_touch_feature(x)
+
+
+func set_feature_mark(x: int, on: bool) -> void:
+	if on:
+		feature_marks[x] = true
+	else:
+		feature_marks.erase(x)
+	_touch_feature(x)
+
+
+func _touch_feature(x: int) -> void:
+	var base := gen.surface_y(x) - 1
+	for y in [base, base - 8]:
+		dirty[chunk_of(x, y)] = true
 
 
 func reveal(x: int, y: int) -> bool:

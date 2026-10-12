@@ -89,6 +89,38 @@ static func hash01(x: int, y: int, s: int) -> float:
 	return float(h) / 4294967296.0
 
 
+## Объекты на поверхности (стоят на клетке над землёй).
+const FEATURE_NONE := 0
+const FEATURE_TREE := 1
+const FEATURE_BOULDER := 2
+
+
+func feature_at(x: int) -> int:
+	var s := surface_y(x)
+	if absi(surface_y(x - 1) - s) > 1 or absi(surface_y(x + 1) - s) > 1:
+		return FEATURE_NONE
+	var h := hash01(x, 7, world_seed + 11)
+	if h < 0.12:
+		return FEATURE_TREE
+	if h < 0.17:
+		return FEATURE_BOULDER
+	return FEATURE_NONE
+
+
+func tree_height(x: int) -> int:
+	return 4 + int(hash01(x, 9, world_seed) * 4.0)
+
+
+## Что даёт объект при сборе: [ключ ресурса, количество].
+func feature_yield(x: int) -> Array:
+	match feature_at(x):
+		FEATURE_TREE:
+			return ["wood", 3 + tree_height(x) / 2]
+		FEATURE_BOULDER:
+			return ["stone", 3 + int(hash01(x, 13, world_seed) * 4.0)]
+	return ["", 0]
+
+
 ## Плавная вариация оттенка породы для отрисовки, 0..1.
 func tint(x: int, y: int) -> float:
 	return clampf(_n_tint.get_noise_2d(x, y) + 0.5, 0.0, 1.0)
