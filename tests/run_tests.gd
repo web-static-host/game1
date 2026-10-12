@@ -33,6 +33,9 @@ func _initialize() -> void:
 	test_wear_and_repair()
 	test_calendar()
 	test_elements()
+	test_gas_alarm()
+	test_scouting()
+	test_tech_tree()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -238,7 +241,9 @@ func test_units_realtime() -> void:
 			below += 1
 	check(below > 0, "жители спустились под землю")
 	for u in colony.units:
-		check(colony.pathing.standable(u.cell()), "%s стоит на опоре" % u.name)
+		if u.state == Unit.State.MOVE:
+			continue # идущий может быть посреди шага или вброд
+		check(colony.pathing.standable(u.cell()), "%s стоит на опоре (%s %s st%d)" % [u.name, u.cell(), Unit.TASK_NAMES[u.task], u.state])
 	# Сбор дерева онлайн.
 	var tree := 0
 	for tx in range(x - 60, x + 60):
@@ -1143,6 +1148,93 @@ func test_elements() -> void:
 	check(gp.paused and gp.hazard_pending == "water" and gp.blocked.begins_with("Геолог"), "геолог предупредил о воде: " + gp.blocked)
 	gc.set_paused(gp, false)
 	check(not gp.paused and gp.hazard_ack.has("water"), "игрок разрешил копать дальше")
+
+
+## Газовая тревога: метан у стройки останавливает работы, жители уходят из облака,
+## игрок может приказать продолжать; газ ушёл — работы идут сами.
+func test_gas_alarm() -> void:
+	var colony := _new_colony(63)
+	var w := colony.world
+	colony.start_new(0)
+	var el := colony.elements
+	var o := Vector2i(300, w.gen.surface_y(300) + 40)
+	_granite_box(w, o, Vector2i(40, 12))
+	var cells := []
+	for y in range(o.y + 2, o.y + 5):
+		for x in range(o.x + 2, o.x + 36):
+			cells.append(Vector2i(x, y))
+	_dig_cells(w, cells)
+	var room := Project.new()
+	room.id = 950
+	room.kind = Project.Kind.ROOM
+	room.phase = Project.Phase.DONE
+	room.purpose = RoomType.STORAGE
+	room.rect = Rect2i(o.x + 2, o.y + 2, 6, 3)
+	colony.projects.append(room)
+	el.gas[o + Vector2i(4, 3)] = 0.3
+	el.gas[o + Vector2i(4, 4)] = 0.3
+	el._gas_alarm()
+	check(room.paused and room.hazard_pending == "methane", "метан у комнаты — работы остановлены")
+	var u := colony.units[0]
+	u.pos = Vector2(o + Vector2i(4, 4))
+	u.state = Unit.State.IDLE
+	u.task = Unit.Task.NONE
+	el.affect_unit(u, 0.1)
+	check(u.task == Unit.Task.GOTO and el.gas_at(u.target) < Elements.GAS_CLEAR, "житель уходит из облака метана")
+	colony.set_paused(room, false)
+	el._gas_alarm()
+	check(not room.paused and room.hazard_ack.has("methane"), "игрок приказал работать в газе — тревога молчит")
+	el.gas.clear()
+	el._gas_alarm()
+	check(not room.hazard_ack.has("methane"), "газ ушёл — тревога снова на страже")
+	el.gas[o + Vector2i(4, 3)] = 0.3
+	el._gas_alarm()
+	el.gas.clear()
+	el._gas_alarm()
+	check(not room.paused and room.hazard_pending.is_empty(), "метан ушёл — работы возобновились сами")
+	colony.projects.erase(room)
+
+
+## Рядом нечего рубить — житель идёт к краю разведанного, карта раскрывается дальше.
+func test_scouting() -> void:
+	var colony := _new_colony(64)
+	colony.start_new(0)
+	var u := colony.units[0]
+	var reach := colony.pathing.explore(u.cell())
+	var before := colony.explored_max - colony.explored_min
+	check(colony._try_scout(u, reach[0], reach[1], "wood"), "житель пошёл на разведку")
+	check(u.task == Unit.Task.GOTO and (u.target.x >= colony.explored_max - 8 or u.target.x <= colony.explored_min + 8),
+		"идёт к краю разведанного")
+	check(not colony._try_scout(colony.units[1], reach[0], reach[1], "wood"), "разведчиков не шлют толпой")
+	for i in 200:
+		colony.update(0.5)
+	check(colony.explored_max - colony.explored_min > before, "разведанное расширилось (%d → %d)" % [before, colony.explored_max - colony.explored_min])
+
+
+## Дерево наук: все требования существуют, всё изучается по порядку, эффекты работают.
+func test_tech_tree() -> void:
+	var r := Research.new()
+	for id in Research.TECHS:
+		for need in Research.TECHS[id][3]:
+			check(Research.TECHS.has(need), "%s требует существующую %s" % [id, need])
+	var colony := _new_colony(65)
+	colony.start_new(0)
+	var cap := colony.storage_capacity("wood")
+	var dig := colony.dig_bonus()
+	r = colony.research
+	var guard := 0
+	while r.done.size() < Research.TECHS.size() and guard < 100:
+		guard += 1
+		if r.current.is_empty():
+			for id in Research.TECHS:
+				if r.start(id):
+					break
+		r.add(10000.0)
+	check(r.done.size() == Research.TECHS.size(), "все %d технологий можно изучить (%d)" % [Research.TECHS.size(), r.done.size()])
+	check(colony.dig_bonus() == 2.0 and dig == 1.0, "глубинное бурение: копка вдвое быстрее")
+	check(colony.carry_cap() == 8 and colony.build_bonus() == 1.5 and colony.automation_bonus() == 1.5, "тачки, плотники, автоматика")
+	check(colony.farm_bonus() >= 1.25, "агрономия прибавила урожай")
+	check(cap == 0 or colony.storage_capacity("wood") > cap, "стеллажи расширили склады")
 
 
 func test_loads() -> void:

@@ -163,6 +163,8 @@ func _play() -> void:
 	_marks()
 	_science()
 	_professions()
+	if _fix_shaft():
+		return
 	if _busy() >= 2:
 		return
 	if _need_home():
@@ -176,11 +178,41 @@ func _play() -> void:
 	_more_storage()
 
 
+## Шахту залило подземной водой или в ней метан: насосная или дегазация у верха
+## вставшего тоннеля, куда можно дойти.
+func _fix_shaft() -> bool:
+	for p in colony.projects:
+		if p.kind != Project.Kind.TUNNEL or p.rect.position.x != shaft_x:
+			continue
+		var want := -1
+		if p.blocked.begins_with("В зоне"):
+			want = RoomType.PUMP
+		elif p.hazard_pending == "methane":
+			want = RoomType.DEGAS
+		if want < 0:
+			continue
+		for q in colony.projects:
+			if _pending_purpose.get(q.id, -1) == want or (q.purpose == want and absi(q.rect.position.y - p.rect.position.y) < 15):
+				return false
+		var top := p.rect.position.y
+		for rx in [shaft_x + 1, shaft_x - 6]:
+			for dy in [0, 1, 2]:
+				var room := Rect2i(rx, top - 3 + dy, 6, 3)
+				var mat := _best_material()
+				if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
+					var r := colony.create_project(Project.Kind.ROOM, room, -1, mat)
+					if r != null:
+						_pending_purpose[r.id] = want
+						_act("насосная" if want == RoomType.PUMP else "дегазация")
+						return true
+	return false
+
+
 ## Осторожный игрок: рядом вода — копает дальше, газ или магма — бросает выработку
 ## и роет шахту в другом месте.
 func _answer_geologist() -> void:
 	for p: Project in colony.projects.duplicate():
-		if not p.paused or p.hazard_pending.is_empty():
+		if not p.paused or p.hazard_pending.is_empty() or p.hazard_pending == "methane":
 			continue
 		_act("геолог")
 		if p.hazard_pending == "water":
@@ -243,7 +275,7 @@ func _science() -> void:
 func _professions() -> void:
 	var farms := colony.rooms_of(RoomType.FARM).size()
 	var labs := colony.rooms_of(RoomType.LAB).size()
-	var want := {Unit.Prof.FARMER: farms, Unit.Prof.SCIENTIST: labs}
+	var want := {Unit.Prof.FARMER: farms, Unit.Prof.SCIENTIST: labs * 2 if colony.units.size() >= 10 else labs}
 	for prof in want:
 		var have := colony.units.filter(func(u: Unit) -> bool: return u.profession == prof).size()
 		for u in colony.units:
@@ -340,6 +372,12 @@ func _next_underground() -> int:
 		return RoomType.FARM
 	if not has.call(RoomType.DINING):
 		return RoomType.DINING
+	var labs := 0
+	for p in colony.projects:
+		if p.purpose == RoomType.LAB or _pending_purpose.get(p.id, -1) == RoomType.LAB:
+			labs += 1
+	if colony.units.size() >= 9 and labs < 2 and not colony.research.current.is_empty():
+		return RoomType.LAB
 	if colony.research.has("bricks") and not has.call(RoomType.KILN) and colony.known_resources.has("clay"):
 		return RoomType.KILN
 	if colony.research.has("electricity") and not has.call(RoomType.GENERATOR) \
@@ -347,9 +385,6 @@ func _next_underground() -> int:
 		return RoomType.GENERATOR
 	if not colony.elements.gas.is_empty() and not has.call(RoomType.DEGAS):
 		return RoomType.DEGAS
-	for p in colony.projects:
-		if p.blocked.begins_with("В зоне") and not has.call(RoomType.PUMP):
-			return RoomType.PUMP
 	return -1
 
 

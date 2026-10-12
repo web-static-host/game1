@@ -24,7 +24,8 @@ const DIRS4: Array[Vector2i] = WorldData.DIRS4
 const HAZARD_TEXT := {
 	"water": "Геолог: стена влажная — рядом вода. Дальше — риск затопления. Продолжить?",
 	"magma": "Геолог: порода раскалена — рядом магма! Прорыв лавы — катастрофа. Продолжить?",
-	"gas": "Геолог: пахнет газом — рядом метан. Нужна вентиляция. Продолжить?",
+	"gas": "Геолог: пахнет газом — рядом метан. Нужна дегазация. Продолжить?",
+	"methane": "Метан в выработке! Искра от кирки — взрыв. Работы стоят, пока газ не уйдёт (поможет дегазация). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
@@ -54,12 +55,14 @@ const PREGNANCY_TIME := 20.0 * 30.0
 const PLANT_TICK := 20.0
 const OFFLINE_PLANT_TICK := 120.0
 ## Сколько секунд дерево растёт от саженца до взрослого.
-const TREE_GROW_TIME := 5400.0
+const TREE_GROW_TIME := 3000.0
 ## Секунд на одну новую ягоду.
 const BERRY_REGEN := 120.0
 ## Шанс за тик появиться саженцу на свободной траве — на каждое дерево рядом.
 const TREE_SPREAD := 0.0015
 const BUSH_SPREAD := 0.0004
+## Шанс за тик, что ветер занесёт семя дерева на свободную траву вдали от деревьев.
+const TREE_SEED := 0.00004
 const SPREAD_RADIUS := 5
 ## Растения живут и распространяются в этой полосе вокруг базы.
 const PLANT_AREA := 160
@@ -162,6 +165,10 @@ var _access_t := 0
 var _full_warned := {}
 ## Игровое время с начала колонии, сек.
 var game_time := 0.0
+## Когда житель последний раз уходил из облака метана: id -> время игры.
+var _fled := {}
+## Когда последний раз посылали жителя на разведку за сырьём (время игры).
+var _scout_at := -100.0
 ## Прогресс оффлайн-работ без своего места хранения (ходки за материалами, ремонт).
 var _offline_progress := {}
 ## Добытое лежит там, где добыто, пока не унесут: клетка -> {ресурс: количество}.
@@ -582,6 +589,41 @@ func set_paused(p: Project, on: bool) -> void:
 	if not on and p.blocked.begins_with("В зоне"):
 		_check_liquids(p)
 	_log("%s: %s" % [p.title(), "пауза" if on else "работы возобновлены"], "info")
+
+
+## Газовая тревога: бригада бросает работу, пока метан не уйдёт или игрок не прикажет продолжать.
+func gas_stop(p: Project) -> void:
+	p.paused = true
+	p.hazard_pending = "methane"
+	p.blocked = HAZARD_TEXT["methane"]
+	_log("%s: %s" % [p.title(), p.blocked], "danger")
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+
+
+## Житель почуял взрывоопасный метан и уходит к ближайшему чистому воздуху.
+## Кто работает на стройке, где игрок велел продолжать в газе, — остаётся.
+func flee_gas(u: Unit) -> void:
+	if u.task == Unit.Task.GOTO or u.state == Unit.State.FALL or game_time - float(_fled.get(u.id, -100.0)) < 20.0:
+		return
+	var p := project_by_id(u.project_id)
+	if p != null and p.hazard_ack.has("methane"):
+		return
+	_fled[u.id] = game_time
+	var reach := pathing.explore(u.cell())
+	var dist: Dictionary = reach[1]
+	var best = null
+	var best_d := 1 << 30
+	for c: Vector2i in dist:
+		if dist[c] < best_d and elements.gas_at(c) < Elements.GAS_CLEAR and elements.gas_at(c + Vector2i.UP) < Elements.GAS_CLEAR:
+			best_d = dist[c]
+			best = c
+	if best == null or best == u.cell():
+		return
+	_drop(u)
+	_start(u, Unit.Task.GOTO, best, best, 0, reach[0])
+	elements._warn_once("flee", "%s уходит из облака метана" % u.name, "warning")
 
 
 func cancel_project(p: Project) -> void:
@@ -1074,7 +1116,7 @@ func storage_capacity(key: String) -> int:
 	for p in rooms_of(RoomType.STORAGE):
 		if RoomType.stores(p, key):
 			c += RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
-	return c
+	return roundi(c * 1.5) if research.has("shelving") else c
 
 
 ## Сколько ресурса лежит на складах, сколько — кучей на земле.
@@ -1286,7 +1328,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		_report_hazard(hm, hazards[hm])
 	match Mat.hazard(m):
 		Mat.Hazard.GAS:
-			_log("Выброс метана на глубине %s! Нужна вентиляция." % _depth_text(c), "danger")
+			_log("Выброс метана на глубине %s! Нужна дегазация." % _depth_text(c), "danger")
 			elements.release_gas(c)
 		Mat.Hazard.WATER:
 			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning")
@@ -1494,9 +1536,12 @@ func grow_plants(t: float) -> void:
 					trees += 1
 				elif n == WorldGen.FEATURE_BUSH:
 					bushes += 1
-			if trees + bushes == 0:
-				continue
 			var roll := rng.randf()
+			if trees + bushes == 0:
+				if roll < TREE_SEED * k and _grass_free(x):
+					world.sprout(x, WorldGen.FEATURE_TREE)
+					kinds[x] = WorldGen.FEATURE_TREE
+				continue
 			if roll < trees * TREE_SPREAD * k:
 				if _grass_free(x):
 					world.sprout(x, WorldGen.FEATURE_TREE)
@@ -1536,7 +1581,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.starving_warned = false
 		if u.task != Unit.Task.SLEEP:
 			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
-		u.health = minf(100.0, u.health + dt * (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0))
+		var heal := (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0) * (2.0 if research.has("medicine") else 1.0)
+		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
 			if u.satiety < HUNGRY + 5.0 and has_food():
@@ -1774,6 +1820,7 @@ func _start_swim(u: Unit) -> void:
 
 ## Сколько секунд разведчик осматривается на месте.
 const SCOUT_WAIT := 15.0
+const SCOUT_EVERY := 30.0
 
 
 ## Отправить жителя в точку target (или как можно ближе к ней). Возвращает, куда он пойдёт.
@@ -1854,7 +1901,7 @@ func _work(u: Unit, dt: float) -> void:
 	var rate := dt
 	if not skill.is_empty():
 		var before := u.level(skill)
-		u.skills[skill] += dt
+		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0)
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
 		rate = dt * u.speed(skill) * u.need_factor()
@@ -1869,7 +1916,7 @@ func _work(u: Unit, dt: float) -> void:
 				_complete_dig(c, p, u)
 		Unit.Task.BUILD:
 			var p := project_by_id(u.project_id)
-			p.build_done += rate
+			p.build_done += rate * build_bonus()
 			if p.build_done >= p.build_work():
 				_finish_project(p)
 		Unit.Task.EQUIP:
@@ -1895,12 +1942,12 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
-			rp.repair_done += rate
+			rp.repair_done += rate * build_bonus()
 			if rp.repair_done >= rp.repair_work:
 				_finish_repair(rp)
 		Unit.Task.CRAFT:
 			var cp := project_by_id(u.project_id)
-			cp.farm_progress += rate
+			cp.farm_progress += rate * automation_bonus()
 			if cp.farm_progress >= RoomType.RECIPES[cp.purpose][2]:
 				cp.farm_progress = 0.0
 				_craft(cp)
@@ -1908,7 +1955,7 @@ func _work(u: Unit, dt: float) -> void:
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
 		Unit.Task.RESEARCH:
-			_research(rate)
+			_research(rate * automation_bonus())
 			u.work_t += dt
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
@@ -2339,8 +2386,9 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 
 ## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
 func _hazard_stop(p: Project, c: Vector2i) -> bool:
-	for dy in range(-2, 3):
-		for dx in range(-2, 3):
+	var r := 4 if research.has("geology") else 2
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
 			var n := c + Vector2i(dx, dy)
 			if world.is_revealed(n.x, n.y):
 				continue
@@ -2634,7 +2682,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 				best = stand
 				best_c = c
 				best_k = k
-				best_n = mini(CARRY, mini(avail, room))
+				best_n = mini(carry_cap(), mini(avail, room))
 				best_d = dist[stand]
 				break
 	if best == null:
@@ -2652,7 +2700,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 ## Житель берёт ресурс с кучи c (рядом с ним) и несёт на склад.
 func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
 	var room: int = capacity(key) - inventory.get(key, 0) - _incoming(key)
-	var n := mini(CARRY, mini(drop_amount(c, key), room))
+	var n := mini(carry_cap(), mini(drop_amount(c, key), room))
 	if n <= 0:
 		return
 	_drop(u)
@@ -2691,7 +2739,7 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bo
 		if src[0] == null:
 			continue
 		u.carry_key = k
-		u.carry_amount = mini(CARRY, mini(left[k], src[2]))
+		u.carry_amount = mini(carry_cap(), mini(left[k], src[2]))
 		u.haul_stage = 0
 		u.from_drop = src[1] != null
 		u.haul_src = src[1] if src[1] != null else Vector2i.ZERO
@@ -2846,9 +2894,32 @@ func _try_gather(u: Unit, key: String, room: Project, parents: Dictionary, dist:
 				best_x = x
 				best_stand = stand
 	if best_x == null:
-		return false
+		return _try_scout(u, parents, dist, key)
 	u.gather_room = room.id
 	_start(u, Unit.Task.HARVEST, _ground_cell(best_x), best_stand, 0, parents)
+	return true
+
+
+## Рядом не осталось чего добыть — житель идёт по поверхности к краю разведанного:
+## дальше могут быть деревья, валуны и кусты. Не чаще раза в SCOUT_EVERY секунд.
+func _try_scout(u: Unit, parents: Dictionary, dist: Dictionary, key: String) -> bool:
+	if game_time - _scout_at < SCOUT_EVERY:
+		return false
+	var best = null
+	var best_d := 1 << 30
+	for c: Vector2i in dist:
+		var s := world.gen.surface_y(c.x)
+		if c.y >= s or c.y < s - 3 or (c.x < explored_max - 8 and c.x > explored_min + 8):
+			continue
+		if dist[c] < best_d:
+			best_d = dist[c]
+			best = c
+	if best == null or best == u.cell():
+		return false
+	_scout_at = game_time
+	_start(u, Unit.Task.GOTO, best, best, 0, parents)
+	var what := {"wood": "деревьев", "stone": "валунов", "berries": "кустов", "clay": "глины"}
+	_log("%s идёт на разведку: рядом не осталось %s" % [u.name, what.get(key, "сырья")], "info")
 	return true
 
 
@@ -2885,6 +2956,8 @@ func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		if best_x != null:
 			world.set_feature_mark(best_x, true)
 			return _try_harvest(u, parents, dist)
+		if _try_scout(u, parents, dist, k):
+			return true
 	return false
 
 
@@ -2925,6 +2998,8 @@ func service_years(p: Project) -> float:
 		var t := Env.temperature(c.y, world.gen.surface_y(c.x))
 		if m != "stone" and t > 40.0:
 			years /= 1.0 + (t - 40.0) / 60.0
+	if research.has("maintenance"):
+		years /= 0.7
 	return years
 
 
@@ -3129,11 +3204,27 @@ func powered() -> bool:
 
 
 func farm_bonus() -> float:
-	return 1.0 + 0.5 * power_ratio if research.has("hydroponics") and powered() else 1.0
+	var k := 1.25 if research.has("agronomy") else 1.0
+	return k * (1.0 + 0.5 * power_ratio if research.has("hydroponics") and powered() else 1.0)
 
 
 func dig_bonus() -> float:
+	if research.has("deep_drilling"):
+		return 2.0
 	return 1.5 if research.has("drilling") else 1.0
+
+
+func build_bonus() -> float:
+	return 1.5 if research.has("carpentry") else 1.0
+
+
+func automation_bonus() -> float:
+	return 1.5 if research.has("automation") else 1.0
+
+
+## Сколько житель уносит за раз.
+func carry_cap() -> int:
+	return 8 if research.has("carts") else CARRY
 
 
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
@@ -3155,7 +3246,7 @@ func _power_tick(dt: float) -> void:
 				p.farm_progress += RoomType.FUEL_TIME
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
-			power_made += RoomType.POWER_MAKE
+			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0))
 			if p.blocked.begins_with("Нет топлива"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
@@ -3374,7 +3465,7 @@ func _offline_deliver(p: Project) -> void:
 		return
 	var left := remaining(p)
 	for k in left:
-		var n := mini(CARRY, mini(left[k], inventory.get(k, 0)))
+		var n := mini(carry_cap(), mini(left[k], inventory.get(k, 0)))
 		if n <= 0:
 			continue
 		inventory[k] -= n

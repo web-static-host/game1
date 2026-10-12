@@ -420,6 +420,10 @@ func _show_project(p: Project) -> void:
 			colony.cancel_project(p)
 			_select(null, null), "danger"])
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
+	if p.phase == Project.Phase.DONE and p.paused:
+		actions.append(["Продолжить", func() -> void:
+			colony.set_paused(p, false)
+			_show_project(p)])
 	if p.phase == Project.Phase.DONE:
 		if p.repairing:
 			controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))

@@ -6,7 +6,7 @@ extends RefCounted
 ## - лава вне очага остывает в базальт, с водой даёт камень и пар;
 ## - вскрытый водоносный пласт сочится водой; насосы откачивают воду;
 ## - метан из газовых карманов расходится по выработкам и поднимается вверх,
-##   взрывается от искр, вентиляция его выводит;
+##   взрывается от искр; дегазация его собирает; газовая тревога останавливает работы;
 ## - жара: глубина + лава рядом, вентиляция охлаждает.
 ## Оффлайн стихии стоят: катастрофы без игрока не случаются.
 
@@ -36,6 +36,9 @@ const GAS_MIN := 0.01
 ## Взрывоопасная концентрация и удушье.
 const GAS_EXPLOSIVE := 0.25
 const GAS_CHOKE := 0.5
+## Метан у стройки, при котором работы встают (ниже взрывоопасного), и «проветрено».
+const GAS_ALARM := 0.15
+const GAS_CLEAR := 0.05
 const VENT_RADIUS := 20
 const VENT_COOLING := 18.0
 ## Выше — жителям вредно (жара).
@@ -315,6 +318,7 @@ func _seep_tick() -> void:
 
 func _gas_tick() -> void:
 	_seep_tick()
+	_gas_alarm()
 	if gas.is_empty():
 		return
 	var next := {}
@@ -362,6 +366,37 @@ func gas_at(c: Vector2i) -> float:
 	return gas.get(c, 0.0)
 
 
+## Больше всего метана в прямоугольнике.
+func gas_in(r: Rect2i) -> float:
+	var g := 0.0
+	if gas.is_empty():
+		return g
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			g = maxf(g, gas.get(Vector2i(x, y), 0.0))
+	return g
+
+
+## Газовая тревога: где метана много, работы встают; ушёл газ — продолжают сами.
+## Игрок может приказать работать в газе — тогда взрыв на его совести.
+func _gas_alarm() -> void:
+	for p: Project in colony.projects:
+		if p.is_water_structure() or p.purpose == RoomType.DEGAS or p.purpose == RoomType.VENT:
+			continue
+		var g := gas_in(p.rect.grow(1))
+		if p.hazard_pending == "methane":
+			if g < GAS_CLEAR:
+				p.paused = false
+				p.hazard_pending = ""
+				p.blocked = ""
+				colony._log("%s: метан ушёл, работы возобновлены" % p.title(), "info")
+		elif p.hazard_ack.has("methane"):
+			if g < GAS_CLEAR:
+				p.hazard_ack.erase("methane")
+		elif g >= GAS_ALARM and not p.paused:
+			colony.gas_stop(p)
+
+
 ## Искра от кирки в облаке метана: взрыв.
 func spark(c: Vector2i) -> void:
 	var g := maxf(gas_at(c), gas_at(c + UP))
@@ -377,7 +412,7 @@ func explode(c: Vector2i) -> void:
 			var n := Vector2i(x, y)
 			gas.erase(n)
 			cells.append(n)
-	colony._log("ВЗРЫВ МЕТАНА на глубине %d м! Нужна вентиляция" % (c.y - world.gen.surface_y(c.x)), "danger")
+	colony._log("ВЗРЫВ МЕТАНА на глубине %d м! Нужна дегазация" % (c.y - world.gen.surface_y(c.x)), "danger")
 	for u: Unit in colony.units.duplicate():
 		if u.cell().distance_to(c) <= 4.0:
 			colony.injure(u, 55.0, "взрыв метана")
@@ -407,7 +442,7 @@ func temperature(c: Vector2i) -> float:
 	for p in colony.rooms_of(RoomType.VENT):
 		var center := p.rect.get_center()
 		if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
-			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0)
+			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("cooling") else 1.0)
 			break
 	return t
 
@@ -420,12 +455,15 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= 6.0 * dt
 		_hurt_check(u, "утонул(а)")
 	var g := maxf(gas_at(c), gas_at(head))
-	if g >= GAS_CHOKE:
+	if g >= GAS_EXPLOSIVE:
+		colony.flee_gas(u)
+	if g >= GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0):
 		u.health -= 3.0 * dt
 		_hurt_check(u, "задохнулся(лась) метаном")
 	var t := temperature(c)
-	if t > HOT:
-		u.health -= minf(20.0, (t - HOT) / 8.0) * dt
+	var hot := HOT + (15.0 if colony.research.has("cooling") else 0.0)
+	if t > hot:
+		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "погиб(ла) от жары")
 	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
