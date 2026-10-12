@@ -18,6 +18,12 @@ const OFFLINE_EFFICIENCY := 0.75
 const OFFLINE_STEP := 30.0
 const HARVEST_TIME := {WorldGen.FEATURE_TREE: 20.0, WorldGen.FEATURE_BOULDER: 25.0, WorldGen.FEATURE_BUSH: 10.0}
 const DIRS4: Array[Vector2i] = WorldData.DIRS4
+## Что говорит геолог, почуяв опасность рядом с забоем.
+const HAZARD_TEXT := {
+	"water": "Геолог: стена влажная — рядом вода. Дальше — риск затопления. Продолжить?",
+	"magma": "Геолог: порода раскалена — рядом магма! Прорыв лавы — катастрофа. Продолжить?",
+	"gas": "Геолог: пахнет газом — рядом метан. Нужна вентиляция. Продолжить?",
+}
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
 
@@ -76,6 +82,7 @@ const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "food": 30}
 var world: WorldData
 var pathing: Pathing
 var physics: Physics
+var elements: Elements
 ## Идёт оффлайн-расчёт (без анимаций и гибели).
 var offline := false
 var units: Array[Unit] = []
@@ -127,6 +134,7 @@ func _init(p_world: WorldData) -> void:
 	world = p_world
 	pathing = Pathing.new(world, interior, room_cells, deck)
 	physics = Physics.new(self)
+	elements = Elements.new(self)
 	rng.seed = world.gen.world_seed + 12345
 
 
@@ -490,6 +498,11 @@ func ladders_needed(r: Rect2i) -> Array[Project]:
 
 func set_paused(p: Project, on: bool) -> void:
 	p.paused = on
+	if not on and not p.hazard_pending.is_empty():
+		# Игрок решил копать дальше, несмотря на предупреждение геолога.
+		p.hazard_ack.append(p.hazard_pending)
+		p.hazard_pending = ""
+		p.blocked = ""
 	if not on:
 		p.exposed_t = 0.0
 	if not on and p.blocked.begins_with("В зоне"):
@@ -1154,8 +1167,10 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 	match Mat.hazard(m):
 		Mat.Hazard.GAS:
 			_log("Выброс метана на глубине %s! Нужна вентиляция." % _depth_text(c), "danger")
+			elements.release_gas(c)
 		Mat.Hazard.WATER:
 			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning")
+	elements.on_opened(c)
 	physics.on_opened(c)
 	for other in projects:
 		if other.phase == Project.Phase.DIG:
@@ -1200,6 +1215,7 @@ func on_collapse(c: Vector2i, span: int, limit: int, m: int) -> void:
 ## Порода упала из src в land: задевает жителей по пути, засыпает стройку.
 func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 	dig_progress.erase(land)
+	elements.on_opened(src)
 	for u: Unit in units.duplicate():
 		var c := u.cell()
 		if c.x == land.x and (c == land or c + Vector2i(0, -1) == land or (c.y >= src.y and c.y <= land.y)):
@@ -1358,6 +1374,10 @@ func grow_plants(t: float) -> void:
 
 func _life_tick(dt: float, offline: bool) -> void:
 	for u: Unit in units.duplicate():
+		if not offline:
+			elements.affect_unit(u, dt)
+			if not units.has(u):
+				continue
 		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt)
 		if u.task != Unit.Task.SLEEP:
 			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
@@ -1456,10 +1476,18 @@ func update(dt: float) -> void:
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)
+	elements.update(dt)
 	_explore_t += dt
 	if _explore_t >= 1.0:
 		_explore_t = 0.0
 		explore()
+		# Воду откачали — затопленная стройка продолжается сама.
+		for p in projects:
+			if p.paused and p.blocked.begins_with("В зоне"):
+				_check_liquids(p)
+				if p.blocked.is_empty():
+					p.paused = false
+					_log("%s: вода ушла, работы продолжаются" % p.title(), "good")
 
 
 ## Жители открывают карту вокруг себя.
@@ -1477,7 +1505,24 @@ func is_explored(x: int) -> bool:
 
 func _update_unit(u: Unit, dt: float) -> void:
 	u.anim += dt
+	if u.state != Unit.State.SWIM and _head_in_water(u):
+		_drop(u)
+		_start_swim(u)
 	match u.state:
+		Unit.State.SWIM:
+			if u.path_i >= u.path.size():
+				u.state = Unit.State.IDLE
+				if _head_in_water(u):
+					_start_swim(u)
+				return
+			var next := Vector2(u.path[u.path_i])
+			var delta := next - u.pos
+			var step := CLIMB_SPEED * 0.8 * dt
+			if delta.length() <= step:
+				u.pos = next
+				u.path_i += 1
+			else:
+				u.pos += delta.normalized() * step
 		Unit.State.IDLE:
 			if not pathing.standable(u.cell()):
 				u.state = Unit.State.FALL
@@ -1502,6 +1547,44 @@ func _update_unit(u: Unit, dt: float) -> void:
 				_drop(u)
 				return
 			_work(u, dt)
+
+
+func _head_in_water(u: Unit) -> bool:
+	var h := u.cell() + Vector2i(0, -1)
+	return world.get_mat(h.x, h.y) == Mat.WATER
+
+
+## Житель под водой: плывёт к ближайшему месту, где можно встать и дышать.
+func _start_swim(u: Unit) -> void:
+	var start := u.cell()
+	var parents := {start: start}
+	var queue: Array[Vector2i] = [start]
+	var head := 0
+	var goal = null
+	while head < queue.size() and queue.size() < 800:
+		var c := queue[head]
+		head += 1
+		if c != start and pathing.node(c):
+			goal = c
+			break
+		for d in DIRS4:
+			var n: Vector2i = c + d
+			if parents.has(n):
+				continue
+			var m := world.get_mat(n.x, n.y)
+			if m == Mat.WATER or m == Mat.AIR:
+				parents[n] = c
+				queue.append(n)
+	u.path.clear()
+	u.path_i = 0
+	u.state = Unit.State.SWIM
+	if goal != null:
+		u.path = Pathing.path_to(parents, goal)
+
+
+## Затопило готовую постройку.
+func on_flooded(p: Project, _c: Vector2i) -> void:
+	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
 
 
 ## Совсем устал или голоден — бросает работу.
@@ -1566,6 +1649,7 @@ func _work(u: Unit, dt: float) -> void:
 	match u.task:
 		Unit.Task.DIG:
 			var c := u.target
+			elements.spark(u.cell())
 			dig_progress[c] = dig_progress.get(c, 0.0) + rate
 			if dig_progress[c] >= dig_time(c):
 				var p := project_by_id(u.project_id)
@@ -1968,8 +2052,38 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 		return false
 	if p.blocked.begins_with("Нет доступа"):
 		p.blocked = ""
+	if _hazard_stop(p, best_cell):
+		return false
 	_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
 	return true
+
+
+## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
+func _hazard_stop(p: Project, c: Vector2i) -> bool:
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			var n := c + Vector2i(dx, dy)
+			if world.is_revealed(n.x, n.y):
+				continue
+			var kind := ""
+			match world.get_mat(n.x, n.y):
+				Mat.WATER:
+					kind = "water"
+				Mat.MAGMA:
+					kind = "magma"
+				Mat.GAS_POCKET:
+					kind = "gas"
+			if kind.is_empty() or p.hazard_ack.has(kind):
+				continue
+			p.paused = true
+			p.hazard_pending = kind
+			p.blocked = HAZARD_TEXT[kind]
+			_log("%s: %s" % [p.title(), p.blocked], "danger" if kind == "magma" else "warning")
+			for u in units:
+				if u.project_id == p.id:
+					_drop(u)
+			return true
+	return false
 
 
 ## Крепь выкопанного среза: житель встаёт в срезе или рядом.
@@ -2439,6 +2553,8 @@ func collapse(p: Project, why: String) -> void:
 			continue
 		if not _room_supported(q):
 			collapse(q, "рухнул нижний этаж")
+	for c in p.cells():
+		elements.on_opened(c)
 	physics.check_area(p.cells())
 
 
@@ -2692,6 +2808,8 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 									continue
 								for d in DIRS4:
 									if world.is_open(c.x + d.x, c.y + d.y):
+										if _hazard_stop(p, c):
+											return []
 										taken[c] = true
 										taken[slot] = taken.get(slot, 0) + 1
 										return [c, Unit.Task.DIG, p]
@@ -2792,6 +2910,7 @@ func to_dict() -> Dictionary:
 		"plant_t": _plant_t,
 		"explored": [explored_min, explored_max, deepest_y, highest_y],
 		"fish": fish,
+		"elements": elements.to_dict(),
 	}
 
 
@@ -2841,5 +2960,6 @@ func load_dict(d: Dictionary) -> void:
 		explored_max = home.x + EXPLORE_RADIUS
 		deepest_y = home.y
 		highest_y = home.y
+	elements.load_dict(d.get("elements", {}))
 	explore()
 	_refresh_bushes()

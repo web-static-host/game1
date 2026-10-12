@@ -66,8 +66,45 @@ func _process(_delta: float) -> bool:
 		_prepare_lake()
 	if _frame == 430:
 		_shot("lake")
+		_prepare_elements()
+	if _frame == 470:
+		_shot("elements")
 		return true
 	return false
+
+
+## Подземелье со стихиями: затопленный штрек, лава, облако метана.
+func _prepare_elements() -> void:
+	var colony: Colony = _main.colony
+	var w: WorldData = _main.world
+	var o := Vector2i(_main._home.x + 60, w.gen.surface_y(_main._home.x + 60) + 30)
+	for y in range(o.y - 2, o.y + 14):
+		for x in range(o.x - 2, o.x + 34):
+			w.set_material(x, y, Mat.GRANITE)
+	for y in range(o.y, o.y + 10):
+		w.set_dug(o.x + 3, y)
+	for x in range(o.x + 3, o.x + 30):
+		for y in [o.y + 8, o.y + 9]:
+			w.set_dug(x, y)
+	for y in range(o.y, o.y + 4):
+		for x in range(o.x + 20, o.x + 28):
+			w.set_dug(x, y)
+	for y in range(o.y + 4, o.y + 8):
+		w.set_dug(o.x + 24, y)
+	for x in range(o.x + 4, o.x + 14):
+		w.set_fluid(x, o.y + 9, Mat.WATER)
+		colony.elements.active[Vector2i(x, o.y + 9)] = true
+	for x in range(o.x + 21, o.x + 24):
+		w.set_fluid(x, o.y + 3, Mat.MAGMA)
+		colony.elements.active[Vector2i(x, o.y + 3)] = true
+	for i in 6:
+		colony.elements.release_gas(Vector2i(o.x + 3, o.y + 6 - i))
+	for i in 8:
+		colony.elements.update(0.5)
+	colony.explored_max = maxi(colony.explored_max, o.x + 50)
+	colony.deepest_y = maxi(colony.deepest_y, o.y + 20)
+	_main.world_view.focus_cell(o + Vector2i(15, 5))
+	_main.camera.zoom = Vector2(0.9, 0.9)
 
 
 func _prepare_base() -> void:

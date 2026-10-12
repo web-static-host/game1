@@ -2,15 +2,17 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT }
 
-const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая"]
+const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция"]
 const HINTS := [
 	"",
 	"кровати: место для сна и для детей",
 	"больше места для ресурсов",
 	"грибные грядки: производство еды",
 	"еда в столовой сытнее и поднимает настроение",
+	"откачивает воду вокруг (16 м)",
+	"выводит метан и охлаждает воздух вокруг (20 м)",
 ]
 ## Пока складов нет, ресурсы лежат кучами на земле у базы — немного.
 const BASE_CAPACITY := 50
@@ -50,6 +52,10 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"soil": 3 * w, "wood": 4}
 		DINING:
 			return {"wood": 2 * w, "stone": 4}
+		PUMP:
+			return {"wood": 6, "stone": 8}
+		VENT:
+			return {"wood": 8, "stone": 4}
 	return {}
 
 

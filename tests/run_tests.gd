@@ -32,6 +32,7 @@ func _initialize() -> void:
 	test_storage_workers()
 	test_wear_and_repair()
 	test_calendar()
+	test_elements()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -742,7 +743,13 @@ func test_lakes_and_fishing() -> void:
 	var x1: int = found[2]
 	check(w.get_mat(x0 + 1, level) == Mat.WATER, "в озере вода")
 	check(w.feature_at(x0 + 1) == WorldGen.FEATURE_NONE, "в воде не растут деревья")
-	check(not colony.pathing.passable(Vector2i(x0 + 1, level)), "по воде не ходят")
+	var deep := x0
+	for x in range(x0, x1 + 1):
+		if w.gen.surface_y(x) > w.gen.surface_y(deep):
+			deep = x
+	check(not colony.pathing.node(Vector2i(deep, level - 1)), "по водной глади не бегают")
+	if w.gen.surface_y(deep) - level >= 2:
+		check(not colony.pathing.node(Vector2i(deep, level)), "по глубокой воде не ходят")
 	var row := level - 1
 	var bridge_r := Rect2i(x0, row, x1 - x0 + 1, 1)
 	check(colony.validate(Project.Kind.BRIDGE, bridge_r).is_empty(), "мостик от берега до берега: " + colony.validate(Project.Kind.BRIDGE, bridge_r))
@@ -980,3 +987,140 @@ func test_calendar() -> void:
 	check(colony.date_text() == "1 янв · год 1", "календарь начинается с 1 января: " + colony.date_text())
 	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + 5.0
 	check(colony.date_text() == "5 мар · год 2", "дата считается по игровым суткам: " + colony.date_text())
+
+
+## Сплошной гранитный блок w×h с левым верхним углом o (для опытов со стихиями).
+func _granite_box(w: WorldData, o: Vector2i, size: Vector2i) -> void:
+	for y in range(o.y, o.y + size.y):
+		for x in range(o.x, o.x + size.x):
+			w.set_material(x, y, Mat.GRANITE)
+
+
+func _dig_cells(w: WorldData, cells: Array) -> void:
+	for c in cells:
+		w.set_dug(c.x, c.y)
+
+
+func _count(w: WorldData, r: Rect2i, m: int) -> int:
+	var n := 0
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			if w.get_mat(x, y) == m:
+				n += 1
+	return n
+
+
+func test_elements() -> void:
+	var colony := _new_colony(61)
+	var w := colony.world
+	colony.start_new(0)
+	var el := colony.elements
+	var o := Vector2i(300, w.gen.surface_y(300) + 40)
+	_granite_box(w, o, Vector2i(30, 20))
+	# Шахта 1×6 и штрек 8×1 внизу; две клетки воды наверху шахты.
+	var shaft := []
+	for dy in 6:
+		shaft.append(o + Vector2i(2, 2 + dy))
+	var drift := []
+	for dx in range(3, 11):
+		drift.append(o + Vector2i(dx, 7))
+	_dig_cells(w, shaft + drift)
+	w.set_fluid(o.x + 2, o.y + 2, Mat.WATER)
+	w.set_fluid(o.x + 2, o.y + 3, Mat.WATER)
+	check(w.get_mat(o.x + 2, o.y + 2) == Mat.WATER and w.is_dug(o.x + 2, o.y + 2), "вода в выработке хранится поверх неё")
+	el.active[o + Vector2i(2, 2)] = true
+	el.active[o + Vector2i(2, 3)] = true
+	for i in 100:
+		el.update(0.2)
+	check(_count(w, Rect2i(o.x + 2, o.y + 2, 1, 5), Mat.WATER) == 0, "вода стекла вниз по шахте")
+	check(_count(w, Rect2i(o.x + 2, o.y + 7, 9, 1), Mat.WATER) == 2, "и растеклась по дну штрека (воды не прибавилось)")
+	check(w.get_mat(o.x + 2, o.y + 2) == Mat.AIR and w.is_dug(o.x + 2, o.y + 2), "вода ушла — выработка снова пустая")
+	# Насос откачивает воду.
+	var pump := Project.new()
+	pump.id = 900
+	pump.kind = Project.Kind.ROOM
+	pump.phase = Project.Phase.DONE
+	pump.purpose = RoomType.PUMP
+	pump.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
+	colony.projects.append(pump)
+	for i in 10:
+		el.update(1.0)
+	check(_count(w, Rect2i(o.x, o.y, 30, 20), Mat.WATER) == 0, "насосная откачала воду")
+	colony.projects.erase(pump)
+	# Лава стекает и застывает базальтом.
+	w.set_fluid(o.x + 2, o.y + 2, Mat.MAGMA)
+	el.active[o + Vector2i(2, 2)] = true
+	for i in 20:
+		el.update(0.8)
+	check(_count(w, Rect2i(o.x + 2, o.y + 2, 1, 5), Mat.MAGMA) == 0 and _count(w, Rect2i(o.x + 2, o.y + 7, 9, 1), Mat.MAGMA) == 1,
+		"лава стекла вниз")
+	check(el.temperature(o + Vector2i(4, 7)) > 200.0, "рядом с лавой жарко")
+	for i in 130:
+		el.update(1.0)
+	check(_count(w, Rect2i(o.x + 2, o.y + 7, 9, 1), Mat.MAGMA) == 0 and _count(w, Rect2i(o.x + 2, o.y + 7, 9, 1), Mat.BASALT) == 1,
+		"вытекшая лава застыла базальтом")
+	# Лава и вода: камень и пар.
+	var a := o + Vector2i(6, 7)
+	var b := o + Vector2i(7, 7)
+	w.set_fluid(a.x, a.y, Mat.MAGMA)
+	w.set_fluid(b.x, b.y, Mat.WATER)
+	el._entered(a, Mat.MAGMA)
+	check(w.get_mat(a.x, a.y) == Mat.BASALT and w.get_mat(b.x, b.y) == Mat.AIR, "лава с водой: базальт и пар")
+	# Метан расходится и поднимается, вентиляция выводит.
+	el.release_gas(o + Vector2i(2, 6))
+	for i in 5:
+		el.update(1.0)
+	check(el.gas_at(o + Vector2i(2, 4)) > 0.0, "метан поднялся по шахте")
+	var u := colony.units[0]
+	u.pos = Vector2(o + Vector2i(2, 6))
+	u.health = 100.0
+	el.explode(o + Vector2i(2, 6))
+	check(u.health < 100.0, "взрыв метана ранит жителя рядом")
+	check(el.gas_at(o + Vector2i(2, 6)) == 0.0, "газ выгорел при взрыве")
+	el.release_gas(o + Vector2i(2, 5))
+	var vent := Project.new()
+	vent.id = 901
+	vent.kind = Project.Kind.ROOM
+	vent.phase = Project.Phase.DONE
+	vent.purpose = RoomType.VENT
+	vent.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
+	colony.projects.append(vent)
+	for i in 20:
+		el.update(1.0)
+	var total := 0.0
+	for c in el.gas:
+		total += el.gas[c]
+	check(total < 0.1, "вентиляция вывела метан (%.2f)" % total)
+	colony.projects.erase(vent)
+	# Житель под водой всплывает туда, где можно дышать.
+	for c in [o + Vector2i(2, 6), o + Vector2i(2, 5), o + Vector2i(2, 4)]:
+		w.set_fluid(c.x, c.y, Mat.WATER)
+	u.pos = Vector2(o + Vector2i(2, 6))
+	u.health = 100.0
+	u.state = Unit.State.IDLE
+	for i in 60:
+		colony._update_unit(u, 0.2)
+	check(not colony._head_in_water(u) and u.health > 0.0, "житель выплыл из затопленной шахты")
+	# Сохранение воды в выработках.
+	var data := SaveSystem.serialize(w, colony, Vector2i.ZERO)
+	var w2 := WorldData.new(WorldGen.new(61))
+	var c2 := Colony.new(w2)
+	SaveSystem.apply(JSON.parse_string(JSON.stringify(data)), w2, c2)
+	check(w2.get_mat(o.x + 2, o.y + 5) == Mat.WATER and w2.is_dug(o.x + 2, o.y + 5), "вода в выработке сохраняется")
+	# Геолог чует воду рядом с забоем и останавливает бригаду.
+	var gc := _new_colony(62)
+	var gw := gc.world
+	var gx := _find_solid_column(gw)
+	gc.start_new(gx)
+	gc.inventory = {"wood": 40}
+	var gs := gw.gen.surface_y(gx)
+	gw.set_fluid(gx, gs + 6, Mat.WATER)
+	gw.set_fluid(gx + 1, gs + 6, Mat.WATER)
+	var gp := gc.create_project(Project.Kind.TUNNEL, Rect2i(gx, gs, 1, 5))
+	for i in 600:
+		gc.update(0.5)
+		if gp.paused:
+			break
+	check(gp.paused and gp.hazard_pending == "water" and gp.blocked.begins_with("Геолог"), "геолог предупредил о воде: " + gp.blocked)
+	gc.set_paused(gp, false)
+	check(not gp.paused and gp.hazard_ack.has("water"), "игрок разрешил копать дальше")

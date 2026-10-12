@@ -3,7 +3,7 @@ extends RefCounted
 ## Житель колонии. Позиция — клетка, где стоят ноги (рост ~2 клетки).
 
 enum Sex { MALE, FEMALE }
-enum State { IDLE, MOVE, WORK, FALL }
+enum State { IDLE, MOVE, WORK, FALL, SWIM }
 enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR }
 enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER }
 

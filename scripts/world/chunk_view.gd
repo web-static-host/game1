@@ -140,8 +140,10 @@ func _draw() -> void:
 				draw_rect(r, fog_color(depth, v))
 				continue
 			var dug := f & ChunkData.F_DUG != 0
-			if dug or m == Mat.AIR or m == Mat.WATER:
+			if dug or m == Mat.AIR or Mat.is_fluid(m):
 				_draw_open_cell(lx, ly, r, m, dug, depth, v)
+				if dug and f & ChunkData.F_FLUID:
+					_draw_fluid(lx, ly, r, chunk.fluid[i])
 				continue
 			_draw_solid_cell(lx, ly, r, m, v, x, y, surf)
 	# Деревья и валуны — после рельефа, чтобы рисоваться поверх.
@@ -163,9 +165,8 @@ func _draw_open_cell(lx: int, ly: int, r: Rect2, m: int, dug: bool, depth: int, 
 	else:
 		back = fog_color(depth, v).darkened(0.55)
 	draw_rect(r, back)
-	if m == Mat.WATER and not dug:
-		var w := Mat.color(Mat.WATER).lightened((v - 0.5) * 0.08)
-		draw_rect(r, w)
+	if Mat.is_fluid(m) and not dug:
+		_draw_fluid(lx, ly, r, m)
 		return
 	# Скругляем внутренние углы туннеля.
 	for corner: Vector2i in CORNERS:
@@ -484,6 +485,28 @@ func _is_hole(lx: int, ly: int) -> bool:
 	var f := _flags_at(lx, ly)
 	return f >= 0 and f & (ChunkData.F_DUG | ChunkData.F_CAVE) != 0 and _is_open(lx, ly)
 
+
+
+const LAVA := Color(0.95, 0.38, 0.1)
+const LAVA_HOT := Color(1.0, 0.82, 0.3)
+
+
+## Вода или лава в выработке; у верхней кромки — светлая гладь.
+func _draw_fluid(lx: int, ly: int, r: Rect2, m: int) -> void:
+	var top := _mat_at(lx, ly - 1) != m
+	if m == Mat.MAGMA:
+		draw_rect(r, LAVA)
+		var x := chunk.cx * SIZE + lx
+		var y := chunk.cy * SIZE + ly
+		for k in 3:
+			var p := r.position + Vector2(4 + WorldGen.hash01(x, y, 500 + k) * (TILE - 8), 4 + WorldGen.hash01(x, y, 510 + k) * (TILE - 8))
+			draw_circle(p, 2.5 + WorldGen.hash01(x, y, 520 + k) * 3.0, LAVA_HOT)
+		if top:
+			draw_rect(Rect2(r.position, Vector2(TILE, 5)), LAVA_HOT)
+		return
+	draw_rect(r, Mat.color(Mat.WATER).lightened(0.05))
+	if top:
+		draw_rect(Rect2(r.position, Vector2(TILE, 5)), WATER_TOP)
 
 
 const WATER_DEEP := Color(0.16, 0.38, 0.68, 0.92)

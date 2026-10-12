@@ -783,10 +783,14 @@ func _cell_spec(c: Vector2i) -> Dictionary:
 
 func _env_text(c: Vector2i) -> String:
 	var surf := world.gen.surface_y(c.x)
-	return "%d °C · %d кПа · кислород %d%%" % [
-		roundi(Env.temperature(c.y, surf)),
+	var t := "%d °C · %d кПа · кислород %d%%" % [
+		roundi(colony.elements.temperature(c)),
 		roundi(Env.pressure(c.y, surf)),
 		roundi(Env.oxygen_ratio(c.y, surf) * 100.0)]
+	var g := colony.elements.gas_at(c)
+	if g >= Elements.GAS_MIN:
+		t += " · метан %d%%%s" % [roundi(g * 100.0), " — взрывоопасно!" if g >= Elements.GAS_EXPLOSIVE else ""]
+	return t
 
 
 func _update_status() -> void:

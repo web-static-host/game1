@@ -1,0 +1,427 @@
+class_name Elements
+extends RefCounted
+## Стихии под землёй:
+## - вода и лава текут клеточным автоматом: вниз, а вбок — если есть куда пролиться
+##   или сверху давит столб; считаются только «активные» клетки у мест, где что-то поменялось;
+## - лава вне очага остывает в базальт, с водой даёт камень и пар;
+## - вскрытый водоносный пласт сочится водой; насосы откачивают воду;
+## - метан из газовых карманов расходится по выработкам и поднимается вверх,
+##   взрывается от искр, вентиляция его выводит;
+## - жара: глубина + лава рядом, вентиляция охлаждает.
+## Оффлайн стихии стоят: катастрофы без игрока не случаются.
+
+const UP := Vector2i(0, -1)
+const DOWN := Vector2i(0, 1)
+const SIDES: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0)]
+const DIRS4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+const WATER_STEP := 0.2
+const LAVA_STEP := 0.8
+const MAX_MOVES := 600
+## Через сколько секунд без движения вытекшая лава застывает базальтом.
+const LAVA_COOL := 90.0
+## Как часто вскрытый водоносный пласт выпускает клетку воды.
+const SPRING_TIME := 25.0
+const PUMP_TIME := 2.0
+const PUMP_RADIUS := 16
+const GAS_STEP := 1.0
+## Метана в одной клетке газового кармана.
+const GAS_PER_POCKET := 3.0
+const GAS_MIN := 0.01
+## Взрывоопасная концентрация и удушье.
+const GAS_EXPLOSIVE := 0.25
+const GAS_CHOKE := 0.5
+const VENT_RADIUS := 20
+const VENT_COOLING := 18.0
+## Выше — жителям вредно (жара).
+const HOT := 50.0
+
+var colony: Colony
+var world: WorldData
+## Клетки с жидкостью, которые могут сдвинуться: Vector2i -> true.
+var active := {}
+## Сколько секунд вытекшая лава стоит без движения: Vector2i -> сек.
+var lava_still := {}
+## Вскрытые водоносные пласты: клетка -> таймер.
+var springs := {}
+## Метан в открытых клетках: Vector2i -> доля (0..1+).
+var gas := {}
+var _water_t := 0.0
+var _lava_t := 0.0
+var _gas_t := 0.0
+var _pump_t := 0.0
+var _rng := RandomNumberGenerator.new()
+var _warned := {}
+
+
+func _init(p_colony: Colony) -> void:
+	colony = p_colony
+	world = p_colony.world
+	_rng.seed = world.gen.world_seed + 777
+
+
+func update(dt: float) -> void:
+	_water_t += dt
+	while _water_t >= WATER_STEP:
+		_water_t -= WATER_STEP
+		_flow(Mat.WATER)
+	_lava_t += dt
+	while _lava_t >= LAVA_STEP:
+		_lava_t -= LAVA_STEP
+		_flow(Mat.MAGMA)
+		_cool_lava(LAVA_STEP)
+	_gas_t += dt
+	while _gas_t >= GAS_STEP:
+		_gas_t -= GAS_STEP
+		_gas_tick()
+	_pump_t += dt
+	while _pump_t >= PUMP_TIME:
+		_pump_t -= PUMP_TIME
+		_pumps()
+	for c in springs.keys():
+		springs[c] += dt
+		if springs[c] >= SPRING_TIME:
+			springs[c] = 0.0
+			_spring(c)
+
+
+# --- Жидкости --------------------------------------------------------------------------
+
+## Клетка c открылась: соседняя вода или лава может потечь, пласт — засочиться, газ — выйти.
+func on_opened(c: Vector2i) -> void:
+	for d in [UP, DOWN, Vector2i(-1, 0), Vector2i(1, 0), Vector2i(-1, -1), Vector2i(1, -1)]:
+		var n: Vector2i = c + d
+		var m := world.get_mat(n.x, n.y)
+		if Mat.is_fluid(m):
+			active[n] = true
+		elif m == Mat.AQUIFER and not springs.has(n):
+			springs[n] = SPRING_TIME * 0.5
+
+
+## Газовый карман вскрыт: метан выходит в выработку.
+func release_gas(c: Vector2i) -> void:
+	gas[c] = gas.get(c, 0.0) + GAS_PER_POCKET
+
+
+func _accepts(c: Vector2i) -> bool:
+	return world.get_mat(c.x, c.y) == Mat.AIR
+
+
+func _flow(kind: int) -> void:
+	var cells: Array = []
+	for c in active:
+		if world.get_mat(c.x, c.y) == kind:
+			cells.append(c)
+	if cells.is_empty():
+		return
+	for c in cells:
+		active.erase(c)
+	# Снизу вверх: нижние клетки освобождают место верхним за один шаг.
+	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y > b.y)
+	var moves := 0
+	for c: Vector2i in cells:
+		if moves >= MAX_MOVES:
+			active[c] = true
+			continue
+		if world.get_mat(c.x, c.y) != kind:
+			continue
+		var to = _target(c, kind)
+		if to == null:
+			continue
+		moves += 1
+		_move(c, to, kind)
+
+
+## Куда течь: вниз; вбок — если там можно пролиться ниже или сверху давит столб.
+func _target(c: Vector2i, kind: int) -> Variant:
+	if _accepts(c + DOWN):
+		return c + DOWN
+	var order: Array[Vector2i] = SIDES.duplicate()
+	if _rng.randf() < 0.5:
+		order.reverse()
+	for d in order:
+		if _accepts(c + d) and _accepts(c + d + DOWN):
+			return c + d
+	if world.get_mat(c.x, c.y - 1) == kind:
+		for d in order:
+			if _accepts(c + d):
+				return c + d
+	return null
+
+
+func _move(from: Vector2i, to: Vector2i, kind: int) -> void:
+	world.clear_fluid(from.x, from.y)
+	world.set_fluid(to.x, to.y, kind)
+	if kind == Mat.MAGMA:
+		lava_still.erase(from)
+		lava_still[to] = 0.0
+	# Сверху и сбоку жидкость может стечь в освободившуюся клетку.
+	for d in [UP, Vector2i(-1, 0), Vector2i(1, 0), Vector2i(-1, -1), Vector2i(1, -1)]:
+		var n: Vector2i = from + d
+		if Mat.is_fluid(world.get_mat(n.x, n.y)):
+			active[n] = true
+	active[to] = true
+	# Пустота, откуда ушла жидкость, — для осыпей и сводов как свежая выработка.
+	colony.physics.on_opened(from)
+	_entered(to, kind)
+
+
+## Жидкость пришла в клетку: реакции, постройки, жители.
+func _entered(c: Vector2i, kind: int) -> void:
+	for d in DIRS4:
+		var n := c + d
+		var m := world.get_mat(n.x, n.y)
+		if kind == Mat.MAGMA and m == Mat.WATER:
+			_quench(c, n)
+			return
+		if kind == Mat.WATER and m == Mat.MAGMA:
+			_quench(n, c)
+			return
+	var pid: int = colony.interior.get(c, 0)
+	if pid != 0:
+		var p := colony.project_by_id(pid)
+		if p != null:
+			if kind == Mat.MAGMA:
+				colony.collapse(p, "сгорела в лаве")
+			else:
+				colony.on_flooded(p, c)
+	if kind == Mat.MAGMA:
+		for u: Unit in colony.units.duplicate():
+			var uc := u.cell()
+			if uc == c or uc + UP == c:
+				colony.injure(u, 200.0, "попал(а) в лаву")
+		_warn_once("lava%d" % (c.y / 32), "КАТАСТРОФА: лава течёт в выработки на глубине %d м! Уходите, вода её остудит" % (
+			c.y - world.gen.surface_y(c.x)), "danger")
+	else:
+		var p := colony.project_at(c)
+		if p != null and (p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD):
+			colony._check_liquids(p)
+
+
+## Лава встретила воду: лава застывает камнем, вода уходит паром.
+func _quench(lava: Vector2i, water: Vector2i) -> void:
+	world.set_material(lava.x, lava.y, Mat.BASALT)
+	lava_still.erase(lava)
+	world.clear_fluid(water.x, water.y)
+	colony.physics.on_opened(water)
+	for d in DIRS4:
+		for c in [lava + d, water + d]:
+			if Mat.is_fluid(world.get_mat(c.x, c.y)):
+				active[c] = true
+	_warn_once("steam", "Лава встретила воду: шипит пар, лава застывает базальтом", "warning")
+
+
+func _cool_lava(dt: float) -> void:
+	for c in lava_still.keys():
+		if world.get_mat(c.x, c.y) != Mat.MAGMA:
+			lava_still.erase(c)
+			continue
+		if active.has(c):
+			lava_still[c] = 0.0
+			continue
+		lava_still[c] += dt
+		if lava_still[c] >= LAVA_COOL:
+			lava_still.erase(c)
+			world.set_material(c.x, c.y, Mat.BASALT)
+
+
+## Водоносный пласт сочится в соседнюю пустую клетку (пока ей есть куда течь).
+func _spring(c: Vector2i) -> void:
+	if world.get_mat(c.x, c.y) != Mat.AQUIFER:
+		springs.erase(c)
+		return
+	for d in [DOWN, Vector2i(-1, 0), Vector2i(1, 0)]:
+		var n: Vector2i = c + d
+		if _accepts(n):
+			world.set_fluid(n.x, n.y, Mat.WATER)
+			active[n] = true
+			_warn_once("spring%d,%d" % [c.x / 16, c.y / 16], "Водоносный пласт сочится водой (глубина %d м) — нужен насос" % (
+				c.y - world.gen.surface_y(c.x)), "warning")
+			return
+	# Вокруг уже вода или порода — пласт затих.
+	var open := false
+	for d in DIRS4:
+		var n := c + d
+		if world.is_open(n.x, n.y) or world.get_mat(n.x, n.y) == Mat.WATER:
+			open = true
+	if not open:
+		springs.erase(c)
+
+
+## Насосы откачивают воду: по клетке с поверхности ближайшего затопления.
+func _pumps() -> void:
+	for p in colony.rooms_of(RoomType.PUMP):
+		if p.paused:
+			continue
+		var center := p.rect.get_center()
+		var best = null
+		for y in range(center.y - PUMP_RADIUS, center.y + PUMP_RADIUS + 1):
+			for x in range(center.x - PUMP_RADIUS, center.x + PUMP_RADIUS + 1):
+				if world.gen.surface_y(x) > y:
+					continue # озёра на поверхности не откачиваем
+				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER:
+					best = Vector2i(x, y)
+					break
+			if best != null:
+				break
+		if best != null:
+			world.clear_fluid(best.x, best.y)
+			for d in DIRS4:
+				var n: Vector2i = best + d
+				if world.get_mat(n.x, n.y) == Mat.WATER:
+					active[n] = true
+
+
+# --- Газ ------------------------------------------------------------------------------
+
+func _open_for_gas(c: Vector2i) -> bool:
+	return world.get_mat(c.x, c.y) == Mat.AIR
+
+
+func _gas_tick() -> void:
+	if gas.is_empty():
+		return
+	var next := {}
+	for c: Vector2i in gas:
+		var g: float = gas[c]
+		# Над землёй газ уходит в небо.
+		if c.y < world.gen.surface_y(c.x) or not _open_for_gas(c):
+			continue
+		var targets: Array[Vector2i] = []
+		for d in DIRS4:
+			if _open_for_gas(c + d):
+				targets.append(c + d)
+		# Метан легче воздуха: больше уходит вверх.
+		var keep := g * 0.4
+		var share := g - keep
+		var weights := 0.0
+		for t in targets:
+			weights += 2.0 if t.y < c.y else 1.0
+		if weights == 0.0:
+			next[c] = next.get(c, 0.0) + g
+			continue
+		next[c] = next.get(c, 0.0) + keep
+		for t in targets:
+			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
+	# Вентиляция выводит газ.
+	for p in colony.rooms_of(RoomType.VENT):
+		var center := p.rect.get_center()
+		for c in next:
+			if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
+				next[c] *= 0.5
+	gas.clear()
+	for c in next:
+		if next[c] >= GAS_MIN:
+			gas[c] = next[c]
+
+
+func gas_at(c: Vector2i) -> float:
+	return gas.get(c, 0.0)
+
+
+## Искра от кирки в облаке метана: взрыв.
+func spark(c: Vector2i) -> void:
+	var g := maxf(gas_at(c), gas_at(c + UP))
+	if g < GAS_EXPLOSIVE or _rng.randf() > 0.02:
+		return
+	explode(c)
+
+
+func explode(c: Vector2i) -> void:
+	var cells: Array[Vector2i] = []
+	for y in range(c.y - 3, c.y + 4):
+		for x in range(c.x - 3, c.x + 4):
+			var n := Vector2i(x, y)
+			gas.erase(n)
+			cells.append(n)
+	colony._log("ВЗРЫВ МЕТАНА на глубине %d м! Нужна вентиляция" % (c.y - world.gen.surface_y(c.x)), "danger")
+	for u: Unit in colony.units.duplicate():
+		if u.cell().distance_to(c) <= 4.0:
+			colony.injure(u, 55.0, "взрыв метана")
+	var hit := {}
+	for n in cells:
+		if n.distance_to(c) > 2.5:
+			continue
+		var pid: int = colony.interior.get(n, 0)
+		if pid != 0 and not hit.has(pid):
+			hit[pid] = true
+			var p := colony.project_by_id(pid)
+			if p != null:
+				colony.collapse(p, "разрушена взрывом")
+	colony.physics.check_area(cells)
+
+
+# --- Жара -------------------------------------------------------------------------------
+
+## Температура в клетке: глубина, лава рядом, охлаждение вентиляцией.
+func temperature(c: Vector2i) -> float:
+	var t := Env.temperature(c.y, world.gen.surface_y(c.x))
+	if c.y >= world.gen.surface_y(c.x) - 2:
+		for dy in range(-3, 4):
+			for dx in range(-3, 4):
+				if world.get_mat(c.x + dx, c.y + dy) == Mat.MAGMA:
+					t = maxf(t, 1100.0 / (1.0 + Vector2(dx, dy).length() * 2.0))
+	for p in colony.rooms_of(RoomType.VENT):
+		var center := p.rect.get_center()
+		if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
+			t -= VENT_COOLING
+			break
+	return t
+
+
+## Воздействие стихий на жителя за dt секунд.
+func affect_unit(u: Unit, dt: float) -> void:
+	var c := u.cell()
+	var head := c + UP
+	if world.get_mat(head.x, head.y) == Mat.WATER:
+		u.health -= 6.0 * dt
+		_hurt_check(u, "утонул(а)")
+	var g := maxf(gas_at(c), gas_at(head))
+	if g >= GAS_CHOKE:
+		u.health -= 3.0 * dt
+		_hurt_check(u, "задохнулся(лась) метаном")
+	var t := temperature(c)
+	if t > HOT:
+		u.health -= minf(20.0, (t - HOT) / 8.0) * dt
+		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
+		_hurt_check(u, "погиб(ла) от жары")
+	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
+	if o2 < 0.55:
+		u.health -= (0.55 - o2) * 10.0 * dt
+		_hurt_check(u, "задохнулся(лась) на высоте")
+
+
+func _hurt_check(u: Unit, why: String) -> void:
+	if u.health <= 0.0:
+		colony.injure(u, 1.0, why)
+
+
+func _warn_once(key: String, text: String, kind: String) -> void:
+	var now := Time.get_ticks_msec()
+	if _warned.has(key) and now - int(_warned[key]) < 60000:
+		return
+	_warned[key] = now
+	colony._log(text, kind)
+
+
+# --- Сохранение -------------------------------------------------------------------------
+
+static func _cells(d: Dictionary) -> Array:
+	var out := []
+	for c: Vector2i in d:
+		out.append([c.x, c.y, d[c]])
+	return out
+
+
+func to_dict() -> Dictionary:
+	return {"active": _cells(active), "lava": _cells(lava_still), "springs": _cells(springs), "gas": _cells(gas)}
+
+
+func load_dict(d: Dictionary) -> void:
+	for e in d.get("active", []):
+		active[Vector2i(int(e[0]), int(e[1]))] = true
+	for e in d.get("lava", []):
+		lava_still[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	for e in d.get("springs", []):
+		springs[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	for e in d.get("gas", []):
+		gas[Vector2i(int(e[0]), int(e[1]))] = float(e[2])

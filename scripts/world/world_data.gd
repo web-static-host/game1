@@ -15,6 +15,8 @@ var chunks := {}
 var pending_flags := {}
 ## Сохранённые материалы изменённых чанков (осыпи, обвалы): Vector2i -> PackedByteArray
 var pending_mats := {}
+## Сохранённая жидкость в выработках: Vector2i -> PackedByteArray
+var pending_fluids := {}
 ## Чанки, которые нужно перерисовать: Vector2i -> true
 var dirty := {}
 ## Собранные объекты поверхности: x -> true
@@ -53,6 +55,10 @@ func get_chunk(cx: int, cy: int) -> ChunkData:
 			c.modified = true
 			c.mat_modified = true
 			pending_mats.erase(key)
+		if pending_fluids.has(key):
+			c.fluid = pending_fluids[key]
+			c.modified = true
+			pending_fluids.erase(key)
 		chunks[key] = c
 	return c
 
@@ -194,9 +200,38 @@ func set_material(x: int, y: int, m: int) -> void:
 	var c := _chunk_at(x, y)
 	var i := ChunkData.idx(x & MASK, y & MASK)
 	c.mat[i] = m
-	c.flags[i] = (c.flags[i] & ~(ChunkData.F_DUG | ChunkData.F_CAVE)) | ChunkData.F_REVEALED
+	c.flags[i] = (c.flags[i] & ~(ChunkData.F_DUG | ChunkData.F_CAVE | ChunkData.F_FLUID)) | ChunkData.F_REVEALED
 	c.modified = true
 	c.mat_modified = true
+	_touch(x, y)
+
+
+## Жидкость m (вода, магма) занимает пустую клетку.
+func set_fluid(x: int, y: int, m: int) -> void:
+	var c := _chunk_at(x, y)
+	var i := ChunkData.idx(x & MASK, y & MASK)
+	if c.flags[i] & ChunkData.F_DUG:
+		if c.fluid.is_empty():
+			c.fluid.resize(SIZE * SIZE)
+		c.fluid[i] = m
+		c.flags[i] |= ChunkData.F_FLUID
+	else:
+		c.mat[i] = m
+		c.mat_modified = true
+	c.modified = true
+	_touch(x, y)
+
+
+## Жидкость ушла из клетки — там снова пусто.
+func clear_fluid(x: int, y: int) -> void:
+	var c := _chunk_at(x, y)
+	var i := ChunkData.idx(x & MASK, y & MASK)
+	if c.flags[i] & ChunkData.F_FLUID:
+		c.flags[i] &= ~ChunkData.F_FLUID
+	elif Mat.is_fluid(c.mat[i]):
+		c.mat[i] = Mat.AIR
+		c.mat_modified = true
+	c.modified = true
 	_touch(x, y)
 
 
@@ -258,6 +293,8 @@ func evict_outside(keep: Rect2i) -> void:
 			pending_flags[key] = c.flags
 		if c.mat_modified:
 			pending_mats[key] = c.mat
+		if c.has_fluid_overlay():
+			pending_fluids[key] = c.fluid
 		chunks.erase(key)
 
 
@@ -268,6 +305,16 @@ func modified_mats() -> Dictionary:
 		var c: ChunkData = chunks[key]
 		if c.mat_modified:
 			out[key] = c.mat
+	return out
+
+
+## Жидкость в выработках по чанкам (загруженные и нет): Vector2i -> PackedByteArray.
+func modified_fluids() -> Dictionary:
+	var out := pending_fluids.duplicate()
+	for key in chunks:
+		var c: ChunkData = chunks[key]
+		if c.has_fluid_overlay():
+			out[key] = c.fluid
 	return out
 
 

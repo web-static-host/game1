@@ -45,6 +45,7 @@ func _draw() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
 	_draw_dig_progress()
+	_draw_gas()
 	for p in colony.projects:
 		_draw_supply(p, font)
 		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
@@ -201,6 +202,26 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				var h := 6.0 + 10.0 * fmod(grow + WorldGen.hash01(p.id, i, 70), 1.0)
 				draw_line(Vector2(mx, floor_y - 8), Vector2(mx, floor_y - 8 - h), Color(MUSHROOM, alpha), 3.0)
 				draw_circle(Vector2(mx, floor_y - 8 - h), 4.0 + h * 0.15, Color(MUSHROOM_CAP, alpha))
+		RoomType.PUMP:
+			# Насос и труба вверх через потолок.
+			var px := x0 + TILE * 1.2
+			draw_rect(Rect2(px - 14, floor_y - 26, 28, 26), Color(0.35, 0.45, 0.55, alpha))
+			draw_rect(Rect2(px - 4, r.position.y, 8, floor_y - 26 - r.position.y), Color(0.45, 0.5, 0.55, alpha))
+			var a := Time.get_ticks_msec() / 300.0
+			draw_arc(Vector2(px + 26, floor_y - 18), 10, 0, TAU, 16, Color(0.55, 0.38, 0.2, alpha), 3.0)
+			draw_line(Vector2(px + 26, floor_y - 18), Vector2(px + 26, floor_y - 18) + Vector2(cos(a), sin(a)) * 10, Color(0.55, 0.38, 0.2, alpha), 3.0)
+			draw_line(Vector2(px + 14, floor_y - 18), Vector2(px + 26, floor_y - 18), Color(0.45, 0.5, 0.55, alpha), 3.0)
+		RoomType.VENT:
+			# Вентилятор в стене и короб воздуховода.
+			var cx := x0 + RoomType.usable_width(p) * TILE * 0.5
+			var cy := (r.position.y + floor_y) * 0.5
+			draw_rect(Rect2(x0 + 4, r.position.y + 6, RoomType.usable_width(p) * TILE - 8, 10), Color(0.55, 0.58, 0.62, alpha))
+			draw_circle(Vector2(cx, cy), 20, Color(0.3, 0.33, 0.38, alpha))
+			var a := Time.get_ticks_msec() / 120.0
+			for k in 3:
+				var dir := Vector2(cos(a + k * TAU / 3.0), sin(a + k * TAU / 3.0))
+				draw_line(Vector2(cx, cy), Vector2(cx, cy) + dir * 17, Color(0.85, 0.88, 0.92, alpha), 5.0)
+			draw_circle(Vector2(cx, cy), 4, Color(0.2, 0.2, 0.22, alpha))
 		RoomType.DINING:
 			var w := RoomType.usable_width(p)
 			var tx := x0 + 8
@@ -350,6 +371,16 @@ func _draw_supply(p: Project, font: Font) -> void:
 		var tp := Vector2(x + 30, y + 21)
 		draw_string(font, tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
 		x += widths[i] + 6.0
+
+
+## Метан: зеленоватая дымка, гуще — опаснее.
+func _draw_gas() -> void:
+	for c: Vector2i in colony.elements.gas:
+		var g: float = colony.elements.gas[c]
+		var col := Color(0.55, 0.8, 0.25, clampf(g * 0.8, 0.05, 0.55))
+		if g >= Elements.GAS_EXPLOSIVE:
+			col = Color(0.75, 0.85, 0.2, clampf(g * 0.8, 0.2, 0.65))
+		draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), col)
 
 
 ## Трещины на ветхой постройке — тем больше, чем сильнее износ.

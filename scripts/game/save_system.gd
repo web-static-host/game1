@@ -12,14 +12,12 @@ static func serialize(world: WorldData, colony: Colony, camera_cell: Vector2i) -
 	for key in flags_by_chunk:
 		var raw: PackedByteArray = flags_by_chunk[key]
 		chunks["%d,%d" % [key.x, key.y]] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
-	var mats := {}
-	var mats_by_chunk := world.modified_mats()
-	for key in mats_by_chunk:
-		var raw: PackedByteArray = mats_by_chunk[key]
-		mats["%d,%d" % [key.x, key.y]] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
+	var mats := _packed(world.modified_mats())
+	var fluids := _packed(world.modified_fluids())
 	return {
 		"version": VERSION,
 		"mats": mats,
+		"fluids": fluids,
 		"seed": world.gen.world_seed,
 		"saved_at": Time.get_unix_time_from_system(),
 		"camera": [camera_cell.x, camera_cell.y],
@@ -29,6 +27,24 @@ static func serialize(world: WorldData, colony: Colony, camera_cell: Vector2i) -
 		"plants": _plants_list(world),
 		"colony": colony.to_dict(),
 	}
+
+
+static func _packed(by_chunk: Dictionary) -> Dictionary:
+	var out := {}
+	for key in by_chunk:
+		var raw: PackedByteArray = by_chunk[key]
+		out["%d,%d" % [key.x, key.y]] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
+	return out
+
+
+static func _unpack(data: Dictionary, into: Dictionary) -> void:
+	var size := ChunkData.SIZE * ChunkData.SIZE
+	for k in data:
+		var parts: PackedStringArray = k.split(",")
+		var key := Vector2i(int(parts[0]), int(parts[1]))
+		var raw := Marshalls.base64_to_raw(data[k]).decompress(size, FileAccess.COMPRESSION_DEFLATE)
+		if raw.size() == size:
+			into[key] = raw
 
 
 static func _plants_list(world: WorldData) -> Array:
@@ -73,13 +89,8 @@ static func apply(data: Dictionary, world: WorldData, colony: Colony) -> void:
 		var raw := Marshalls.base64_to_raw(chunks[k]).decompress(size, FileAccess.COMPRESSION_DEFLATE)
 		if raw.size() == size:
 			world.pending_flags[key] = raw
-	var mats: Dictionary = data.get("mats", {})
-	for k in mats:
-		var parts: PackedStringArray = k.split(",")
-		var key := Vector2i(int(parts[0]), int(parts[1]))
-		var raw := Marshalls.base64_to_raw(mats[k]).decompress(size, FileAccess.COMPRESSION_DEFLATE)
-		if raw.size() == size:
-			world.pending_mats[key] = raw
+	_unpack(data.get("mats", {}), world.pending_mats)
+	_unpack(data.get("fluids", {}), world.pending_fluids)
 	for x in data.get("removed_features", []):
 		world.removed_features[int(x)] = true
 	for x in data.get("feature_marks", []):

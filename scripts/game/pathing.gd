@@ -26,8 +26,9 @@ func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_de
 	deck = p_deck
 
 
+## Можно находиться в клетке: пусто или вода (вброд).
 func passable(c: Vector2i) -> bool:
-	return world.is_open(c.x, c.y)
+	return world.is_open(c.x, c.y) or (world.get_mat(c.x, c.y) == Mat.WATER and world.is_revealed(c.x, c.y))
 
 
 func climbable(c: Vector2i) -> bool:
@@ -53,9 +54,10 @@ func standable(c: Vector2i) -> bool:
 	return room_cells.has(below) and room_cells[below] != room_cells.get(c, -1)
 
 
-## Узел графа: можно стоять и голова не упирается.
+## Узел графа: можно стоять, голова не упирается и над водой.
 func node(c: Vector2i) -> bool:
-	return standable(c) and passable(c + UP)
+	var h := c + UP
+	return standable(c) and world.is_open(h.x, h.y)
 
 
 func neighbors(c: Vector2i) -> Array[Vector2i]:
