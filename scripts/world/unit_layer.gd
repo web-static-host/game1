@@ -40,6 +40,9 @@ func _draw() -> void:
 			draw_set_transform(foot, 0.0, Vector2(sc, sc))
 			_draw_unit(u, Vector2.ZERO)
 			draw_set_transform(Vector2.ZERO)
+			if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
+				# Груз на плече.
+				ResIcon.draw(self, u.carry_key, foot + Vector2(-u.facing * 6, -50 * sc), 9)
 			_draw_needs(u, foot + Vector2(0, -70 * sc))
 		if u.id == selected_unit:
 			draw_arc(foot + Vector2(0, -26), 34, 0, TAU, 32, Color.WHITE, 2.0)

@@ -45,6 +45,10 @@ func _draw() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
 	_draw_dig_progress()
+	for p in colony.projects:
+		_draw_supply(p, font)
+		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
+			_draw_wear_sign(p)
 	# Падающая порода.
 	for f in colony.physics.fx:
 		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
@@ -96,7 +100,15 @@ func _draw_done(p: Project) -> void:
 		else:
 			_draw_furniture(p, r, p.purpose, 1.0)
 	else:
-		_draw_supports(p, r, 1.0)
+		_draw_supports(p, r, 1.0 - p.wear * 0.5)
+	if p.wear > 0.4:
+		_draw_cracks(p, r)
+	if p.repairing:
+		var t := clampf(p.repair_done / maxf(1.0, p.repair_work), 0.0, 1.0) if p.repair_paid else 0.0
+		var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
+		draw_rect(bar, BAR_BG)
+		draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), Color(0.4, 0.7, 1.0))
+		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
 	if p.id == selected_project:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
@@ -308,6 +320,58 @@ const RES_COLORS := {
 
 static func res_color(k: String) -> Color:
 	return RES_COLORS.get(k, Color(0.6, 0.6, 0.6))
+
+
+## Плашки над стройкой: значок ресурса и «принесено/нужно»; красная — взять неоткуда.
+func _draw_supply(p: Project, font: Font) -> void:
+	var items := colony.supply_status(p)
+	if items.is_empty():
+		return
+	var r := _rect_px(p.rect)
+	var fs := 18
+	var widths: Array[float] = []
+	var total := 0.0
+	for e in items:
+		var w := 34.0 + font.get_string_size("%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 8.0
+		widths.append(w)
+		total += w + 6.0
+	var x := r.get_center().x - (total - 6.0) * 0.5
+	var y := r.position.y - 36.0
+	for i in items.size():
+		var e: Array = items[i]
+		var box := Rect2(x, y, widths[i], 28)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.08, 0.09, 0.12, 0.85) if e[3] else Color(0.72, 0.15, 0.13, 0.92)
+		sb.set_corner_radius_all(9)
+		sb.border_color = Color(1, 1, 1, 0.15) if e[3] else Color(1.0, 0.5, 0.45)
+		sb.set_border_width_all(1)
+		draw_style_box(sb, box)
+		ResIcon.draw(self, e[0], Vector2(x + 16, y + 14), 10)
+		var tp := Vector2(x + 30, y + 21)
+		draw_string(font, tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+		x += widths[i] + 6.0
+
+
+## Трещины на ветхой постройке — тем больше, чем сильнее износ.
+func _draw_cracks(p: Project, r: Rect2) -> void:
+	var n := int((p.wear - 0.4) * 12.0) + 1
+	var col := Color(0.15, 0.1, 0.08, 0.35 + p.wear * 0.4)
+	for k in n:
+		var a := r.position + Vector2(10 + WorldGen.hash01(p.id, k, 81) * (r.size.x - 20), 8 + WorldGen.hash01(p.id, k, 82) * (r.size.y - 20))
+		var b := a + Vector2(WorldGen.hash01(p.id, k, 83) * 14 - 7, 9)
+		var c := b + Vector2(WorldGen.hash01(p.id, k, 84) * 14 - 7, 9)
+		draw_polyline(PackedVector2Array([a, b, c]), col, 2.0)
+
+
+## Знак «нужен ремонт» над ветхой постройкой (мигает, если вот-вот рухнет).
+func _draw_wear_sign(p: Project) -> void:
+	var r := _rect_px(p.rect)
+	var col := Color(1.0, 0.7, 0.2) if p.wear < Colony.WEAR_WARN[1] else Color(1.0, 0.3, 0.25)
+	if p.wear >= Colony.WEAR_WARN[1] and int(Time.get_ticks_msec() / 400) % 2 == 0:
+		col = col.lightened(0.4)
+	var c := Vector2(r.end.x - 14, r.position.y - 16)
+	draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(self, "warning", c, 12, col)
 
 
 func _ground_y(x: float) -> float:

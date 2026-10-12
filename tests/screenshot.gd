@@ -25,10 +25,21 @@ func _process(_delta: float) -> bool:
 		_prepare_base()
 	if _frame == 300:
 		_shot("colony")
+		_main.hud._build_btn.button_pressed = true
+		for pr in _main.colony.projects:
+			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.STORAGE:
+				_main._select(null, pr)
+	if _frame == 315:
+		_shot("storage_panel")
+		_main.hud._build_btn.button_pressed = false
+		_main._select(_main.colony.units[1], null)
+	if _frame == 325:
+		_shot("unit_panel")
+		_main._select(null, null)
 		var c: Vector2i = _main._home + Vector2i(4, 10)
 		_main.world_view.focus_cell(c)
 		_main.camera.zoom = Vector2(1.1, 1.1)
-	if _frame == 330:
+	if _frame == 335:
 		_shot("underground")
 		for pr in _main.colony.projects:
 			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.HOME:
@@ -73,7 +84,7 @@ func _prepare_base() -> void:
 	var home := colony.create_project(R, Rect2i(x0 + 1, s + 3, 7, 3), -1, "wood")
 	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 3))
 	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 4), -1, "stone")
-	var store := colony.create_project(R, Rect2i(x0 - 9, s + 5, 8, 3), -1, "clay")
+	var store := colony.create_project(R, Rect2i(x0 - 9, s + 6, 8, 3), -1, "clay")
 	colony.advance_offline(100000.0)
 	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
 	for pr in [[home, RoomType.HOME], [farm, RoomType.FARM], [store, RoomType.STORAGE]]:
@@ -84,6 +95,14 @@ func _prepare_base() -> void:
 	colony.units[0].energy = 5.0
 	# Новая стройка в процессе — чтобы видеть жителей за работой.
 	colony.create_project(T, Rect2i(x0 + 8, s + 4, 8, 2))
+	# Наземный дом, на который носят материалы (камня нет — плашка красная).
+	colony.inventory = {"wood": 30, "food": 40}
+	var gx := x0 + 14
+	while world.gen.surface_y(gx) != world.gen.surface_y(gx + 5) or world.gen.surface_y(gx) != world.gen.surface_y(gx + 2):
+		gx += 1
+	colony.create_project(R, Rect2i(gx, world.gen.surface_y(gx) - 3, 5, 3), 2, "stone")
+	if home != null:
+		home.wear = 0.82
 	for x in range(x0 - 30, x0 + 30):
 		if world.feature_at(x) != WorldGen.FEATURE_NONE and (x % 2 == 0):
 			world.set_feature_mark(x, true)

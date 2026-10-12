@@ -179,6 +179,12 @@ func _apply_offline(since_unix: float) -> void:
 			hungry += 1
 	if hungry > 0:
 		lines.append("Голодают жителей: %d — нужна еда (ягоды, ферма)." % hungry)
+	var worn := 0
+	for p in colony.projects:
+		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
+			worn += 1
+	if worn > 0:
+		lines.append("Ветшают построек: %d — нужен ремонт, иначе рухнут." % worn)
 	hud.show_message("С возвращением!", "\n".join(lines))
 
 
@@ -227,7 +233,7 @@ func _on_tap(screen_pos: Vector2) -> void:
 		_select(null, p)
 		return
 	_select(null, null)
-	hud.show_info(_cell_info(c))
+	hud.show_panel(_cell_spec(c))
 
 
 ## Столбец дерева/валуна рядом с нажатием (или null).
@@ -251,7 +257,6 @@ func _select(u: Unit, p: Project) -> void:
 		_info_target = ["unit", u.id]
 		_show_unit(u)
 	elif p != null:
-		_info_target = ["project", p.id]
 		_show_project(p)
 	else:
 		_info_target = []
@@ -259,25 +264,57 @@ func _select(u: Unit, p: Project) -> void:
 
 
 func _show_unit(u: Unit) -> void:
+	var controls := []
+	if not u.child:
+		controls.append({
+			"label": "Профессия", "value": u.profession, "min": 0, "max": Unit.PROF_NAMES.size() - 1,
+			"options": Unit.PROF_NAMES,
+			"changed": func(v: int) -> void: u.profession = v,
+		})
+	var spec := _unit_spec(u)
+	spec["controls"] = controls
+	hud.show_panel(spec)
+
+
+static func _need_bar(label: String, v: float) -> Dictionary:
+	var col := Color(0.45, 0.82, 0.4)
+	if v < 25.0:
+		col = Color(0.9, 0.3, 0.25)
+	elif v < 50.0:
+		col = Color(0.95, 0.65, 0.2)
+	return {"type": "progress", "label": label, "value": v / 100.0, "color": col, "text": "%d%%" % roundi(v)}
+
+
+func _unit_spec(u: Unit) -> Dictionary:
+	var who := "мужчина" if u.sex == Unit.Sex.MALE else "женщина"
 	if u.child:
-		hud.show_info(_unit_text(u))
-		return
-	hud.show_info(_unit_text(u), [], [{
-		"label": "Профессия:", "value": u.profession, "min": 0, "max": Unit.PROF_NAMES.size() - 1,
-		"options": Unit.PROF_NAMES,
-		"changed": func(v: int) -> void:
-			u.profession = v
-			hud.update_info_text(_unit_text(u)),
-	}])
-
-
-func _unit_text(u: Unit) -> String:
-	var t := u.status_text()
+		who = "%s, вырастет через %s" % ["малыш" if u.age < Unit.CHILD_TIME * 0.5 else "подросток",
+			Fmt.duration(Unit.CHILD_TIME - u.age)]
+	var task: String = Unit.TASK_NAMES[u.task]
+	if u.gather_room != 0:
+		task += " для склада"
+	var rows := [_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())]
+	if u.health < 99.5:
+		rows.append(_need_bar("Здоровье", u.health))
+	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
+		rows.append({"type": "resources", "label": "Несёт", "items": [[u.carry_key, u.carry_amount, -1, true]]})
+	if not u.child:
+		var skills := []
+		for k in ["dig", "build", "gather", "farm"]:
+			skills.append(["", "%s %d" % [Unit.SKILL_NAMES[k], u.level(k)]])
+		rows.append({"type": "chips", "label": "Навыки", "items": skills})
+	var extra := [["home", "кровать есть" if u.bed_room != 0 else "нет кровати",
+		Color.WHITE if u.bed_room != 0 else Color(1.0, 0.6, 0.5)]]
 	if u.partner_id != 0:
 		var partner := colony.unit_by_id(u.partner_id)
 		if partner != null:
-			t += "\nПара: " + partner.name
-	return t
+			extra.append(["people", "пара: " + partner.name])
+	if u.pregnancy >= 0.0:
+		extra.append(["", "ждёт ребёнка", Color(1.0, 0.7, 0.8)])
+	if u.child:
+		extra.append(["", "ест вдвое больше"])
+	rows.append({"type": "chips", "items": extra})
+	return {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
 
 
 func _show_project(p: Project) -> void:
@@ -289,36 +326,70 @@ func _show_project(p: Project) -> void:
 			_show_project(p)])
 		actions.append(["Отменить", func() -> void:
 			colony.cancel_project(p)
-			_select(null, null)])
-		controls.append(_workers_stepper(p.workers, func(v: int) -> void:
-			p.workers = v
-			hud.update_info_text(_project_text(p))))
+			_select(null, null), "danger"])
+		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
 	if p.phase == Project.Phase.DONE:
+		if p.repairing:
+			controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
+			actions.append(["Отменить ремонт", func() -> void:
+				colony.cancel_project(p)
+				_show_project(p)])
+		elif p.wear >= 0.05:
+			actions.append(["Ремонт", func() -> void:
+				if colony.start_repair(p):
+					_show_project(p)
+				else:
+					hud.log_event(colony.repair_error(p), "warning"), "primary"])
 		actions.append(["Снести", func() -> void:
 			var err := colony.demolish_error(p)
 			if not err.is_empty():
 				hud.log_event(err, "warning")
 				return
 			colony.demolish(p)
-			_select(null, null)])
+			_select(null, null), "danger"])
+	var preview := {"v": maxi(p.purpose, 1)}
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		if p.purpose == RoomType.STORAGE:
+			controls.append({"label": "Работников склада", "value": p.gatherers, "min": 0, "max": maxi(1, colony.adults()),
+				"changed": func(v: int) -> void: p.gatherers = v})
+			controls.append(_storage_targets(p))
 			controls.append(_storage_checks(p))
 		# Готовая комната: выбор назначения.
-		var choice := {"v": maxi(p.purpose, 1)}
 		controls.append({
-			"label": "Назначение:", "value": choice["v"], "min": 1, "max": RoomType.NAMES.size() - 1,
+			"label": "Назначение", "value": preview["v"], "min": 1, "max": RoomType.NAMES.size() - 1,
 			"options": RoomType.NAMES,
 			"changed": func(v: int) -> void:
-				choice["v"] = v
-				hud.update_info_text(_project_text(p, v)),
+				preview["v"] = v
+				_info_target = ["project", p.id, v]
+				hud.refresh_panel(_project_spec(p, v)),
 		})
-		actions.append(["Обустроить", func() -> void:
-			if colony.set_purpose(p, choice["v"]):
+		actions.push_front(["Обустроить", func() -> void:
+			if colony.set_purpose(p, preview["v"]):
 				_show_project(p)
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
-	hud.show_info(_project_text(p, maxi(p.purpose, 1)), actions, controls)
+	_info_target = ["project", p.id, preview["v"]]
+	var spec := _project_spec(p, preview["v"])
+	spec["actions"] = actions
+	spec["controls"] = controls
+	spec["controls_first"] = p.purpose == RoomType.STORAGE and p.phase == Project.Phase.DONE
+	hud.show_panel(spec)
+
+
+## Нормы запаса склада: сколько держать каждого ресурса.
+func _storage_targets(p: Project) -> Dictionary:
+	var items := []
+	var keys: Array = Colony.GATHER_SOURCES.keys()
+	for k in colony.known_resources:
+		if not keys.has(k) and not RoomType.BULK.has(k):
+			keys.append(k)
+	for k in keys:
+		if not RoomType.stores(p, k):
+			continue
+		items.append([k, colony.inventory.get(k, 0), int(p.targets.get(k, 0)), colony.capacity(k),
+			Colony.GATHER_SOURCES.has(k)])
+	return {"type": "targets", "label": "Держать в запасе (работники склада добывают до нормы):", "items": items,
+		"changed": func(key: String, v: int) -> void: p.targets[key] = v}
 
 
 ## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.
@@ -329,7 +400,7 @@ func _storage_checks(p: Project) -> Dictionary:
 	for k in keys:
 		if not RoomType.BULK.has(k):
 			items.append([k, Mat.resource_name(k), p.store_filter.has(k)])
-	return {"type": "checks", "label": "Хранить на складе:", "items": items,
+	return {"type": "checks", "label": "Что хранить на складе:", "items": items,
 		"toggled": func(key: String, on: bool) -> void:
 			var f: Array[String] = p.store_filter.duplicate()
 			if key == "*":
@@ -343,68 +414,129 @@ func _storage_checks(p: Project) -> Dictionary:
 
 
 func _workers_stepper(value: int, changed: Callable) -> Dictionary:
-	return {"label": "Рабочих:", "value": value, "min": 1, "max": maxi(1, colony.adults()), "changed": changed}
+	return {"label": "Рабочих", "value": value, "min": 1, "max": maxi(1, colony.adults()), "changed": changed}
 
 
-func _project_text(p: Project, preview_purpose := -1) -> String:
-	var lines: PackedStringArray = [p.title() + " — " + ("на паузе" if p.paused else p.phase_name())]
-	if p.kind == Project.Kind.ROOM:
-		lines[0] += " · стены: " + p.material_name().to_lower()
-	elif p.kind == Project.Kind.TUNNEL:
-		lines[0] += " · потоков: %d" % Colony.tunnel_lanes(p.rect)
-	else:
-		lines.append("Рыбаков: %d из %d · рыбы в озере ~%d (восстанавливается)" % [
-			colony.workers_on(p), p.fish_slots(), int(colony.fish_left(p))])
+static func _progress(label: String, v: float, text := "", col := Color(0.45, 0.82, 0.4)) -> Dictionary:
+	return {"type": "progress", "label": label, "value": v, "text": text if not text.is_empty() else "%d%%" % roundi(v * 100.0), "color": col}
+
+
+## Цвет износа: зелёный → оранжевый → красный.
+static func _wear_color(w: float) -> Color:
+	if w >= Colony.WEAR_WARN[1]:
+		return Color(0.9, 0.28, 0.24)
+	if w >= Colony.WEAR_WARN[0]:
+		return Color(0.95, 0.62, 0.2)
+	return Color(0.5, 0.75, 0.45)
+
+
+func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
+	var rows := []
+	var sub := "на паузе" if p.paused else p.phase_name()
+	var accent := Hud.ACCENT
 	match p.phase:
 		Project.Phase.DIG:
-			lines.append("Этап 1 из 2: копка. Осталось клеток: %d" % colony.remaining_dig(p).size())
+			var left := colony.remaining_dig(p).size()
+			rows.append(_progress("Копка", 1.0 - float(left) / p.area(), "осталось %d клеток" % left))
+			if not p.needs_support.is_empty():
+				rows.append(_progress("Крепь", float(p.supported.size()) / p.needs_support.size(),
+					"%d из %d срезов" % [p.supported.size(), p.needs_support.size()], Color(0.75, 0.55, 0.3)))
+			var clear := colony.uncleared(p).size()
+			if clear > 0:
+				rows.append({"type": "text", "text": "Сначала убрать с места стройки: %d (деревья, кусты, валуны)" % clear})
 		Project.Phase.BUILD:
-			var pct := int(100.0 * p.build_done / p.build_work()) if p.paid else 0
-			lines.append("Этап 2 из 2: строительство %d%%" % pct)
+			rows.append(_progress("Строительство", p.build_done / p.build_work() if p.paid else 0.0))
 		Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
-			var pct := int(100.0 * p.equip_done / w) if p.equip_paid else 0
-			if p.equip_ladder:
-				lines.append("Строится лестница: %d%%" % pct)
-			else:
-				lines.append("Обустройство под «%s»: %d%%" % [RoomType.NAMES[p.equip_target], pct])
-			lines.append("Материалы: " + _cost_text(RoomType.job_cost(p)) + (" (оплачено)" if p.equip_paid else ""))
-	if p.phase == Project.Phase.DIG and not colony.uncleared(p).is_empty():
-		lines.append("Сначала убрать с места стройки: %d (деревья, кусты, валуны)" % colony.uncleared(p).size())
-	if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
-		lines.append("Материалы: " + _cost_text(p.cost()) + (" (оплачено)" if p.paid else ""))
-	if p.phase != Project.Phase.DONE:
-		lines.append("Сейчас работают: %d из %d" % [colony.workers_on(p), p.workers])
-	elif p.kind == Project.Kind.ROOM:
+			rows.append(_progress("Лестница" if p.equip_ladder else "Обустройство", p.equip_done / w if p.equip_paid else 0.0))
+	if p.repairing:
+		rows.append(_progress("Ремонт", p.repair_done / maxf(1.0, p.repair_work) if p.repair_paid else 0.0))
+	var supply := colony.supply_status(p)
+	if not supply.is_empty():
+		rows.append({"type": "resources", "label": "Материалы", "items": supply})
+	var chips := []
+	if p.phase != Project.Phase.DONE or p.repairing:
+		chips.append(["people", "рабочие %d/%d" % [colony.workers_on(p), p.workers]])
+	match p.kind:
+		Project.Kind.ROOM:
+			chips.append(["", "стены: " + p.material_name().to_lower()])
+		Project.Kind.TUNNEL:
+			chips.append(["", "потоков: %d" % Colony.tunnel_lanes(p.rect)])
+		_:
+			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
+			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
+	if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
+		rows.append(_progress("Износ", p.wear, "%d%% · ещё ~%s" % [roundi(p.wear * 100.0), _years(colony.years_left(p))],
+			_wear_color(p.wear)))
+		if p.kind == Project.Kind.ROOM:
+			chips.append(["", "этажей сверху: до %d" % Project.FLOORS_ABOVE.get(p.material, 1)])
+	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		match p.purpose:
 			RoomType.HOME:
 				var used := 0
 				for u in colony.units:
 					if u.bed_room == p.id:
 						used += 1
-				lines.append("Кроватей: %d (по одной на жителя), занято: %d" % [RoomType.beds(p), used])
+				chips.append(["home", "кроватей %d, занято %d" % [RoomType.beds(p), used]])
 				var free := colony.beds_total() - colony.units.size() - colony.pregnant_count()
-				lines.append("Свободных мест для детей во всей колонии: %d" % maxi(0, free))
-				lines.append("Ребёнок рождается у пары, если есть свободная кровать, еда (от 3) и мама сыта; шанс ~12%% каждые 20 сек.")
+				chips.append(["people", "мест для детей в колонии: %d" % maxi(0, free)])
 			RoomType.STORAGE:
-				lines.append("Вместимость: +%d каждого выбранного ресурса" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)))
+				chips.append(["people", "работников %d/%d" % [colony.gatherers_on(p), p.gatherers]])
+				chips.append(["", "+%d места каждому ресурсу" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p))])
+				var lacking := colony.storage_deficit(p)
+				if p.gatherers > 0 and not lacking.is_empty():
+					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())
+					rows.append({"type": "text", "text": "Добывают до нормы: " + ", ".join(names)})
 			RoomType.FARM:
-				lines.append("Фермеров: %d из %d мест" % [colony.workers_on(p), RoomType.farm_slots(p)])
+				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 			RoomType.DINING:
-				lines.append("Еда здесь сытнее и поднимает настроение")
-		lines.append("Этажей сверху выдержит: %d (стены: %s)" % [Project.FLOORS_ABOVE.get(p.material, 1), p.material_name().to_lower()])
+				chips.append(["", "еда сытнее, настроение лучше"])
 		if preview_purpose > 0 and preview_purpose != p.purpose:
-			lines.append("Обустроить под «%s» (%s): %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose],
-				_cost_text(RoomType.equip_cost(preview_purpose, p))])
-	lines.append("Условия: " + _env_text(p.rect.get_center()))
+			var cost := RoomType.equip_cost(preview_purpose, p)
+			rows.append({"type": "text", "text": "«%s»: %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose]],
+				"color": Color.WHITE})
+			if not cost.is_empty():
+				rows.append({"type": "resources", "label": "Обустройство", "items": _cost_items(cost)})
+	rows.append({"type": "chips", "items": chips})
 	if not p.found.is_empty():
-		var f: PackedStringArray = []
+		var found := []
 		for k in p.found:
-			f.append("%s %d" % [Mat.resource_name(k).to_lower(), p.found[k]])
-		lines.append("Найдено при копке: " + ", ".join(f))
+			found.append([k, p.found[k], -1, true])
+		rows.append({"type": "resources", "label": "Найдено", "items": found})
+	rows.append({"type": "text", "text": "Условия: " + _env_text(p.rect.get_center())})
 	if not p.blocked.is_empty():
-		lines.append("Внимание: " + p.blocked)
-	return "\n".join(lines)
+		rows.append({"type": "warning", "text": p.blocked})
+		accent = Color(1.0, 0.5, 0.4)
+	elif p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
+		rows.append({"type": "warning", "text": "Постройка ветшает — отремонтируйте, иначе она рухнет."})
+	return {"title": p.title(), "subtitle": sub, "accent": accent, "rows": rows}
+
+
+static func _years(y: float) -> String:
+	if y >= 1.0:
+		return "%d %s" % [roundi(y), _plural(roundi(y), "год", "года", "лет")]
+	return "%d мес." % maxi(1, roundi(y * 12.0))
+
+
+static func _plural(n: int, one: String, few: String, many: String) -> String:
+	var m := n % 100
+	if m >= 11 and m <= 14:
+		return many
+	match n % 10:
+		1:
+			return one
+		2, 3, 4:
+			return few
+	return many
+
+
+## Плашки стоимости: [ресурс, есть на складе, нужно, хватает].
+func _cost_items(cost: Dictionary) -> Array:
+	var out := []
+	for k in cost:
+		var have: int = colony.inventory.get(k, 0)
+		out.append([k, have, cost[k], have >= cost[k]])
+	return out
 
 
 func _refresh_info() -> void:
@@ -413,13 +545,13 @@ func _refresh_info() -> void:
 	if _info_target[0] == "unit":
 		var u := colony.unit_by_id(_info_target[1])
 		if u != null:
-			hud.update_info_text(_unit_text(u))
+			hud.refresh_panel(_unit_spec(u))
 	elif _info_target[0] == "project":
 		var p := colony.project_by_id(_info_target[1])
 		if p == null:
 			_select(null, null)
-		elif p.phase != Project.Phase.DONE:
-			hud.update_info_text(_project_text(p))
+		else:
+			hud.refresh_panel(_project_spec(p, _info_target[2]))
 
 
 # --- Рамка стройки -------------------------------------------------------------------
@@ -504,65 +636,69 @@ func _show_pending() -> void:
 				idx = i
 		if opts.size() > 1:
 			controls.push_front({
-				"label": "Постройка:", "value": idx, "min": 0, "max": opts.size() - 1,
+				"label": "Постройка", "value": idx, "min": 0, "max": opts.size() - 1,
 				"options": opts,
 				"changed": func(v: int) -> void:
 					_pending_kind = _water_options[v][0]
 					_pending = _water_options[v][1]
 					world_view.structures.preview = _pending
-					hud.update_info_text(_pending_text()),
+					hud.refresh_panel(_pending_spec()),
 			})
 	if kind == Project.Kind.ROOM:
 		var mats := colony.available_materials()
 		var names: Array = mats.map(func(k: String) -> String: return Project.MATERIALS[k][0])
 		controls.push_front({
-			"label": "Материал стен:", "value": mats.find(_pending_material), "min": 0, "max": mats.size() - 1,
+			"label": "Материал стен", "value": mats.find(_pending_material), "min": 0, "max": mats.size() - 1,
 			"options": names,
 			"changed": func(v: int) -> void:
 				_pending_material = mats[v]
-				hud.update_info_text(_pending_text()),
+				hud.refresh_panel(_pending_spec()),
 		})
-	hud.show_info(_pending_text(), [
-		["Построить", _confirm_pending],
-		["Отмена", _clear_preview],
-	], controls)
+	var spec := _pending_spec()
+	spec["controls"] = controls
+	spec["controls_first"] = true
+	spec["actions"] = [["Построить", _confirm_pending, "primary"], ["Отмена", _clear_preview]]
+	hud.show_panel(spec)
 
 
-func _pending_text() -> String:
+func _pending_spec() -> Dictionary:
 	var r := _pending
 	var kind := _pending_kind
-	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
+	var rows := []
 	var cost := Project.cost_for(kind, r, _pending_material)
-	var support := colony.support_needed(kind, r)
 	if not cost.is_empty():
-		lines.append("Материалы на 2-м этапе: " + _cost_text(cost))
+		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
+	var chips := []
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
-		lines.append("Копают по срезам и сразу крепят: ~%d дерева по ходу работ" % _support_estimate(kind, r))
+		var sw := _support_estimate(kind, r)
+		var have: int = colony.inventory.get("wood", 0)
+		rows.append({"type": "resources", "label": "Крепь по ходу", "items": [["wood", have, sw, have >= sw]]})
+	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
-		lines.append("Потолок из «%s» держит без опор %d м — крепь усиленная: +%d дерева" % [
-			Mat.name_of(span[1]).to_lower(), span[0], support])
+		rows.append({"type": "text", "text": "Потолок из «%s» держит без опор %d м — крепь усиленная" % [
+			Mat.name_of(span[1]).to_lower(), span[0]]})
 	for lower in colony.ladders_needed(r):
-		lines.append("+ лестница в нижнем здании: " + _cost_text(RoomType.ladder_cost(lower)))
+		rows.append({"type": "resources", "label": "Лестница внизу", "items": _cost_items(RoomType.ladder_cost(lower))})
 	if kind == Project.Kind.TUNNEL:
 		var lanes := Colony.tunnel_lanes(r)
-		lines.append("Пропускная способность: %d %s" % [lanes, "поток" if lanes == 1 else "потока"])
+		chips.append(["people", "%d %s" % [lanes, "поток" if lanes == 1 else "потока"]])
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		var tmp := Project.new()
 		tmp.kind = kind
 		tmp.rect = r
 		var lake := world.gen.lake_at(r.get_center().x)
-		lines.append("Рыбаков: до %d, улов каждые %d сек. Рыбы в озере: ~%d" % [
-			tmp.fish_slots(), int(tmp.fish_time()), int(colony.fish_in(lake))])
-		if kind == Project.Kind.BRIDGE:
-			lines.append("По мостику можно перейти на другой берег.")
-	elif colony.available_materials().size() == 1:
-		lines.append("Глина и камень станут доступны, когда вы их добудете.")
-	lines.append("Рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults()))
+		chips.append(["people", "рыбаков до %d" % tmp.fish_slots()])
+		chips.append(["", "улов раз в %d с" % int(tmp.fish_time())])
+		chips.append(["", "рыбы ~%d" % int(colony.fish_in(lake))])
+	chips.append(["people", "рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults())])
+	rows.append({"type": "chips", "items": chips})
+	if kind == Project.Kind.ROOM and colony.available_materials().size() == 1:
+		rows.append({"type": "text", "text": "Глина и камень станут доступны, когда вы их добудете."})
+	rows.append({"type": "text", "text": "Материалы жители принесут сами. Без крепи и работ дольше 3 мин — риск обвала."})
 	if not colony.has_access(r):
-		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
-	lines.append("Без крепи выработка держится, пока идут работы; простой дольше 3 мин — риск обвала.")
-	return "\n".join(lines)
+		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
+	return {"title": "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y], "subtitle": "новая стройка", "rows": rows}
 
 
 ## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).
@@ -593,50 +729,56 @@ func _clear_preview() -> void:
 	hud.hide_info()
 
 
-func _cost_text(cost: Dictionary) -> String:
-	var parts: PackedStringArray = []
-	for k in cost:
-		var have: int = colony.inventory.get(k, 0)
-		parts.append("%s %d%s" % [Mat.resource_name(k).to_lower(), cost[k], "" if have >= cost[k] else " (есть %d)" % have])
-	return ", ".join(parts)
-
-
 # --- Информация -------------------------------------------------------------------
 
-func _cell_info(c: Vector2i) -> String:
+func _cell_spec(c: Vector2i) -> Dictionary:
 	var gen := world.gen
 	var surf := gen.surface_y(c.x)
 	var depth := c.y - surf
-	var lines: PackedStringArray = []
-	if depth < 0:
-		lines.append("Высота %s м над уровнем моря · %s" % [Fmt.int_spaced(-c.y), gen.zone_name(c.x, c.y)])
-	else:
-		lines.append("Глубина %s м · %s" % [Fmt.int_spaced(depth), gen.zone_name(c.x, c.y)])
+	var rows := []
+	var title := gen.zone_name(c.x, c.y)
+	var sub := ("высота %s м" % Fmt.int_spaced(-c.y)) if depth < 0 else ("глубина %s м" % Fmt.int_spaced(depth))
 	if depth < 0 and world.get_mat(c.x, c.y) == Mat.WATER:
 		var lake := gen.lake_at(c.x)
-		lines.append("Озеро шириной ~%d м. Рыбы: ~%d из %d (рыбу не видно)" % [
-			int(lake.get("w", 0)) * 2, int(colony.fish_in(lake)), int(Colony.fish_max(lake))])
-		lines.append("Для рыбалки постройте мостик или пристань (режим «Мост»).")
+		title = "Озеро"
+		rows.append({"type": "chips", "items": [["", "ширина ~%d м" % (int(lake.get("w", 0)) * 2)],
+			["", "рыбы ~%d из %d" % [int(colony.fish_in(lake)), int(Colony.fish_max(lake))]]]})
+		rows.append({"type": "text", "text": "Рыбу не видно. Для рыбалки постройте мостик или пристань («Стройка» → «Мост»), с берега ловят медленнее."})
 	var f := world.feature_at(c.x)
 	if depth < 0 and depth >= -8 and f != WorldGen.FEATURE_NONE:
 		match f:
 			WorldGen.FEATURE_TREE:
-				lines.append("Дерево: рост %d%%, даст дерева: %d" % [roundi(world.growth(c.x) * 100), colony.feature_yield(c.x)[1]])
+				title = "Дерево"
+				rows.append(_progress("Рост", world.growth(c.x)))
+				rows.append({"type": "resources", "label": "Даст", "items": [["wood", colony.feature_yield(c.x)[1], -1, true]]})
 			WorldGen.FEATURE_BUSH:
-				lines.append("Куст: ягод %d из %d (отрастают)" % [floori(world.berries(c.x)), int(WorldData.BUSH_BERRIES)])
+				title = "Куст с ягодами"
+				rows.append(_progress("Ягоды", world.berries(c.x) / WorldData.BUSH_BERRIES,
+					"%d из %d" % [floori(world.berries(c.x)), int(WorldData.BUSH_BERRIES)], Color(0.85, 0.3, 0.35)))
+				rows.append({"type": "text", "text": "Ягоды отрастают. Голодные жители едят прямо с куста."})
+			WorldGen.FEATURE_BOULDER:
+				title = "Валун"
+				rows.append({"type": "resources", "label": "Даст", "items": [["stone", colony.feature_yield(c.x)[1], -1, true]]})
 	if depth >= 0:
 		if not world.is_revealed(c.x, c.y):
-			lines.append("Неизвестно. Узнаем, когда раскопаем соседнюю клетку.")
+			title = "Неизвестно"
+			rows.append({"type": "text", "text": "Что здесь, узнаем, когда раскопаем соседнюю клетку."})
 		elif world.is_dug(c.x, c.y):
-			lines.append("Выработка (раньше: %s)" % Mat.name_of(world.get_natural_mat(c.x, c.y)))
+			title = "Выработка"
+			rows.append({"type": "text", "text": "Раньше здесь был(а): " + Mat.name_of(world.get_natural_mat(c.x, c.y)).to_lower()})
 		else:
 			var m := world.get_mat(c.x, c.y)
-			lines.append(Mat.name_of(m))
+			title = Mat.name_of(m)
 			if Mat.is_diggable(m):
-				lines.append("Плотность %s кг/м³ · прочность %s МПа · копать ~%s" % [
-					Fmt.int_spaced(int(Mat.density(m))), str(Mat.strength(m)), Fmt.duration(colony.dig_time(c))])
-	lines.append(_env_text(c))
-	return "\n".join(lines)
+				var key := Mat.resource(m)
+				if not key.is_empty():
+					rows.append({"type": "resources", "label": "Добыча", "items": [[key, 1, -1, true]]})
+				rows.append({"type": "chips", "items": [
+					["", "%s кг/м³" % Fmt.int_spaced(int(Mat.density(m)))],
+					["", "прочность %s МПа" % str(Mat.strength(m))],
+					["", "копать ~" + Fmt.duration(colony.dig_time(c))]]})
+	rows.append({"type": "text", "text": _env_text(c)})
+	return {"title": title, "subtitle": sub, "rows": rows}
 
 
 func _env_text(c: Vector2i) -> String:
@@ -655,10 +797,8 @@ func _update_status() -> void:
 	for u in colony.units:
 		if u.satiety < 25.0:
 			hungry += 1
-	var people := "Жители %d" % colony.units.size()
-	if hungry > 0:
-		people += " (голодают %d)" % hungry
-	hud.set_resources(colony.inventory, people)
+	hud.set_resources(colony.inventory, colony.units.size(), hungry)
+	hud.set_date(colony.date_text())
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
