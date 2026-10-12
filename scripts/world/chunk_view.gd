@@ -9,6 +9,8 @@ const TILE := 32.0
 const ROUND := 11.0
 ## Толщина почвенного слоя вдоль сглаженной поверхности, в клетках.
 const SOIL_BAND := 1.4
+## Насколько глубоко (в долях клетки) видна порода от края выработки.
+const FADE := 0.6
 const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-2, 0), Vector2i(2, 0)]
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.36, 0.62, 0.27)
@@ -196,10 +198,20 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		mask |= 4
 	if open_d and open_l:
 		mask |= 8
-	if mask == 0:
+	# Под землёй порода видна только у самой выработки и плавно уходит в темноту.
+	var faded := mask == 0 and not _near_sky(lx, ly)
+	if faded:
+		draw_rect(r, fog_color(y - surf, v))
+		_fade_edges(lx, ly, r, base, open_l, open_r, open_u, open_d)
+	elif mask == 0:
 		draw_rect(r, base)
-	else:
+	elif _near_sky(lx, ly):
 		draw_colored_polygon(_rounded_rect(r, mask), base)
+	else:
+		# Выступ между выработками: приглушённый, как и остальная порода у края.
+		var pts := _rounded_rect(r, mask)
+		draw_colored_polygon(pts, fog_color(y - surf, v))
+		draw_colored_polygon(pts, Color(base, 0.55))
 
 	# Тени по краям, обращённым к пустоте.
 	var shade := base.darkened(0.28)
@@ -211,7 +223,7 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		draw_rect(Rect2(r.position.x, r.end.y - 3, TILE, 3), shade)
 
 	if Mat.is_ore(m):
-		_draw_ore(r, m, x, y)
+		_draw_ore(r, m, x, y, [open_l, open_r, open_u, open_d] if faded else [])
 	elif m == Mat.MAGMA:
 		draw_circle(r.get_center(), TILE * 0.3, Color(1.0, 0.85, 0.3, 0.8))
 
@@ -219,16 +231,32 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		_draw_grass(r, x, mask)
 
 
-func _draw_ore(r: Rect2, m: int, x: int, y: int) -> void:
-	var col := Mat.color(m)
+## open_sides: [лево, право, верх, низ] — вкрапления видны только у открытых сторон.
+func _draw_ore(r: Rect2, m: int, x: int, y: int, open_sides: Array = []) -> void:
+	var base_col := Mat.color(m)
 	for k in 5:
 		var hx := WorldGen.hash01(x, y, 100 + k)
 		var hy := WorldGen.hash01(x, y, 200 + k)
 		var hr := WorldGen.hash01(x, y, 300 + k)
 		var p := r.position + Vector2(5 + hx * (TILE - 10), 5 + hy * (TILE - 10))
-		draw_circle(p, 2.5 + hr * 4.0, col.darkened(0.25))
+		var col := base_col
+		if not open_sides.is_empty():
+			var d := TILE
+			var local := p - r.position
+			if open_sides[0]:
+				d = minf(d, local.x)
+			if open_sides[1]:
+				d = minf(d, TILE - local.x)
+			if open_sides[2]:
+				d = minf(d, local.y)
+			if open_sides[3]:
+				d = minf(d, TILE - local.y)
+			col.a = clampf(1.0 - d / (FADE * TILE), 0.0, 1.0)
+			if col.a <= 0.05:
+				continue
+		draw_circle(p, 2.5 + hr * 4.0, Color(col.darkened(0.25), col.a))
 		draw_circle(p, 1.5 + hr * 3.5, col)
-		draw_circle(p - Vector2(1, 1), 1.0 + hr, col.lightened(0.4))
+		draw_circle(p - Vector2(1, 1), 1.0 + hr, Color(col.lightened(0.4), col.a))
 
 
 func _draw_grass(r: Rect2, x: int, mask: int) -> void:
@@ -303,6 +331,15 @@ func _draw_feature(f: int, x: int, foot: Vector2) -> void:
 		draw_circle(foot + Vector2(-w * 0.15, -hh * 0.6), hh * 0.25, BOULDER.lightened(0.2))
 		if marked:
 			_draw_mark(foot + Vector2(0, -hh - TILE * 0.7))
+	elif f == WorldGen.FEATURE_BUSH:
+		var bw := TILE * (0.55 + WorldGen.hash01(x, 33, 0) * 0.2)
+		for k in 3:
+			draw_circle(foot + Vector2((k - 1) * bw * 0.55, -bw * 0.55 - (k % 2) * 4.0), bw * 0.55, LEAVES if k != 1 else LEAVES_LIGHT)
+		for k in 5:
+			var bp := foot + Vector2((WorldGen.hash01(x, 40 + k, 0) - 0.5) * bw * 1.6, -bw * (0.3 + WorldGen.hash01(x, 50 + k, 0) * 0.8))
+			draw_circle(bp, 3.0, Color(0.85, 0.15, 0.25))
+		if marked:
+			_draw_mark(foot + Vector2(0, -bw * 1.6 - TILE * 0.4))
 
 
 ## Значок «собрать»: жёлтый кружок со стрелкой вниз.
@@ -406,3 +443,43 @@ func _band_poly(lx: int, ly: int, line: Vector3) -> PackedVector2Array:
 
 static func _rect_poly(r: Rect2) -> PackedVector2Array:
 	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
+
+
+## Рядом открытое небо (поверхность, склоны) — такие клетки видны полностью.
+func _near_sky(lx: int, ly: int) -> bool:
+	for d: Vector2i in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1),
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
+		var f := _flags_at(lx + d.x, ly + d.y)
+		if f >= 0 and f & ChunkData.F_REVEALED and f & (ChunkData.F_DUG | ChunkData.F_CAVE) == 0 \
+				and _mat_at(lx + d.x, ly + d.y) == Mat.AIR:
+			return true
+	return false
+
+
+## Градиент от цвета породы у открытой стороны к темноте вглубь.
+func _fade_edges(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool) -> void:
+	var f := FADE * TILE
+	var clear := Color(base, 0.0)
+	var p := r.position
+	var e := r.end
+	if l:
+		draw_polygon(PackedVector2Array([p, Vector2(p.x + f, p.y), Vector2(p.x + f, e.y), Vector2(p.x, e.y)]),
+			PackedColorArray([base, clear, clear, base]))
+	if rt:
+		draw_polygon(PackedVector2Array([Vector2(e.x - f, p.y), Vector2(e.x, p.y), e, Vector2(e.x - f, e.y)]),
+			PackedColorArray([clear, base, base, clear]))
+	if u:
+		draw_polygon(PackedVector2Array([p, Vector2(e.x, p.y), Vector2(e.x, p.y + f), Vector2(p.x, p.y + f)]),
+			PackedColorArray([base, base, clear, clear]))
+	if d:
+		draw_polygon(PackedVector2Array([Vector2(p.x, e.y - f), Vector2(e.x, e.y - f), e, Vector2(p.x, e.y)]),
+			PackedColorArray([clear, clear, base, base]))
+	# Открыт только угол по диагонали — веер из угла.
+	for c: Vector2i in CORNERS:
+		var side_x := l if c.x < 0 else rt
+		var side_y := u if c.y < 0 else d
+		if side_x or side_y or not _is_open(lx + c.x, ly + c.y):
+			continue
+		var corner := Vector2(p.x if c.x < 0 else e.x, p.y if c.y < 0 else e.y)
+		draw_polygon(PackedVector2Array([corner, corner + Vector2(-c.x * f, 0), corner + Vector2(0, -c.y * f)]),
+			PackedColorArray([base, clear, clear]))

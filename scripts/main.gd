@@ -24,6 +24,7 @@ var _drag_start := Vector2i.ZERO
 var _pending := Rect2i()
 var _pending_kind := 0
 var _pending_workers := 1
+var _pending_material := "wood"
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
 
@@ -40,7 +41,7 @@ func _ready() -> void:
 	var start := _home + Vector2i(0, -3)
 	if data.is_empty():
 		colony.start_new(_home.x)
-		hud.log_event("У вас 5 жителей и пустой склад. Начните со «Сбора»: отметьте деревья и валуны — это дерево и камень для стройки.", "info")
+		hud.log_event("У вас 5 жителей и пустой склад. Начните со «Сбора»: кусты с ягодами — еда, деревья и валуны — дерево и камень.", "info")
 	else:
 		SaveSystem.apply(data, world, colony)
 		var cam: Array = data.get("camera", [])
@@ -135,6 +136,7 @@ func _apply_offline(since_unix: float) -> void:
 	var simulated := minf(away, OFFLINE_CAP_SEC)
 	var inv_before := colony.inventory.duplicate()
 	var built_before := _done_count()
+	var units_before := colony.units.size()
 	var dug := colony.advance_offline(simulated)
 	var lines: PackedStringArray = ["Вас не было %s." % Fmt.duration(away)]
 	if away > OFFLINE_CAP_SEC:
@@ -151,6 +153,15 @@ func _apply_offline(since_unix: float) -> void:
 			var gained: int = colony.inventory[k] - int(inv_before.get(k, 0))
 			if gained > 0:
 				lines.append("+%s %s" % [Fmt.int_spaced(gained), Mat.resource_name(k).to_lower()])
+	var born := colony.units.size() - units_before
+	if born > 0:
+		lines.append("Родилось детей: %d!" % born)
+	var hungry := 0
+	for u in colony.units:
+		if u.satiety < 25.0:
+			hungry += 1
+	if hungry > 0:
+		lines.append("Голодают жителей: %d — нужна еда (ягоды, ферма)." % hungry)
 	hud.show_message("С возвращением!", "\n".join(lines))
 
 
@@ -216,7 +227,7 @@ func _select(u: Unit, p: Project) -> void:
 	world_view.structures.selected_project = p.id if p != null else 0
 	if u != null:
 		_info_target = ["unit", u.id]
-		hud.show_info(u.status_text())
+		_show_unit(u)
 	elif p != null:
 		_info_target = ["project", p.id]
 		_show_project(p)
@@ -225,37 +236,101 @@ func _select(u: Unit, p: Project) -> void:
 		hud.hide_info()
 
 
+func _show_unit(u: Unit) -> void:
+	if u.child:
+		hud.show_info(_unit_text(u))
+		return
+	hud.show_info(_unit_text(u), [], [{
+		"label": "Профессия:", "value": u.profession, "min": 0, "max": Unit.PROF_NAMES.size() - 1,
+		"options": Unit.PROF_NAMES,
+		"changed": func(v: int) -> void:
+			u.profession = v
+			hud.update_info_text(_unit_text(u)),
+	}])
+
+
+func _unit_text(u: Unit) -> String:
+	var t := u.status_text()
+	if u.partner_id != 0:
+		var partner := colony.unit_by_id(u.partner_id)
+		if partner != null:
+			t += "\nПара: " + partner.name
+	return t
+
+
 func _show_project(p: Project) -> void:
 	var actions := []
-	if p.phase != Project.Phase.DONE:
+	var controls := []
+	if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD or p.phase == Project.Phase.EQUIP:
 		actions.append(["Продолжить" if p.paused else "Пауза", func() -> void:
 			colony.set_paused(p, not p.paused)
 			_show_project(p)])
 		actions.append(["Отменить", func() -> void:
 			colony.cancel_project(p)
 			_select(null, null)])
-		hud.show_info(_project_text(p), actions, _workers_stepper(p.workers, func(v: int) -> void:
+		controls.append(_workers_stepper(p.workers, func(v: int) -> void:
 			p.workers = v
 			hud.update_info_text(_project_text(p))))
-		return
-	hud.show_info(_project_text(p), actions)
+	elif p.kind == Project.Kind.ROOM:
+		# Готовая комната: выбор назначения.
+		var choice := {"v": maxi(p.purpose, 1)}
+		controls.append({
+			"label": "Назначение:", "value": choice["v"], "min": 1, "max": RoomType.NAMES.size() - 1,
+			"options": RoomType.NAMES,
+			"changed": func(v: int) -> void:
+				choice["v"] = v
+				hud.update_info_text(_project_text(p, v)),
+		})
+		actions.append(["Обустроить", func() -> void:
+			if colony.set_purpose(p, choice["v"]):
+				_show_project(p)
+			else:
+				hud.log_event("Комната уже так обустроена", "info")])
+	hud.show_info(_project_text(p, maxi(p.purpose, 1)), actions, controls)
 
 
 func _workers_stepper(value: int, changed: Callable) -> Dictionary:
-	return {"label": "Рабочих:", "value": value, "min": 1, "max": maxi(1, colony.units.size()), "changed": changed}
+	return {"label": "Рабочих:", "value": value, "min": 1, "max": maxi(1, colony.adults()), "changed": changed}
 
 
-func _project_text(p: Project) -> String:
+func _project_text(p: Project, preview_purpose := -1) -> String:
 	var lines: PackedStringArray = [p.title() + " — " + ("на паузе" if p.paused else p.phase_name())]
+	if p.kind == Project.Kind.ROOM:
+		lines[0] += " · стены: " + p.material_name().to_lower()
+	else:
+		lines[0] += " · потоков: %d" % Colony.tunnel_lanes(p.rect)
 	match p.phase:
 		Project.Phase.DIG:
 			lines.append("Этап 1 из 2: копка. Осталось клеток: %d" % colony.remaining_dig(p).size())
 		Project.Phase.BUILD:
 			var pct := int(100.0 * p.build_done / p.build_work()) if p.paid else 0
 			lines.append("Этап 2 из 2: строительство %d%%" % pct)
-	if p.phase != Project.Phase.DONE:
+		Project.Phase.EQUIP:
+			var w := RoomType.equip_work(p.equip_target, p)
+			var pct := int(100.0 * p.equip_done / w) if p.equip_paid else 0
+			lines.append("Обустройство под «%s»: %d%%" % [RoomType.NAMES[p.equip_target], pct])
+			lines.append("Материалы: " + _cost_text(RoomType.equip_cost(p.equip_target, p)) + (" (оплачено)" if p.equip_paid else ""))
+	if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 		lines.append("Материалы: " + _cost_text(p.cost()) + (" (оплачено)" if p.paid else ""))
+	if p.phase != Project.Phase.DONE:
 		lines.append("Сейчас работают: %d из %d" % [colony.workers_on(p), p.workers])
+	elif p.kind == Project.Kind.ROOM:
+		match p.purpose:
+			RoomType.HOME:
+				var used := 0
+				for u in colony.units:
+					if u.bed_room == p.id:
+						used += 1
+				lines.append("Кроватей: %d, занято: %d" % [RoomType.beds(p), used])
+			RoomType.STORAGE:
+				lines.append("Вместимость склада: +%d каждого ресурса" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)))
+			RoomType.FARM:
+				lines.append("Фермеров: %d из %d мест" % [colony.workers_on(p), RoomType.farm_slots(p)])
+			RoomType.DINING:
+				lines.append("Еда здесь сытнее и поднимает настроение")
+		if preview_purpose > 0 and preview_purpose != p.purpose:
+			lines.append("Обустроить под «%s» (%s): %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose],
+				_cost_text(RoomType.equip_cost(preview_purpose, p))])
 	if not p.found.is_empty():
 		var f: PackedStringArray = []
 		for k in p.found:
@@ -270,14 +345,14 @@ func _refresh_info() -> void:
 	if _info_target.is_empty() or not hud.info_visible():
 		return
 	if _info_target[0] == "unit":
-		for u in colony.units:
-			if u.id == _info_target[1]:
-				hud.update_info_text(u.status_text())
+		var u := colony.unit_by_id(_info_target[1])
+		if u != null:
+			hud.update_info_text(_unit_text(u))
 	elif _info_target[0] == "project":
 		var p := colony.project_by_id(_info_target[1])
 		if p == null:
 			_select(null, null)
-		else:
+		elif p.phase != Project.Phase.DONE:
 			hud.update_info_text(_project_text(p))
 
 
@@ -310,22 +385,49 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 		return
 	_pending = r
 	_pending_kind = kind
-	var rec := Project.recommended_workers(kind, r, colony.units.size())
-	_pending_workers = rec
-	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
-	lines.append("Материалы на 2-м этапе: " + _cost_text(Project.cost_for(kind, r)))
-	lines.append("Сначала жители выкопают зону, потом построят.")
-	if not colony.has_access(r):
-		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
-	lines.append("Рекомендуется рабочих: %d" % rec)
-	hud.show_info("\n".join(lines), [
+	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
+	_pending_material = "wood"
+	_show_pending()
+
+
+func _show_pending() -> void:
+	var r := _pending
+	var kind := _pending_kind
+	var controls := [_workers_stepper(_pending_workers, func(v: int) -> void: _pending_workers = v)]
+	if kind == Project.Kind.ROOM:
+		var mats := colony.available_materials()
+		var names: Array = mats.map(func(k: String) -> String: return Project.MATERIALS[k][0])
+		controls.push_front({
+			"label": "Материал стен:", "value": mats.find(_pending_material), "min": 0, "max": mats.size() - 1,
+			"options": names,
+			"changed": func(v: int) -> void:
+				_pending_material = mats[v]
+				hud.update_info_text(_pending_text()),
+		})
+	hud.show_info(_pending_text(), [
 		["Построить", _confirm_pending],
 		["Отмена", _clear_preview],
-	], _workers_stepper(rec, func(v: int) -> void: _pending_workers = v))
+	], controls)
+
+
+func _pending_text() -> String:
+	var r := _pending
+	var kind := _pending_kind
+	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
+	lines.append("Материалы на 2-м этапе: " + _cost_text(Project.cost_for(kind, r, _pending_material)))
+	if kind == Project.Kind.TUNNEL:
+		var lanes := Colony.tunnel_lanes(r)
+		lines.append("Пропускная способность: %d %s" % [lanes, "поток" if lanes == 1 else "потока"])
+	elif colony.available_materials().size() == 1:
+		lines.append("Глина и камень станут доступны, когда вы их добудете.")
+	lines.append("Рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults()))
+	if not colony.has_access(r):
+		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
+	return "\n".join(lines)
 
 
 func _confirm_pending() -> void:
-	var p := colony.create_project(_pending_kind, _pending, _pending_workers)
+	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")
@@ -387,16 +489,24 @@ func _update_status() -> void:
 		where = "Высота %s м" % Fmt.int_spaced(-c.y)
 	else:
 		where = "Глубина %s м" % Fmt.int_spaced(depth)
-	var busy := 0
+	var kids := 0
+	var hungry := 0
 	for u in colony.units:
-		if u.task != Unit.Task.NONE:
-			busy += 1
+		if u.child:
+			kids += 1
+		if u.satiety < 25.0:
+			hungry += 1
 	var active := 0
 	for p in colony.projects:
 		if p.phase != Project.Phase.DONE:
 			active += 1
-	hud.set_status("%s · %s · %s\nЖители %d (заняты %d) · стройки %d" % [
-		where, world.gen.zone_name(c.x, c.y), _env_text(c), colony.units.size(), busy, active])
+	var people := "Жители %d" % colony.units.size()
+	if kids > 0:
+		people += " (дети %d)" % kids
+	var line2 := "%s · кроватей %d · стройки %d" % [people, colony.beds_total(), active]
+	if hungry > 0:
+		line2 += " · голодают: %d" % hungry
+	hud.set_status("%s · %s · %s\n%s" % [where, world.gen.zone_name(c.x, c.y), _env_text(c), line2])
 	hud.set_resources(colony.inventory)
 
 

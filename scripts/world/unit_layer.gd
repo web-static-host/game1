@@ -33,13 +33,49 @@ func _draw() -> void:
 		if u.state != Unit.State.FALL and below == gen.surface_y(cx) and not colony.world.is_dug(cx, below) \
 				and not colony.interior.has(Vector2i(cx, below - 1)):
 			foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
-		_draw_unit(u, foot)
+		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK:
+			_draw_sleeping(u, foot)
+		else:
+			var sc := 0.68 if u.child else 1.0
+			draw_set_transform(foot, 0.0, Vector2(sc, sc))
+			_draw_unit(u, Vector2.ZERO)
+			draw_set_transform(Vector2.ZERO)
+			_draw_needs(u, foot + Vector2(0, -70 * sc))
 		if u.id == selected_unit:
 			draw_arc(foot + Vector2(0, -26), 34, 0, TAU, 32, Color.WHITE, 2.0)
 			var w := font.get_string_size(u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 			var p := foot + Vector2(-w * 0.5, -62)
 			draw_string_outline(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 5, Color(0, 0, 0, 0.85))
 			draw_string(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+
+
+## Спящий: лежит, над ним «z».
+func _draw_sleeping(u: Unit, foot: Vector2) -> void:
+	var k := int(u.look * 1000.0)
+	var shirts: Array = SHIRT_M if u.sex == Unit.Sex.MALE else SHIRT_F
+	var sc := 0.68 if u.child else 1.0
+	var y := foot.y - 22 * sc
+	draw_rect(Rect2(foot.x - 22 * sc, y, 36 * sc, 10 * sc), shirts[(k / 7) % shirts.size()])
+	draw_circle(Vector2(foot.x + 20 * sc, y + 4 * sc), 7 * sc, SKIN[k % SKIN.size()])
+	var font := ThemeDB.fallback_font
+	var bob := sin(u.anim * 2.0) * 3.0
+	draw_string(font, Vector2(foot.x + 18, y - 10 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.8))
+	draw_string(font, Vector2(foot.x + 26, y - 20 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.6))
+
+
+## Значки нужд над головой: голод (красный кружок) и усталость (синий).
+func _draw_needs(u: Unit, p: Vector2) -> void:
+	var icons: Array[Color] = []
+	if u.satiety < 25.0:
+		icons.append(Color(0.95, 0.35, 0.3))
+	if u.energy < 20.0:
+		icons.append(Color(0.4, 0.55, 0.95))
+	if u.pregnancy >= 0.0:
+		icons.append(Color(1.0, 0.6, 0.75))
+	for i in icons.size():
+		var c := p + Vector2((i - (icons.size() - 1) * 0.5) * 14, 0)
+		draw_circle(c, 6, Color(0, 0, 0, 0.5))
+		draw_circle(c, 4.5, icons[i])
 
 
 func _draw_unit(u: Unit, foot: Vector2) -> void:
@@ -71,7 +107,12 @@ func _draw_unit(u: Unit, foot: Vector2) -> void:
 	# Руки и инструмент
 	var shoulder := neck + Vector2(f * 3, 3)
 	var hand: Vector2
-	if working:
+	if working and u.task == Unit.Task.EAT:
+		# Подносит еду ко рту.
+		var a := sin(u.anim * 5.0) * 0.5
+		hand = head + Vector2(f * (6 + a * 4), 6)
+		draw_circle(hand + Vector2(f * 3, -2), 3.5, Color(0.85, 0.2, 0.25))
+	elif working:
 		var a := -0.6 + sin(u.anim * (7.0 if u.task != Unit.Task.BUILD else 10.0)) * 0.9
 		hand = shoulder + Vector2(f * cos(a), sin(a)) * 14.0
 		_draw_tool(u.task, hand, f, a)
@@ -101,7 +142,9 @@ func _draw_tool(task: int, hand: Vector2, f: float, a: float) -> void:
 	match task:
 		Unit.Task.DIG:
 			draw_line(tip - across * 7, tip + across * 7 + dir * 2, TOOL, 3.0)
-		Unit.Task.BUILD:
+		Unit.Task.BUILD, Unit.Task.EQUIP:
 			draw_rect(Rect2(tip - Vector2(4, 4), Vector2(8, 8)), TOOL)
+		Unit.Task.FARM:
+			draw_circle(tip, 4, Color(0.4, 0.7, 0.9))
 		Unit.Task.HARVEST:
 			draw_colored_polygon(PackedVector2Array([tip, tip + across * 8, tip + across * 6 - dir * 7]), TOOL)

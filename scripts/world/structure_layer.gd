@@ -38,10 +38,10 @@ func _draw() -> void:
 		return
 	var font := ThemeDB.fallback_font
 	for p in colony.projects:
-		if p.phase == Project.Phase.DONE:
+		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			_draw_done(p)
 	for p in colony.projects:
-		if p.phase != Project.Phase.DONE:
+		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
 	_draw_dig_progress()
 	if preview.size != Vector2i.ZERO:
@@ -52,30 +52,127 @@ func _draw() -> void:
 		_label(font, r.position + Vector2(4, -8), preview_text, col)
 
 
+## Цвета по материалу стен: [задняя стена, рама, линии кладки].
+const WALLS := {
+	"wood": [Color(0.86, 0.73, 0.55), Color(0.52, 0.36, 0.2), Color(0.74, 0.6, 0.42)],
+	"clay": [Color(0.88, 0.76, 0.64), Color(0.66, 0.45, 0.32), Color(0.8, 0.66, 0.54)],
+	"stone": [Color(0.74, 0.74, 0.76), Color(0.45, 0.45, 0.5), Color(0.62, 0.62, 0.66)],
+}
+const BED_FRAME := Color(0.45, 0.3, 0.18)
+const BLANKETS := [Color(0.35, 0.5, 0.8), Color(0.75, 0.35, 0.4), Color(0.4, 0.65, 0.45), Color(0.8, 0.65, 0.3)]
+const SOIL := Color(0.3, 0.2, 0.13)
+const MUSHROOM := Color(0.92, 0.88, 0.8)
+const MUSHROOM_CAP := Color(0.75, 0.42, 0.3)
+const CRATE := Color(0.62, 0.45, 0.25)
+
+
 func _draw_done(p: Project) -> void:
 	var r := _rect_px(p.rect)
 	if p.kind == Project.Kind.ROOM:
-		draw_rect(r, ROOM_WALL)
-		# Панели стен.
-		var step := TILE * 2.0
-		var x := r.position.x + step
-		while x < r.end.x - 1:
-			draw_line(Vector2(x, r.position.y + 6), Vector2(x, r.end.y - 6), ROOM_WALL.darkened(0.08), 2.0)
-			x += step
-		draw_rect(Rect2(r.position.x, r.end.y - 6, r.size.x, 6), ROOM_FLOOR)
-		draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), ROOM_FRAME)
-		draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), ROOM_FRAME)
-		draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), ROOM_FRAME)
-		# Лестница — только у заглублённой комнаты, иначе вход с уровня земли.
-		if p.ladder:
-			_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-		var lamp := Vector2(r.get_center().x, r.position.y + 9)
-		draw_circle(lamp, 14, Color(LAMP, 0.18))
-		draw_circle(lamp, 5, LAMP)
+		_draw_room_shell(p, r)
+		if p.phase == Project.Phase.EQUIP:
+			var w := RoomType.equip_work(p.equip_target, p)
+			var t := clampf(p.equip_done / w, 0.0, 1.0) if p.equip_paid else 0.0
+			_draw_furniture(p, r, p.equip_target, 0.25 + 0.6 * t)
+			var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
+			draw_rect(bar, BAR_BG)
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
+			_dashed_rect(r, PAUSED if p.paused else BUILD_EDGE, 2.5)
+		else:
+			_draw_furniture(p, r, p.purpose, 1.0)
 	else:
 		_draw_supports(p, r, 1.0)
 	if p.id == selected_project:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
+
+
+func _draw_room_shell(p: Project, r: Rect2) -> void:
+	var c: Array = WALLS.get(p.material, WALLS["wood"])
+	draw_rect(r, c[0])
+	match p.material:
+		"wood":
+			# Доски.
+			var y := r.position.y + 10
+			while y < r.end.y - 6:
+				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
+				y += 10
+		"stone":
+			# Кладка блоками со смещением.
+			var row := 0
+			var y := r.position.y + 5
+			while y < r.end.y - 6:
+				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
+				var x := r.position.x + 5 + (20 if row % 2 else 0)
+				while x < r.end.x - 5:
+					draw_line(Vector2(x, y), Vector2(x, minf(y + 16, r.end.y - 6)), c[2], 1.5)
+					x += 40
+				y += 16
+				row += 1
+		_:
+			# Глиняная штукатурка: мягкие пятна.
+			for k in int(r.size.x / 18.0):
+				var px := r.position.x + 10 + k * 18 + WorldGen.hash01(p.id, k, 61) * 8.0
+				var py := r.position.y + 12 + WorldGen.hash01(p.id, k, 62) * (r.size.y - 30)
+				draw_circle(Vector2(px, py), 4 + WorldGen.hash01(p.id, k, 63) * 4, c[2])
+	draw_rect(Rect2(r.position.x, r.end.y - 6, r.size.x, 6), ROOM_FLOOR)
+	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), c[1])
+	draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), c[1])
+	draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), c[1])
+	# Лестница — только у заглублённой комнаты, иначе вход с уровня земли.
+	if p.ladder:
+		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+	var lamp := Vector2(r.get_center().x, r.position.y + 9)
+	draw_circle(lamp, 14, Color(LAMP, 0.18))
+	draw_circle(lamp, 5, LAMP)
+
+
+func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
+	var floor_y := r.end.y - 6
+	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
+	match purpose:
+		RoomType.HOME:
+			for i in RoomType.beds(p):
+				var bx := x0 + i * TILE * 2 + 4
+				var bw := TILE * 2 - 8
+				draw_rect(Rect2(bx, floor_y - 14, bw, 14), Color(BED_FRAME, alpha))
+				draw_rect(Rect2(bx + 2, floor_y - 20, bw - 4, 8), Color(BLANKETS[(p.id + i) % BLANKETS.size()], alpha))
+				draw_rect(Rect2(bx + 3, floor_y - 24, 14, 7), Color(0.95, 0.95, 0.92, alpha))
+				draw_rect(Rect2(bx, floor_y - 26, 4, 26), Color(BED_FRAME, alpha))
+		RoomType.STORAGE:
+			var fill := 0.0
+			var cap := float(colony.capacity(""))
+			for k in colony.inventory:
+				fill = maxf(fill, colony.inventory[k] / cap)
+			var w := RoomType.usable_width(p)
+			# Стеллаж и ящики: чем полнее склад, тем больше ящиков.
+			draw_line(Vector2(x0 + 4, floor_y - 40), Vector2(x0 + w * TILE - 4, floor_y - 40), Color(BED_FRAME, alpha), 3.0)
+			var boxes := ceili(w * 2 * clampf(fill, 0.1, 1.0))
+			for i in boxes:
+				var lvl := i % 2
+				var bx := x0 + 6 + (i / 2) * TILE
+				var by := floor_y - 18 - lvl * 40
+				draw_rect(Rect2(bx, by, 20, 18), Color(CRATE, alpha))
+				draw_rect(Rect2(bx, by, 20, 18), Color(CRATE.darkened(0.35), alpha), false, 1.5)
+		RoomType.FARM:
+			var w := RoomType.usable_width(p)
+			draw_rect(Rect2(x0 + 2, floor_y - 8, w * TILE - 4, 8), Color(SOIL, alpha))
+			var grow := clampf(p.farm_progress / RoomType.FARM_CYCLE, 0.0, 1.0)
+			for i in w * 2:
+				var mx := x0 + 8 + i * TILE * 0.5
+				var h := 6.0 + 10.0 * fmod(grow + WorldGen.hash01(p.id, i, 70), 1.0)
+				draw_line(Vector2(mx, floor_y - 8), Vector2(mx, floor_y - 8 - h), Color(MUSHROOM, alpha), 3.0)
+				draw_circle(Vector2(mx, floor_y - 8 - h), 4.0 + h * 0.15, Color(MUSHROOM_CAP, alpha))
+		RoomType.DINING:
+			var w := RoomType.usable_width(p)
+			var tx := x0 + 8
+			while tx + 40 < x0 + w * TILE:
+				draw_rect(Rect2(tx, floor_y - 18, 40, 4), Color(BED_FRAME, alpha))
+				draw_line(Vector2(tx + 6, floor_y - 14), Vector2(tx + 6, floor_y), Color(BED_FRAME, alpha), 3.0)
+				draw_line(Vector2(tx + 34, floor_y - 14), Vector2(tx + 34, floor_y), Color(BED_FRAME, alpha), 3.0)
+				draw_circle(Vector2(tx + 20, floor_y - 21), 4, Color(0.9, 0.9, 0.85, alpha))
+				draw_rect(Rect2(tx - 8, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
+				draw_rect(Rect2(tx + 40, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
+				tx += 64
 
 
 ## Крепь тоннеля: рамы поперёк, в шахте — лестница.
@@ -105,7 +202,8 @@ func _draw_site(p: Project, font: Font) -> void:
 	else:
 		var t := clampf(p.build_done / p.build_work(), 0.0, 1.0) if p.paid else 0.0
 		if p.kind == Project.Kind.ROOM:
-			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(ROOM_WALL, 0.55))
+			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
+			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
 		else:
 			_draw_supports(p, r, 0.3 + 0.7 * t)
 		var bar := Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 6)

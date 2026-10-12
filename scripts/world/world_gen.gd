@@ -93,6 +93,7 @@ static func hash01(x: int, y: int, s: int) -> float:
 const FEATURE_NONE := 0
 const FEATURE_TREE := 1
 const FEATURE_BOULDER := 2
+const FEATURE_BUSH := 3
 
 
 func feature_at(x: int) -> int:
@@ -104,6 +105,8 @@ func feature_at(x: int) -> int:
 		return FEATURE_TREE
 	if h < 0.17:
 		return FEATURE_BOULDER
+	if h < 0.25:
+		return FEATURE_BUSH
 	return FEATURE_NONE
 
 
@@ -118,6 +121,8 @@ func feature_yield(x: int) -> Array:
 			return ["wood", 3 + tree_height(x) / 2]
 		FEATURE_BOULDER:
 			return ["stone", 3 + int(hash01(x, 13, world_seed) * 4.0)]
+		FEATURE_BUSH:
+			return ["food", 3 + int(hash01(x, 14, world_seed) * 3.0)]
 	return ["", 0]
 
 

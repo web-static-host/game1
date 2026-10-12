@@ -17,6 +17,12 @@ func _initialize() -> void:
 	test_units_realtime()
 	test_room_from_surface_realtime()
 	test_workers_and_ladder()
+	test_room_materials()
+	test_room_purposes()
+	test_needs_realtime()
+	test_family()
+	test_tunnel_throughput()
+	test_professions()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -289,6 +295,148 @@ func test_workers_and_ladder() -> void:
 	check(house != null and not house.ladder, "у наземного дома лестницы нет")
 
 
+## Готовая подземная комната от шахты: возвращает [colony, room].
+func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
+	var colony := _new_colony(seed_value)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	colony.start_new(x)
+	colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "clay": 55}
+	var s := w.gen.surface_y(x)
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x + 1, s + 3, width, 3))
+	colony.advance_offline(30000.0)
+	if purpose >= 0:
+		colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "food": 50}
+		colony.set_purpose(room, purpose)
+		colony.advance_offline(5000.0)
+	return [colony, room]
+
+
+func test_room_materials() -> void:
+	var colony := _new_colony(12)
+	check(colony.available_materials() == ["wood"], "в начале доступно только дерево")
+	colony._add("clay", 3)
+	colony._add("stone", 3)
+	check(colony.available_materials() == ["wood", "clay", "stone"], "глина и камень открываются после добычи")
+	var r := Rect2i(0, 0, 6, 3)
+	check(Project.cost_for(Project.Kind.ROOM, r, "stone").has("stone"), "каменная комната требует камень")
+	check(not Project.cost_for(Project.Kind.ROOM, r, "wood").has("stone"), "деревянная — без камня")
+	check(Project.work_for(Project.Kind.ROOM, r, "stone") > Project.work_for(Project.Kind.ROOM, r, "wood"), "камень строить дольше")
+
+
+func test_room_purposes() -> void:
+	var res := _colony_with_room(21)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	check(room.phase == Project.Phase.DONE and room.purpose == RoomType.NONE, "комната построена без назначения")
+	var cap0 := colony.capacity("stone")
+	colony.inventory = {}
+	check(colony.set_purpose(room, RoomType.STORAGE), "назначение выбрано")
+	colony.advance_offline(3000.0)
+	check(room.phase == Project.Phase.EQUIP and room.blocked.begins_with("Не хватает"), "без дерева склад не обустроить")
+	colony.inventory = {"wood": 50, "food": 50}
+	colony.advance_offline(3000.0)
+	check(room.purpose == RoomType.STORAGE and room.phase == Project.Phase.DONE, "склад обустроен")
+	check(colony.capacity("stone") > cap0, "склад увеличил вместимость")
+	colony.inventory = {"stone": colony.capacity("stone") - 1}
+	colony._add("stone", 10)
+	check(colony.inventory["stone"] == colony.capacity("stone"), "лишнее сверх вместимости не помещается")
+
+	var farm_res := _colony_with_room(22, RoomType.FARM)
+	var fc: Colony = farm_res[0]
+	var farm: Project = farm_res[1]
+	check(farm.purpose == RoomType.FARM, "ферма обустроена")
+	fc.inventory["food"] = 0
+	var food0 := 0
+	fc.advance_offline(1800.0)
+	check(fc.inventory.get("food", 0) > food0, "ферма производит еду (%d → %d)" % [food0, fc.inventory.get("food", 0)])
+
+	var home_res := _colony_with_room(23, RoomType.HOME)
+	var hc: Colony = home_res[0]
+	check(hc.beds_total() == 2, "в заглублённой жилой 6×3 две кровати — у стены лестница (%d)" % hc.beds_total())
+
+
+func test_needs_realtime() -> void:
+	var res := _colony_with_room(24, RoomType.HOME)
+	var colony: Colony = res[0]
+	var u: Unit = colony.units[0]
+	colony.inventory["food"] = 10
+	u.satiety = 20.0
+	var t := 0.0
+	while t < 60.0 and u.satiety < 50.0:
+		colony.update(0.5)
+		t += 0.5
+	check(u.satiety >= 50.0 and colony.inventory["food"] < 10, "голодный житель поел (%.0f с)" % t)
+	u.energy = 5.0
+	t = 0.0
+	var slept_in_bed := false
+	while t < 900.0 and u.energy < 99.0:
+		colony.update(0.5)
+		t += 0.5
+		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK and u.project_id != 0:
+			slept_in_bed = true
+	check(u.energy >= 99.0, "уставший житель выспался (%.0f с)" % t)
+	check(slept_in_bed, "спал в кровати")
+
+
+func test_family() -> void:
+	var res := _colony_with_room(25, RoomType.HOME, 16)
+	var colony: Colony = res[0]
+	check(colony.beds_total() == 7, "в жилой 16×3 семь кроватей")
+	var before := colony.units.size()
+	var pairs := 0
+	for i in 20:
+		colony.inventory["food"] = 100
+		colony.advance_offline(600.0)
+	for u in colony.units:
+		if u.partner_id != 0:
+			pairs += 1
+	check(pairs >= 2, "сложились пары (%d)" % pairs)
+	check(colony.units.size() > Colony.START_UNITS, "родились дети (%d → %d)" % [Colony.START_UNITS, colony.units.size()])
+	check(colony.units.size() <= colony.beds_total(), "жителей не больше, чем кроватей")
+	var kid: Unit = colony.units[colony.units.size() - 1]
+	for i in 6:
+		colony.inventory["food"] = 100
+		colony.advance_offline(600.0)
+	check(not kid.child, "ребёнок вырос")
+
+
+func test_tunnel_throughput() -> void:
+	check(Colony.tunnel_lanes(Rect2i(0, 0, 1, 10)) == 1, "шахта шириной 1 — один поток")
+	check(Colony.tunnel_lanes(Rect2i(0, 0, 3, 10)) == 3, "шахта шириной 3 — три потока")
+	check(Colony.tunnel_lanes(Rect2i(0, 0, 10, 2)) == 1, "штрек высотой 2 — один поток")
+	check(Colony.tunnel_lanes(Rect2i(0, 0, 10, 3)) == 2, "штрек высотой 3 — два потока")
+	var colony := _new_colony(26)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	colony.start_new(x)
+	var s := w.gen.surface_y(x)
+	var narrow := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 8))
+	var wide := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 2, s, 3, 8))
+	var a := colony.units[0]
+	var b := colony.units[1]
+	a.pos = Vector2(x, s + 3)
+	b.pos = Vector2(x, s + 4)
+	check(is_equal_approx(colony.congestion(a), 0.5), "двое в узкой шахте мешают друг другу")
+	a.pos = Vector2(x + 2, s + 3)
+	b.pos = Vector2(x + 3, s + 4)
+	check(is_equal_approx(colony.congestion(a), 1.0), "в широкой шахте расходятся свободно")
+
+
+func test_professions() -> void:
+	var colony := _new_colony(27)
+	colony.start_new(0)
+	var u := colony.units[0]
+	u.profession = Unit.Prof.DIGGER
+	check(colony._task_order(u)[0] == "dig", "копатель сначала копает")
+	u.profession = Unit.Prof.FARMER
+	check(colony._task_order(u)[0] == "farm", "фермер сначала идёт на ферму")
+	var kid := colony._new_unit(Unit.Sex.FEMALE, Vector2.ZERO)
+	kid.child = true
+	check(colony.adults() == 5, "дети не считаются рабочими")
+
+
 func test_save_roundtrip() -> void:
 	var path := "user://test_save.json"
 	var colony := _new_colony(4242)
@@ -316,6 +464,7 @@ func test_save_roundtrip() -> void:
 	check(c2.projects.size() == 2 and c2.projects[1].paused, "стройки и пауза восстановлены")
 	check(c2.interior.has(Vector2i(x, s + 1)), "готовые постройки восстановлены")
 	check(w2.feature_marks.has(x - 3), "отметки сбора восстановлены")
+	check(c2.units[0].satiety == colony.units[0].satiety and c2.units[0].profession == colony.units[0].profession, "потребности и профессии восстановлены")
 	w2.evict_outside(Rect2i(1000, 1000, 1, 1))
 	check(w2.chunks.is_empty() and w2.is_dug(x, s + 1), "выгрузка не теряет раскопки")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

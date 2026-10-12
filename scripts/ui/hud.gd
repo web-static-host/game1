@@ -30,7 +30,7 @@ var _log: VBoxContainer
 var _info_panel: PanelContainer
 var _info_label: Label
 var _info_buttons: HBoxContainer
-var _info_stepper: HBoxContainer
+var _info_stepper: VBoxContainer
 var _mode_buttons: Array[Button] = []
 var _btn_speed: Button
 var _dialog: PanelContainer
@@ -137,8 +137,8 @@ func _build_bottom(box: VBoxContainer) -> void:
 	_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_info_label.add_theme_font_size_override("font_size", 20)
 	v.add_child(_info_label)
-	_info_stepper = HBoxContainer.new()
-	_info_stepper.add_theme_constant_override("separation", 8)
+	_info_stepper = VBoxContainer.new()
+	_info_stepper.add_theme_constant_override("separation", 6)
 	v.add_child(_info_stepper)
 	_info_buttons = HBoxContainer.new()
 	_info_buttons.add_theme_constant_override("separation", 8)
@@ -222,25 +222,26 @@ func set_status(text: String) -> void:
 func set_resources(inventory: Dictionary) -> void:
 	var parts: PackedStringArray = []
 	# Дерево и камень — всегда первыми, это основа стройки.
-	for k in ["wood", "stone"]:
+	for k in ["food", "wood", "stone"]:
 		parts.append("%s %s" % [Mat.resource_name(k), Fmt.int_spaced(inventory.get(k, 0))])
 	var keys := inventory.keys()
 	keys.sort()
 	for k in keys:
-		if k != "wood" and k != "stone" and inventory[k] > 0:
+		if not k in ["food", "wood", "stone"] and inventory[k] > 0:
 			parts.append("%s %s" % [Mat.resource_name(k), Fmt.int_spaced(inventory[k])])
 	_resources.text = " · ".join(parts)
 
 
 ## Панель с описанием и кнопками. actions: [[текст, Callable], ...]
-## stepper: {"label": String, "value": int, "min": int, "max": int, "changed": Callable(int)}
-func show_info(text: String, actions: Array = [], stepper: Dictionary = {}) -> void:
+## controls: [{"label", "value", "min", "max", "changed": Callable(int), "options"?: Array}]
+## — строки «Подпись: [−] значение [+]»; с options значение показывается текстом.
+func show_info(text: String, actions: Array = [], controls: Array = []) -> void:
 	_info_label.text = text
 	for c in _info_stepper.get_children():
 		c.queue_free()
-	_info_stepper.visible = not stepper.is_empty()
-	if not stepper.is_empty():
-		_build_stepper(stepper)
+	_info_stepper.visible = not controls.is_empty()
+	for st in controls:
+		_build_stepper(st)
 	for c in _info_buttons.get_children():
 		c.queue_free()
 	for a in actions:
@@ -252,28 +253,31 @@ func show_info(text: String, actions: Array = [], stepper: Dictionary = {}) -> v
 	_info_panel.visible = true
 
 
-## Строка «Рабочих: [−] 3 [+]».
 func _build_stepper(st: Dictionary) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	_info_stepper.add_child(row)
 	var label := Label.new()
 	label.text = st["label"]
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_info_stepper.add_child(label)
+	row.add_child(label)
+	var options: Array = st.get("options", [])
 	var value := Label.new()
-	value.custom_minimum_size = Vector2(56, 0)
+	value.custom_minimum_size = Vector2(150 if not options.is_empty() else 56, 0)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	value.add_theme_font_size_override("font_size", 28)
+	value.add_theme_font_size_override("font_size", 22 if not options.is_empty() else 28)
 	var minus := Button.new()
-	minus.text = "−"
-	minus.custom_minimum_size = Vector2(72, 56)
+	minus.text = "−" if options.is_empty() else "<"
+	minus.custom_minimum_size = Vector2(72, 52)
 	var plus := Button.new()
-	plus.text = "+"
-	plus.custom_minimum_size = Vector2(72, 56)
-	_info_stepper.add_child(minus)
-	_info_stepper.add_child(value)
-	_info_stepper.add_child(plus)
+	plus.text = "+" if options.is_empty() else ">"
+	plus.custom_minimum_size = Vector2(72, 52)
+	row.add_child(minus)
+	row.add_child(value)
+	row.add_child(plus)
 	var state := {"v": int(st["value"])}
 	var refresh := func() -> void:
-		value.text = str(state["v"])
+		value.text = str(options[state["v"]]) if not options.is_empty() else str(state["v"])
 		minus.disabled = state["v"] <= int(st["min"])
 		plus.disabled = state["v"] >= int(st["max"])
 	refresh.call()

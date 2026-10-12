@@ -69,6 +69,7 @@ const _RAW := [
 
 const RESOURCE_NAMES := {
 	"wood": "Дерево",
+	"food": "Еда",
 	"soil": "Грунт",
 	"clay": "Глина",
 	"sand": "Песок",

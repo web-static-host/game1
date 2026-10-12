@@ -4,12 +4,19 @@ extends RefCounted
 ## этап 2 — построить (нужны ресурсы). Можно поставить на паузу.
 
 enum Kind { TUNNEL, ROOM }
-enum Phase { DIG, BUILD, DONE }
+## EQUIP — готовая комната оборудуется под назначение.
+enum Phase { DIG, BUILD, DONE, EQUIP }
 
 const ROOM_MIN := Vector2i(3, 3)
 const ROOM_MAX := Vector2i(24, 8)
 const TUNNEL_MAX_LEN := 64
 const TUNNEL_MAX_WIDTH := 3
+## Материалы стен комнат: ключ -> [название, множитель времени стройки].
+const MATERIALS := {
+	"wood": ["Дерево", 1.0],
+	"clay": ["Глина", 1.2],
+	"stone": ["Камень", 1.5],
+}
 
 var id := 0
 var kind := Kind.TUNNEL
@@ -27,9 +34,20 @@ var blocked := ""
 var workers := 1
 ## Лестница у левой стены (нужна, если пол комнаты ниже поверхности).
 var ladder := false
+## Материал стен комнаты: ключ ресурса ("wood", "clay", "stone").
+var material := "wood"
+## Назначение комнаты (RoomType) и оборудование.
+var purpose := 0
+var equip_target := 0
+var equip_paid := false
+var equip_done := 0.0
+## Прогресс фермы до следующей единицы еды.
+var farm_progress := 0.0
 
 
 func title() -> String:
+	if kind == Kind.ROOM and purpose != RoomType.NONE:
+		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
 
 
@@ -43,6 +61,8 @@ func phase_name() -> String:
 			return "копка"
 		Phase.BUILD:
 			return "строительство" if paid else "ждёт ресурсы"
+		Phase.EQUIP:
+			return "обустройство" if equip_paid else "обустройство ждёт ресурсы"
 	return "готово"
 
 
@@ -63,26 +83,34 @@ func has_cell(c: Vector2i) -> bool:
 
 
 ## Стоимость второго этапа. Тоннелю нужна крепь и лестницы (дерево),
-## комнате — ещё и камень на стены, пол и потолок.
-static func cost_for(k: int, r: Rect2i) -> Dictionary:
+## комнате — стены из выбранного материала и деревянные балки перекрытий.
+static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 	var cells_n := r.size.x * r.size.y
 	if k == Kind.ROOM:
-		return {"wood": ceili(cells_n / 4.0) + 2, "stone": r.size.x + r.size.y}
+		var out := {"wood": ceili(cells_n / 6.0)}
+		out[mat] = out.get(mat, 0) + r.size.x + r.size.y
+		return out
 	return {"wood": ceili(cells_n / 4.0)}
 
 
 ## Объём работ второго этапа, сек (для жителя с навыком 1).
-static func work_for(k: int, r: Rect2i) -> float:
+static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 	var cells_n := r.size.x * r.size.y
-	return cells_n * (5.0 if k == Kind.ROOM else 2.0)
+	if k == Kind.ROOM:
+		return cells_n * 5.0 * MATERIALS.get(mat, ["", 1.0])[1]
+	return cells_n * 2.0
 
 
 func cost() -> Dictionary:
-	return cost_for(kind, rect)
+	return cost_for(kind, rect, material)
 
 
 func build_work() -> float:
-	return work_for(kind, rect)
+	return work_for(kind, rect, material)
+
+
+func material_name() -> String:
+	return MATERIALS.get(material, ["?"])[0]
 
 
 ## Рекомендуемое число рабочих: примерно один на 6–8 клеток площади.
@@ -123,6 +151,12 @@ func to_dict() -> Dictionary:
 		"blocked": blocked,
 		"workers": workers,
 		"ladder": ladder,
+		"material": material,
+		"purpose": purpose,
+		"equip_target": equip_target,
+		"equip_paid": equip_paid,
+		"equip_done": equip_done,
+		"farm_progress": farm_progress,
 	}
 
 
@@ -142,4 +176,10 @@ static func from_dict(d: Dictionary) -> Project:
 	p.blocked = str(d.get("blocked", ""))
 	p.workers = int(d.get("workers", 2))
 	p.ladder = bool(d.get("ladder", false))
+	p.material = str(d.get("material", "wood"))
+	p.purpose = int(d.get("purpose", 0))
+	p.equip_target = int(d.get("equip_target", 0))
+	p.equip_paid = bool(d.get("equip_paid", false))
+	p.equip_done = float(d.get("equip_done", 0.0))
+	p.farm_progress = float(d.get("farm_progress", 0.0))
 	return p

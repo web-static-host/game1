@@ -30,6 +30,12 @@ func _process(_delta: float) -> bool:
 		_main.camera.zoom = Vector2(1.1, 1.1)
 	if _frame == 330:
 		_shot("underground")
+		for pr in _main.colony.projects:
+			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.HOME:
+				_main._select(null, pr)
+	if _frame == 345:
+		_shot("room_panel")
+		_main._select(null, null)
 		_main.world_view.focus_cell(Vector2i(_main._home.x, 1200))
 		_main.camera.zoom = Vector2(0.6, 0.6)
 		_reveal_area(Vector2i(_main._home.x, 1200), 40, 50)
@@ -57,12 +63,21 @@ func _prepare_base() -> void:
 	colony.inventory = {"wood": 200, "stone": 200}
 	var T := Project.Kind.TUNNEL
 	var R := Project.Kind.ROOM
+	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
+	colony.known_resources = {"wood": true, "stone": true, "clay": true}
 	colony.create_project(T, Rect2i(x0, s, 1, 14))
-	colony.create_project(R, Rect2i(x0 + 1, s + 3, 7, 3))
-	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 2))
-	colony.create_project(R, Rect2i(x0 + 1, s + 10, 5, 4))
-	colony.create_project(R, Rect2i(x0 + 8, s - 3, 6, 3))
+	var home := colony.create_project(R, Rect2i(x0 + 1, s + 3, 7, 3), -1, "wood")
+	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 3))
+	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 4), -1, "stone")
+	var store := colony.create_project(R, Rect2i(x0 - 9, s + 5, 8, 3), -1, "clay")
 	colony.advance_offline(100000.0)
+	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
+	for pr in [[home, RoomType.HOME], [farm, RoomType.FARM], [store, RoomType.STORAGE]]:
+		if pr[0] != null:
+			colony.set_purpose(pr[0], pr[1])
+	colony.advance_offline(5000.0)
+	colony.inventory["food"] = 40
+	colony.units[0].energy = 5.0
 	# Новая стройка в процессе — чтобы видеть жителей за работой.
 	colony.create_project(T, Rect2i(x0 + 8, s + 4, 8, 2))
 	for x in range(x0 - 30, x0 + 30):
