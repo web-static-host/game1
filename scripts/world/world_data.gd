@@ -26,6 +26,9 @@ var feature_marks := {}
 ## Живые растения с состоянием: x -> {"t": вид, "g": рост 0..1, "b": ягоды}.
 ## Сгенерированные изначально растения — взрослые и с полным урожаем, пока их не тронули.
 var plants := {}
+## Растёт при каждом изменении твёрдой породы или флагов клеток (копка, обвал, вскрытие):
+## по нему поиск пути понимает, что кэш обходов устарел. Течение воды не считается.
+var revision := 0
 const BUSH_BERRIES := 6.0
 
 
@@ -103,6 +106,7 @@ func _set_flags(x: int, y: int, add: int) -> bool:
 		return false
 	c.flags[i] = old | add
 	c.modified = true
+	revision += 1
 	_touch(x, y)
 	return true
 
@@ -201,6 +205,7 @@ func set_material(x: int, y: int, m: int) -> void:
 	var i := ChunkData.idx(x & MASK, y & MASK)
 	c.mat[i] = m
 	c.flags[i] = (c.flags[i] & ~(ChunkData.F_DUG | ChunkData.F_CAVE | ChunkData.F_FLUID)) | ChunkData.F_REVEALED
+	revision += 1
 	c.modified = true
 	c.mat_modified = true
 	_touch(x, y)

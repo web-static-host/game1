@@ -20,6 +20,61 @@ var side := 1
 var _pending_purpose := {}
 var deaths: Array[String] = []
 var births := 0
+var prof := {}
+
+
+func _tm(key: String, from: int) -> int:
+	var now := Time.get_ticks_usec()
+	prof[key] = prof.get(key, 0) + now - from
+	return now
+
+
+## Копия Colony.update с замером времени по частям.
+func _update_profiled(dt: float) -> void:
+	var c := colony
+	var remaining := dt
+	var t0 := Time.get_ticks_usec()
+	while remaining > 0.0:
+		var step := minf(remaining, Colony.SUBSTEP)
+		remaining -= step
+		c.game_time += step
+		c.pathing.tick(step)
+		for p in c.projects:
+			if not p.paused:
+				c._try_pay(p)
+		t0 = _tm("pay", t0)
+		c._tick_exposure(step)
+		c._wear_tick(step)
+		t0 = _tm("exposure+wear", t0)
+		c._power_tick(step)
+		c._plant_tick(step)
+		t0 = _tm("power+plants", t0)
+		c._life_tick(step, false)
+		t0 = _tm("life", t0)
+		for u: Unit in c.units.duplicate():
+			var st := u.state
+			c._update_unit(u, step)
+			t0 = _tm("unit_st%d" % st, t0)
+	c.physics.update(dt)
+	t0 = _tm("physics", t0)
+	c.elements.update(dt)
+	t0 = _tm("elements", t0)
+	c.loads.update(dt)
+	t0 = _tm("loads", t0)
+	c._explore_t += dt
+	if c._explore_t >= 1.0:
+		c._explore_t = 0.0
+		c.explore()
+		c._access_t += 1
+		if c._access_t >= 5:
+			c._access_t = 0
+			c._check_access()
+		for p in c.projects:
+			if p.paused and p.blocked.begins_with("В зоне"):
+				c._check_liquids(p)
+				if p.blocked.is_empty():
+					p.paused = false
+	t0 = _tm("explore+access", t0)
 
 
 func _initialize() -> void:
@@ -35,13 +90,19 @@ func _initialize() -> void:
 	var next_slice := 600.0
 	var think := 0.0
 	print("=== Мир %d, %d минут игры ===" % [seed_value, minutes])
+	var profile := not OS.get_environment("PROFILE").is_empty()
 	while t < minutes * 60.0:
-		colony.update(0.5)
+		if profile:
+			_update_profiled(0.5)
+		else:
+			colony.update(0.5)
 		t += 0.5
 		think += 0.5
 		if think >= 5.0:
 			think = 0.0
+			var tb := Time.get_ticks_usec()
 			_play()
+			_tm("bot", tb)
 			var dbg := OS.get_environment("DEBUG_FROM")
 			if not dbg.is_empty() and t >= float(dbg) * 60.0 and int(t) % 20 == 0:
 				_debug()
@@ -63,6 +124,12 @@ func _initialize() -> void:
 	print("\n--- Смерти ---")
 	for d in deaths:
 		print(d)
+	if profile:
+		var keys := prof.keys()
+		keys.sort_custom(func(a: String, b: String) -> bool: return prof[a] > prof[b])
+		print("\n--- Профиль (мс) ---")
+		for k in keys:
+			print("%-12s %8d" % [k, prof[k] / 1000])
 	print("\nДействий игрока: %d (%.1f в минуту), рождений: %d" % [actions.size(), actions.size() / (t / 60.0), births])
 	quit()
 
@@ -184,7 +251,7 @@ func _play() -> void:
 ## вставшего тоннеля, куда можно дойти.
 func _fix_shaft() -> bool:
 	for p in colony.projects:
-		if p.kind != Project.Kind.TUNNEL or p.rect.position.x != shaft_x:
+		if p.phase == Project.Phase.DONE or absi(p.rect.get_center().x - shaft_x) > 8:
 			continue
 		var want := -1
 		if p.blocked.begins_with("В зоне"):

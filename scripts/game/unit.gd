@@ -70,6 +70,8 @@ var project_id := 0
 var path: Array[Vector2i] = []
 var path_i := 0
 var retry := 0.0
+## Сколько раз подряд не нашёл себе дела — ищет реже (до 5 с).
+var idle_fails := 0
 var facing := 1
 var anim := 0.0
 

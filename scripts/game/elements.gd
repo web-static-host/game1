@@ -64,6 +64,8 @@ var _gas_t := 0.0
 var _pump_t := 0.0
 var _rng := RandomNumberGenerator.new()
 var _warned := {}
+var _temp_memo := {}
+var _temp_t := 0.0
 
 
 func _init(p_colony: Colony) -> void:
@@ -73,6 +75,10 @@ func _init(p_colony: Colony) -> void:
 
 
 func update(dt: float) -> void:
+	_temp_t += dt
+	if _temp_t >= 1.0:
+		_temp_t = 0.0
+		_temp_memo.clear()
 	_water_t += dt
 	while _water_t >= WATER_STEP:
 		_water_t -= WATER_STEP
@@ -389,7 +395,8 @@ func _gas_alarm() -> void:
 				p.paused = false
 				p.hazard_pending = ""
 				p.blocked = ""
-				colony._log("%s: метан ушёл, работы возобновлены" % p.title(), "info")
+				if colony.game_time - float(colony._gas_logged.get(p.id, -1000.0)) > Colony.GAS_LOG_EVERY:
+					colony._log("%s: метан ушёл, работы возобновлены" % p.title(), "info")
 		elif p.hazard_ack.has("methane"):
 			if g < GAS_CLEAR:
 				p.hazard_ack.erase("methane")
@@ -432,7 +439,16 @@ func explode(c: Vector2i) -> void:
 # --- Жара -------------------------------------------------------------------------------
 
 ## Температура в клетке: глубина, лава рядом, охлаждение вентиляцией.
+## Запоминаем на секунду: жители стоят на месте, а считать дорого.
 func temperature(c: Vector2i) -> float:
+	var v = _temp_memo.get(c)
+	if v == null:
+		v = _temperature(c)
+		_temp_memo[c] = v
+	return v
+
+
+func _temperature(c: Vector2i) -> float:
 	var t := Env.temperature(c.y, world.gen.surface_y(c.x))
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):

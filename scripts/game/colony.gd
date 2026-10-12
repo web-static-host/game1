@@ -167,6 +167,9 @@ var _full_warned := {}
 var game_time := 0.0
 ## Когда житель последний раз уходил из облака метана: id -> время игры.
 var _fled := {}
+## Когда последний раз сообщали о газовой тревоге на стройке: id -> время игры.
+var _gas_logged := {}
+const GAS_LOG_EVERY := 300.0
 ## Когда последний раз посылали жителя на разведку за сырьём (время игры).
 var _scout_at := -100.0
 ## Прогресс оффлайн-работ без своего места хранения (ходки за материалами, ремонт).
@@ -596,7 +599,10 @@ func gas_stop(p: Project) -> void:
 	p.paused = true
 	p.hazard_pending = "methane"
 	p.blocked = HAZARD_TEXT["methane"]
-	_log("%s: %s" % [p.title(), p.blocked], "danger")
+	# Газ то копится, то уходит — не засыпаем сообщениями: о стройке не чаще раза в 5 минут.
+	if game_time - float(_gas_logged.get(p.id, -1000.0)) > GAS_LOG_EVERY:
+		_log("%s: %s" % [p.title(), p.blocked], "danger")
+	_gas_logged[p.id] = game_time
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
@@ -1664,6 +1670,7 @@ func update(dt: float) -> void:
 		var step := minf(remaining, SUBSTEP)
 		remaining -= step
 		game_time += step
+		pathing.tick(step)
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
@@ -1733,8 +1740,13 @@ func _update_unit(u: Unit, dt: float) -> void:
 				u.fall_from = u.pos.y
 				return
 			u.retry -= dt
-			if u.retry <= 0.0 and not _assign(u):
-				u.retry = 1.5
+			if u.retry <= 0.0:
+				if _assign(u):
+					u.idle_fails = 0
+				else:
+					# Дела нет — ищем реже, чтобы толпа бездельников не грузила игру.
+					u.idle_fails += 1
+					u.retry = minf(1.5 + 0.75 * u.idle_fails, 5.0)
 		Unit.State.FALL:
 			u.pos.x = roundf(u.pos.x)
 			var k := Vector2i(roundi(u.pos.x), floori(u.pos.y))

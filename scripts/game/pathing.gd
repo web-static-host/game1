@@ -18,6 +18,15 @@ var interior: Dictionary
 var room_cells: Dictionary
 ## Настил мостов и пристаней: по нему ходят над водой.
 var deck: Dictionary
+## Кэш обходов: старт -> [parents, dist]. Сбрасывается, когда меняется порода или постройки,
+## и раз в CACHE_TIME секунд (вода течёт, это не отслеживаем).
+var _cache := {}
+var _cache_key := []
+var _cache_age := 0.0
+## Запомненные node() и passable() клеток — живут столько же, сколько кэш обходов.
+var _node_memo := {}
+var _pass_memo := {}
+const CACHE_TIME := 2.0
 
 
 func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
@@ -64,36 +73,78 @@ func node(c: Vector2i) -> bool:
 	return standable(c) and world.is_open(h.x, h.y)
 
 
+func _node_m(c: Vector2i) -> bool:
+	var v = _node_memo.get(c)
+	if v == null:
+		v = node(c)
+		_node_memo[c] = v
+	return v
+
+
+func _pass_m(c: Vector2i) -> bool:
+	var v = _pass_memo.get(c)
+	if v == null:
+		v = passable(c)
+		_pass_memo[c] = v
+	return v
+
+
 func neighbors(c: Vector2i) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for dx in [-1, 1]:
 		var side := c + Vector2i(dx, 0)
-		if node(side):
+		if _node_m(side):
 			out.append(side)
 		else:
 			var step_up := c + Vector2i(dx, -1)
-			if passable(c + UP * 2) and node(step_up):
+			if _pass_m(c + UP * 2) and _node_m(step_up):
 				out.append(step_up)
-			elif passable(c + UP * 2) and passable(c + UP * 3) and node(c + Vector2i(dx, -2)):
+			elif _pass_m(c + UP * 2) and _pass_m(c + UP * 3) and _node_m(c + Vector2i(dx, -2)):
 				# Уступ в 2 м — залезают.
 				out.append(c + Vector2i(dx, -2))
 			var step_down := c + Vector2i(dx, 1)
-			if passable(side) and node(step_down):
+			if _pass_m(side) and _node_m(step_down):
 				out.append(step_down)
-			elif passable(side) and passable(side + DOWN) and node(c + Vector2i(dx, 2)):
+			elif _pass_m(side) and _pass_m(side + DOWN) and _node_m(c + Vector2i(dx, 2)):
 				# Спрыгивают с уступа в 2 м.
 				out.append(c + Vector2i(dx, 2))
 	var up := c + UP
-	if climbable(c) and node(up):
+	if climbable(c) and _node_m(up):
 		out.append(up)
 	var down := c + DOWN
-	if climbable(down) and node(down):
+	if climbable(down) and _node_m(down):
 		out.append(down)
 	return out
 
 
 ## Обход в ширину от start. Возвращает [parents: Dictionary, dist: Dictionary].
 func explore(start: Vector2i) -> Array:
+	var key := [world.revision, interior.size(), room_cells.size(), deck.size()]
+	if key != _cache_key:
+		clear_cache()
+		_cache_key = key
+	if _cache.has(start):
+		return _cache[start]
+	var out := _explore(start)
+	_cache[start] = out
+	return out
+
+
+## Время идёт: старые обходы забываем.
+func tick(dt: float) -> void:
+	_cache_age += dt
+	if _cache_age >= CACHE_TIME:
+		_cache_age = 0.0
+		clear_cache()
+
+
+func clear_cache() -> void:
+	_cache.clear()
+	_node_memo.clear()
+	_pass_memo.clear()
+
+
+func _explore(start: Vector2i) -> Array:
 	var parents := {start: start}
 	var dist := {start: 0}
 	if not node(start):
