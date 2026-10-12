@@ -271,11 +271,15 @@ func _show_project(p: Project) -> void:
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void:
 			p.workers = v
 			hud.update_info_text(_project_text(p))))
-	elif p.kind == Project.Kind.ROOM:
-		if not p.ladder:
-			actions.append(["Лестница", func() -> void:
-				colony.add_ladder(p)
-				_show_project(p)])
+	if p.phase == Project.Phase.DONE:
+		actions.append(["Снести", func() -> void:
+			var err := colony.demolish_error(p)
+			if not err.is_empty():
+				hud.log_event(err, "warning")
+				return
+			colony.demolish(p)
+			_select(null, null)])
+	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		if p.purpose == RoomType.STORAGE:
 			controls.append(_storage_checks(p))
 		# Готовая комната: выбор назначения.
@@ -363,8 +367,7 @@ func _project_text(p: Project, preview_purpose := -1) -> String:
 				lines.append("Фермеров: %d из %d мест" % [colony.workers_on(p), RoomType.farm_slots(p)])
 			RoomType.DINING:
 				lines.append("Еда здесь сытнее и поднимает настроение")
-		if not p.ladder:
-			lines.append("Лестницы нет: на эту комнату нельзя ставить второй этаж (%s)" % _cost_text(RoomType.ladder_cost(p)))
+		lines.append("Этажей сверху выдержит: %d (стены: %s)" % [Project.FLOORS_ABOVE.get(p.material, 1), p.material_name().to_lower()])
 		if preview_purpose > 0 and preview_purpose != p.purpose:
 			lines.append("Обустроить под «%s» (%s): %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose],
 				_cost_text(RoomType.equip_cost(preview_purpose, p))])
@@ -451,7 +454,17 @@ func _pending_text() -> String:
 	var r := _pending
 	var kind := _pending_kind
 	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
-	lines.append("Материалы на 2-м этапе: " + _cost_text(Project.cost_for(kind, r, _pending_material)))
+	var cost := Project.cost_for(kind, r, _pending_material)
+	var support := colony.support_needed(kind, r)
+	if support > 0:
+		cost["wood"] = cost.get("wood", 0) + support
+	lines.append("Материалы на 2-м этапе: " + _cost_text(cost))
+	if support > 0:
+		var span: Array = colony.ceiling_span(r)
+		lines.append("Потолок из «%s» держит без опор %d м — в цене крепь: +%d дерева" % [
+			Mat.name_of(span[1]).to_lower(), span[0], support])
+	for lower in colony.ladders_needed(r):
+		lines.append("+ лестница в нижнем здании: " + _cost_text(RoomType.ladder_cost(lower)))
 	if kind == Project.Kind.TUNNEL:
 		var lanes := Colony.tunnel_lanes(r)
 		lines.append("Пропускная способность: %d %s" % [lanes, "поток" if lanes == 1 else "потока"])
@@ -460,6 +473,7 @@ func _pending_text() -> String:
 	lines.append("Рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults()))
 	if not colony.has_access(r):
 		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
+	lines.append("Без крепи выработка держится, пока идут работы; простой дольше 3 мин — риск обвала.")
 	return "\n".join(lines)
 
 

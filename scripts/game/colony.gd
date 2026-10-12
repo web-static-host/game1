@@ -39,6 +39,9 @@ const PREGNANCY_TIME := 900.0
 
 var world: WorldData
 var pathing: Pathing
+var physics: Physics
+## Идёт оффлайн-расчёт (без анимаций и гибели).
+var offline := false
 var units: Array[Unit] = []
 var projects: Array[Project] = []
 var inventory := {}
@@ -68,6 +71,7 @@ var _full_warned := {}
 func _init(p_world: WorldData) -> void:
 	world = p_world
 	pathing = Pathing.new(world, interior, room_cells)
+	physics = Physics.new(self)
 	rng.seed = world.gen.world_seed + 12345
 
 
@@ -196,10 +200,81 @@ func validate(kind: int, r: Rect2i) -> String:
 				or Mat.is_solid(world.get_mat(below.x, below.y))
 			if not ok:
 				return "Комнате не на что опереться — нужен грунт или постройка снизу"
-			# Второй этаж: в нижнем здании нужна лестница наверх.
-			var lower := project_at(below)
-			if lower != null and lower.kind == Project.Kind.ROOM and not lower.ladder:
-				return "В нижнем здании нет лестницы — выберите его и нажмите «Лестница»"
+		var floors_err := _floors_error(r)
+		if not floors_err.is_empty():
+			return floors_err
+		# Пролёт под землёй ограничен прочностью породы потолка: шире — нужна крепь,
+		# втрое шире — не удержать ничем.
+		var span := ceiling_span(r)
+		if r.size.x > span[0] * 3:
+			return "Потолок из породы «%s» не удержать даже с крепью: здесь не шире %d м" % [
+				Mat.name_of(span[1]).to_lower(), span[0] * 3]
+	return ""
+
+
+## [допустимый пролёт без крепи, самая слабая порода потолка] для комнаты r.
+func ceiling_span(r: Rect2i) -> Array:
+	var limit := 1 << 20
+	var weakest := Mat.AIR
+	for x in range(r.position.x, r.end.x):
+		var cy := r.position.y - 1
+		if cy < world.gen.surface_y(x):
+			continue
+		var m := world.get_mat(x, cy)
+		if Mat.is_solid(m) and not Mat.is_loose(m) and not interior.has(Vector2i(x, cy)):
+			var lim := span_limit(m, Vector2i(x, cy))
+			if lim < limit:
+				limit = lim
+				weakest = m
+	return [limit, weakest]
+
+
+## Дерево на дополнительную крепь для комнаты r (0 — порода держит сама).
+func support_needed(kind: int, r: Rect2i) -> int:
+	if kind != Project.Kind.ROOM:
+		return 0
+	var span: Array = ceiling_span(r)
+	return maxi(0, r.size.x - span[0]) * r.size.y
+
+
+## Наибольший пролёт без крепи для породы m на глубине клетки c.
+func span_limit(m: int, c: Vector2i) -> int:
+	var depth := c.y - world.gen.surface_y(c.x)
+	var k := clampf(1.0 - depth / 8000.0, 0.4, 1.0)
+	return maxi(2, roundi(Mat.max_span(m) * k))
+
+
+## Комнаты прямо под зоной (по всей ширине).
+func rooms_below(r: Rect2i) -> Array[Project]:
+	var out: Array[Project] = []
+	for x in range(r.position.x, r.end.x):
+		var p := project_at(Vector2i(x, r.end.y))
+		if p != null and p.kind == Project.Kind.ROOM and not out.has(p):
+			out.append(p)
+	return out
+
+
+## Выдержат ли нижние этажи ещё один сверху.
+func _floors_error(r: Rect2i) -> String:
+	var chain := rooms_below(r)
+	var level := 1
+	var seen := {}
+	while not chain.is_empty():
+		var next: Array[Project] = []
+		for p in chain:
+			if seen.has(p.id):
+				continue
+			seen[p.id] = true
+			if p.phase != Project.Phase.DONE:
+				return "Нижнее здание ещё не достроено или обустраивается"
+			var allowed: int = Project.FLOORS_ABOVE.get(p.material, 1)
+			if level > allowed:
+				return "%s стены не выдержат %d эт. сверху (максимум %d) — нужен материал прочнее" % [
+					{"wood": "Деревянные", "clay": "Глиняные", "stone": "Каменные"}.get(p.material, "Эти"), level, allowed]
+			for q in rooms_below(p.rect):
+				next.append(q)
+		chain = next
+		level += 1
 	return ""
 
 
@@ -264,17 +339,34 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 	p.material = material if kind == Project.Kind.ROOM else "wood"
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
+	p.support_wood = support_needed(kind, r)
 	# Деревья, кусты и валуны на месте стройки убираются на этапе 1 — как ресурс.
 	for x in features_in(r):
 		p.clear_x.append(x)
 		world.set_feature_mark(x, true)
 	projects.append(p)
+	# Надстройка: в нижнем здании автоматически строится лестница наверх.
+	if kind == Project.Kind.ROOM:
+		for lower in rooms_below(r):
+			if not lower.ladder:
+				add_ladder(lower)
 	_check_phase(p)
 	return p
 
 
+## Лестницы, которые придётся добавить при надстройке (для подсказки цены).
+func ladders_needed(r: Rect2i) -> Array[Project]:
+	var out: Array[Project] = []
+	for lower in rooms_below(r):
+		if not lower.ladder:
+			out.append(lower)
+	return out
+
+
 func set_paused(p: Project, on: bool) -> void:
 	p.paused = on
+	if not on:
+		p.exposed_t = 0.0
 	if not on and p.blocked.begins_with("В зоне"):
 		_check_liquids(p)
 	_log("%s: %s" % [p.title(), "пауза" if on else "работы возобновлены"], "info")
@@ -296,6 +388,50 @@ func cancel_project(p: Project) -> void:
 		if u.project_id == p.id:
 			_drop(u)
 	_log("%s отменена" % p.title(), "info")
+	physics.check_area(p.cells())
+
+
+## Можно ли снести постройку (сверху ничего не стоит).
+func demolish_error(p: Project) -> String:
+	if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
+		return "Снести можно только готовую постройку — идущую стройку отмените"
+	for q in projects:
+		if q == p or q.kind != Project.Kind.ROOM:
+			continue
+		if q.rect.end.y == p.rect.position.y and q.rect.position.x < p.rect.end.x and q.rect.end.x > p.rect.position.x:
+			return "Сначала снесите то, что стоит сверху"
+	return ""
+
+
+## Сносит готовую постройку: возвращает половину затраченных материалов.
+func demolish(p: Project) -> bool:
+	if not demolish_error(p).is_empty():
+		return false
+	var spent := p.cost()
+	if p.purpose != RoomType.NONE:
+		var eq := RoomType.equip_cost(p.purpose, p)
+		for k in eq:
+			spent[k] = spent.get(k, 0) + eq[k]
+	_refund(spent, 0.5)
+	_release_beds(p)
+	projects.erase(p)
+	for c in p.cells():
+		room_cells.erase(c)
+		interior.erase(c)
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	_log("%s снесена, возвращено: %s" % [p.title(), _cost_line(spent, 0.5)], "info")
+	physics.check_area(p.cells())
+	return true
+
+
+func _cost_line(cost: Dictionary, part: float) -> String:
+	var parts: PackedStringArray = []
+	for k in cost:
+		parts.append("%s %d" % [Mat.resource_name(k).to_lower(), int(floor(cost[k] * part))])
+	return ", ".join(parts)
 
 
 func _refund(cost: Dictionary, part: float) -> void:
@@ -382,6 +518,7 @@ func _try_pay(p: Project) -> void:
 		inventory[k] -= cost[k]
 	if p.phase == Project.Phase.BUILD:
 		p.paid = true
+		p.exposed_t = 0.0
 	else:
 		p.equip_paid = true
 	p.blocked = ""
@@ -639,6 +776,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 			_log("Выброс метана на глубине %s! Нужна вентиляция." % _depth_text(c), "danger")
 		Mat.Hazard.WATER:
 			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning")
+	physics.on_opened(c)
 	for other in projects:
 		if other.phase == Project.Phase.DIG:
 			_check_phase(other)
@@ -660,13 +798,87 @@ func _note_discovery(m: int, c: Vector2i) -> void:
 		_log("Новая находка: %s на глубине %s!" % [Mat.name_of(m), _depth_text(c)], "good")
 
 
+# --- Физика: осыпи, обвалы, травмы ------------------------------------------------------
+
+var _last_slide_ms := -100000
+
+
+func on_slide(c: Vector2i, moved: int, m: int) -> void:
+	# Осыпи частые — сообщаем не чаще раза в 5 секунд и не в оффлайне.
+	var now := Time.get_ticks_msec()
+	if offline or now - _last_slide_ms < 5000:
+		return
+	_last_slide_ms = now
+	_log("Осыпь: %s засыпал выработку (%d м³, глубина %s)" % [Mat.name_of(m).to_lower(), moved, _depth_text(c)], "warning")
+
+
+func on_collapse(c: Vector2i, span: int, limit: int, m: int) -> void:
+	_log("ОБВАЛ на глубине %s: потолок из «%s» не выдержал пролёт %d м (держит %d м без крепи)" % [
+		_depth_text(c), Mat.name_of(m).to_lower(), span, limit], "danger")
+
+
+## Порода упала из src в land: задевает жителей по пути, засыпает стройку.
+func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
+	dig_progress.erase(land)
+	for u: Unit in units.duplicate():
+		var c := u.cell()
+		if c.x == land.x and (c == land or c + Vector2i(0, -1) == land or (c.y >= src.y and c.y <= land.y)):
+			injure(u, 45.0, "придавило породой")
+	var p := project_at(land)
+	if p != null and p.phase == Project.Phase.BUILD:
+		# Выработку засыпало — копать заново.
+		p.phase = Project.Phase.DIG
+		for cc in p.cells():
+			room_cells.erase(cc)
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+
+
+func injure(u: Unit, dmg: float, why: String) -> void:
+	u.health -= dmg
+	if u.health > 0.0:
+		_log("%s: %s, здоровье %d%%" % [u.name, why, roundi(u.health)], "danger")
+		return
+	if offline:
+		# Пока игрока нет, жители не гибнут — только тяжело ранены.
+		u.health = 1.0
+		_log("%s: %s, тяжело ранен(а)" % [u.name, why], "danger")
+		return
+	_kill(u, why)
+
+
+func _kill(u: Unit, why: String) -> void:
+	_drop(u)
+	units.erase(u)
+	for o in units:
+		if o.partner_id == u.id:
+			o.partner_id = 0
+	_log("%s погиб(ла): %s" % [u.name, why], "danger")
+
+
+func _tick_exposure(dt: float) -> void:
+	for p: Project in projects.duplicate():
+		var idle := p.paused or (p.phase == Project.Phase.BUILD and not p.paid)
+		if (p.phase != Project.Phase.DIG and p.phase != Project.Phase.BUILD) or not idle:
+			p.exposed_t = 0.0
+			continue
+		var before := p.exposed_t
+		p.exposed_t += dt
+		if before < Physics.GRACE * 0.5 and p.exposed_t >= Physics.GRACE * 0.5:
+			_log("%s простаивает без крепи — может обвалиться" % p.title(), "warning")
+		if before < Physics.GRACE and p.exposed_t >= Physics.GRACE:
+			physics.check_area(p.cells())
+
+
 # --- Жизнь: потребности, взросление, семьи ---------------------------------------------
 
 func _life_tick(dt: float, offline: bool) -> void:
-	for u in units.duplicate():
+	for u: Unit in units.duplicate():
 		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt)
 		if u.task != Unit.Task.SLEEP:
 			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
+		u.health = minf(100.0, u.health + dt * (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0))
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
 			var portion := 2 if u.child else 1
@@ -747,9 +959,11 @@ func update(dt: float) -> void:
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
+		_tick_exposure(step)
 		_life_tick(step, false)
-		for u in units:
+		for u: Unit in units.duplicate():
 			_update_unit(u, step)
+	physics.update(dt)
 
 
 func _update_unit(u: Unit, dt: float) -> void:
@@ -1136,6 +1350,7 @@ func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary, only: Array = 
 ## Упрощённая модель: жители не ходят, а сразу работают с меньшей эффективностью
 ## (часть времени уходит на сон и еду). Возвращает число выкопанных клеток.
 func advance_offline(dt: float) -> int:
+	offline = true
 	for u in units:
 		_drop(u)
 	var dug_before := cells_dug
@@ -1168,6 +1383,7 @@ func advance_offline(dt: float) -> int:
 			step = minf(step, _offline_left(key, jobs[key]) / jobs[key][1])
 		step = maxf(step, 0.0)
 		remaining -= step
+		_tick_exposure(step)
 		_life_tick(step, true)
 		for u in units:
 			if u.task != Unit.Task.NONE:
@@ -1201,6 +1417,7 @@ func advance_offline(dt: float) -> int:
 					harvest_progress[x] = harvest_progress.get(x, 0.0) + j[1] * step
 					if harvest_progress[x] >= HARVEST_TIME.get(world.feature_at(x), 20.0) - 0.001:
 						_complete_harvest(x, j[2])
+	offline = false
 	return cells_dug - dug_before
 
 

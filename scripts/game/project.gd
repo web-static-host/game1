@@ -17,6 +17,8 @@ const MATERIALS := {
 	"clay": ["Глина", 1.2],
 	"stone": ["Камень", 1.5],
 }
+## Сколько этажей можно поставить сверху на комнату из материала.
+const FLOORS_ABOVE := {"wood": 1, "clay": 2, "stone": 4}
 
 var id := 0
 var kind := Kind.TUNNEL
@@ -49,6 +51,10 @@ var equip_ladder := false
 var clear_x: Array[int] = []
 ## Что хранит склад (пусто — всё).
 var store_filter: Array[String] = []
+## Сколько секунд выработка простаивает без крепи (пауза, ждёт материалы).
+var exposed_t := 0.0
+## Дополнительная крепь (дерево), если пролёт шире, чем держит порода.
+var support_wood := 0
 
 
 func title() -> String:
@@ -110,7 +116,10 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 
 
 func cost() -> Dictionary:
-	return cost_for(kind, rect, material)
+	var c := cost_for(kind, rect, material)
+	if support_wood > 0:
+		c["wood"] = c.get("wood", 0) + support_wood
+	return c
 
 
 func build_work() -> float:
@@ -168,6 +177,8 @@ func to_dict() -> Dictionary:
 		"equip_ladder": equip_ladder,
 		"clear_x": clear_x,
 		"store_filter": store_filter,
+		"exposed_t": exposed_t,
+		"support_wood": support_wood,
 	}
 
 
@@ -198,4 +209,6 @@ static func from_dict(d: Dictionary) -> Project:
 		p.clear_x.append(int(x))
 	for k in d.get("store_filter", []):
 		p.store_filter.append(str(k))
+	p.exposed_t = float(d.get("exposed_t", 0.0))
+	p.support_wood = int(d.get("support_wood", 0))
 	return p

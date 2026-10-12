@@ -72,6 +72,8 @@ func _draw_needs(u: Unit, p: Vector2) -> void:
 		icons.append(Color(0.4, 0.55, 0.95))
 	if u.pregnancy >= 0.0:
 		icons.append(Color(1.0, 0.6, 0.75))
+	if u.health < 50.0:
+		icons.append(Color(1.0, 1.0, 1.0))
 	for i in icons.size():
 		var c := p + Vector2((i - (icons.size() - 1) * 0.5) * 14, 0)
 		draw_circle(c, 6, Color(0, 0, 0, 0.5))

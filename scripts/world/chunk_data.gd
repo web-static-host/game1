@@ -17,6 +17,8 @@ var mat := PackedByteArray()
 var flags := PackedByteArray()
 ## Чанк отличается от сгенерированного — его нужно сохранять.
 var modified := false
+## Изменились сами материалы (осыпь, обломки) — сохраняем и их.
+var mat_modified := false
 
 
 func _init(p_cx: int, p_cy: int) -> void:

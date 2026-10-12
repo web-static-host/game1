@@ -33,6 +33,8 @@ var look := 0.0
 ## Потребности 0..100.
 var energy := 100.0
 var satiety := 100.0
+## Здоровье 0..100: травмы от обвалов, восстанавливается отдыхом.
+var health := 100.0
 var profession := Prof.ANY
 ## Возраст в секундах игры (для детей), дети не работают.
 var child := false
@@ -100,6 +102,8 @@ func need_factor() -> float:
 		f *= 0.6
 	if mood() < 30.0:
 		f *= 0.85
+	if health < 50.0:
+		f *= 0.7
 	return f
 
 
@@ -112,7 +116,10 @@ func status_text() -> String:
 		who = "%s, вырастет через %s, ест вдвое больше" % [
 			"малыш" if age < CHILD_TIME * 0.5 else "подросток", Fmt.duration(CHILD_TIME - age)]
 	var lines: PackedStringArray = ["%s (%s) — %s" % [name, who, TASK_NAMES[task]]]
-	lines.append("Сытость %d%% · бодрость %d%% · настроение %d%%" % [roundi(satiety), roundi(energy), roundi(mood())])
+	var needs := "Сытость %d%% · бодрость %d%% · настроение %d%%" % [roundi(satiety), roundi(energy), roundi(mood())]
+	if health < 99.5:
+		needs += " · здоровье %d%%" % roundi(health)
+	lines.append(needs)
 	if not child:
 		lines.append(" · ".join(parts))
 	var extra: PackedStringArray = []
@@ -128,6 +135,7 @@ func to_dict() -> Dictionary:
 		"id": id, "name": name, "sex": sex, "pos": [pos.x, pos.y], "skills": skills, "look": look,
 		"energy": energy, "satiety": satiety, "profession": profession, "child": child, "age": age,
 		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index,
+		"health": health,
 	}
 
 
@@ -151,4 +159,5 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.pregnancy = float(d.get("pregnancy", -1.0))
 	u.bed_room = int(d.get("bed_room", 0))
 	u.bed_index = int(d.get("bed_index", 0))
+	u.health = float(d.get("health", 100.0))
 	return u

@@ -45,6 +45,14 @@ func _draw() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
 	_draw_dig_progress()
+	# Падающая порода.
+	for f in colony.physics.fx:
+		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
+		var pos: Vector2 = (f[0] as Vector2).lerp(f[1], t * t)
+		var px := view.cell_to_local(Vector2i.ZERO) + pos * TILE
+		var col := ChunkView.rock_color(f[2], 0.5)
+		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col)
+		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col.darkened(0.3), false, 2.0)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
 		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)

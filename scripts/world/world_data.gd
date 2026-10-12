@@ -13,6 +13,8 @@ var gen: WorldGen
 var chunks := {}
 ## Сохранённые флаги чанков, которые ещё не загружены: Vector2i -> PackedByteArray
 var pending_flags := {}
+## Сохранённые материалы изменённых чанков (осыпи, обвалы): Vector2i -> PackedByteArray
+var pending_mats := {}
 ## Чанки, которые нужно перерисовать: Vector2i -> true
 var dirty := {}
 ## Собранные объекты поверхности: x -> true
@@ -42,6 +44,11 @@ func get_chunk(cx: int, cy: int) -> ChunkData:
 			c.flags = pending_flags[key]
 			c.modified = true
 			pending_flags.erase(key)
+		if pending_mats.has(key):
+			c.mat = pending_mats[key]
+			c.modified = true
+			c.mat_modified = true
+			pending_mats.erase(key)
 		chunks[key] = c
 	return c
 
@@ -136,6 +143,17 @@ func reveal(x: int, y: int) -> bool:
 	return _set_flags(x, y, ChunkData.F_REVEALED)
 
 
+## Кладёт материал в клетку (осыпь, обломки): клетка снова твёрдая и видимая.
+func set_material(x: int, y: int, m: int) -> void:
+	var c := _chunk_at(x, y)
+	var i := ChunkData.idx(x & MASK, y & MASK)
+	c.mat[i] = m
+	c.flags[i] = (c.flags[i] & ~(ChunkData.F_DUG | ChunkData.F_CAVE)) | ChunkData.F_REVEALED
+	c.modified = true
+	c.mat_modified = true
+	_touch(x, y)
+
+
 func set_dug(x: int, y: int) -> void:
 	_set_flags(x, y, ChunkData.F_DUG | ChunkData.F_REVEALED)
 
@@ -192,7 +210,19 @@ func evict_outside(keep: Rect2i) -> void:
 		var c: ChunkData = chunks[key]
 		if c.modified:
 			pending_flags[key] = c.flags
+		if c.mat_modified:
+			pending_mats[key] = c.mat
 		chunks.erase(key)
+
+
+## Изменённые материалы чанков (загруженные и нет): Vector2i -> PackedByteArray.
+func modified_mats() -> Dictionary:
+	var out := pending_mats.duplicate()
+	for key in chunks:
+		var c: ChunkData = chunks[key]
+		if c.mat_modified:
+			out[key] = c.mat
+	return out
 
 
 ## Все изменённые чанки (загруженные и нет): Vector2i -> PackedByteArray флагов.

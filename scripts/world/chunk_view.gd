@@ -8,9 +8,9 @@ const SIZE := ChunkData.SIZE
 const TILE := 32.0
 const ROUND := 11.0
 ## Толщина почвенного слоя вдоль сглаженной поверхности, в клетках.
-const SOIL_BAND := 1.4
+const SOIL_BAND := 0.5
 ## Насколько глубоко (в долях клетки) видна порода от края выработки.
-const FADE := 0.6
+const FADE := 0.5
 const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-2, 0), Vector2i(2, 0)]
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.36, 0.62, 0.27)
@@ -62,16 +62,6 @@ static func fog_color(depth: int, v: float) -> Color:
 	return c.lightened((v - 0.5) * 0.08) if v >= 0.5 else c.darkened((0.5 - v) * 0.08)
 
 
-## Цвет породы с яркостью, подтянутой к окружающей земле: у выработки виден
-## оттенок породы, но без «свечения» светлых пород на тёмном фоне.
-static func match_luma(base: Color, fog: Color) -> Color:
-	var lb := base.get_luminance()
-	if lb <= 0.001:
-		return base
-	var k := lerpf(1.0, fog.get_luminance() * 1.15 / lb, 0.75)
-	return Color(clampf(base.r * k, 0, 1), clampf(base.g * k, 0, 1), clampf(base.b * k, 0, 1), base.a)
-
-
 static func rock_color(m: int, v: float) -> Color:
 	var c := Mat.color(m)
 	if Mat.is_ore(m):
@@ -120,7 +110,10 @@ func _draw() -> void:
 			var y := y0 + ly
 			if y < surf:
 				if not line.is_zero_approx() and y + 1 > minf(line.x, line.z):
-					_draw_clipped(lx, ly, line, soil)
+					var sr := Rect2(lx * TILE, ly * TILE, TILE, TILE)
+					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)))
+					for poly in Geometry2D.intersect_polygons(_band_poly(lx, ly, line), _rect_poly(sr)):
+						draw_colored_polygon(poly, soil)
 				continue # небо рисует фон
 			var i := ChunkData.idx(lx, ly)
 			var f := chunk.flags[i]
@@ -129,12 +122,14 @@ func _draw() -> void:
 			var r := Rect2(lx * TILE, ly * TILE, TILE, TILE)
 			var depth := y - surf
 			if y < band_to and f & ChunkData.F_DUG == 0 and Mat.is_solid(m):
-				var col := rock_color(m, v) if f & ChunkData.F_REVEALED else fog_color(depth, v)
-				_draw_clipped(lx, ly, line, col)
-				# Почвенный слой постоянной толщины вдоль поверхности скрывает ступеньки.
+				# Что под травой — неизвестно: видна только полоса почвы в полблока.
+				_draw_clipped(lx, ly, line, fog_color(depth, v))
 				var band := _band_poly(lx, ly, line)
 				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
 					draw_colored_polygon(poly, soil)
+				if f & ChunkData.F_REVEALED:
+					_half_strips(lx, ly, r, rock_color(m, v), _is_hole(lx - 1, ly), _is_hole(lx + 1, ly),
+						_is_hole(lx, ly - 1), _is_hole(lx, ly + 1))
 				if y == surf:
 					_draw_smooth_grass(lx, ly, line, x)
 				continue
@@ -215,14 +210,13 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	var fog := fog_color(y - surf, v)
 	if faded:
 		draw_rect(r, fog)
-		_fade_edges(lx, ly, r, match_luma(base, fog), open_l, open_r, open_u, open_d)
+		_half_strips(lx, ly, r, base, open_l, open_r, open_u, open_d)
 	elif mask == 0:
 		draw_rect(r, base)
 	else:
 		# Выступ между выработками: приглушённый, как и остальная порода у края.
-		var pts := _rounded_rect(r, mask)
-		draw_colored_polygon(pts, fog)
-		draw_colored_polygon(pts, Color(match_luma(base, fog), 0.45))
+		# Выступ, открытый с двух сторон, виден целиком.
+		draw_colored_polygon(_rounded_rect(r, mask), base)
 
 	# Тени по краям, обращённым к пустоте.
 	var shade := base.darkened(0.28)
@@ -456,30 +450,30 @@ static func _rect_poly(r: Rect2) -> PackedVector2Array:
 	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
 
 
-## Градиент от цвета породы у открытой стороны к темноте вглубь.
-func _fade_edges(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool) -> void:
+## Полоса породы в полблока у открытых сторон, дальше — неразведанная земля.
+func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool) -> void:
 	var f := FADE * TILE
-	var clear := Color(base, 0.0)
 	var p := r.position
 	var e := r.end
 	if l:
-		draw_polygon(PackedVector2Array([p, Vector2(p.x + f, p.y), Vector2(p.x + f, e.y), Vector2(p.x, e.y)]),
-			PackedColorArray([base, clear, clear, base]))
+		draw_rect(Rect2(p.x, p.y, f, TILE), base)
 	if rt:
-		draw_polygon(PackedVector2Array([Vector2(e.x - f, p.y), Vector2(e.x, p.y), e, Vector2(e.x - f, e.y)]),
-			PackedColorArray([clear, base, base, clear]))
+		draw_rect(Rect2(e.x - f, p.y, f, TILE), base)
 	if u:
-		draw_polygon(PackedVector2Array([p, Vector2(e.x, p.y), Vector2(e.x, p.y + f), Vector2(p.x, p.y + f)]),
-			PackedColorArray([base, base, clear, clear]))
+		draw_rect(Rect2(p.x, p.y, TILE, f), base)
 	if d:
-		draw_polygon(PackedVector2Array([Vector2(p.x, e.y - f), Vector2(e.x, e.y - f), e, Vector2(p.x, e.y)]),
-			PackedColorArray([clear, clear, base, base]))
-	# Открыт только угол по диагонали — веер из угла.
+		draw_rect(Rect2(p.x, e.y - f, TILE, f), base)
+	# Открыт только угол по диагонали — четверть клетки.
 	for c: Vector2i in CORNERS:
 		var side_x := l if c.x < 0 else rt
 		var side_y := u if c.y < 0 else d
 		if side_x or side_y or not _is_open(lx + c.x, ly + c.y):
 			continue
-		var corner := Vector2(p.x if c.x < 0 else e.x, p.y if c.y < 0 else e.y)
-		draw_polygon(PackedVector2Array([corner, corner + Vector2(-c.x * f, 0), corner + Vector2(0, -c.y * f)]),
-			PackedColorArray([base, clear, clear]))
+		var corner := Vector2(p.x if c.x < 0 else e.x - f, p.y if c.y < 0 else e.y - f)
+		draw_rect(Rect2(corner, Vector2(f, f)), base)
+
+
+## Выработка или пещера (не небо).
+func _is_hole(lx: int, ly: int) -> bool:
+	var f := _flags_at(lx, ly)
+	return f >= 0 and f & (ChunkData.F_DUG | ChunkData.F_CAVE) != 0 and _is_open(lx, ly)

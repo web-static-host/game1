@@ -12,8 +12,14 @@ static func serialize(world: WorldData, colony: Colony, camera_cell: Vector2i) -
 	for key in flags_by_chunk:
 		var raw: PackedByteArray = flags_by_chunk[key]
 		chunks["%d,%d" % [key.x, key.y]] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
+	var mats := {}
+	var mats_by_chunk := world.modified_mats()
+	for key in mats_by_chunk:
+		var raw: PackedByteArray = mats_by_chunk[key]
+		mats["%d,%d" % [key.x, key.y]] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
 	return {
 		"version": VERSION,
+		"mats": mats,
 		"seed": world.gen.world_seed,
 		"saved_at": Time.get_unix_time_from_system(),
 		"camera": [camera_cell.x, camera_cell.y],
@@ -58,6 +64,13 @@ static func apply(data: Dictionary, world: WorldData, colony: Colony) -> void:
 		var raw := Marshalls.base64_to_raw(chunks[k]).decompress(size, FileAccess.COMPRESSION_DEFLATE)
 		if raw.size() == size:
 			world.pending_flags[key] = raw
+	var mats: Dictionary = data.get("mats", {})
+	for k in mats:
+		var parts: PackedStringArray = k.split(",")
+		var key := Vector2i(int(parts[0]), int(parts[1]))
+		var raw := Marshalls.base64_to_raw(mats[k]).decompress(size, FileAccess.COMPRESSION_DEFLATE)
+		if raw.size() == size:
+			world.pending_mats[key] = raw
 	for x in data.get("removed_features", []):
 		world.removed_features[int(x)] = true
 	for x in data.get("feature_marks", []):

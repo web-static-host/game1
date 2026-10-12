@@ -24,6 +24,7 @@ func _initialize() -> void:
 	test_tunnel_throughput()
 	test_professions()
 	test_build_rules_v2()
+	test_physics()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -165,7 +166,7 @@ func test_offline_build() -> void:
 	check(shaft != null and room != null, "стройки заложены")
 	var wood_before: int = colony.inventory["wood"]
 	var dug := colony.advance_offline(20000.0)
-	check(dug == 6 + 12, "выкопаны шахта и комната (%d)" % dug)
+	check(dug >= 6 + 12, "выкопаны шахта и комната, с учётом осыпей (%d)" % dug)
 	check(shaft.phase == Project.Phase.DONE and room.phase == Project.Phase.DONE, "обе стройки завершены")
 	check(colony.inventory["wood"] < wood_before + 20, "дерево потрачено на стройку")
 	check(not room.found.is_empty(), "при копке найдены ресурсы")
@@ -305,7 +306,11 @@ func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 	colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "clay": 55}
 	var s := w.gen.surface_y(x)
 	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
-	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x + 1, s + 3, width, 3))
+	var rr := Rect2i(x + 1, s + 3, width, 3)
+	var err := colony.validate(Project.Kind.ROOM, rr)
+	if not err.is_empty():
+		printerr("  комната не заложена: ", err)
+	var room := colony.create_project(Project.Kind.ROOM, rr)
 	colony.advance_offline(30000.0)
 	if purpose >= 0:
 		colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "food": 50}
@@ -382,9 +387,30 @@ func test_needs_realtime() -> void:
 
 
 func test_family() -> void:
-	var res := _colony_with_room(25, RoomType.HOME, 16)
+	var res := _colony_with_room(25, RoomType.HOME, 8)
 	var colony: Colony = res[0]
-	check(colony.beds_total() == 7, "в жилой 16×3 семь кроватей")
+	# Второй дом на поверхности — чтобы кроватей было больше, чем жителей.
+	var w := colony.world
+	var hx := 0
+	for tx in range(40, 400):
+		var ts := w.gen.surface_y(tx)
+		var flat := true
+		for dx in range(-1, 10):
+			if w.gen.surface_y(tx + dx) != ts:
+				flat = false
+		if flat:
+			hx = tx
+			break
+	colony.inventory = {"wood": 50, "stone": 50, "food": 50}
+	var house_rect := Rect2i(hx, w.gen.surface_y(hx) - 3, 8, 3)
+	var house_err := colony.validate(Project.Kind.ROOM, house_rect)
+	check(house_err.is_empty(), "дом на поверхности можно заложить: " + house_err)
+	var house := colony.create_project(Project.Kind.ROOM, house_rect)
+	colony.advance_offline(8000.0)
+	colony.inventory = {"wood": 50, "stone": 50, "food": 50}
+	colony.set_purpose(house, RoomType.HOME)
+	colony.advance_offline(3000.0)
+	check(colony.beds_total() >= 7, "кроватей больше, чем жителей (%d)" % colony.beds_total())
 	var before := colony.units.size()
 	var pairs := 0
 	for i in 20:
@@ -464,11 +490,13 @@ func test_build_rules_v2() -> void:
 	check(colony.known_resources.has("wood") and colony.inventory["wood"] > wood_before - house.cost()["wood"], "срубленное дерево пошло в запас")
 	# Второй этаж — только с лестницей в нижнем.
 	var upper := Rect2i(tree - 1, ts - 6, 4, 3)
-	check(colony.validate(Project.Kind.ROOM, upper).begins_with("В нижнем здании нет лестницы"), "без лестницы второй этаж нельзя")
-	check(colony.add_ladder(house), "лестница заложена")
-	colony.advance_offline(5000.0)
-	check(house.ladder, "лестница построена")
-	check(colony.validate(Project.Kind.ROOM, upper).is_empty(), "с лестницей второй этаж можно")
+	check(colony.ladders_needed(upper) == [house], "для второго этажа нужна лестница внизу")
+	colony.inventory = {"wood": 40, "stone": 40}
+	var top := colony.create_project(Project.Kind.ROOM, upper)
+	check(top != null and house.phase == Project.Phase.EQUIP and house.equip_ladder, "лестница в нижнем здании заложена автоматически")
+	colony.advance_offline(8000.0)
+	check(house.ladder and top.phase == Project.Phase.DONE, "лестница и второй этаж построены")
+	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree - 1, ts - 9, 4, 3)).is_empty(), "на деревянный дом третий этаж нельзя")
 	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree + 3, ts - 6, 4, 3)).is_empty(), "висящий второй этаж нельзя")
 	# Отвал не ограничен, склад хранит выбранное.
 	colony._add("sand", 5000)
@@ -485,6 +513,104 @@ func test_build_rules_v2() -> void:
 	for i in 40:
 		colony.update(0.5)
 	check(colony.inventory["food"] == 8 or kid.satiety > 50.0 and colony.inventory["food"] <= 8, "ребёнок съел двойную порцию")
+
+
+## Глубокий участок гранита, где можно «вырезать» сценарий руками.
+func _granite_spot(colony: Colony) -> Vector2i:
+	var w := colony.world
+	for x in range(0, 2000, 7):
+		var y := w.gen.surface_y(x) + 1500
+		var ok := true
+		for dy in range(-6, 4):
+			for dx in range(-8, 9):
+				var m := w.get_mat(x + dx, y + dy)
+				if m != Mat.GRANITE and m != Mat.GNEISS:
+					ok = false
+		if ok:
+			return Vector2i(x, y)
+	return Vector2i(0, 1500)
+
+
+func test_physics() -> void:
+	var colony := _new_colony(41)
+	var w := colony.world
+	var c := _granite_spot(colony)
+	# Сыпучее: песок над выкопанной клеткой осыпается вниз.
+	w.set_material(c.x, c.y - 2, Mat.SAND)
+	w.set_dug(c.x, c.y)
+	w.set_dug(c.x, c.y + 1)
+	w.set_dug(c.x, c.y - 1)
+	colony.physics.on_opened(c + Vector2i(0, -1))
+	check(w.get_mat(c.x, c.y + 1) == Mat.SAND, "песок осыпался на дно выработки")
+	check(w.is_open(c.x, c.y - 2), "на месте песка — пустота")
+	# Готовая постройка защищает: песок не сыплется в укреплённую клетку.
+	var d := c + Vector2i(4, 0)
+	w.set_material(d.x, d.y - 1, Mat.SAND)
+	w.set_dug(d.x, d.y)
+	colony.interior[d] = 999
+	colony.physics.on_opened(d)
+	check(w.get_mat(d.x, d.y - 1) == Mat.SAND and w.is_open(d.x, d.y), "крепь держит сыпучий грунт")
+	colony.interior.erase(d)
+	# Пролёт: под глиняным потолком пустота 7 м без крепи — обвал.
+	var e := c + Vector2i(-8, 6)
+	for x in range(e.x, e.x + 7):
+		w.set_material(x, e.y - 1, Mat.CLAY)
+		w.set_dug(x, e.y)
+		w.set_dug(x, e.y + 1)
+	check(colony.physics.check_span(Vector2i(e.x + 3, e.y + 1)), "широкий пролёт под глиной обрушился")
+	var rubble := 0
+	for x in range(e.x, e.x + 7):
+		if w.get_mat(x, e.y + 1) == Mat.RUBBLE:
+			rubble += 1
+	check(rubble == 7, "выработку засыпало обломками (%d)" % rubble)
+	# Узкий пролёт в граните держится.
+	var f := c + Vector2i(6, -4)
+	for x in range(f.x, f.x + 4):
+		w.set_dug(x, f.y)
+	check(not colony.physics.check_span(Vector2i(f.x + 1, f.y)), "4 м в граните держатся без крепи")
+	# Обломки ранят жителя.
+	colony.start_new(0)
+	var u := colony.units[0]
+	var g := c + Vector2i(-3, -4)
+	w.set_material(g.x, g.y - 1, Mat.GRAVEL)
+	w.set_dug(g.x, g.y)
+	w.set_dug(g.x, g.y + 1)
+	u.pos = Vector2(g.x, g.y)
+	colony.physics.on_opened(g)
+	check(u.health < 100.0, "житель ранен осыпью (%.0f)" % u.health)
+	# Простой стройки без крепи → обвал.
+	var colony2 := _new_colony(42)
+	colony2.inventory = {}
+	var c2 := _granite_spot(colony2)
+	var w2 := colony2.world
+	for x in range(c2.x - 6, c2.x + 6):
+		w2.set_material(x, c2.y - 1, Mat.CLAY)
+		w2.set_dug(x, c2.y)
+		w2.set_dug(x, c2.y + 1)
+	var p := Project.new()
+	p.id = 77
+	p.kind = Project.Kind.TUNNEL
+	p.rect = Rect2i(c2.x - 6, c2.y, 12, 2)
+	p.phase = Project.Phase.BUILD
+	colony2.projects.append(p)
+	colony2.update(10.0)
+	check(w2.is_open(c2.x, c2.y + 1), "пока стройка недолго ждёт материалы — держится")
+	colony2.update(Physics.GRACE + 5.0)
+	check(not w2.is_open(c2.x, c2.y + 1) and p.phase == Project.Phase.DIG, "долгий простой без крепи — обвал, копать заново")
+	# Снос: возвращается половина.
+	var colony3 := _new_colony(43)
+	var w3 := colony3.world
+	var x3 := _find_solid_column(w3)
+	colony3.start_new(x3)
+	colony3.inventory = {"wood": 40, "stone": 40}
+	var s3 := w3.gen.surface_y(x3)
+	var t := colony3.create_project(Project.Kind.TUNNEL, Rect2i(x3, s3, 1, 8))
+	colony3.advance_offline(20000.0)
+	check(t.phase == Project.Phase.DONE, "шахта построена")
+	var wood := int(colony3.inventory.get("wood", 0))
+	check(colony3.demolish(t), "шахта снесена")
+	check(int(colony3.inventory.get("wood", 0)) == wood + t.cost()["wood"] / 2, "вернулась половина дерева")
+	check(colony3.project_by_id(t.id) == null and not colony3.interior.has(Vector2i(x3, s3 + 2)), "постройки больше нет")
 
 
 func test_save_roundtrip() -> void:
