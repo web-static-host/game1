@@ -158,6 +158,7 @@ var explored_max := 0
 var deepest_y := 0
 var highest_y := 0
 var _explore_t := 0.0
+var _access_t := 0
 var _full_warned := {}
 ## Игровое время с начала колонии, сек.
 var game_time := 0.0
@@ -372,13 +373,59 @@ func water_rects(start_x: int, end_x: int) -> Dictionary:
 		right -= 1
 	out["bridge"] = Rect2i(left, row, right - left + 1, 1)
 	# Пристань: от ближайшего к началу берега, длиной как провели (3–10 м).
+	# Если до того берега жителям не дойти — от другого.
 	var length := clampi(absi(end_x - start_x) + 1, 3, 10)
-	if absi(start_x - left) <= absi(start_x - right):
-		out["pier"] = Rect2i(left, row, mini(length, right - left), 1)
-	else:
-		var l := maxi(left + 1, right - length + 1)
-		out["pier"] = Rect2i(l, row, right - l + 1, 1)
+	var l_pier := Rect2i(left, row, mini(length, right - left), 1)
+	var rl := maxi(left + 1, right - length + 1)
+	var r_pier := Rect2i(rl, row, right - rl + 1, 1)
+	var near_left := absi(start_x - left) <= absi(start_x - right)
+	out["pier"] = l_pier if near_left else r_pier
+	if not can_reach(out["pier"]):
+		var other := r_pier if near_left else l_pier
+		if can_reach(other):
+			out["pier"] = other
 	return out
+
+
+## Могут ли жители дойти до зоны (обход от каждого взрослого, кэш на полсекунды).
+var _reach_cache: Array = []
+var _reach_at := -100000
+
+
+func can_reach(r: Rect2i) -> bool:
+	var now := Time.get_ticks_msec()
+	if now - _reach_at > 500 or _reach_cache.is_empty() or offline:
+		_reach_cache.clear()
+		_reach_at = now
+		var seen := {}
+		for u in units:
+			if u.child or seen.has(u.cell()):
+				continue
+			seen[u.cell()] = true
+			_reach_cache.append(pathing.explore(u.cell())[1])
+	for dist in _reach_cache:
+		if _near_rect(r, dist) != null:
+			return true
+	return false
+
+
+## Раз в несколько секунд: до каких строек жителям не дойти — предупреждение.
+func _check_access() -> void:
+	for p in projects:
+		var working := p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD \
+			or p.phase == Project.Phase.EQUIP or p.repairing
+		if p.paused or not working or workers_on(p) > 0:
+			continue
+		var blocked_access := p.blocked.begins_with("Нет доступа")
+		if not p.blocked.is_empty() and not blocked_access:
+			continue
+		if can_reach(p.rect):
+			if blocked_access:
+				p.blocked = ""
+		elif not blocked_access:
+			p.blocked = "Нет доступа — жители не могут дойти до стройки" if p.is_water_structure() \
+				else "Нет доступа — проложите тоннель к стройке"
+			_log("%s: %s" % [p.title(), p.blocked], "warning")
 
 
 ## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
@@ -1101,6 +1148,11 @@ func food_low() -> bool:
 	return food_value() < units.size() * MEAL_GOAL * 1.5
 
 
+## Еды меньше, чем на полприёма каждому, — все силы на еду.
+func food_critical() -> bool:
+	return food_value() < units.size() * MEAL_GOAL * 0.5 and drop_total("food") + drop_total("berries") == 0
+
+
 ## Приём пищи: сначала настоящая еда, потом ягоды; take(ключ, n) отдаёт, сколько взяли.
 func _eat_from(u: Unit, take: Callable, bonus := 1.0) -> void:
 	var gained := 0.0
@@ -1583,6 +1635,10 @@ func update(dt: float) -> void:
 	if _explore_t >= 1.0:
 		_explore_t = 0.0
 		explore()
+		_access_t += 1
+		if _access_t >= 5:
+			_access_t = 0
+			_check_access()
 		# Воду откачали — затопленная стройка продолжается сама.
 		for p in projects:
 			if p.paused and p.blocked.begins_with("В зоне"):
@@ -2020,11 +2076,14 @@ func _task_order(u: Unit) -> Array[String]:
 			order.append_array(["farm", "fish"])
 		Unit.Prof.SCIENTIST:
 			order.append("science")
-	if food_low():
-		order.append_array(["farm", "fish"])
-	if waiting_for_materials() or food_low():
-		order.append_array(["cleanup", "harvest", "need"])
-	order.append_array(["storage", "projects", "cleanup", "farm", "fish", "craft", "science", "harvest"])
+	# Голод перебивает стройку, только если еды почти нет.
+	if food_critical():
+		order.append_array(["farm", "fish", "need"])
+	# Стройки — раньше сбора: на каждой работает столько, сколько выбрал игрок.
+	order.append_array(["storage", "projects", "cleanup"])
+	if waiting_for_materials():
+		order.append("need")
+	order.append_array(["harvest", "farm", "fish", "craft", "science", "need"])
 	return order
 
 

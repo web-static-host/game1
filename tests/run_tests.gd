@@ -37,6 +37,7 @@ func _initialize() -> void:
 	test_economy()
 	test_drops_and_scouting()
 	test_food_balance()
+	test_build_priority()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -1364,3 +1365,33 @@ func test_food_balance() -> void:
 	var pond := g.lake_at(55)
 	check(not pond.is_empty() and absi(int(pond["cx"])) - int(pond["w"]) > 30, "недалеко от базы есть пруд")
 	check(colony.explored_max >= Colony.START_VIEW, "поверхность у базы видна далеко")
+
+
+func test_build_priority() -> void:
+	var colony := _new_colony(4242)
+	var world := colony.world
+	colony.start_new(0)
+	# Как у игрока: много отмеченного на сбор и мало еды — стройка всё равно идёт.
+	for d in range(1, 60):
+		for x in [d, -d]:
+			if world.feature_at(x) != WorldGen.FEATURE_NONE:
+				colony.toggle_harvest(x)
+	var lake := world.gen.lake_at(55)
+	var span := world.gen.lake_water_span(lake)
+	# Жест начат у дальнего берега — пристань всё равно встаёт у того, куда можно дойти.
+	var r: Rect2i = colony.water_rects(span.y, span.y - 4)["pier"]
+	check(colony.can_reach(r), "пристань ставится к берегу, до которого можно дойти")
+	colony.inventory = {"wood": 40, "stone": 10, "food": 4}
+	var p := colony.create_project(Project.Kind.PIER, r, 1)
+	var t := 0.0
+	while t < 600.0 and p.phase != Project.Phase.DONE:
+		colony.update(0.5)
+		t += 0.5
+	check(p.phase == Project.Phase.DONE, "пристань с одним рабочим построена, хотя дел полно (%.0f с)" % t)
+	# Недоступная стройка: предупреждение.
+	var far := Rect2i(span.y - 1, int(lake["level"]) - 1, 3, 1)
+	if not colony.can_reach(far) and colony.validate(Project.Kind.PIER, far).is_empty():
+		var q := colony.create_project(Project.Kind.PIER, far, 1)
+		for i in 20:
+			colony.update(0.5)
+		check(q.blocked.begins_with("Нет доступа"), "до недоступной стройки — предупреждение: " + q.blocked)

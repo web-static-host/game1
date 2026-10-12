@@ -920,6 +920,8 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "chips", "items": chips})
 	if not colony.has_access(r):
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
+	elif not colony.can_reach(r):
+		rows.append({"type": "warning", "text": "Жители не могут сюда дойти — стройка не начнётся."})
 	var title := "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
 		title += " · " + Project.MATERIALS[_pending_material][0].to_lower()
