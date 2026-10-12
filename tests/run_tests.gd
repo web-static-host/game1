@@ -34,6 +34,7 @@ func _initialize() -> void:
 	test_calendar()
 	test_elements()
 	test_loads()
+	test_economy()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -1203,3 +1204,52 @@ func test_loads() -> void:
 		c2.loads.update(1.0)
 	check(c2.loads.storm_left <= 0.0 and mags.is_empty(), "галочка «Стихийные бедствия» выключает бури и землетрясения")
 	check(Loads.STORM_EVERY.x >= 3600.0 * 4 and Loads.QUAKE_EVERY.x >= 3600.0 * 12, "бедствия очень редкие")
+
+
+func test_economy() -> void:
+	var res := _colony_with_room(81, RoomType.LAB)
+	var colony: Colony = res[0]
+	var lab: Project = res[1]
+	check(lab.purpose == RoomType.LAB, "лаборатория обустроена")
+	check(not colony.set_purpose(lab, RoomType.KILN), "печь нельзя без исследования")
+	check(not colony.available_materials().has("brick"), "кирпичных стен пока нет")
+	check(colony.research.start("bricks"), "начали изучать обжиг кирпича")
+	check(not colony.research.available("metallurgy"), "металлургия — только после кирпича")
+	for u in colony.units:
+		u.profession = Unit.Prof.SCIENTIST
+	var t := 0.0
+	while t < 2000.0 and not colony.research.has("bricks"):
+		colony.update(1.0)
+		t += 1.0
+	check(colony.research.has("bricks"), "учёные изучили обжиг кирпича (%.0f с)" % t)
+	check(colony.available_materials().has("brick"), "открылись кирпичные стены")
+	check(colony.research.available("metallurgy"), "открылась металлургия")
+	# Печь делает кирпич (оффлайн тоже).
+	colony.inventory = {"wood": 40, "stone": 40, "clay": 40, "food": 50}
+	check(colony.set_purpose(lab, RoomType.KILN), "лабораторию переделали в печь")
+	colony.advance_offline(3000.0)
+	check(lab.purpose == RoomType.KILN and colony.inventory.get("brick", 0) > 0, "печь обожгла кирпич (%d)" % colony.inventory.get("brick", 0))
+	check(colony.inventory.get("clay", 40) < 40, "на кирпич ушла глина")
+	# Генератор жжёт уголь и даёт энергию.
+	colony.research.done.append("electricity")
+	colony.inventory = {"wood": 40, "stone": 40, "copper": 10, "iron": 10, "coal": 3, "food": 50}
+	check(colony.set_purpose(lab, RoomType.GENERATOR), "печь переделали в генератор")
+	colony.advance_offline(3000.0)
+	check(lab.purpose == RoomType.GENERATOR, "генератор готов")
+	colony.inventory["coal"] = 2
+	colony._power_tick(1.0)
+	check(colony.power_made == RoomType.POWER_MAKE and colony.powered(), "генератор даёт энергию")
+	colony._power_tick(RoomType.FUEL_TIME * 3.0)
+	colony._power_tick(1.0)
+	colony._power_tick(RoomType.FUEL_TIME * 3.0)
+	colony._power_tick(1.0)
+	check(colony.inventory.get("coal", 0) == 0, "уголь сгорел")
+	# Бурение ускоряет копку.
+	var before := colony.dig_bonus()
+	colony.research.done.append("drilling")
+	check(colony.dig_bonus() > before, "бурение ускоряет копку")
+	# Сохранение науки.
+	var d := colony.to_dict()
+	var c2 := Colony.new(WorldData.new(WorldGen.new(81)))
+	c2.load_dict(JSON.parse_string(JSON.stringify(d)))
+	check(c2.research.has("bricks") and c2.research.has("drilling"), "исследования сохраняются")

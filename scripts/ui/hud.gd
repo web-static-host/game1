@@ -6,6 +6,7 @@ extends Control
 signal mode_changed(mode: int)
 signal home_pressed
 signal speed_pressed
+signal science_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
 
@@ -169,13 +170,13 @@ static func _outlined(text: String, fs: int, col: Color) -> Label:
 
 
 ## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
-func set_resources(inventory: Dictionary, people: int, hungry := 0) -> void:
+func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
 	var keys: Array = ["food", "wood", "stone"]
 	var rest := inventory.keys().filter(func(k: String) -> bool:
 		return not keys.has(k) and not RoomType.BULK.has(k) and inventory[k] > 0)
 	rest.sort()
 	keys.append_array(rest)
-	var sig := "%d/%d|" % [people, hungry]
+	var sig := "%d/%d/%d/%d|" % [people, hungry, power_made, power_used]
 	for k in keys:
 		sig += "%s=%d," % [k, inventory.get(k, 0)]
 	if sig == _res_sig:
@@ -185,6 +186,9 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0) -> void:
 		c.queue_free()
 	_res_box.add_child(_chip_plain("people", str(people) if hungry == 0 else "%d (голодают %d)" % [people, hungry],
 		Color(1.0, 0.55, 0.5) if hungry > 0 else Color.WHITE))
+	if power_known and (power_made > 0 or power_used > 0):
+		_res_box.add_child(_chip_plain("power", "%d/%d" % [power_made, power_used],
+			Color(1.0, 0.85, 0.3) if power_made >= power_used else Color(1.0, 0.55, 0.5)))
 	for k in keys:
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
@@ -250,6 +254,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_child(fill)
+	var science := IconButton.make("flask", "Наука")
+	science.pressed.connect(func() -> void: science_pressed.emit())
+	bar.add_child(science)
 	var home := IconButton.make("home", "К базе")
 	_btn_speed = IconButton.make("speed", "×1")
 	var menu := IconButton.make("menu", "Меню")
@@ -485,6 +492,8 @@ func _build_control(st: Dictionary) -> void:
 			_build_checks(st)
 		"targets":
 			_build_targets(st)
+		"techs":
+			_build_techs(st)
 		_:
 			_build_stepper(st)
 
@@ -507,6 +516,52 @@ func _build_checks(st: Dictionary) -> void:
 		var key: String = item[0]
 		b.toggled.connect(func(on: bool) -> void: toggled.call(key, on))
 		flow.add_child(b)
+
+
+## Дерево технологий: название, что даёт, цена и кнопка «Изучать».
+func _build_techs(st: Dictionary) -> void:
+	for item in st["items"]:
+		var p := PanelContainer.new()
+		var bg := Color(1, 1, 1, 0.06)
+		match item["state"]:
+			"done":
+				bg = Color(0.2, 0.45, 0.25, 0.6)
+			"current":
+				bg = Color(0.2, 0.35, 0.6, 0.7)
+		p.add_theme_stylebox_override("panel", _box(bg, 10, 8))
+		_controls.add_child(p)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		p.add_child(row)
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_theme_constant_override("separation", 2)
+		row.add_child(col)
+		var title := _label("%s · %d очков" % [item["name"], item["cost"]], 19,
+			Color.WHITE if item["state"] != "locked" else MUTED)
+		col.add_child(title)
+		var desc := _label(item["desc"], 16, MUTED)
+		desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		desc.custom_minimum_size = Vector2(PANEL_WIDTH - 220, 0)
+		col.add_child(desc)
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(150, 50)
+		b.add_theme_font_size_override("font_size", 18)
+		match item["state"]:
+			"done":
+				b.text = "Изучено"
+				b.disabled = true
+			"current":
+				b.text = "Изучается"
+				b.disabled = true
+			"available":
+				b.text = "Изучать"
+				b.pressed.connect(item["pick"])
+			_:
+				b.text = "Недоступно"
+				b.disabled = true
+		row.add_child(b)
 
 
 func _build_targets(st: Dictionary) -> void:

@@ -4,16 +4,16 @@ extends RefCounted
 
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL, SWIM }
-enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR }
-enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER }
+enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH }
+enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
 	"Тимофей", "Глеб", "Лев", "Матвей", "Фёдор", "Роман", "Кирилл", "Олег", "Степан", "Юрий"]
 const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Наталья", "Татьяна", "Ирина", "Светлана", "Дарья", "Вера",
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
-const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма"}
-const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь", "носит материалы", "ремонтирует"]
-const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер"]
+const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
+const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь", "носит материалы", "ремонтирует", "работает в мастерской", "исследует"]
+const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный"]
 ## Сколько секунд длится детство.
 const CHILD_TIME := 1800.0
 
@@ -27,7 +27,7 @@ var name := ""
 var sex := Sex.MALE
 var pos := Vector2.ZERO
 ## Опыт навыков в секундах работы.
-var skills := {"dig": 0.0, "build": 0.0, "gather": 0.0, "farm": 0.0}
+var skills := {"dig": 0.0, "build": 0.0, "gather": 0.0, "farm": 0.0, "science": 0.0}
 ## Внешность (детерминирована от id).
 var look := 0.0
 ## Потребности 0..100.
@@ -96,6 +96,10 @@ static func skill_for(t: int) -> String:
 			return "build"
 		Task.REPAIR:
 			return "build"
+		Task.CRAFT:
+			return "build"
+		Task.RESEARCH:
+			return "science"
 	return ""
 
 

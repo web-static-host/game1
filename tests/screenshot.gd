@@ -72,6 +72,13 @@ func _process(_delta: float) -> bool:
 		_main.hud._new_game.visible = true
 	if _frame == 480:
 		_shot("new_game")
+		_main.hud._new_game.visible = false
+		_main.colony.research.done.append("bricks")
+		_main.colony.research.start("electricity")
+		_main.colony.research.progress = 25.0
+		_main._show_science()
+	if _frame == 490:
+		_shot("science")
 		return true
 	return false
 

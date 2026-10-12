@@ -265,6 +265,11 @@ func _pumps() -> void:
 				break
 		if best != null:
 			world.clear_fluid(best.x, best.y)
+			# С энергией насос качает вдвое быстрее.
+			if colony.powered() and colony.power_ratio >= 0.5:
+				var below: Vector2i = best + DOWN
+				if world.get_mat(below.x, below.y) == Mat.WATER:
+					world.clear_fluid(below.x, below.y)
 			for d in DIRS4:
 				var n: Vector2i = best + d
 				if world.get_mat(n.x, n.y) == Mat.WATER:
@@ -307,7 +312,7 @@ func _gas_tick() -> void:
 		var center := p.rect.get_center()
 		for c in next:
 			if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
-				next[c] *= 0.5
+				next[c] *= 0.25 if colony.powered() else 0.5
 	gas.clear()
 	for c in next:
 		if next[c] >= GAS_MIN:
@@ -363,7 +368,7 @@ func temperature(c: Vector2i) -> float:
 	for p in colony.rooms_of(RoomType.VENT):
 		var center := p.rect.get_center()
 		if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
-			t -= VENT_COOLING
+			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0)
 			break
 	return t
 

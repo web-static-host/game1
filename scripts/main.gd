@@ -103,6 +103,7 @@ func _build_scene() -> void:
 		_save()
 		hud.log_event("Игра сохранена", "good"))
 	hud.new_game_confirmed.connect(_new_game)
+	hud.science_pressed.connect(_show_science)
 
 
 func _process(delta: float) -> void:
@@ -325,7 +326,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		rows.append({"type": "resources", "label": "Несёт", "items": [[u.carry_key, u.carry_amount, -1, true]]})
 	if not u.child:
 		var skills := []
-		for k in ["dig", "build", "gather", "farm"]:
+		for k in ["dig", "build", "gather", "farm", "science"]:
 			skills.append(["", "%s %d" % [Unit.SKILL_NAMES[k], u.level(k)]])
 		rows.append({"type": "chips", "label": "Навыки", "items": skills})
 	var extra := [["home", "кровать есть" if u.bed_room != 0 else "нет кровати",
@@ -379,14 +380,18 @@ func _show_project(p: Project) -> void:
 				"changed": func(v: int) -> void: p.gatherers = v})
 			controls.append(_storage_targets(p))
 			controls.append(_storage_checks(p))
-		# Готовая комната: выбор назначения.
+		# Готовая комната: выбор назначения (только изученные).
+		var purposes := []
+		for t in range(1, RoomType.NAMES.size()):
+			if colony.research.has(RoomType.REQUIRES.get(t, "")):
+				purposes.append(t)
 		controls.append({
-			"label": "Назначение", "value": preview["v"], "min": 1, "max": RoomType.NAMES.size() - 1,
-			"options": RoomType.NAMES,
-			"changed": func(v: int) -> void:
-				preview["v"] = v
-				_info_target = ["project", p.id, v]
-				hud.refresh_panel(_project_spec(p, v)),
+			"label": "Назначение", "value": maxi(0, purposes.find(preview["v"])), "min": 0, "max": purposes.size() - 1,
+			"options": purposes.map(func(t: int) -> String: return RoomType.NAMES[t]),
+			"changed": func(i: int) -> void:
+				preview["v"] = purposes[i]
+				_info_target = ["project", p.id, purposes[i]]
+				hud.refresh_panel(_project_spec(p, purposes[i])),
 		})
 		actions.push_front(["Обустроить", func() -> void:
 			if colony.set_purpose(p, preview["v"]):
@@ -521,6 +526,34 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
+			RoomType.KILN, RoomType.FORGE:
+				var recipe: Array = RoomType.RECIPES[p.purpose]
+				rows.append(_progress("Производство", p.farm_progress / recipe[2]))
+				var items := []
+				for k in recipe[0]:
+					var have: int = colony.inventory.get(k, 0)
+					items.append([k, have, recipe[0][k], have >= recipe[0][k]])
+				rows.append({"type": "resources", "label": "Сырьё на цикл", "items": items})
+				var out := []
+				for k in recipe[1]:
+					out.append([k, recipe[1][k], -1, true])
+				rows.append({"type": "resources", "label": "Даёт", "items": out})
+				chips.append(["people", "мастеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
+			RoomType.LAB:
+				chips.append(["people", "учёных %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
+				var cur := colony.research.current
+				if cur.is_empty():
+					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
+				else:
+					rows.append(_progress(Research.tech_name(cur), colony.research.progress / colony.research.cost(cur)))
+			RoomType.GENERATOR:
+				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
+				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
+					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
+				rows.append({"type": "text", "text": "Жжёт 1 уголь (или 2 дерева) за %d с." % int(RoomType.FUEL_TIME)})
+		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
+			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
+				("не хватает" if colony.powered() else "нет"))])
 		if preview_purpose > 0 and preview_purpose != p.purpose:
 			var cost := RoomType.equip_cost(preview_purpose, p)
 			rows.append({"type": "text", "text": "«%s»: %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose]],
@@ -569,6 +602,55 @@ func _cost_items(cost: Dictionary) -> Array:
 	return out
 
 
+## Наука: текущее исследование и дерево технологий.
+func _show_science() -> void:
+	_select(null, null)
+	_info_target = ["science"]
+	var spec := _science_spec()
+	var techs := []
+	for id in Research.TECHS:
+		techs.append(id)
+	spec["controls"] = [{"type": "techs", "items": techs.map(func(id: String) -> Dictionary: return _tech_item(id))}]
+	hud.show_panel(spec)
+
+
+func _tech_item(id: String) -> Dictionary:
+	var r := colony.research
+	var state := "locked"
+	if r.has(id):
+		state = "done"
+	elif r.current == id:
+		state = "current"
+	elif r.available(id):
+		state = "available"
+	var needs: Array = Research.TECHS[id][3]
+	var desc: String = Research.TECHS[id][1]
+	if state == "locked":
+		desc = "Сначала: " + ", ".join(needs.map(func(n: String) -> String: return Research.tech_name(n))) + ". " + desc
+	return {"name": Research.tech_name(id), "desc": desc, "cost": int(r.cost(id)), "state": state,
+		"pick": func() -> void:
+			r.start(id)
+			_show_science()}
+
+
+func _science_spec() -> Dictionary:
+	var r := colony.research
+	var rows := []
+	if r.current.is_empty():
+		rows.append({"type": "text", "text": "Выберите, что изучать. Очки дают учёные в лаборатории (назначение комнаты)."})
+	else:
+		rows.append(_progress(Research.tech_name(r.current), r.progress / r.cost(r.current),
+			"%d / %d" % [int(r.progress), int(r.cost(r.current))], Color(0.45, 0.7, 1.0)))
+	var labs := colony.rooms_of(RoomType.LAB)
+	var scientists := 0
+	for p in labs:
+		scientists += colony.workers_on(p)
+	rows.append({"type": "chips", "items": [["", "лабораторий: %d" % labs.size()], ["people", "учёных за работой: %d" % scientists]]})
+	if labs.is_empty():
+		rows.append({"type": "warning", "text": "Нет лаборатории — постройте комнату и выберите назначение «Лаборатория»."})
+	return {"title": "Наука", "subtitle": "изучено %d из %d" % [r.done.size(), Research.TECHS.size()], "rows": rows}
+
+
 func _refresh_info() -> void:
 	if _info_target.is_empty() or not hud.info_visible():
 		return
@@ -576,6 +658,8 @@ func _refresh_info() -> void:
 		var u := colony.unit_by_id(_info_target[1])
 		if u != null:
 			hud.refresh_panel(_unit_spec(u))
+	elif _info_target[0] == "science":
+		hud.refresh_panel(_science_spec())
 	elif _info_target[0] == "project":
 		var p := colony.project_by_id(_info_target[1])
 		if p == null:
@@ -853,7 +937,8 @@ func _update_status() -> void:
 	for u in colony.units:
 		if u.satiety < 25.0:
 			hungry += 1
-	hud.set_resources(colony.inventory, colony.units.size(), hungry)
+	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
+		colony.research.has("electricity"))
 	hud.set_date(colony.date_text())
 
 

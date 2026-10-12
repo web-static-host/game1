@@ -2,9 +2,10 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR }
 
-const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция"]
+const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
+	"Лаборатория", "Печь", "Кузница", "Генератор"]
 const HINTS := [
 	"",
 	"кровати: место для сна и для детей",
@@ -13,7 +14,23 @@ const HINTS := [
 	"еда в столовой сытнее и поднимает настроение",
 	"откачивает воду вокруг (16 м)",
 	"выводит метан и охлаждает воздух вокруг (20 м)",
+	"учёные открывают технологии",
+	"обжиг: 2 глины + 1 дерево → 2 кирпича",
+	"плавка: 2 железа + 1 уголь → 1 сталь",
+	"энергия: сжигает уголь (или дрова)",
 ]
+## Назначения, которые нужно сначала изучить.
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity"}
+## Мастерские: [сырьё, продукция, секунд работы на цикл].
+const RECIPES := {
+	KILN: [{"clay": 2, "wood": 1}, {"brick": 2}, 20.0],
+	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
+}
+## Сколько энергии берут потребители и даёт генератор (условные единицы).
+const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
+const POWER_MAKE := 20
+## На сколько секунд хватает 1 угля (или 2 дров).
+const FUEL_TIME := 40.0
 ## Пока складов нет, ресурсы лежат кучами на земле у базы — немного.
 const BASE_CAPACITY := 50
 ## Прибавка вместимости за клетку ширины склада (для разрешённых в нём ресурсов).
@@ -56,6 +73,14 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"wood": 6, "stone": 8}
 		VENT:
 			return {"wood": 8, "stone": 4}
+		LAB:
+			return {"wood": 10, "stone": 6}
+		KILN:
+			return {"stone": 12, "clay": 6}
+		FORGE:
+			return {"stone": 10, "brick": 8}
+		GENERATOR:
+			return {"stone": 6, "copper": 4, "iron": 4}
 	return {}
 
 

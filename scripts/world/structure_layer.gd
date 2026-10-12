@@ -71,6 +71,8 @@ const WALLS := {
 	"wood": [Color(0.86, 0.73, 0.55), Color(0.52, 0.36, 0.2), Color(0.74, 0.6, 0.42)],
 	"clay": [Color(0.88, 0.76, 0.64), Color(0.66, 0.45, 0.32), Color(0.8, 0.66, 0.54)],
 	"stone": [Color(0.74, 0.74, 0.76), Color(0.45, 0.45, 0.5), Color(0.62, 0.62, 0.66)],
+	"brick": [Color(0.78, 0.45, 0.36), Color(0.5, 0.25, 0.2), Color(0.88, 0.8, 0.74)],
+	"metal": [Color(0.66, 0.7, 0.75), Color(0.36, 0.4, 0.46), Color(0.5, 0.55, 0.6)],
 }
 const BED_FRAME := Color(0.45, 0.3, 0.18)
 const BLANKETS := [Color(0.35, 0.5, 0.8), Color(0.75, 0.35, 0.4), Color(0.4, 0.65, 0.45), Color(0.8, 0.65, 0.3)]
@@ -124,17 +126,27 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 			while y < r.end.y - 6:
 				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
 				y += 10
-		"stone":
-			# Кладка блоками со смещением.
+		"metal":
+			# Стальные панели с заклёпками.
+			var x := r.position.x + 5
+			while x < r.end.x - 5:
+				draw_line(Vector2(x, r.position.y + 5), Vector2(x, r.end.y - 6), c[2], 2.0)
+				draw_circle(Vector2(x + 5, r.position.y + 12), 1.8, c[1])
+				draw_circle(Vector2(x + 5, r.end.y - 14), 1.8, c[1])
+				x += 24
+		"stone", "brick":
+			# Кладка блоками со смещением (кирпич — мельче).
+			var bh := 10.0 if p.material == "brick" else 16.0
+			var bw := 24.0 if p.material == "brick" else 40.0
 			var row := 0
 			var y := r.position.y + 5
 			while y < r.end.y - 6:
 				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
-				var x := r.position.x + 5 + (20 if row % 2 else 0)
+				var x := r.position.x + 5 + (bw * 0.5 if row % 2 else 0.0)
 				while x < r.end.x - 5:
-					draw_line(Vector2(x, y), Vector2(x, minf(y + 16, r.end.y - 6)), c[2], 1.5)
-					x += 40
-				y += 16
+					draw_line(Vector2(x, y), Vector2(x, minf(y + bh, r.end.y - 6)), c[2], 1.5)
+					x += bw
+				y += bh
 				row += 1
 		_:
 			# Глиняная штукатурка: мягкие пятна.

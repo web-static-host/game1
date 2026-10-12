@@ -71,9 +71,9 @@ const MONTH := DAY * 30.0
 const YEAR := MONTH * 12.0
 const MONTH_NAMES := ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 ## Сколько лет служит постройка до полного износа (на поверхности).
-const WEAR_YEARS := {"wood": 20.0, "clay": 40.0, "stone": 100.0, "metal": 60.0}
+const WEAR_YEARS := {"wood": 20.0, "clay": 40.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
 ## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
-const WEAR_UNDERGROUND := {"wood": 0.6, "clay": 0.85, "stone": 1.0, "metal": 0.6}
+const WEAR_UNDERGROUND := {"wood": 0.6, "clay": 0.85, "stone": 1.0, "brick": 0.9, "metal": 0.6}
 ## Предупреждения об износе.
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
@@ -90,6 +90,11 @@ var loads: Loads
 var quake_factor := 1.0
 ## Стихийные бедствия (бури, землетрясения) — выбирается при создании игры.
 var disasters := true
+var research := Research.new()
+## Энергия: сколько дают генераторы, сколько берут потребители, доля обеспеченности 0..1.
+var power_made := 0
+var power_used := 0
+var power_ratio := 1.0
 ## Идёт оффлайн-расчёт (без анимаций и гибели).
 var offline := false
 var units: Array[Unit] = []
@@ -243,6 +248,10 @@ func available_materials() -> Array[String]:
 	for k in ["clay", "stone"]:
 		if known_resources.has(k):
 			out.append(k)
+	if research.has("bricks"):
+		out.append("brick")
+	if research.has("metallurgy"):
+		out.append("metal")
 	return out
 
 
@@ -894,6 +903,8 @@ func waiting_for_materials() -> bool:
 func set_purpose(p: Project, t: int) -> bool:
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
+	if not research.has(RoomType.REQUIRES.get(t, "")):
+		return false
 	_release_beds(p)
 	p.equip_ladder = false
 	p.equip_target = t
@@ -1463,6 +1474,7 @@ func update(dt: float) -> void:
 				_try_pay(p)
 		_tick_exposure(step)
 		_wear_tick(step)
+		_power_tick(step)
 		_plant_tick(step)
 		_life_tick(step, false)
 		for u: Unit in units.duplicate():
@@ -1643,7 +1655,7 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.DIG:
 			var c := u.target
 			elements.spark(u.cell())
-			dig_progress[c] = dig_progress.get(c, 0.0) + rate
+			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus()
 			if dig_progress[c] >= dig_time(c):
 				var p := project_by_id(u.project_id)
 				_drop(u)
@@ -1675,9 +1687,23 @@ func _work(u: Unit, dt: float) -> void:
 			rp.repair_done += rate
 			if rp.repair_done >= rp.repair_work:
 				_finish_repair(rp)
+		Unit.Task.CRAFT:
+			var cp := project_by_id(u.project_id)
+			cp.farm_progress += rate
+			if cp.farm_progress >= RoomType.RECIPES[cp.purpose][2]:
+				cp.farm_progress = 0.0
+				_craft(cp)
+			u.work_t += dt
+			if u.work_t >= FARM_SHIFT:
+				_drop(u)
+		Unit.Task.RESEARCH:
+			_research(rate)
+			u.work_t += dt
+			if u.work_t >= FARM_SHIFT:
+				_drop(u)
 		Unit.Task.FARM:
 			var p := project_by_id(u.project_id)
-			p.farm_progress += rate
+			p.farm_progress += rate * farm_bonus()
 			while p.farm_progress >= RoomType.FARM_CYCLE:
 				p.farm_progress -= RoomType.FARM_CYCLE
 				_add("food", 1)
@@ -1735,6 +1761,14 @@ func _task_valid(u: Unit) -> bool:
 					return p.phase == Project.Phase.EQUIP and p.equip_paid
 				Unit.Task.FARM:
 					return p.phase == Project.Phase.DONE and p.purpose == RoomType.FARM
+		Unit.Task.CRAFT:
+			var cp := project_by_id(u.project_id)
+			return cp != null and not cp.paused and cp.phase == Project.Phase.DONE and RoomType.RECIPES.has(cp.purpose) \
+				and has_inputs(cp)
+		Unit.Task.RESEARCH:
+			var lp := project_by_id(u.project_id)
+			return lp != null and not lp.paused and lp.phase == Project.Phase.DONE and lp.purpose == RoomType.LAB \
+				and not research.current.is_empty()
 		Unit.Task.HARVEST:
 			if u.project_id != 0:
 				var hp := project_by_id(u.project_id)
@@ -1825,11 +1859,13 @@ func _task_order(u: Unit) -> Array[String]:
 			order.append_array(["storage", "harvest", "fish"])
 		Unit.Prof.FARMER:
 			order.append_array(["farm", "fish"])
+		Unit.Prof.SCIENTIST:
+			order.append("science")
 	if food_low():
 		order.append_array(["farm", "fish"])
 	if waiting_for_materials() or food_low():
 		order.append("harvest")
-	order.append_array(["storage", "projects", "farm", "fish", "harvest"])
+	order.append_array(["storage", "projects", "farm", "fish", "craft", "science", "harvest"])
 	return order
 
 
@@ -1857,6 +1893,13 @@ func _assign(u: Unit) -> bool:
 					return true
 			"farm":
 				if _try_farm(u, parents, dist):
+					return true
+			"craft":
+				for t in RoomType.RECIPES:
+					if _try_room_work(u, t, Unit.Task.CRAFT, parents, dist):
+						return true
+			"science":
+				if not research.current.is_empty() and _try_room_work(u, RoomType.LAB, Unit.Task.RESEARCH, parents, dist):
 					return true
 			"fish":
 				if _try_fish(u, parents, dist):
@@ -2121,7 +2164,14 @@ func _near_rect(r: Rect2i, dist: Dictionary) -> Variant:
 
 
 func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
-	for p in rooms_of(RoomType.FARM):
+	return _try_room_work(u, RoomType.FARM, Unit.Task.FARM, parents, dist)
+
+
+## Работа на месте в комнате: ферма, мастерская, лаборатория.
+func _try_room_work(u: Unit, purpose: int, task: int, parents: Dictionary, dist: Dictionary) -> bool:
+	for p in rooms_of(purpose):
+		if task == Unit.Task.CRAFT and not has_inputs(p):
+			continue
 		if p.paused or workers_on(p) >= RoomType.farm_slots(p):
 			continue
 		var best = null
@@ -2132,7 +2182,7 @@ func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 				best_d = dist[c]
 				best = c
 		if best != null:
-			_start(u, Unit.Task.FARM, best, best, p.id, parents)
+			_start(u, task, best, best, p.id, parents)
 			return true
 	return false
 
@@ -2559,6 +2609,95 @@ func _room_supported(q: Project) -> bool:
 	return true
 
 
+# --- Экономика: мастерские, наука, энергия --------------------------------------------
+
+## Хватает ли сырья на цикл мастерской.
+func has_inputs(p: Project) -> bool:
+	if not RoomType.RECIPES.has(p.purpose):
+		return false
+	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	for k in need:
+		if inventory.get(k, 0) < need[k]:
+			return false
+	return true
+
+
+## Чего не хватает мастерской (пусто — всё есть).
+func missing_inputs(p: Project) -> Dictionary:
+	var out := {}
+	if not RoomType.RECIPES.has(p.purpose):
+		return out
+	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	for k in need:
+		if inventory.get(k, 0) < need[k]:
+			out[k] = need[k]
+	return out
+
+
+func _craft(p: Project) -> void:
+	if not has_inputs(p):
+		return
+	var recipe: Array = RoomType.RECIPES[p.purpose]
+	for k in recipe[0]:
+		inventory[k] -= recipe[0][k]
+	for k in recipe[1]:
+		_add(k, recipe[1][k])
+
+
+func _research(work: float) -> void:
+	var lab_power := 1.0 + 0.5 * power_ratio if research.has("electricity") and power_made > 0 else 1.0
+	var finished := research.add(work * Research.POINTS_PER_SEC * lab_power)
+	if finished.is_empty():
+		return
+	_log("Изучено: %s. %s" % [Research.tech_name(finished), Research.TECHS[finished][1]], "good")
+	if research.current.is_empty():
+		_log("Все доступные исследования завершены", "info")
+
+
+## Есть ли энергия (изучено электричество и работает генератор).
+func powered() -> bool:
+	return research.has("electricity") and power_made > 0
+
+
+func farm_bonus() -> float:
+	return 1.0 + 0.5 * power_ratio if research.has("hydroponics") and powered() else 1.0
+
+
+func dig_bonus() -> float:
+	return 1.5 if research.has("drilling") else 1.0
+
+
+## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
+func _power_tick(dt: float) -> void:
+	power_made = 0
+	power_used = 0
+	for p in rooms_of(RoomType.GENERATOR):
+		if p.paused:
+			continue
+		if p.farm_progress <= 0.0:
+			if inventory.get("coal", 0) >= 1:
+				inventory["coal"] -= 1
+				p.farm_progress += RoomType.FUEL_TIME
+			elif inventory.get("wood", 0) >= 2:
+				inventory["wood"] -= 2
+				p.farm_progress += RoomType.FUEL_TIME
+		if p.farm_progress > 0.0:
+			p.farm_progress -= dt
+			power_made += RoomType.POWER_MAKE
+			if p.blocked.begins_with("Нет топлива"):
+				p.blocked = ""
+		elif p.blocked.is_empty():
+			p.blocked = "Нет топлива: нужен уголь или дрова"
+			_log("%s: %s" % [p.title(), p.blocked], "warning")
+	for t in RoomType.POWER_USE:
+		if t == RoomType.FARM and not research.has("hydroponics"):
+			continue
+		for p in rooms_of(t):
+			if not p.paused:
+				power_used += RoomType.POWER_USE[t]
+	power_ratio = 1.0 if power_used == 0 else minf(1.0, float(power_made) / power_used)
+
+
 ## Дата по игровому календарю: «12 мар · год 1».
 func date_text() -> String:
 	var days := int(game_time / DAY)
@@ -2607,6 +2746,7 @@ func advance_offline(dt: float) -> int:
 		game_time += step
 		_tick_exposure(step)
 		_wear_tick(step)
+		_power_tick(step)
 		_plant_tick(step)
 		_life_tick(step, true)
 		for u in units:
@@ -2632,9 +2772,19 @@ func advance_offline(dt: float) -> int:
 					p.equip_done += j[1] * step
 					if p.equip_done >= RoomType.job_work(p) - 0.001:
 						_finish_equip(p)
-				Unit.Task.FARM:
+				Unit.Task.CRAFT:
 					var p: Project = j[3]
 					p.farm_progress += j[1] * step
+					var need: float = RoomType.RECIPES[p.purpose][2]
+					while p.farm_progress >= need and has_inputs(p):
+						p.farm_progress -= need
+						_craft(p)
+					p.farm_progress = minf(p.farm_progress, need)
+				Unit.Task.RESEARCH:
+					_research(j[1] * step)
+				Unit.Task.FARM:
+					var p: Project = j[3]
+					p.farm_progress += j[1] * step * farm_bonus()
 					while p.farm_progress >= RoomType.FARM_CYCLE:
 						p.farm_progress -= RoomType.FARM_CYCLE
 						_add("food", 1)
@@ -2688,7 +2838,7 @@ func _offline_left(key: Variant, job: Array) -> float:
 		Unit.Task.EQUIP:
 			var p: Project = job[3]
 			return RoomType.job_work(p) - p.equip_done
-		Unit.Task.FARM, Unit.Task.FISH:
+		Unit.Task.FARM, Unit.Task.FISH, Unit.Task.CRAFT, Unit.Task.RESEARCH:
 			return OFFLINE_STEP
 		Unit.Task.SUPPORT:
 			var p: Project = job[3]
@@ -2755,6 +2905,19 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if not p.paused and taken.get(slot, 0) < RoomType.farm_slots(p):
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["f%d" % p.id, Unit.Task.FARM, p]
+			"craft", "science":
+				var kinds: Array = RoomType.RECIPES.keys() if kind == "craft" else [RoomType.LAB]
+				for t in kinds:
+					for p in rooms_of(t):
+						var slot := "w%d" % p.id
+						if p.paused or taken.get(slot, 0) >= RoomType.farm_slots(p):
+							continue
+						if kind == "craft" and not has_inputs(p):
+							continue
+						if kind == "science" and research.current.is_empty():
+							continue
+						taken[slot] = taken.get(slot, 0) + 1
+						return ["c%d" % p.id, Unit.Task.CRAFT if kind == "craft" else Unit.Task.RESEARCH, p]
 			"storage":
 				for room in rooms_of(RoomType.STORAGE):
 					var gslot := "g%d" % room.id
@@ -2906,6 +3069,7 @@ func to_dict() -> Dictionary:
 		"elements": elements.to_dict(),
 		"loads": loads.to_dict(),
 		"disasters": disasters,
+		"research": research.to_dict(),
 	}
 
 
@@ -2958,6 +3122,7 @@ func load_dict(d: Dictionary) -> void:
 	elements.load_dict(d.get("elements", {}))
 	loads.load_dict(d.get("loads", {}))
 	disasters = bool(d.get("disasters", true))
+	research.load_dict(d.get("research", {}))
 	loads.loads = loads.compute()
 	explore()
 	_refresh_bushes()
