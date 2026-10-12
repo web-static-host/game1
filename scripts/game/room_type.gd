@@ -2,10 +2,10 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация"]
 const HINTS := [
 	"",
 	"кровати: место для сна и для детей",
@@ -13,11 +13,12 @@ const HINTS := [
 	"грибные грядки: производство еды",
 	"еда в столовой сытнее и поднимает настроение",
 	"откачивает воду вокруг (16 м)",
-	"выводит метан и охлаждает воздух вокруг (20 м)",
+	"охлаждает воздух вокруг (20 м)",
 	"учёные открывают технологии",
 	"обжиг: 2 глины + 1 дерево → 2 кирпича",
 	"плавка: 2 железа + 1 уголь → 1 сталь",
-	"энергия: сжигает уголь (или дрова)",
+	"энергия: сжигает метан, уголь или дрова",
+	"собирает метан вокруг (20 м) — топливо для генератора",
 ]
 ## Назначения, которые нужно сначала изучить.
 const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity"}
@@ -29,7 +30,7 @@ const RECIPES := {
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
 const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
 const POWER_MAKE := 20
-## На сколько секунд хватает 1 угля (или 2 дров).
+## На сколько секунд хватает 1 метана, 1 угля или 2 дров.
 const FUEL_TIME := 40.0
 ## Пока складов нет, ресурсы лежат кучами на земле у базы — немного.
 const BASE_CAPACITY := 50
@@ -66,7 +67,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		STORAGE:
 			return {"wood": 2 * w}
 		FARM:
-			return {"soil": 3 * w, "wood": 4}
+			# Грядки из досок и споры грибов (немного еды на посев).
+			return {"wood": 2 * w + 2, "food": 4}
 		DINING:
 			return {"wood": 2 * w, "stone": 4}
 		PUMP:
@@ -81,6 +83,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 10, "brick": 8}
 		GENERATOR:
 			return {"stone": 6, "copper": 4, "iron": 4}
+		DEGAS:
+			return {"wood": 8, "stone": 8}
 	return {}
 
 

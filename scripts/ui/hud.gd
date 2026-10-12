@@ -5,6 +5,8 @@ extends Control
 
 ## Выбран инструмент: режим и ширина комнаты (для комнат).
 signal mode_changed(mode: int, room_width: int)
+## Во время установки комнаты поменяли размер или материал.
+signal room_options_changed(width: int, material: String)
 signal home_pressed
 signal speed_pressed
 signal science_pressed
@@ -15,19 +17,18 @@ signal new_game_confirmed(disasters: bool)
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
 enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND }
 
-## Инструменты «Стройки»: [режим, ширина комнаты, значок, подпись].
+## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
-	[Mode.TUNNEL, 0, "tunnel", "Тоннель"],
-	[Mode.ROOM, 3, "room", "Малая 3×3"],
-	[Mode.ROOM, 6, "room", "Средняя 6×3"],
-	[Mode.ROOM, 9, "room", "Большая 9×3"],
-	[Mode.BRIDGE, 0, "bridge", "Мост"],
+	[Mode.TUNNEL, "tunnel", "Тоннель"],
+	[Mode.ROOM, "room", "Комната"],
+	[Mode.BRIDGE, "bridge", "Мост"],
 ]
 const TOOL_HINTS := {
-	Mode.TUNNEL: "Тоннель: проведите пальцем рамку (высота от 2 м). Двигать карту — двумя пальцами",
-	Mode.ROOM: "Комната: коснитесь, где поставить, и двигайте пальцем. Карта — двумя пальцами",
-	Mode.BRIDGE: "Мост: проведите пальцем над озером",
+	Mode.TUNNEL: "Проведите пальцем рамку тоннеля. Карта — двумя пальцами",
+	Mode.ROOM: "Выберите размер и материал, коснитесь карты. Карта — двумя пальцами",
+	Mode.BRIDGE: "Проведите пальцем над озером",
 }
+const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 ## Отступы от краёв экрана (скруглённые углы, вырезы камеры).
 const SIDE := 34.0
 const EDGE_TOP := 14.0
@@ -67,6 +68,11 @@ var _controls: VBoxContainer
 var _actions: HBoxContainer
 var _hint: Label
 var _hint_cancel: Button
+## Полоска выбора комнаты: размеры и материалы.
+var _room_strip: HBoxContainer
+var _room_w := 6
+var _room_mat := "wood"
+var _room_mats: Array = ["wood"]
 var _btn_speed: IconButton
 var _dialog: PanelContainer
 var _dialog_title: Label
@@ -243,8 +249,8 @@ func _build_bottom(box: VBoxContainer) -> void:
 	box.add_child(bar)
 	# Подменю «Стройки»: инструменты; после выбора — разовый режим установки.
 	for t in TOOLS:
-		var b := IconButton.make(t[2], t[3], 108, 80)
-		b.pressed.connect(func() -> void: _pick_tool(t[0], t[1], t[2], t[3]))
+		var b := IconButton.make(t[1], t[2], 108, 80)
+		b.pressed.connect(func() -> void: _pick_tool(t[0], t[1], t[2]))
 		_build_row.add_child(b)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
@@ -265,8 +271,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	home.pressed.connect(func() -> void: home_pressed.emit())
 	_btn_speed.pressed.connect(func() -> void: speed_pressed.emit())
 	menu.pressed.connect(func() -> void:
-		_new_game.visible = false
-		_menu.visible = not _menu.visible)
+		var open := not _menu.visible
+		close_overlays()
+		_menu.visible = open)
 
 
 func _place_build_row() -> void:
@@ -282,10 +289,22 @@ func _on_build_toggled(on: bool) -> void:
 		set_mode(Mode.LOOK)
 		mode_changed.emit(Mode.LOOK, 0)
 		return
+	if on:
+		close_overlays()
 	_build_row.visible = on
 
 
-func _pick_tool(mode: int, width: int, glyph: String, caption: String) -> void:
+## Открыто только одно окно: карточка, меню, подменю стройки или новая игра.
+func close_overlays() -> void:
+	hide_info()
+	_menu.visible = false
+	_new_game.visible = false
+	if not _placing:
+		_build_row.visible = false
+		_build_btn.set_pressed_no_signal(false)
+
+
+func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 	hide_info()
 	_build_row.visible = false
 	_placing = true
@@ -293,7 +312,54 @@ func _pick_tool(mode: int, width: int, glyph: String, caption: String) -> void:
 	_build_btn.glyph = glyph
 	_build_btn.set_caption(caption)
 	set_hint(TOOL_HINTS.get(mode, ""))
-	mode_changed.emit(mode, width)
+	_show_room_strip(mode == Mode.ROOM)
+	mode_changed.emit(mode, _room_w if mode == Mode.ROOM else 0)
+
+
+## Материалы стен, доступные колонии (для полоски выбора комнаты).
+func set_room_materials(mats: Array) -> void:
+	_room_mats = mats
+	if not _room_mats.has(_room_mat):
+		_room_mat = "wood"
+
+
+func room_material() -> String:
+	return _room_mat
+
+
+## Полоска под подсказкой: размер комнаты и материал стен — выбираются до установки.
+func _show_room_strip(on: bool) -> void:
+	for c in _room_strip.get_children():
+		_room_strip.remove_child(c)
+		c.queue_free()
+	_room_strip.visible = on
+	if not on:
+		return
+	var sizes := ButtonGroup.new()
+	for s in ROOM_SIZES:
+		var b := IconButton.make("room", s[1], 120, 72)
+		b.toggle_mode = true
+		b.button_group = sizes
+		b.button_pressed = s[0] == _room_w
+		b.pressed.connect(func() -> void:
+			_room_w = s[0]
+			room_options_changed.emit(_room_w, _room_mat))
+		_room_strip.add_child(b)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(14, 0)
+	_room_strip.add_child(gap)
+	var mats := ButtonGroup.new()
+	for m in _room_mats:
+		var b := IconButton.make("", Project.MATERIALS[m][0], 96, 72)
+		b.res_key = m
+		b.toggle_mode = true
+		b.button_group = mats
+		b.button_pressed = m == _room_mat
+		b.pressed.connect(func() -> void:
+			_room_mat = m
+			room_options_changed.emit(_room_w, _room_mat))
+		_room_strip.add_child(b)
+	_place_hint.call_deferred()
 
 
 ## Вернуть нижнее меню в обычный вид (после стройки или отмены).
@@ -306,6 +372,7 @@ func set_mode(mode: int) -> void:
 	_build_btn.glyph = "build"
 	_build_btn.set_caption("Стройка")
 	set_hint("")
+	_show_room_strip(false)
 
 
 ## Подсказка сверху по центру — что сейчас делать (с кнопкой «Отмена»).
@@ -328,14 +395,36 @@ func _build_hint() -> void:
 		set_mode(Mode.LOOK)
 		mode_changed.emit(Mode.LOOK, 0))
 	box.add_child(_hint_cancel)
+	_room_strip = HBoxContainer.new()
+	_room_strip.add_theme_constant_override("separation", 6)
+	_room_strip.visible = false
+	add_child(_room_strip)
 
 
 func set_hint(text: String) -> void:
 	var box := _hint.get_parent().get_parent() as Control
 	_hint.text = text
 	box.visible = not text.is_empty()
+	_place_hint()
+
+
+func _place_hint() -> void:
+	var box := _hint.get_parent().get_parent() as Control
 	box.reset_size()
 	box.position = Vector2((size.x - box.size.x) * 0.5, TOP_H + 18)
+	_room_strip.reset_size()
+	_room_strip.position = Vector2((size.x - _room_strip.size.x) * 0.5, box.position.y + box.size.y + 8)
+
+
+## Сколько места сверху занято подсказкой и полоской выбора.
+func _top_limit() -> float:
+	var top := TOP_H
+	var box := _hint.get_parent().get_parent() as Control
+	if box.visible:
+		top = box.position.y + box.size.y + 8.0
+	if _room_strip.visible:
+		top = _room_strip.position.y + _room_strip.size.y + 8.0
+	return top
 
 
 func set_speed_text(text: String) -> void:
@@ -389,9 +478,16 @@ func _build_panel() -> void:
 ## Строки rows: {"type": "progress"|"resources"|"chips"|"text"|"warning"|"section", ...}.
 ## Управление controls: шаговые переключатели, галочки, нормы запаса (см. _build_control).
 func show_panel(spec: Dictionary) -> void:
+	_menu.visible = false
+	_new_game.visible = false
+	if not _placing:
+		_build_row.visible = false
+		_build_btn.set_pressed_no_signal(false)
 	_fill_header(spec)
 	_fill_body(spec.get("rows", []))
+	# Старое убираем сразу, а не в конце кадра — иначе карточка меряет себя вместе с ним.
 	for c in _controls.get_children():
+		_controls.remove_child(c)
 		c.queue_free()
 	for st in spec.get("controls", []):
 		_build_control(st)
@@ -399,6 +495,7 @@ func show_panel(spec: Dictionary) -> void:
 	# Переключатели можно поставить над описанием, чтобы не прятались под прокруткой.
 	_body.get_parent().move_child(_controls, 0 if spec.get("controls_first", false) else 1)
 	for c in _actions.get_children():
+		_actions.remove_child(c)
 		c.queue_free()
 	for a in spec.get("actions", []):
 		var b := Button.new()
@@ -431,16 +528,14 @@ func _fit_scroll() -> void:
 	if content == null:
 		return
 	var h := content.get_combined_minimum_size().y
-	# Карточка не выше места между верхней строкой и меню: заголовок, кнопки, отступы — ~160.
-	var max_h := get_viewport_rect().size.y - TOP_H - BAR_H - 175.0
-	if _actions.visible:
-		max_h -= 66.0
-	_scroll.custom_minimum_size = Vector2(0, minf(h, maxf(140.0, max_h)))
-	# Прижата к нижнему меню и растёт вверх.
+	# Сколько занимает карточка без прокручиваемой части (заголовок, кнопки, отступы).
+	_scroll.custom_minimum_size = Vector2.ZERO
+	var overhead := _info_panel.get_combined_minimum_size().y
+	# Карточка помещается между верхом (строка ресурсов, подсказка) и нижним меню.
+	var avail := size.y - BAR_H - _top_limit() - 4.0
+	_scroll.custom_minimum_size = Vector2(0, clampf(h, 0.0, maxf(100.0, avail - overhead)))
 	var ph := _info_panel.get_combined_minimum_size().y
 	_info_panel.size = Vector2(PANEL_WIDTH, ph)
-	if not _hint.text.is_empty():
-		_info_panel.position.y = maxf(_info_panel.position.y, TOP_H + 60.0)
 	_info_panel.position = Vector2(SIDE, size.y - BAR_H - ph)
 
 

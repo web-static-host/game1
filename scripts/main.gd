@@ -15,6 +15,7 @@ var camera: CameraController
 var hud: Hud
 var mode := Hud.Mode.LOOK
 var _sky: ColorRect
+var _night: CanvasModulate
 var _speed_idx := 0
 var _autosave := 0.0
 var _status_timer := 0.0
@@ -82,6 +83,8 @@ func _build_scene() -> void:
 	_sky.material = mat
 	sky_layer.add_child(_sky)
 
+	_night = CanvasModulate.new()
+	add_child(_night)
 	camera = CameraController.new()
 	camera.zoom = Vector2(1.0, 1.0)
 	add_child(camera)
@@ -109,6 +112,7 @@ func _build_scene() -> void:
 		hud.log_event("Игра сохранена", "good"))
 	hud.new_game_confirmed.connect(_new_game)
 	hud.science_pressed.connect(_show_science)
+	hud.room_options_changed.connect(_on_room_options)
 
 
 func _process(delta: float) -> void:
@@ -272,6 +276,7 @@ func _on_tap(screen_pos: Vector2) -> void:
 		_select(null, p)
 		return
 	_select(null, null)
+	hud.close_overlays()
 	var fx = _feature_near(c)
 	if fx != null and colony.is_explored(c.x):
 		_show_feature(fx)
@@ -381,7 +386,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 	var who := "мужчина" if u.sex == Unit.Sex.MALE else "женщина"
 	if u.child:
 		who = "%s, вырастет через %s" % ["малыш" if u.age < Unit.CHILD_TIME * 0.5 else "подросток",
-			Fmt.duration(Unit.CHILD_TIME - u.age)]
+			Colony.game_span(Unit.CHILD_TIME - u.age)]
 	var task: String = Unit.TASK_NAMES[u.task]
 	if u.gather_room != 0:
 		task += " для склада"
@@ -616,7 +621,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
-				rows.append({"type": "text", "text": "Жжёт 1 уголь (или 2 дерева) за %d с." % int(RoomType.FUEL_TIME)})
+				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан)." % int(RoomType.FUEL_TIME)})
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])
@@ -671,6 +676,7 @@ func _cost_items(cost: Dictionary) -> Array:
 ## Наука: текущее исследование и дерево технологий.
 func _show_science() -> void:
 	_select(null, null)
+	hud.close_overlays()
 	_info_target = ["science"]
 	var spec := _science_spec()
 	var techs := []
@@ -794,8 +800,26 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending = r
 	_pending_kind = kind
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
-	_pending_material = "wood"
+	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else "wood"
 	_show_pending()
+
+
+## Поменяли размер или материал комнаты: рамка и карточка обновляются на месте.
+func _on_room_options(width: int, material: String) -> void:
+	_room_w = width
+	_pending_material = material
+	var s := world_view.structures
+	if mode != Hud.Mode.ROOM or s.preview.size == Vector2i.ZERO:
+		return
+	var placed := _room_rect(s.preview.position + Vector2i(s.preview.size.x / 2, 1))
+	s.preview = placed[0]
+	s.preview_ok = (placed[1] as String).is_empty()
+	s.preview_text = "%d×%d" % [s.preview.size.x, s.preview.size.y]
+	if hud.info_visible() and s.preview_ok:
+		_pending = s.preview
+		_show_pending()
+	elif not s.preview_ok:
+		hud.hide_info()
 
 
 ## Комната выбранного размера под пальцем; сама прилипает к земле или этажу рядом.
@@ -839,16 +863,6 @@ func _show_pending() -> void:
 					world_view.structures.preview = _pending
 					hud.refresh_panel(_pending_spec()),
 			})
-	if kind == Project.Kind.ROOM:
-		var mats := colony.available_materials()
-		var names: Array = mats.map(func(k: String) -> String: return Project.MATERIALS[k][0])
-		controls.push_front({
-			"label": "Материал стен", "value": mats.find(_pending_material), "min": 0, "max": mats.size() - 1,
-			"options": names,
-			"changed": func(v: int) -> void:
-				_pending_material = mats[v]
-				hud.refresh_panel(_pending_spec()),
-		})
 	var spec := _pending_spec()
 	spec["controls"] = controls
 	spec["controls_first"] = true
@@ -869,7 +883,8 @@ func _pending_spec() -> Dictionary:
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
-		rows.append({"type": "resources", "label": "Крепь по ходу", "items": [["wood", have, sw, have >= sw]]})
+		if sw > 0:
+			rows.append({"type": "resources", "label": "Крепь по ходу", "items": [["wood", have, sw, have >= sw]]})
 	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
@@ -906,14 +921,14 @@ func _pending_spec() -> Dictionary:
 		chips.append(["people", "рыбаков до %d" % tmp.fish_slots()])
 		chips.append(["", "улов раз в %d с" % int(tmp.fish_time())])
 		chips.append(["", "рыбы ~%d" % int(colony.fish_in(lake))])
-	chips.append(["people", "рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults())])
-	rows.append({"type": "chips", "items": chips})
-	if kind == Project.Kind.ROOM and colony.available_materials().size() == 1:
-		rows.append({"type": "text", "text": "Глина и камень станут доступны, когда вы их добудете."})
-	rows.append({"type": "text", "text": "Материалы жители принесут сами. Без крепи и работ дольше 3 мин — риск обвала."})
+	if not chips.is_empty():
+		rows.append({"type": "chips", "items": chips})
 	if not colony.has_access(r):
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
-	return {"title": "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y], "subtitle": "новая стройка", "rows": rows}
+	var title := "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]
+	if kind == Project.Kind.ROOM:
+		title += " · " + Project.MATERIALS[_pending_material][0].to_lower()
+	return {"title": title, "rows": rows}
 
 
 ## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).
@@ -1023,6 +1038,7 @@ func _update_status() -> void:
 			hungry += 1
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
+	hud.set_room_materials(colony.available_materials())
 	hud.set_date(colony.date_text())
 
 
@@ -1045,3 +1061,7 @@ func _update_sky() -> void:
 	var m := _sky.material as ShaderMaterial
 	m.set_shader_parameter("alt_top", -top_y)
 	m.set_shader_parameter("alt_bottom", -bottom_y)
+	var light := colony.daylight()
+	m.set_shader_parameter("daylight", light)
+	# Ночью мир чуть темнее.
+	_night.color = Color(0.62, 0.66, 0.85).lerp(Color.WHITE, light)

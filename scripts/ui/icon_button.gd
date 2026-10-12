@@ -4,6 +4,8 @@ extends Button
 
 var glyph := ""
 var caption := ""
+## Значок ресурса вместо глифа (кнопки материалов).
+var res_key := ""
 const ICON_COLOR := Color(0.92, 0.94, 0.98)
 const ICON_PRESSED := Color(0.12, 0.09, 0.05)
 
@@ -29,7 +31,10 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var has_caption := not caption.is_empty()
 	var icon_c := Vector2(size.x * 0.5, size.y * (0.4 if has_caption else 0.5))
-	ResIcon.draw_glyph(self, glyph, icon_c, minf(size.x, size.y) * (0.22 if has_caption else 0.3), col)
+	if not res_key.is_empty():
+		ResIcon.draw(self, res_key, icon_c, minf(size.x, size.y) * 0.22)
+	else:
+		ResIcon.draw_glyph(self, glyph, icon_c, minf(size.x, size.y) * (0.22 if has_caption else 0.3), col)
 	if has_caption:
 		var fs := 15
 		var w := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x

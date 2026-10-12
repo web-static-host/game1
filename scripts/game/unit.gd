@@ -53,6 +53,10 @@ var carry_amount := 0
 var haul_stage := 0
 ## Работает на склад: id склада, для которого добывает ресурсы (0 — нет).
 var gather_room := 0
+## С какой высоты начал падать (для травмы при падении).
+var fall_from := 0.0
+## Уже предупреждали, что житель истощён от голода.
+var starving_warned := false
 ## Откуда берёт груз: с кучи на земле (клетка haul_src) или со склада;
 ## куда несёт: на склад (to_store) или на стройку project_id.
 var haul_src := Vector2i.ZERO
@@ -119,12 +123,26 @@ func need_factor() -> float:
 	var f := 1.0
 	if satiety < 15.0:
 		f *= 0.5
+	elif satiety < 30.0:
+		f *= 0.75
 	if energy < 10.0:
 		f *= 0.6
 	if mood() < 30.0:
 		f *= 0.85
 	if health < 50.0:
 		f *= 0.7
+	return f
+
+
+## Голодный и больной ходит медленнее.
+func move_factor() -> float:
+	var f := 1.0
+	if satiety < 15.0:
+		f *= 0.7
+	elif satiety < 30.0:
+		f *= 0.85
+	if health < 50.0:
+		f *= 0.8
 	return f
 
 

@@ -252,7 +252,7 @@ func test_units_realtime() -> void:
 			on_ground = true
 	check(w.feature_at(tree) == WorldGen.FEATURE_NONE and on_ground, "житель срубил дерево, дрова лежат на месте рубки (%.0f с)" % t)
 	t = 0.0
-	while t < 1500.0 and colony.inventory.get("wood", 0) <= wood:
+	while t < 1500.0 and (colony.inventory.get("wood", 0) <= wood or colony.drop_total("wood") > 0):
 		colony.update(1.0)
 		t += 1.0
 	check(colony.drop_total("wood") == 0 and colony.inventory.get("wood", 0) > wood, "дрова отнесли на склад (%.0f с)" % t)
@@ -774,9 +774,10 @@ func test_lakes_and_fishing() -> void:
 	check(br.phase == Project.Phase.DONE, "мостик построен")
 	check(colony.pathing.standable(Vector2i(x0 + 2, row)), "по мостику можно ходить над водой")
 	colony.inventory["food"] = 0
+	colony.fish[int(lake["id"])] = Colony.fish_max(lake)
 	var fish0 := colony.fish_in(lake)
 	colony.advance_offline(1800.0)
-	check(colony.inventory.get("food", 0) > 0, "с мостика наловили рыбы (%d еды)" % colony.inventory.get("food", 0))
+	check(colony.fish_in(lake) < fish0, "с мостика наловили рыбы (в озере %d → %d)" % [int(fish0), int(colony.fish_in(lake))])
 	check(colony.fish_in(lake) < fish0 + 0.01, "рыбы в озере стало меньше или столько же")
 	colony.fish[int(lake["id"])] = 0.0
 	colony.grow_plants(Colony.FISH_REGEN * 5)
@@ -995,9 +996,12 @@ func test_wear_and_repair() -> void:
 
 func test_calendar() -> void:
 	var colony := _new_colony(1)
-	check(colony.date_text() == "1 янв · год 1", "календарь начинается с 1 января: " + colony.date_text())
-	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + 5.0
-	check(colony.date_text() == "5 мар · год 2", "дата считается по игровым суткам: " + colony.date_text())
+	check(colony.date_text() == "1 янв · 00:00 · год 1", "календарь начинается с 1 января: " + colony.date_text())
+	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + Colony.DAY * 14.5 / 24.0
+	check(colony.date_text() == "5 мар · 14:30 · год 2", "дата и время по игровым суткам: " + colony.date_text())
+	check(not colony.is_night() and colony.daylight() == 1.0, "днём светло")
+	colony.game_time = Colony.DAY * 23.0 / 24.0
+	check(colony.is_night() and colony.daylight() == 0.0, "в 23:00 ночь")
 
 
 ## Сплошной гранитный блок w×h с левым верхним углом o (для опытов со стихиями).
@@ -1093,7 +1097,7 @@ func test_elements() -> void:
 	vent.id = 901
 	vent.kind = Project.Kind.ROOM
 	vent.phase = Project.Phase.DONE
-	vent.purpose = RoomType.VENT
+	vent.purpose = RoomType.DEGAS
 	vent.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
 	colony.projects.append(vent)
 	for i in 20:
@@ -1101,7 +1105,8 @@ func test_elements() -> void:
 	var total := 0.0
 	for c in el.gas:
 		total += el.gas[c]
-	check(total < 0.1, "вентиляция вывела метан (%.2f)" % total)
+	check(total < 0.1, "дегазация собрала метан из выработок (%.2f)" % total)
+	check(colony.inventory.get("methane", 0) >= 1, "метан стал топливом (%d)" % colony.inventory.get("methane", 0))
 	colony.projects.erase(vent)
 	# Житель под водой всплывает туда, где можно дышать.
 	for c in [o + Vector2i(2, 6), o + Vector2i(2, 5), o + Vector2i(2, 4)]:

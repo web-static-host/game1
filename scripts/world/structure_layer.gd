@@ -159,12 +159,21 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), c[1])
 	draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), c[1])
 	draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), c[1])
-	# Лестница — только у заглублённой комнаты, иначе вход с уровня земли.
-	if p.ladder:
+	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
+	if p.ladder or _wall_outside(p, -1):
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+	if _wall_outside(p, 1):
+		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
 	var lamp := Vector2(r.get_center().x, r.position.y + 9)
 	draw_circle(lamp, 14, Color(LAMP, 0.18))
 	draw_circle(lamp, 5, LAMP)
+
+
+## Снаружи у стены комнаты (side −1 — слева, 1 — справа) на уровне пола не выйти.
+func _wall_outside(p: Project, side: int) -> bool:
+	var x := p.rect.position.x - 1 if side < 0 else p.rect.end.x
+	var floor_y := p.rect.end.y - 1
+	return not colony.world.is_open(x, floor_y) and colony.world.is_open(x, p.rect.position.y)
 
 
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:

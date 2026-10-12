@@ -24,6 +24,12 @@ const SPRING_TIME := 25.0
 const PUMP_TIME := 2.0
 const PUMP_RADIUS := 16
 const GAS_STEP := 1.0
+## Сколько метана отдаёт вскрытая клетка, всего и в секунду.
+const SEEP_RESERVE := {Mat.GAS_POCKET: 40.0, Mat.COAL: 6.0}
+const SEEP_RATE := 0.06
+const DEGAS_RADIUS := 20
+## Доля метана в зоне дегазации, которую она забирает за секунду.
+const DEGAS_TAKE := 0.6
 ## Метана в одной клетке газового кармана.
 const GAS_PER_POCKET := 3.0
 const GAS_MIN := 0.01
@@ -43,6 +49,10 @@ var active := {}
 var lava_still := {}
 ## Вскрытые водоносные пласты: клетка -> таймер.
 var springs := {}
+## Вскрытые газовые карманы и угольные пласты сочатся метаном: клетка -> остаток газа.
+var seeps := {}
+## Сколько метана накопила дегазация (в доли единицы ресурса).
+var _captured := 0.0
 ## Метан в открытых клетках: Vector2i -> доля (0..1+).
 var gas := {}
 var _water_t := 0.0
@@ -95,6 +105,8 @@ func on_opened(c: Vector2i) -> void:
 			active[n] = true
 		elif m == Mat.AQUIFER and not springs.has(n):
 			springs[n] = SPRING_TIME * 0.5
+		elif SEEP_RESERVE.has(m) and not seeps.has(n):
+			seeps[n] = SEEP_RESERVE[m]
 
 
 ## Газовый карман вскрыт: метан выходит в выработку.
@@ -282,7 +294,27 @@ func _open_for_gas(c: Vector2i) -> bool:
 	return world.get_mat(c.x, c.y) == Mat.AIR
 
 
+## Вскрытые пласты понемногу выпускают метан в соседнюю выработку.
+func _seep_tick() -> void:
+	for c: Vector2i in seeps.keys():
+		var m := world.get_mat(c.x, c.y)
+		if not SEEP_RESERVE.has(m) or seeps[c] <= 0.0:
+			seeps.erase(c)
+			continue
+		var out = null
+		for d in DIRS4:
+			if _open_for_gas(c + d):
+				out = c + d
+				break
+		if out == null:
+			continue
+		var amount := minf(SEEP_RATE * GAS_STEP, seeps[c])
+		seeps[c] -= amount
+		gas[out] = gas.get(out, 0.0) + amount
+
+
 func _gas_tick() -> void:
+	_seep_tick()
 	if gas.is_empty():
 		return
 	var next := {}
@@ -307,12 +339,19 @@ func _gas_tick() -> void:
 		next[c] = next.get(c, 0.0) + keep
 		for t in targets:
 			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
-	# Вентиляция выводит газ.
-	for p in colony.rooms_of(RoomType.VENT):
+	# Дегазация собирает метан — это топливо для генератора.
+	for p in colony.rooms_of(RoomType.DEGAS):
+		if p.paused:
+			continue
 		var center := p.rect.get_center()
 		for c in next:
-			if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
-				next[c] *= 0.25 if colony.powered() else 0.5
+			if absi(c.x - center.x) <= DEGAS_RADIUS and absi(c.y - center.y) <= DEGAS_RADIUS:
+				var take: float = next[c] * DEGAS_TAKE
+				next[c] -= take
+				_captured += take
+	while _captured >= 1.0:
+		_captured -= 1.0
+		colony._add("methane", 1)
 	gas.clear()
 	for c in next:
 		if next[c] >= GAS_MIN:
@@ -418,7 +457,8 @@ static func _cells(d: Dictionary) -> Array:
 
 
 func to_dict() -> Dictionary:
-	return {"active": _cells(active), "lava": _cells(lava_still), "springs": _cells(springs), "gas": _cells(gas)}
+	return {"active": _cells(active), "lava": _cells(lava_still), "springs": _cells(springs), "gas": _cells(gas),
+		"seeps": _cells(seeps), "captured": _captured}
 
 
 func load_dict(d: Dictionary) -> void:
@@ -430,3 +470,6 @@ func load_dict(d: Dictionary) -> void:
 		springs[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
 	for e in d.get("gas", []):
 		gas[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	for e in d.get("seeps", []):
+		seeps[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	_captured = float(d.get("captured", 0.0))

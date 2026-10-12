@@ -20,11 +20,12 @@ const CAVE_MAX_DEPTH := 10000 # глубже полости схлопывают
 
 var world_seed: int
 ## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
-## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще.
-const LATEST := 2
+## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше.
+const LATEST := 3
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
+var _tree_share := 0.12
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -55,6 +56,8 @@ func _init(p_seed: int, p_version := LATEST) -> void:
 	if version >= 2:
 		_lake_segment = 267
 		_bush_share = 0.08 / 3.0
+	if version >= 3:
+		_tree_share = 0.24
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -113,11 +116,11 @@ func feature_at(x: int) -> int:
 	if water_level(x) < s:
 		return FEATURE_NONE
 	var h := hash01(x, 7, world_seed + 11)
-	if h < 0.12:
+	if h < _tree_share:
 		return FEATURE_TREE
-	if h < 0.17:
+	if h < _tree_share + 0.05:
 		return FEATURE_BOULDER
-	if h < 0.17 + _bush_share:
+	if h < _tree_share + 0.05 + _bush_share:
 		return FEATURE_BUSH
 	return FEATURE_NONE
 

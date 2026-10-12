@@ -29,11 +29,18 @@ const HAZARD_TEXT := {
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
 
-# Потребности (в секунду реального времени).
-const SATIETY_DECAY := 100.0 / 1800.0
-const ENERGY_DECAY := 100.0 / 2700.0
-const SLEEP_BED := 100.0 / 360.0
-const SLEEP_FLOOR := 100.0 / 720.0
+# Потребности привязаны к суткам (DAY = 3 минуты): бодрствуют ~16 часов и спят ночью,
+# едят 2–3 раза в день. Во сне голод растёт медленнее.
+const SATIETY_DECAY := 100.0 / 130.0
+const ENERGY_DECAY := 100.0 / 200.0
+const SLEEP_BED := 100.0 / 70.0
+const SLEEP_FLOOR := 100.0 / 100.0
+## За сколько секунд полный голод убивает здорового жителя (двое суток).
+const STARVE_TIME := DAY * 2.0
+## Ночью ложатся спать, если бодрость ниже этого.
+const NIGHT_SLEEP := 85.0
+## Просыпаются утром, если выспались хотя бы настолько.
+const WAKE := 70.0
 const EAT_TIME := 6.0
 const MEAL := 55.0
 const MEAL_DINING := 100.0
@@ -50,7 +57,7 @@ const OFFLINE_PLANT_TICK := 120.0
 ## Сколько секунд дерево растёт от саженца до взрослого.
 const TREE_GROW_TIME := 5400.0
 ## Секунд на одну новую ягоду.
-const BERRY_REGEN := 90.0
+const BERRY_REGEN := 30.0
 ## Шанс за тик появиться саженцу на свободной траве — на каждое дерево рядом.
 const TREE_SPREAD := 0.0015
 const BUSH_SPREAD := 0.0004
@@ -61,12 +68,17 @@ const PLANT_AREA := 160
 const FISH_REGEN := 60.0
 ## Источник еды для задачи EAT: куст на поверхности.
 const EAT_BUSH := -1
+## Источник еды: еда, лежащая на земле.
+const EAT_DROP := -2
 ## Сколько единиц ресурса житель уносит за раз.
 const CARRY := 5
 ## Оффлайн одна ходка за материалами занимает столько секунд.
 const OFFLINE_HAUL_TIME := 20.0
-# Игровое время: сутки — минута, месяц — 30 суток, год — 12 месяцев (6 часов игры).
-const DAY := 60.0
+# Игровое время: сутки — 3 минуты, месяц — 30 суток, год — 12 месяцев (18 часов игры).
+const DAY := 180.0
+## Ночь: с 22:00 до 6:00.
+const NIGHT_FROM := 22.0
+const NIGHT_TO := 6.0
 const MONTH := DAY * 30.0
 const YEAR := MONTH * 12.0
 const MONTH_NAMES := ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
@@ -157,6 +169,8 @@ func _init(p_world: WorldData) -> void:
 
 func start_new(home_x: int) -> void:
 	inventory = START_INVENTORY.duplicate()
+	# Колония начинается утром.
+	game_time = DAY * 7.0 / 24.0
 	home = Vector2i(home_x, world.gen.surface_y(home_x))
 	explored_min = home_x - EXPLORE_RADIUS
 	explored_max = home_x + EXPLORE_RADIUS
@@ -171,8 +185,8 @@ func start_new(home_x: int) -> void:
 		# Небольшие врождённые склонности.
 		for k in u.skills:
 			u.skills[k] = rng.randf_range(0.0, 200.0)
-		u.energy = rng.randf_range(70.0, 100.0)
-		u.satiety = rng.randf_range(65.0, 90.0)
+		u.energy = rng.randf_range(85.0, 100.0)
+		u.satiety = rng.randf_range(80.0, 100.0)
 
 
 func _new_unit(sex: int, pos: Vector2) -> Unit:
@@ -702,8 +716,9 @@ func _check_supply(p: Project) -> void:
 func _register_room(p: Project) -> void:
 	if p.kind != Project.Kind.ROOM or p.phase == Project.Phase.DIG:
 		return
+	# Крайние столбцы — лестницы у стен: из комнаты в склоне всегда можно выбраться.
 	for c in p.cells():
-		if not (p.ladder and c.x == p.rect.position.x):
+		if c.x != p.rect.position.x and c.x != p.rect.end.x - 1:
 			room_cells[c] = p.id
 
 
@@ -1119,6 +1134,9 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 		_carry_to(u, room, y[0], y[1])
 	elif y[1] > 0:
 		drop_item(_ground_cell(x), y[0], y[1])
+		# Кто добыл — тот и несёт на склад, сколько унесёт (остальное подберут).
+		if u != null and not offline:
+			_pick_up(u, _landing(_ground_cell(x)), y[0])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
 		var what := "собрал ягоды"
 		match kind:
@@ -1304,6 +1322,8 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 	fish[int(lake["id"])] = left - 1.0
 	if u != null:
 		drop_item(u.cell(), "food", 2)
+		if not offline:
+			_pick_up(u, _landing(u.cell()), "food")
 	else:
 		_add("food", 2)
 	if u != null and left - 1.0 < 1.0:
@@ -1391,7 +1411,22 @@ func _life_tick(dt: float, offline: bool) -> void:
 			elements.affect_unit(u, dt)
 			if not units.has(u):
 				continue
-		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt)
+		var asleep := u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK
+		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0))
+		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
+		if u.satiety <= 0.0:
+			u.health -= dt * 100.0 / STARVE_TIME
+			if u.health < 50.0 and not u.starving_warned:
+				u.starving_warned = true
+				_log("%s %s от голода — срочно нужна еда!" % [u.name, "истощена" if u.sex == Unit.Sex.FEMALE else "истощён"], "danger")
+			if u.health <= 0.0:
+				if offline:
+					u.health = 1.0
+				else:
+					_kill(u, "голод")
+					continue
+		elif u.satiety > 30.0:
+			u.starving_warned = false
 		if u.task != Unit.Task.SLEEP:
 			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
 		u.health = minf(100.0, u.health + dt * (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0))
@@ -1541,17 +1576,25 @@ func _update_unit(u: Unit, dt: float) -> void:
 		Unit.State.IDLE:
 			if not pathing.standable(u.cell()):
 				u.state = Unit.State.FALL
+				u.fall_from = u.pos.y
 				return
 			u.retry -= dt
 			if u.retry <= 0.0 and not _assign(u):
 				u.retry = 1.5
 		Unit.State.FALL:
 			u.pos.x = roundf(u.pos.x)
-			u.pos.y += FALL_SPEED * dt
-			var c := Vector2i(roundi(u.pos.x), floori(u.pos.y))
-			if pathing.standable(c):
-				u.pos.y = c.y
-				u.state = Unit.State.IDLE
+			var k := Vector2i(roundi(u.pos.x), floori(u.pos.y))
+			if not pathing.passable(k):
+				_unbury(u)
+				return
+			# Падает до первой опоры — сквозь породу не проваливается.
+			var to_y := u.pos.y + FALL_SPEED * dt
+			while k.y <= floori(to_y):
+				if pathing.standable(k) or not pathing.passable(k + Vector2i(0, 1)):
+					_land(u, k)
+					return
+				k += Vector2i(0, 1)
+			u.pos.y = to_y
 		Unit.State.MOVE:
 			if not _task_valid(u) or _needs_interrupt(u):
 				_drop(u)
@@ -1562,6 +1605,30 @@ func _update_unit(u: Unit, dt: float) -> void:
 				_drop(u)
 				return
 			_work(u, dt)
+
+
+## Приземление: с высоты больше 4 м — травма.
+func _land(u: Unit, c: Vector2i) -> void:
+	u.pos.y = c.y
+	u.state = Unit.State.IDLE
+	var height := c.y - u.fall_from
+	if height > 4.0 and not offline:
+		injure(u, (height - 4.0) * 12.0, "упал(а) с высоты %d м" % roundi(height))
+
+
+## Жителя засыпало породой: выбирается в ближайшую пустоту или гибнет.
+func _unbury(u: Unit) -> void:
+	var start := u.cell()
+	for r in range(1, 6):
+		for d in [Vector2i(0, -r), Vector2i(-r, 0), Vector2i(r, 0), Vector2i(-r, -r), Vector2i(r, -r), Vector2i(0, r)]:
+			var c: Vector2i = start + d
+			if pathing.passable(c) and pathing.passable(c + Vector2i(0, -1)):
+				u.pos = Vector2(c)
+				u.state = Unit.State.FALL
+				u.fall_from = u.pos.y
+				injure(u, 20.0, "засыпало породой — еле выбрался(лась)")
+				return
+	injure(u, 200.0, "засыпало породой")
 
 
 func _head_in_water(u: Unit) -> bool:
@@ -1653,7 +1720,7 @@ func _move(u: Unit, dt: float) -> void:
 	while budget > 0.0 and u.path_i < u.path.size():
 		var next := Vector2(u.path[u.path_i])
 		var delta := next - u.pos
-		var spd := (CLIMB_SPEED if absf(delta.y) > absf(delta.x) else WALK_SPEED) * jam
+		var spd := (CLIMB_SPEED if absf(delta.y) > absf(delta.x) else WALK_SPEED) * jam * u.move_factor()
 		if u.child:
 			spd *= 0.8
 		var dist := delta.length()
@@ -1748,7 +1815,8 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.SLEEP:
 			u.energy = minf(100.0, u.energy + dt * (SLEEP_BED if u.project_id != 0 else SLEEP_FLOOR))
-			if u.energy >= 100.0:
+			# Ночью спят до утра, днём — пока не отдохнут.
+			if not is_night() and u.energy >= WAKE:
 				_drop(u)
 		Unit.Task.EAT:
 			u.work_t += dt
@@ -1760,6 +1828,9 @@ func _work(u: Unit, dt: float) -> void:
 					var eaten := minf(b, portion)
 					world.set_berries(u.target.x, b - eaten)
 					u.satiety = minf(100.0, u.satiety + MEAL * eaten / portion)
+				elif u.project_id == EAT_DROP:
+					var got := _take_drop(u.target, "food", portion)
+					u.satiety = minf(100.0, u.satiety + MEAL * got / portion)
 				elif inventory.get("food", 0) >= portion:
 					inventory["food"] -= portion
 					u.satiety = minf(100.0, u.satiety + (MEAL_DINING if u.project_id != 0 else MEAL))
@@ -1773,13 +1844,14 @@ func _work(u: Unit, dt: float) -> void:
 			u.work_t += rate
 			if u.project_id == 0:
 				if u.work_t >= SHORE_FISH_TIME:
-					_catch_from(_lake_near(u.target.x), u)
+					var lake := _lake_near(u.target.x)
 					_drop(u)
+					_catch_from(lake, u)
 			else:
 				var fp := project_by_id(u.project_id)
 				if u.work_t >= fp.fish_time():
-					_catch_fish(fp, u)
 					_drop(u)
+					_catch_fish(fp, u)
 
 
 func _task_valid(u: Unit) -> bool:
@@ -1831,6 +1903,8 @@ func _task_valid(u: Unit) -> bool:
 		Unit.Task.EAT:
 			if u.project_id == EAT_BUSH:
 				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
+			if u.project_id == EAT_DROP:
+				return drop_amount(u.target, "food") > 0
 			return true
 		Unit.Task.FISH:
 			if u.project_id == 0:
@@ -1902,7 +1976,7 @@ func _task_order(u: Unit) -> Array[String]:
 	if food_low():
 		order.append_array(["farm", "fish"])
 	if waiting_for_materials() or food_low():
-		order.append("harvest")
+		order.append_array(["cleanup", "harvest", "need"])
 	order.append_array(["storage", "projects", "cleanup", "farm", "fish", "craft", "science", "harvest"])
 	return order
 
@@ -1912,15 +1986,15 @@ func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
-	if u.energy < TIRED:
+	if u.energy < TIRED or (is_night() and u.energy < NIGHT_SLEEP):
 		_start_sleep(u, parents, dist)
 		return true
 	if u.satiety < HUNGRY:
 		if inventory.get("food", 0) > 0:
 			_start_eat(u, parents, dist)
 			return true
-		# На складе пусто — идёт искать ягоды.
-		if _start_eat_bush(u, parents, dist):
+		# На складе пусто — ест то, что лежит на земле, или идёт искать ягоды.
+		if _start_eat_drop(u, parents, dist) or _start_eat_bush(u, parents, dist):
 			return true
 	if u.child:
 		return false
@@ -1947,6 +2021,9 @@ func _assign(u: Unit) -> bool:
 					return true
 			"cleanup":
 				if _try_cleanup(u, parents, dist):
+					return true
+			"need":
+				if _try_need(u, parents, dist):
 					return true
 			"dig", "build", "projects":
 				for p in projects:
@@ -2016,6 +2093,25 @@ func _start_eat(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
 		_start(u, Unit.Task.EAT, best, best, room_id, parents)
 	else:
 		_start(u, Unit.Task.EAT, u.cell(), u.cell(), 0, parents)
+
+
+func _start_eat_drop(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var best = null
+	var best_c := Vector2i.ZERO
+	var best_d := 1 << 30
+	for c: Vector2i in drops:
+		if drop_amount(c, "food") <= 0:
+			continue
+		var stand = _drop_stand(c, dist)
+		if stand != null and dist[stand] < best_d:
+			best_d = dist[stand]
+			best = stand
+			best_c = c
+	if best == null:
+		return false
+	u.haul_src = best_c
+	_start(u, Unit.Task.EAT, best_c, best, EAT_DROP, parents)
+	return true
 
 
 func _start_eat_bush(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
@@ -2447,6 +2543,26 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	return true
 
 
+## Житель берёт ресурс с кучи c (рядом с ним) и несёт на склад.
+func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
+	var room: int = capacity(key) - inventory.get(key, 0) - _incoming(key)
+	var n := mini(CARRY, mini(drop_amount(c, key), room))
+	if n <= 0:
+		return
+	_drop(u)
+	u.task = Unit.Task.HAUL
+	u.project_id = 0
+	u.carry_key = key
+	u.carry_amount = n
+	u.haul_stage = 0
+	u.from_drop = true
+	u.haul_src = c
+	u.to_store = true
+	u.path.clear()
+	u.path_i = 0
+	u.state = Unit.State.WORK
+
+
 ## Сколько ресурса уже несут на склад.
 func _incoming(key: String) -> int:
 	var n := 0
@@ -2627,6 +2743,37 @@ func _try_gather(u: Unit, key: String, room: Project, parents: Dictionary, dist:
 	u.gather_room = room.id
 	_start(u, Unit.Task.HARVEST, _ground_cell(best_x), best_stand, 0, parents)
 	return true
+
+
+## Стройке не хватает дерева, камня или еды нет совсем — жители сами отмечают
+## ближайшее дерево, валун или куст и добывают.
+func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var keys := {}
+	for p in projects:
+		if p.paused or not p.blocked.begins_with("Не хватает"):
+			continue
+		for k in _needed_now(p):
+			if GATHER_SOURCES.has(k):
+				keys[k] = true
+	if inventory.get("food", 0) + drop_total("food") == 0:
+		keys["food"] = true
+	for k in keys:
+		var kind: int = GATHER_SOURCES[k]
+		var ux := u.cell().x
+		var best_x = null
+		var best_d := 1 << 30
+		for x in range(maxi(explored_min, ux - Pathing.MAX_RADIUS), mini(explored_max, ux + Pathing.MAX_RADIUS) + 1):
+			if world.feature_marks.has(x) or not _gather_ok(x, kind):
+				continue
+			var base := _ground_cell(x)
+			for stand in [base, base + Vector2i(-1, 0), base + Vector2i(1, 0)]:
+				if dist.has(stand) and dist[stand] < best_d:
+					best_d = dist[stand]
+					best_x = x
+		if best_x != null:
+			world.set_feature_mark(best_x, true)
+			return _try_harvest(u, parents, dist)
+	return false
 
 
 ## Есть ли что добыть для ресурса key (для подсказки «нечего добывать»).
@@ -2883,7 +3030,10 @@ func _power_tick(dt: float) -> void:
 		if p.paused:
 			continue
 		if p.farm_progress <= 0.0:
-			if inventory.get("coal", 0) >= 1:
+			if inventory.get("methane", 0) >= 1:
+				inventory["methane"] -= 1
+				p.farm_progress += RoomType.FUEL_TIME
+			elif inventory.get("coal", 0) >= 1:
 				inventory["coal"] -= 1
 				p.farm_progress += RoomType.FUEL_TIME
 			elif inventory.get("wood", 0) >= 2:
@@ -2895,7 +3045,7 @@ func _power_tick(dt: float) -> void:
 			if p.blocked.begins_with("Нет топлива"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
-			p.blocked = "Нет топлива: нужен уголь или дрова"
+			p.blocked = "Нет топлива: нужен метан, уголь или дрова"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
@@ -2906,10 +3056,41 @@ func _power_tick(dt: float) -> void:
 	power_ratio = 1.0 if power_used == 0 else minf(1.0, float(power_made) / power_used)
 
 
-## Дата по игровому календарю: «12 мар · год 1».
+## Который час (0..24).
+func hour() -> float:
+	return fmod(game_time, DAY) / DAY * 24.0
+
+
+func is_night() -> bool:
+	var h := hour()
+	return h >= NIGHT_FROM or h < NIGHT_TO
+
+
+## Светло ли: 1 — день, 0 — ночь, плавно на рассвете (5–7) и закате (19–21).
+func daylight() -> float:
+	var h := hour()
+	if h < 5.0 or h >= 21.0:
+		return 0.0
+	if h < 7.0:
+		return (h - 5.0) / 2.0
+	if h >= 19.0:
+		return 1.0 - (h - 19.0) / 2.0
+	return 1.0
+
+
+## Дата и время по игровому календарю: «12 мар · 14:30 · год 1».
 func date_text() -> String:
 	var days := int(game_time / DAY)
-	return "%d %s · год %d" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], days / 360 + 1]
+	var minutes := int(hour() * 60.0)
+	return "%d %s · %02d:%02d · год %d" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], minutes / 60, minutes % 60 / 10 * 10, days / 360 + 1]
+
+
+## Длительность в игровых сутках: «3 дн.», «8 ч».
+static func game_span(seconds: float) -> String:
+	var days := seconds / DAY
+	if days >= 1.0:
+		return "%d дн." % roundi(days)
+	return "%d ч" % maxi(1, roundi(days * 24.0))
 
 
 # --- Оффлайн-симуляция --------------------------------------------------------------

@@ -43,8 +43,10 @@ func _process(_delta: float) -> bool:
 	if _frame == 328:
 		_shot("feature")
 		_main.hud.hide_info()
-		_main.hud._pick_tool(Hud.Mode.ROOM, 6, "room", "Средняя 6×3")
-		_main._on_paint(_main.get_viewport().get_visible_rect().size * 0.5 + Vector2(120, 20), true)
+		_main.hud._pick_tool(Hud.Mode.ROOM, "room", "Комната")
+		var at: Vector2 = _main.get_viewport().get_visible_rect().size * 0.5 + Vector2(120, 20)
+		_main._on_paint(at, true)
+		_main._on_paint_end(at)
 	if _frame == 332:
 		_shot("placing")
 		_main._to_look()
