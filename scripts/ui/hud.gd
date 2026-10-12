@@ -446,6 +446,10 @@ func _build_panel() -> void:
 	_info_panel.visible = false
 	_info_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
 	add_child(_info_panel)
+	# Лента событий в том же углу — пока открыта карточка, прячем её.
+	_info_panel.visibility_changed.connect(func() -> void:
+		if _log != null:
+			_log.visible = not _info_panel.visible)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	_info_panel.add_child(v)
