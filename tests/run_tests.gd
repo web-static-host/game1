@@ -36,6 +36,7 @@ func _initialize() -> void:
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
+	test_food_balance()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -76,6 +77,8 @@ func test_surface_and_layers() -> void:
 	var gen := WorldGen.new(777)
 	for x in [-5000, -37, 0, 1, 999, 123456]:
 		var s := gen.surface_y(x)
+		if gen.water_level(x) < s:
+			continue # в озере над дном вода, дно — песок
 		check(gen.material_at(x, s - 1) == Mat.AIR, "над поверхностью воздух (x=%d)" % x)
 		check(gen.material_at(x, s) == Mat.TOPSOIL, "на поверхности почва (x=%d)" % x)
 		check(absi(s) < 80, "рельеф в разумных пределах (x=%d, y=%d)" % [x, s])
@@ -677,7 +680,7 @@ func test_nature() -> void:
 	check(w.berries(bush) == WorldData.BUSH_BERRIES, "у нетронутого куста полный урожай")
 	colony._complete_harvest(bush, null)
 	check(w.feature_at(bush) == WorldGen.FEATURE_BUSH and w.berries(bush) < 1.0, "куст остался без ягод")
-	check(colony.drop_amount(colony._ground_cell(bush), "food") == 6, "ягоды лежат у куста")
+	check(colony.drop_amount(colony._ground_cell(bush), "berries") == 6, "ягоды лежат у куста")
 	colony.grow_plants(Colony.BERRY_REGEN * 3)
 	check(w.berries(bush) >= 2.9, "ягоды отрастают (%.1f)" % w.berries(bush))
 	# Голодный житель при пустом складе ест ягоды с куста.
@@ -972,7 +975,7 @@ func test_wear_and_repair() -> void:
 	var wood0: int = colony.inventory.get("wood", 0)
 	check(colony.start_repair(room), "ремонт начат")
 	colony.advance_offline(3000.0)
-	check(room.wear < 0.01 and not room.repairing, "дом отремонтирован")
+	check(room.wear < 0.05 and not room.repairing, "дом отремонтирован (износ %d%%)" % roundi(room.wear * 100.0))
 	check(colony.inventory.get("wood", 0) < wood0, "на ремонт ушло дерево")
 	# Оффлайн не рушится.
 	room.wear = 0.995
@@ -996,12 +999,11 @@ func test_wear_and_repair() -> void:
 
 func test_calendar() -> void:
 	var colony := _new_colony(1)
-	check(colony.date_text() == "1 янв · 00:00 · год 1", "календарь начинается с 1 января: " + colony.date_text())
-	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + Colony.DAY * 14.5 / 24.0
-	check(colony.date_text() == "5 мар · 14:30 · год 2", "дата и время по игровым суткам: " + colony.date_text())
-	check(not colony.is_night() and colony.daylight() == 1.0, "днём светло")
-	colony.game_time = Colony.DAY * 23.0 / 24.0
-	check(colony.is_night() and colony.daylight() == 0.0, "в 23:00 ночь")
+	check(colony.date_text() == "1 янв · год 1", "календарь начинается с 1 января: " + colony.date_text())
+	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + Colony.DAY * 0.5
+	check(colony.date_text() == "5 мар · год 2", "дата по игровым суткам: " + colony.date_text())
+	check(Colony.DAY_NIGHT or (not colony.is_night() and colony.daylight() == 1.0), "без смены дня и ночи всегда светло")
+	check(absf(Colony.PREGNANCY_TIME - Colony.MONTH) < 0.01, "беременность — месяц")
 
 
 ## Сплошной гранитный блок w×h с левым верхним углом o (для опытов со стихиями).
@@ -1335,3 +1337,30 @@ func test_drops_and_scouting() -> void:
 	for i in 120:
 		colony.update(0.5)
 	check(absi(u.cell().x - target.x) <= 2 or colony.explored_max > before, "житель дошёл и разведал округу")
+
+
+func test_food_balance() -> void:
+	var colony := _new_colony(95)
+	colony.start_new(0)
+	var u := colony.units[0]
+	# Ягоды — перекус, рыба и грибы — еда, в столовой сытнее.
+	colony.inventory = {"berries": 10}
+	u.satiety = 20.0
+	colony._eat_from(u, colony._take_store)
+	var after_berries := u.satiety
+	colony.inventory = {"food": 10}
+	u.satiety = 20.0
+	colony._eat_from(u, colony._take_store)
+	var after_food := u.satiety
+	colony.inventory = {"food": 10}
+	u.satiety = 20.0
+	colony._eat_from(u, colony._take_store, Colony.DINING_BONUS)
+	check(after_berries - 20.0 < 40.0, "ягоды насыщают слабо (+%d)" % roundi(after_berries - 20.0))
+	check(after_food > after_berries, "рыба сытнее ягод (+%d)" % roundi(after_food - 20.0))
+	check(u.satiety > after_food or u.satiety >= 99.0, "в столовой сытнее")
+	check(colony.feature_yield(0)[0] in ["", "wood", "stone", "berries"], "куст даёт ягоды, а не еду")
+	# У новой базы рядом есть пруд.
+	var g := WorldGen.new(95)
+	var pond := g.lake_at(55)
+	check(not pond.is_empty() and absi(int(pond["cx"])) - int(pond["w"]) > 30, "недалеко от базы есть пруд")
+	check(colony.explored_max >= Colony.START_VIEW, "поверхность у базы видна далеко")

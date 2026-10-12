@@ -5,7 +5,7 @@ extends Node2D
 const AUTOSAVE_SEC := 30.0
 ## Сколько времени отсутствия засчитывается (стимул заходить регулярно).
 const OFFLINE_CAP_SEC := 3.0 * 3600.0
-const SPEEDS := [1.0, 10.0, 100.0]
+const SPEEDS := [1.0, 10.0, 20.0]
 const STATUS_INTERVAL := 0.2
 
 var world: WorldData
@@ -106,7 +106,7 @@ func _build_scene() -> void:
 	camera.paint_cancelled.connect(_clear_preview)
 	hud.mode_changed.connect(_set_mode)
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
-	hud.speed_pressed.connect(_cycle_speed)
+	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.save_pressed.connect(func() -> void:
 		_save()
 		hud.log_event("Игра сохранена", "good"))
@@ -229,11 +229,6 @@ func _done_count() -> int:
 		if p.phase == Project.Phase.DONE:
 			n += 1
 	return n
-
-
-func _cycle_speed() -> void:
-	_speed_idx = (_speed_idx + 1) % SPEEDS.size()
-	hud.set_speed_text("×%d" % int(SPEEDS[_speed_idx]))
 
 
 func _set_mode(m: int, room_width := 0) -> void:

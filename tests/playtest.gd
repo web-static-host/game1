@@ -14,7 +14,8 @@ var _anomalies := {}
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var seed_value := int(args[0]) if args.size() > 0 else 4242
-	var days := int(args[1]) if args.size() > 1 else 6
+	## Сколько минут реального времени играть.
+	var days := int(args[1]) if args.size() > 1 else 30
 	world = WorldData.new(WorldGen.new(seed_value))
 	colony = Colony.new(world)
 	colony.event_logged.connect(func(t: String, k: String) -> void:
@@ -25,7 +26,7 @@ func _initialize() -> void:
 	var hour_t := 0.0
 	var tasks := {}
 	var plan := 0
-	while t < days * Colony.DAY:
+	while t < days * 60.0:
 		plan = _player(plan)
 		colony.update(step)
 		t += step
@@ -38,7 +39,7 @@ func _initialize() -> void:
 				name = "плывёт"
 			tasks[name] = tasks.get(name, 0.0) + step
 			_watch(u, step)
-		if hour_t >= Colony.DAY / 4.0:
+		if hour_t >= 120.0:
 			hour_t = 0.0
 			_report(tasks)
 			tasks.clear()
@@ -75,8 +76,8 @@ func _watch(u: Unit, dt: float) -> void:
 	_last_pos[u.id] = c
 	if u.state == Unit.State.FALL and not colony.pathing.passable(c + Vector2i(0, 1)):
 		_anomaly("%s «падает», упёршись в породу" % u.name)
-	if u.task == Unit.Task.SLEEP and not colony.is_night() and u.energy > 90.0 and u.state == Unit.State.WORK:
-		_anomaly("%s спит днём выспавшись" % u.name)
+	if u.task == Unit.Task.SLEEP and u.energy >= 100.0 and u.state == Unit.State.WORK:
+		_anomaly("%s спит, хотя выспался" % u.name)
 
 
 func _report(tasks: Dictionary) -> void:
@@ -104,8 +105,8 @@ func _report(tasks: Dictionary) -> void:
 	for p in colony.projects:
 		if p.phase != Project.Phase.DONE or p.repairing:
 			projects.append("%s:%s%s" % [p.title(), p.phase_name(), (" [" + p.blocked + "]") if not p.blocked.is_empty() else ""])
-	print("%s | жит %d сыт %d бодр %d здор %d | еда %d дер %d кам %d | на земле %d | %s" % [
-		colony.date_text(), colony.units.size(), roundi(sat / n), roundi(en / n), roundi(hp / n),
+	print("[%d с] %s | жит %d сыт %d бодр %d здор %d | еда %d дер %d кам %d | на земле %d | %s" % [
+		Time.get_ticks_msec() / 1000, colony.date_text(), colony.units.size(), roundi(sat / n), roundi(en / n), roundi(hp / n),
 		colony.inventory.get("food", 0), colony.inventory.get("wood", 0), colony.inventory.get("stone", 0), drops,
 		", ".join(parts)])
 	if not projects.is_empty():

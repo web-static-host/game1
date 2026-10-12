@@ -20,12 +20,15 @@ const CAVE_MAX_DEPTH := 10000 # глубже полости схлопывают
 
 var world_seed: int
 ## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
-## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше.
-const LATEST := 3
+## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше;
+## 4 — озёра ещё чаще и одно — недалеко от базы.
+const LATEST := 4
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
 var _tree_share := 0.12
+var _lake_chance := 0.75
+var _home_clear := 60
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -58,6 +61,10 @@ func _init(p_seed: int, p_version := LATEST) -> void:
 		_bush_share = 0.08 / 3.0
 	if version >= 3:
 		_tree_share = 0.24
+	if version >= 4:
+		_lake_segment = 160
+		_lake_chance = 0.85
+		_home_clear = 30
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -142,7 +149,7 @@ func kind_yield(kind: int, x: int) -> Array:
 		FEATURE_BOULDER:
 			return ["stone", 3 + int(hash01(x, 13, world_seed) * 4.0)]
 		FEATURE_BUSH:
-			return ["food", 6]
+			return ["berries", 6]
 	return ["", 0]
 
 
@@ -181,7 +188,15 @@ func _lake_of_segment(k: int) -> Dictionary:
 		return _lakes[k]
 	var d := {}
 	var s := world_seed + 31
-	if hash01(k, 1, s) < 0.75:
+	if version >= 4 and k == 0:
+		# Пруд недалеко от базы — чтобы было где рыбачить с самого начала.
+		var hw := 6 + int(hash01(k, 3, s) * 6.0)
+		var hcx := 50 + int(hash01(k, 5, s) * 15.0)
+		var hlevel := maxi(_base_surface(hcx - hw), _base_surface(hcx + hw))
+		d = {"id": k, "cx": hcx, "w": hw, "depth": 2 + int(hash01(k, 4, s) * 3.0), "level": hlevel}
+		_lakes[k] = d
+		return d
+	if hash01(k, 1, s) < _lake_chance:
 		var r := hash01(k, 2, s)
 		var w: int
 		var depth: int
@@ -195,7 +210,7 @@ func _lake_of_segment(k: int) -> Dictionary:
 			w = 60 + int(hash01(k, 3, s) * 90.0)
 			depth = 10 + int(hash01(k, 4, s) * 20.0)
 		var cx := k * _lake_segment + int(hash01(k, 5, s) * _lake_segment)
-		if absi(cx) - w > LAKE_HOME_CLEAR:
+		if absi(cx) - w > _home_clear:
 			var level := maxi(_base_surface(cx - w), _base_surface(cx + w))
 			d = {"id": k, "cx": cx, "w": w, "depth": depth, "level": level}
 	_lakes[k] = d

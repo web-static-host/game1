@@ -5,7 +5,7 @@ extends RefCounted
 
 const COLORS := {
 	"wood": Color(0.62, 0.42, 0.22), "stone": Color(0.64, 0.64, 0.67), "clay": Color(0.74, 0.44, 0.3),
-	"food": Color(0.88, 0.22, 0.28), "coal": Color(0.2, 0.19, 0.18), "iron": Color(0.72, 0.36, 0.2),
+	"food": Color(0.55, 0.72, 0.85), "berries": Color(0.88, 0.22, 0.28), "coal": Color(0.2, 0.19, 0.18), "iron": Color(0.72, 0.36, 0.2),
 	"copper": Color(0.28, 0.72, 0.6), "silver": Color(0.86, 0.89, 0.93), "gold": Color(0.97, 0.8, 0.24),
 	"uranium": Color(0.55, 0.9, 0.32), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.93, 0.9, 0.92),
 	"oil": Color(0.12, 0.1, 0.08), "limestone": Color(0.83, 0.8, 0.7),
@@ -38,6 +38,14 @@ static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
 				c + Vector2(-r * 0.15, -r * 0.75), c + Vector2(r * 0.6, -r * 0.5), c + Vector2(r * 0.1, -r * 0.1),
 				c + Vector2(-r * 0.5, -r * 0.2)]), col.lightened(0.25))
 		"food":
+			# Рыба.
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-r * 0.9, 0), c + Vector2(-r * 0.2, -r * 0.5), c + Vector2(r * 0.45, -r * 0.3),
+				c + Vector2(r * 0.45, r * 0.3), c + Vector2(-r * 0.2, r * 0.5)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(r * 0.35, 0), c + Vector2(r * 0.95, -r * 0.45), c + Vector2(r * 0.95, r * 0.45)]), col.darkened(0.2))
+			ci.draw_circle(c + Vector2(-r * 0.5, -r * 0.1), r * 0.1, Color(0.1, 0.1, 0.12))
+		"berries":
 			ci.draw_circle(c + Vector2(-r * 0.35, r * 0.2), r * 0.5, col)
 			ci.draw_circle(c + Vector2(r * 0.4, r * 0.3), r * 0.45, col.darkened(0.1))
 			ci.draw_circle(c + Vector2(-r * 0.5, 0.0), r * 0.15, col.lightened(0.5))

@@ -353,7 +353,7 @@ func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 
 const RES_COLORS := {
 	"wood": Color(0.55, 0.38, 0.2), "stone": Color(0.6, 0.6, 0.62), "clay": Color(0.66, 0.42, 0.3),
-	"food": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
+	"food": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
 	"copper": Color(0.25, 0.68, 0.57), "silver": Color(0.84, 0.87, 0.9), "gold": Color(0.95, 0.79, 0.23),
 	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
 	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),

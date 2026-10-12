@@ -8,7 +8,8 @@ signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
 signal home_pressed
-signal speed_pressed
+## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
+signal speed_selected(index: int)
 signal science_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
@@ -29,6 +30,7 @@ const TOOL_HINTS := {
 	Mode.BRIDGE: "Проведите пальцем над озером",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
+const SPEED_NAMES := ["×1", "×10", "×20"]
 ## Отступы от краёв экрана (скруглённые углы, вырезы камеры).
 const SIDE := 34.0
 const EDGE_TOP := 14.0
@@ -73,7 +75,7 @@ var _room_strip: HBoxContainer
 var _room_w := 6
 var _room_mat := "wood"
 var _room_mats: Array = ["wood"]
-var _btn_speed: IconButton
+
 var _dialog: PanelContainer
 var _dialog_title: Label
 var _dialog_text: Label
@@ -190,7 +192,7 @@ static func _outlined(text: String, fs: int, col: Color) -> Label:
 
 ## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
-	var keys: Array = ["food", "wood", "stone"]
+	var keys: Array = ["food", "berries", "wood", "stone"]
 	var rest := inventory.keys().filter(func(k: String) -> bool:
 		return not keys.has(k) and not RoomType.BULK.has(k) and inventory[k] > 0)
 	rest.sort()
@@ -264,12 +266,19 @@ func _build_bottom(box: VBoxContainer) -> void:
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
 	var home := IconButton.make("home", "К базе")
-	_btn_speed = IconButton.make("speed", "×1")
-	var menu := IconButton.make("menu", "Меню")
-	for b in [home, _btn_speed, menu]:
+	bar.add_child(home)
+	# Скорость — отдельными кнопками.
+	var speeds := ButtonGroup.new()
+	for i in SPEED_NAMES.size():
+		var b := IconButton.make("speed", SPEED_NAMES[i], 76, 80)
+		b.toggle_mode = true
+		b.button_group = speeds
+		b.button_pressed = i == 0
+		b.pressed.connect(func() -> void: speed_selected.emit(i))
 		bar.add_child(b)
+	var menu := IconButton.make("menu", "Меню")
+	bar.add_child(menu)
 	home.pressed.connect(func() -> void: home_pressed.emit())
-	_btn_speed.pressed.connect(func() -> void: speed_pressed.emit())
 	menu.pressed.connect(func() -> void:
 		var open := not _menu.visible
 		close_overlays()
@@ -427,8 +436,7 @@ func _top_limit() -> float:
 	return top
 
 
-func set_speed_text(text: String) -> void:
-	_btn_speed.set_caption(text)
+
 
 
 # --- Карточка выбранного ---------------------------------------------------------------

@@ -81,6 +81,7 @@ const SPAN := {
 const RESOURCE_NAMES := {
 	"wood": "Дерево",
 	"food": "Еда",
+	"berries": "Ягоды",
 	"soil": "Грунт",
 	"clay": "Глина",
 	"sand": "Песок",
