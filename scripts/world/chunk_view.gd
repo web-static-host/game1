@@ -7,6 +7,8 @@ extends Node2D
 const SIZE := ChunkData.SIZE
 const TILE := 32.0
 const ROUND := 11.0
+## Толщина почвенного слоя вдоль сглаженной поверхности, в клетках.
+const SOIL_BAND := 1.4
 const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-2, 0), Vector2i(2, 0)]
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.36, 0.62, 0.27)
@@ -96,9 +98,15 @@ func _draw() -> void:
 	for lx in SIZE:
 		var x := x0 + lx
 		var surf := gen.surface_y(x)
+		# Плавный рельеф: верх земли — ломаная через центры столбцов, а не ступеньки.
+		var line := _surface_line(x, surf)
+		var band_to := ceili(maxf(line.x, line.z) + SOIL_BAND) if not line.is_zero_approx() else surf
+		var soil := rock_color(Mat.TOPSOIL, gen.tint(x, surf))
 		for ly in SIZE:
 			var y := y0 + ly
 			if y < surf:
+				if not line.is_zero_approx() and y + 1 > minf(line.x, line.z):
+					_draw_clipped(lx, ly, line, soil)
 				continue # небо рисует фон
 			var i := ChunkData.idx(lx, ly)
 			var f := chunk.flags[i]
@@ -106,6 +114,16 @@ func _draw() -> void:
 			var v := gen.tint(x, y)
 			var r := Rect2(lx * TILE, ly * TILE, TILE, TILE)
 			var depth := y - surf
+			if y < band_to and f & ChunkData.F_DUG == 0 and Mat.is_solid(m):
+				var col := rock_color(m, v) if f & ChunkData.F_REVEALED else fog_color(depth, v)
+				_draw_clipped(lx, ly, line, col)
+				# Почвенный слой постоянной толщины вдоль поверхности скрывает ступеньки.
+				var band := _band_poly(lx, ly, line)
+				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
+					draw_colored_polygon(poly, soil)
+				if y == surf:
+					_draw_smooth_grass(lx, ly, line, x)
+				continue
 			if f & ChunkData.F_REVEALED == 0:
 				draw_rect(r, fog_color(depth, v))
 				continue
@@ -292,3 +310,99 @@ func _draw_mark(p: Vector2) -> void:
 	draw_circle(p, 11, Color(0, 0, 0, 0.5))
 	draw_circle(p, 9, MARK)
 	draw_colored_polygon(PackedVector2Array([p + Vector2(-5, -3), p + Vector2(5, -3), p + Vector2(0, 5)]), Color(0.2, 0.15, 0.05))
+
+
+
+## Линия поверхности над столбцом x в клетках: (левый край, центр, правый край).
+## Нулевой вектор — сглаживание не нужно (поверхность раскопана).
+func _surface_line(x: int, surf: int) -> Vector3:
+	var top := world.get_flags(x, surf) if world.has_chunk(x >> ChunkData.SHIFT, surf >> ChunkData.SHIFT) else 0
+	if top & ChunkData.F_DUG:
+		return Vector3.ZERO
+	var gen := world.gen
+	return Vector3((gen.surface_y(x - 1) + surf) * 0.5, surf, (surf + gen.surface_y(x + 1)) * 0.5)
+
+
+## Рисует часть клетки ниже линии поверхности.
+func _draw_clipped(lx: int, ly: int, line: Vector3, col: Color) -> void:
+	var pts := clip_below(lx * TILE, ly * TILE, TILE, _line_px(ly, line))
+	if pts.size() >= 3:
+		draw_colored_polygon(pts, col)
+
+
+## Линия в пикселях чанка относительно строки ly: y-координаты (лево, центр, право).
+func _line_px(ly: int, line: Vector3) -> Vector3:
+	var y0 := chunk.cy * SIZE
+	return (line - Vector3(y0, y0, y0)) * TILE
+
+
+## Полигон: квадрат клетки, обрезанный сверху ломаной (x0,l.x)-(xm,l.y)-(x1,l.z).
+static func clip_below(x0: float, top: float, size: float, l: Vector3) -> PackedVector2Array:
+	var bottom := top + size
+	var xs := [x0, x0 + size * 0.5, x0 + size]
+	var ls := [l.x, l.y, l.z]
+	var upper: Array[Vector2] = []
+	for seg in 2:
+		var a := Vector2(xs[seg], ls[seg])
+		var b := Vector2(xs[seg + 1], ls[seg + 1])
+		var pts: Array[Vector2] = [a]
+		if not is_equal_approx(a.y, b.y):
+			var ts: Array[float] = []
+			for yy in [top, bottom]:
+				var t: float = (yy - a.y) / (b.y - a.y)
+				if t > 0.0 and t < 1.0:
+					ts.append(t)
+			ts.sort()
+			for t in ts:
+				pts.append(a.lerp(b, t))
+		pts.append(b)
+		for p in pts:
+			upper.append(Vector2(p.x, clampf(p.y, top, bottom)))
+	var all_bottom := true
+	for p in upper:
+		if p.y < bottom - 0.01:
+			all_bottom = false
+	if all_bottom:
+		return PackedVector2Array()
+	var poly := PackedVector2Array()
+	for p in upper:
+		if poly.is_empty() or not poly[poly.size() - 1].is_equal_approx(p):
+			poly.append(p)
+	var br := Vector2(x0 + size, bottom)
+	var bl := Vector2(x0, bottom)
+	if not poly[poly.size() - 1].is_equal_approx(br):
+		poly.append(br)
+	if not poly[0].is_equal_approx(bl):
+		poly.append(bl)
+	return poly
+
+
+func _draw_smooth_grass(lx: int, ly: int, line: Vector3, x: int) -> void:
+	var l := _line_px(ly, line)
+	var xs := [lx * TILE, lx * TILE + TILE * 0.5, lx * TILE + TILE]
+	var ys := [l.x, l.y, l.z]
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(xs[0], ys[0]), Vector2(xs[1], ys[1]), Vector2(xs[2], ys[2]),
+		Vector2(xs[2], ys[2] + 6), Vector2(xs[1], ys[1] + 6), Vector2(xs[0], ys[0] + 6)]), GRASS)
+	for k in 4:
+		var t := (k + 0.5) / 4.0
+		var bx: float = lerpf(xs[0], xs[2], t)
+		var by: float = lerpf(ys[0], ys[1], t * 2.0) if t < 0.5 else lerpf(ys[1], ys[2], t * 2.0 - 1.0)
+		var hgt := 4.0 + WorldGen.hash01(x, k, 400) * 6.0
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(bx - 3, by + 1), Vector2(bx + 3, by + 1),
+			Vector2(bx + WorldGen.hash01(x, k, 401) * 4.0 - 2.0, by - hgt),
+		]), GRASS_DARK if k % 2 else GRASS)
+
+
+func _band_poly(lx: int, ly: int, line: Vector3) -> PackedVector2Array:
+	var l := _line_px(ly, line)
+	var d := SOIL_BAND * TILE
+	var x0 := lx * TILE
+	return PackedVector2Array([
+		Vector2(x0, l.x), Vector2(x0 + TILE * 0.5, l.y), Vector2(x0 + TILE, l.z),
+		Vector2(x0 + TILE, l.z + d), Vector2(x0 + TILE * 0.5, l.y + d), Vector2(x0, l.x + d)])
+
+
+static func _rect_poly(r: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])

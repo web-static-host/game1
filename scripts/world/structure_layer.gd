@@ -66,6 +66,9 @@ func _draw_done(p: Project) -> void:
 		draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), ROOM_FRAME)
 		draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), ROOM_FRAME)
 		draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), ROOM_FRAME)
+		# Лестницы у боковых стен.
+		for lx in [r.position.x + TILE * 0.5, r.end.x - TILE * 0.5]:
+			_ladder(lx, r.position.y + 5, r.end.y - 6, 1.0)
 		var lamp := Vector2(r.get_center().x, r.position.y + 9)
 		draw_circle(lamp, 14, Color(LAMP, 0.18))
 		draw_circle(lamp, 5, LAMP)
@@ -79,14 +82,7 @@ func _draw_done(p: Project) -> void:
 func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 	var col := Color(BEAM, alpha)
 	if p.rect.size.y > p.rect.size.x:
-		var lx := r.get_center().x - 7
-		var rx := r.get_center().x + 7
-		draw_line(Vector2(lx, r.position.y), Vector2(lx, r.end.y), col, 3.0)
-		draw_line(Vector2(rx, r.position.y), Vector2(rx, r.end.y), col, 3.0)
-		var y := r.position.y + 8
-		while y < r.end.y:
-			draw_line(Vector2(lx, y), Vector2(rx, y), col, 2.5)
-			y += 10
+		_ladder(r.get_center().x, r.position.y, r.end.y, alpha)
 	else:
 		var x := r.position.x + TILE * 0.5
 		while x < r.end.x:
@@ -153,3 +149,13 @@ func _label(font: Font, p: Vector2, text: String, col: Color) -> void:
 		return
 	draw_string_outline(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 6, Color(0, 0, 0, 0.85))
 	draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, col)
+
+
+func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
+	var col := Color(BEAM, alpha)
+	draw_line(Vector2(cx - 7, top), Vector2(cx - 7, bottom), col, 3.0)
+	draw_line(Vector2(cx + 7, top), Vector2(cx + 7, bottom), col, 3.0)
+	var y := top + 8
+	while y < bottom:
+		draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 2.5)
+		y += 10

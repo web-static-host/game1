@@ -26,6 +26,13 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	for u in colony.units:
 		var foot := view.cell_to_local(Vector2i.ZERO) + (u.pos + Vector2(0.5, 1.0)) * TILE
+		# На естественном рельефе ноги ставим на сглаженную линию поверхности.
+		var gen := colony.world.gen
+		var cx := roundi(u.pos.x)
+		var below := roundi(u.pos.y) + 1
+		if u.state != Unit.State.FALL and below == gen.surface_y(cx) and not colony.world.is_dug(cx, below) \
+				and not colony.interior.has(Vector2i(cx, below - 1)):
+			foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
 		_draw_unit(u, foot)
 		if u.id == selected_unit:
 			draw_arc(foot + Vector2(0, -26), 34, 0, TAU, 32, Color.WHITE, 2.0)

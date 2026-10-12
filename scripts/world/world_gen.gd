@@ -132,6 +132,14 @@ func surface_y(x: int) -> int:
 	return int(round(-h))
 
 
+## Сглаженная линия поверхности (для отрисовки): ломаная через центры столбцов.
+## fx — координата в клетках (дробная), результат — y верха земли в клетках.
+func surface_smooth(fx: float) -> float:
+	var c := fx - 0.5
+	var i := floori(c)
+	return lerpf(surface_y(i), surface_y(i + 1), c - i)
+
+
 ## Глубина (м) нижней границы осадочного чехла в столбце x.
 func sed_base(x: int) -> int:
 	return SED_BASE + int(_n_sed_base.get_noise_1d(x) * 160.0)

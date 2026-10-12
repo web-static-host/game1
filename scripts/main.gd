@@ -303,6 +303,8 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
 	lines.append("Материалы на 2-м этапе: " + _cost_text(Project.cost_for(kind, r)))
 	lines.append("Сначала жители выкопают зону, потом построят.")
+	if not colony.has_access(r):
+		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
 	hud.show_info("\n".join(lines), [
 		["Построить", _confirm_pending],
 		["Отмена", _clear_preview],

@@ -26,7 +26,8 @@ var projects: Array[Project] = []
 var inventory := {}
 ## Клетки готовых построек: Vector2i -> id проекта.
 var interior := {}
-## Клетки всех комнат (и строящихся): Vector2i -> id проекта.
+## Середина комнат (кроме крайних колонн, где лестницы) после этапа копки:
+## там ходят по полу. Vector2i -> id проекта.
 var room_cells := {}
 ## Занятые цели: ключ -> id жителя.
 var reserved := {}
@@ -123,6 +124,15 @@ func validate(kind: int, r: Rect2i) -> String:
 	return ""
 
 
+## Есть ли у зоны выход к открытому пространству или к другой стройке.
+func has_access(r: Rect2i) -> bool:
+	for y in range(r.position.y - 1, r.end.y + 1):
+		for x in range(r.position.x - 1, r.end.x + 1):
+			if world.is_open(x, y) or (not r.has_point(Vector2i(x, y)) and project_at(Vector2i(x, y)) != null):
+				return true
+	return false
+
+
 func create_project(kind: int, r: Rect2i) -> Project:
 	if not validate(kind, r).is_empty():
 		return null
@@ -132,7 +142,6 @@ func create_project(kind: int, r: Rect2i) -> Project:
 	p.kind = kind
 	p.rect = r
 	projects.append(p)
-	_register_room(p)
 	_check_phase(p)
 	return p
 
@@ -162,9 +171,13 @@ func cancel_project(p: Project) -> void:
 	_log("%s отменена" % p.title(), "info")
 
 
+## Пока комнату копают, в ней леса — по ним можно лазить. Потом лестницы остаются
+## только у боковых стен.
 func _register_room(p: Project) -> void:
-	if p.kind == Project.Kind.ROOM:
-		for c in p.cells():
+	if p.kind != Project.Kind.ROOM or p.phase == Project.Phase.DIG:
+		return
+	for c in p.cells():
+		if c.x > p.rect.position.x and c.x < p.rect.end.x - 1:
 			room_cells[c] = p.id
 
 
@@ -192,6 +205,7 @@ func _check_phase(p: Project) -> void:
 	_check_liquids(p)
 	if remaining_dig(p).is_empty():
 		p.phase = Project.Phase.BUILD
+		_register_room(p)
 		var lines: PackedStringArray = []
 		for k in p.found:
 			lines.append("%s %d" % [Mat.resource_name(k), p.found[k]])

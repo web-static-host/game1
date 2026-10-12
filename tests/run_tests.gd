@@ -15,6 +15,7 @@ func _initialize() -> void:
 	test_offline_build()
 	test_pause_and_materials()
 	test_units_realtime()
+	test_room_from_surface_realtime()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -223,6 +224,32 @@ func test_units_realtime() -> void:
 		colony.update(1.0)
 		t += 1.0
 	check(w.feature_at(tree) == WorldGen.FEATURE_NONE and colony.inventory["wood"] > wood, "житель дошёл и срубил дерево (%.0f с)" % t)
+
+
+func test_room_from_surface_realtime() -> void:
+	# Раньше жители выкапывали верхний ряд комнаты и не могли спуститься внутрь.
+	for seed_value in [1, 2, 4]:
+		var colony := _new_colony(seed_value * 1000 + 6)
+		var w := colony.world
+		colony.start_new(0)
+		var s := w.gen.surface_y(4)
+		var room := colony.create_project(Project.Kind.ROOM, Rect2i(3, s, 6, 3))
+		var t := 0.0
+		while t < 2000.0 and room.phase != Project.Phase.DONE:
+			colony.update(0.2)
+			t += 0.2
+		check(room.phase == Project.Phase.DONE, "комната с поверхности построена (seed %d, %.0f с)" % [seed_value, t])
+		# Тоннель вбок от пола готовой комнаты.
+		var drift := colony.create_project(Project.Kind.TUNNEL, Rect2i(9, s + 1, 5, 2))
+		check(drift != null, "тоннель из комнаты заложен")
+		if drift == null:
+			continue
+		t = 0.0
+		while t < 2000.0 and drift.phase != Project.Phase.DONE:
+			colony.update(0.2)
+			t += 0.2
+		check(drift.phase == Project.Phase.DONE, "жители вышли из комнаты и прокопали тоннель (seed %d)" % seed_value)
+	check(not _new_colony(3).has_access(Rect2i(0, 50, 4, 2)), "у зоны в толще породы нет доступа")
 
 
 func test_save_roundtrip() -> void:
