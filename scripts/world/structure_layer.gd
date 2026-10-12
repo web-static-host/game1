@@ -45,6 +45,7 @@ func _draw() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
 	_draw_dig_progress()
+	_draw_drops(font)
 	_draw_gas()
 	for p in colony.projects:
 		_draw_supply(p, font)
@@ -383,6 +384,29 @@ func _draw_supply(p: Project, font: Font) -> void:
 		var tp := Vector2(x + 30, y + 21)
 		draw_string(font, tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
 		x += widths[i] + 6.0
+
+
+## Добытое, лежащее на земле: кучка значков и число.
+func _draw_drops(font: Font) -> void:
+	for c: Vector2i in colony.drops:
+		var d: Dictionary = colony.drops[c]
+		var p := view.cell_to_local(c) + Vector2(TILE * 0.5, TILE)
+		# На естественной поверхности — по сглаженной линии земли.
+		if c.y == colony.world.gen.surface_y(c.x) - 1 and not colony.world.is_dug(c.x, c.y + 1):
+			p.y = _ground_y(c.x + 0.5)
+		var i := 0
+		for k in d:
+			var n: int = d[k]
+			var piles := clampi(ceili(n / 3.0), 1, 4)
+			for j in piles:
+				ResIcon.draw(self, k, p + Vector2((j - (piles - 1) * 0.5) * 9.0 + i * 6.0, -7.0 - (j % 2) * 5.0 - i * 9.0), 8.0)
+			i += 1
+			if i >= 2:
+				break
+		var total := 0
+		for k in d:
+			total += int(d[k])
+		_label(font, p + Vector2(-6, -26 - i * 6), str(total), Color(1, 1, 1, 0.9))
 
 
 ## Метан: зеленоватая дымка, гуще — опаснее.

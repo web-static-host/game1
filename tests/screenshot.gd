@@ -36,6 +36,18 @@ func _process(_delta: float) -> bool:
 	if _frame == 325:
 		_shot("unit_panel")
 		_main._select(null, null)
+		for x in range(_main._home.x - 30, _main._home.x + 30):
+			if _main.world.feature_at(x) == WorldGen.FEATURE_TREE:
+				_main._show_feature(x)
+				break
+	if _frame == 328:
+		_shot("feature")
+		_main.hud.hide_info()
+		_main.hud._pick_tool(Hud.Mode.ROOM, 6, "room", "Средняя 6×3")
+		_main._on_paint(_main.get_viewport().get_visible_rect().size * 0.5 + Vector2(120, 20), true)
+	if _frame == 332:
+		_shot("placing")
+		_main._to_look()
 		var c: Vector2i = _main._home + Vector2i(4, 10)
 		_main.world_view.focus_cell(c)
 		_main.camera.zoom = Vector2(1.1, 1.1)
@@ -130,7 +142,7 @@ func _prepare_base() -> void:
 	colony.create_project(T, Rect2i(x0, s, 1, 14))
 	var home := colony.create_project(R, Rect2i(x0 + 1, s + 3, 7, 3), -1, "wood")
 	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 3))
-	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 4), -1, "stone")
+	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 3), -1, "stone")
 	var store := colony.create_project(R, Rect2i(x0 - 9, s + 6, 8, 3), -1, "clay")
 	colony.advance_offline(100000.0)
 	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}

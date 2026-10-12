@@ -4,7 +4,7 @@ extends RefCounted
 
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL, SWIM }
-enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH }
+enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH, GOTO }
 enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
@@ -12,7 +12,7 @@ const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий",
 const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Наталья", "Татьяна", "Ирина", "Светлана", "Дарья", "Вера",
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
-const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь", "носит материалы", "ремонтирует", "работает в мастерской", "исследует"]
+const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку"]
 const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный"]
 ## Сколько секунд длится детство.
 const CHILD_TIME := 1800.0
@@ -53,6 +53,11 @@ var carry_amount := 0
 var haul_stage := 0
 ## Работает на склад: id склада, для которого добывает ресурсы (0 — нет).
 var gather_room := 0
+## Откуда берёт груз: с кучи на земле (клетка haul_src) или со склада;
+## куда несёт: на склад (to_store) или на стройку project_id.
+var haul_src := Vector2i.ZERO
+var from_drop := false
+var to_store := false
 
 var state := State.IDLE
 var task := Task.NONE

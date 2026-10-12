@@ -19,6 +19,12 @@ const MANTLE_DEPTH := 35000 # граница Мохоровичича
 const CAVE_MAX_DEPTH := 10000 # глубже полости схлопываются под давлением
 
 var world_seed: int
+## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
+## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще.
+const LATEST := 2
+var version := LATEST
+var _lake_segment := 400
+var _bush_share := 0.08
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -43,8 +49,12 @@ var _n_magma: FastNoiseLite
 var _n_tint: FastNoiseLite
 
 
-func _init(p_seed: int) -> void:
+func _init(p_seed: int, p_version := LATEST) -> void:
 	world_seed = p_seed
+	version = p_version
+	if version >= 2:
+		_lake_segment = 267
+		_bush_share = 0.08 / 3.0
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -107,7 +117,7 @@ func feature_at(x: int) -> int:
 		return FEATURE_TREE
 	if h < 0.17:
 		return FEATURE_BOULDER
-	if h < 0.25:
+	if h < 0.17 + _bush_share:
 		return FEATURE_BUSH
 	return FEATURE_NONE
 
@@ -118,7 +128,12 @@ func tree_height(x: int) -> int:
 
 ## Что даёт объект при сборе: [ключ ресурса, количество].
 func feature_yield(x: int) -> Array:
-	match feature_at(x):
+	return kind_yield(feature_at(x), x)
+
+
+## Что даёт объект вида kind в столбце x (и выросший позже из саженца).
+func kind_yield(kind: int, x: int) -> Array:
+	match kind:
 		FEATURE_TREE:
 			return ["wood", 3 + tree_height(x) / 2]
 		FEATURE_BOULDER:
@@ -176,7 +191,7 @@ func _lake_of_segment(k: int) -> Dictionary:
 		else:
 			w = 60 + int(hash01(k, 3, s) * 90.0)
 			depth = 10 + int(hash01(k, 4, s) * 20.0)
-		var cx := k * LAKE_SEGMENT + int(hash01(k, 5, s) * LAKE_SEGMENT)
+		var cx := k * _lake_segment + int(hash01(k, 5, s) * _lake_segment)
 		if absi(cx) - w > LAKE_HOME_CLEAR:
 			var level := maxi(_base_surface(cx - w), _base_surface(cx + w))
 			d = {"id": k, "cx": cx, "w": w, "depth": depth, "level": level}
@@ -186,7 +201,7 @@ func _lake_of_segment(k: int) -> Dictionary:
 
 ## Озеро, которому принадлежит столбец x (или пустой словарь).
 func lake_at(x: int) -> Dictionary:
-	var k := floori(float(x) / LAKE_SEGMENT)
+	var k := floori(float(x) / _lake_segment)
 	for kk in [k, k - 1, k + 1]:
 		var d := _lake_of_segment(kk)
 		if not d.is_empty() and absi(x - int(d["cx"])) < int(d["w"]):
@@ -208,6 +223,10 @@ func lake_water_span(l: Dictionary) -> Vector2i:
 	l["a"] = a
 	l["b"] = b
 	return Vector2i(a, b)
+
+
+func lake_segment() -> int:
+	return _lake_segment
 
 
 ## y верхней клетки воды в столбце (вода — от неё до дна), иначе очень большое число.

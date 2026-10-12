@@ -19,6 +19,7 @@ static func serialize(world: WorldData, colony: Colony, camera_cell: Vector2i) -
 		"mats": mats,
 		"fluids": fluids,
 		"seed": world.gen.world_seed,
+		"gen": world.gen.version,
 		"saved_at": Time.get_unix_time_from_system(),
 		"camera": [camera_cell.x, camera_cell.y],
 		"chunks": chunks,

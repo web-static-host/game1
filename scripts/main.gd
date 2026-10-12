@@ -32,12 +32,17 @@ var _pending_material := "wood"
 var _info_target := []
 ## Тряска камеры при землетрясении, сек.
 var _shake := 0.0
+## Ширина комнаты для установки и кого отправляем в точку.
+var _room_w := 6
+var _send_unit := 0
 
 
 func _ready() -> void:
 	var data := SaveSystem.load_data()
 	var seed_value := int(data["seed"]) if data.has("seed") else _new_seed()
-	world = WorldData.new(WorldGen.new(seed_value))
+	# Старые сохранения (без версии генерации) — на первой версии, чтобы мир не изменился.
+	var gen_version := int(data.get("gen", 1)) if data.has("seed") else WorldGen.LATEST
+	world = WorldData.new(WorldGen.new(seed_value, gen_version))
 	colony = Colony.new(world)
 	_home = Vector2i(0, world.gen.surface_y(0))
 	_build_scene()
@@ -227,28 +232,36 @@ func _cycle_speed() -> void:
 	hud.set_speed_text("×%d" % int(SPEEDS[_speed_idx]))
 
 
-func _set_mode(m: int) -> void:
+func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
+	if room_width > 0:
+		_room_w = room_width
 	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE
 	_clear_preview()
-	_select(null, null)
+	if m != Hud.Mode.SEND:
+		_select(null, null)
+
+
+## Разовый режим закончен — снова обычный осмотр.
+func _to_look() -> void:
+	hud.set_mode(Hud.Mode.LOOK)
+	_set_mode(Hud.Mode.LOOK)
 
 
 # --- Нажатия ---------------------------------------------------------------------
 
 func _on_tap(screen_pos: Vector2) -> void:
 	var c := world_view.screen_to_cell(screen_pos)
-	if mode == Hud.Mode.HARVEST:
-		var x = _feature_near(c)
-		if not colony.is_explored(c.x):
-			hud.log_event("Туда ещё никто не ходил", "warning")
-			return
-		if x == null:
-			hud.log_event("Здесь нечего собирать — нажмите на дерево, валун или куст.", "warning")
-		else:
-			var err := colony.toggle_harvest(x)
-			if not err.is_empty():
-				hud.log_event(err, "warning")
+	if mode == Hud.Mode.SEND:
+		var su := colony.unit_by_id(_send_unit)
+		_to_look()
+		if su != null:
+			var to = colony.send_unit(su, c)
+			if to == null:
+				hud.log_event("%s не может туда пройти" % su.name, "warning")
+			else:
+				hud.log_event("%s идёт на разведку" % su.name, "info")
+				_select(su, null)
 		return
 	var u := colony.unit_at(world_view.screen_to_world_cells(screen_pos))
 	if u != null:
@@ -259,7 +272,54 @@ func _on_tap(screen_pos: Vector2) -> void:
 		_select(null, p)
 		return
 	_select(null, null)
+	var fx = _feature_near(c)
+	if fx != null and colony.is_explored(c.x):
+		_show_feature(fx)
+		return
 	hud.show_panel(_cell_spec(c))
+
+
+const FEATURE_ACTIONS := {
+	WorldGen.FEATURE_TREE: ["Дерево", "Срубить", "Срубить все рядом"],
+	WorldGen.FEATURE_BOULDER: ["Валун", "Разбить", "Разбить все рядом"],
+	WorldGen.FEATURE_BUSH: ["Куст с ягодами", "Собрать ягоды", "Собрать со всех рядом"],
+}
+const NEAR_RADIUS := 15
+
+
+## Карточка дерева, валуна или куста: что даст и кнопки сбора.
+func _show_feature(x: int) -> void:
+	var f := world.feature_at(x)
+	var names: Array = FEATURE_ACTIONS[f]
+	var marked := world.feature_marks.has(x)
+	var rows := []
+	match f:
+		WorldGen.FEATURE_TREE:
+			rows.append(_progress("Рост", world.growth(x)))
+		WorldGen.FEATURE_BUSH:
+			rows.append(_progress("Ягоды", world.berries(x) / WorldData.BUSH_BERRIES,
+				"%d из %d" % [floori(world.berries(x)), int(WorldData.BUSH_BERRIES)], Color(0.85, 0.3, 0.35)))
+			rows.append({"type": "text", "text": "Куст остаётся — ягоды отрастают."})
+	var y: Array = colony.feature_yield(x)
+	if y[1] > 0:
+		rows.append({"type": "resources", "label": "Даст", "items": [[y[0], y[1], -1, true]]})
+	rows.append({"type": "text", "text": "Добытое ляжет здесь же, жители отнесут его на склад."})
+	var actions := [
+		["Отменить" if marked else names[1], func() -> void:
+			var err := colony.toggle_harvest(x)
+			if not err.is_empty():
+				hud.log_event(err, "warning")
+			_show_feature(x), "" if marked else "primary"],
+		[names[2], func() -> void:
+			var n := 0
+			for nx in range(x - NEAR_RADIUS, x + NEAR_RADIUS + 1):
+				if world.feature_at(nx) == f and not world.feature_marks.has(nx) and colony.is_explored(nx) \
+						and colony.toggle_harvest(nx).is_empty():
+					n += 1
+			hud.log_event("Отмечено на сбор: %d" % n, "info")
+			_show_feature(x)],
+	]
+	hud.show_panel({"title": names[0], "subtitle": "отмечено на сбор" if marked else "", "rows": rows, "actions": actions})
 
 
 ## Столбец дерева/валуна рядом с нажатием (или null).
@@ -299,6 +359,12 @@ func _show_unit(u: Unit) -> void:
 		})
 	var spec := _unit_spec(u)
 	spec["controls"] = controls
+	if not u.child:
+		spec["actions"] = [["Отправить", func() -> void:
+			_send_unit = u.id
+			_set_mode(Hud.Mode.SEND)
+			hud.hide_info()
+			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"]]
 	hud.show_panel(spec)
 
 
@@ -679,7 +745,11 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		(c - _drag_start).abs() + Vector2i.ONE)
 	var kind := _mode_kind()
 	var err := ""
-	if mode == Hud.Mode.BRIDGE:
+	if mode == Hud.Mode.ROOM:
+		var placed := _room_rect(c)
+		r = placed[0]
+		err = placed[1]
+	elif mode == Hud.Mode.BRIDGE:
 		# Над водой ряд сам привязывается к уровню воды и тянется до берега.
 		_water_options = []
 		var w := colony.water_rects(_drag_start.x, c.x)
@@ -697,7 +767,7 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 				pick = _water_options[1]
 			kind = pick[0]
 			r = pick[1]
-	else:
+	elif mode == Hud.Mode.TUNNEL:
 		err = colony.validate(kind, r)
 	var s := world_view.structures
 	s.preview = r
@@ -726,6 +796,17 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
 	_pending_material = "wood"
 	_show_pending()
+
+
+## Комната выбранного размера под пальцем; сама прилипает к земле или этажу рядом.
+## Возвращает [рамка, ошибка (пусто — можно)].
+func _room_rect(c: Vector2i) -> Array:
+	var base := Rect2i(c.x - _room_w / 2, c.y - 1, _room_w, Project.ROOM_HEIGHT)
+	for dy in [0, 1, -1, 2, -2, 3, -3]:
+		var r := Rect2i(base.position + Vector2i(0, dy), base.size)
+		if colony.validate(Project.Kind.ROOM, r).is_empty():
+			return [r, ""]
+	return [base, colony.validate(Project.Kind.ROOM, base)]
 
 
 func _mode_kind() -> int:
@@ -771,7 +852,9 @@ func _show_pending() -> void:
 	var spec := _pending_spec()
 	spec["controls"] = controls
 	spec["controls_first"] = true
-	spec["actions"] = [["Построить", _confirm_pending, "primary"], ["Отмена", _clear_preview]]
+	spec["actions"] = [["Построить", func() -> void:
+		if _confirm_pending():
+			_to_look(), "primary"], ["Отмена", _to_look]]
 	hud.show_panel(spec)
 
 
@@ -849,15 +932,16 @@ func _support_estimate(kind: int, r: Rect2i) -> int:
 	return tmp.slice_wood() * n
 
 
-func _confirm_pending() -> void:
+func _confirm_pending() -> bool:
 	var err := colony.validate(_pending_kind, _pending, _pending_material)
 	if not err.is_empty():
 		hud.log_event(err, "warning")
-		return
+		return false
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")
+	return p != null
 
 
 func _clear_preview() -> void:

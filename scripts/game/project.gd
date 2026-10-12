@@ -9,7 +9,11 @@ enum Kind { TUNNEL, ROOM, BRIDGE, PIER }
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
 const ROOM_MIN := Vector2i(3, 3)
-const ROOM_MAX := Vector2i(24, 8)
+const ROOM_MAX := Vector2i(24, 3)
+## Все комнаты одной высоты — как этажи.
+const ROOM_HEIGHT := 3
+## Размеры на выбор при закладке.
+const ROOM_WIDTHS := [3, 6, 9]
 const TUNNEL_MAX_LEN := 64
 const TUNNEL_MAX_WIDTH := 3
 ## Материалы стен комнат: ключ -> [название, множитель времени стройки].
@@ -242,8 +246,10 @@ static func size_error(k: int, r: Rect2i) -> String:
 	if k == Kind.ROOM:
 		if w < ROOM_MIN.x or h < ROOM_MIN.y:
 			return "Комната — минимум %d×%d" % [ROOM_MIN.x, ROOM_MIN.y]
-		if w > ROOM_MAX.x or h > ROOM_MAX.y:
-			return "Комната — максимум %d×%d" % [ROOM_MAX.x, ROOM_MAX.y]
+		if w > ROOM_MAX.x:
+			return "Комната — не шире %d м" % ROOM_MAX.x
+		if h != ROOM_HEIGHT:
+			return "Комната — %d м в высоту" % ROOM_HEIGHT
 		return ""
 	if h < 2:
 		return "Тоннель — высотой от 2 м, иначе человек не пройдёт"

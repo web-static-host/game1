@@ -35,6 +35,7 @@ func _initialize() -> void:
 	test_elements()
 	test_loads()
 	test_economy()
+	test_drops_and_scouting()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -243,10 +244,18 @@ func test_units_realtime() -> void:
 	colony.toggle_harvest(tree)
 	var wood: int = colony.inventory.get("wood", 0)
 	t = 0.0
+	var on_ground := false
 	while t < 1500.0 and w.feature_at(tree) != WorldGen.FEATURE_NONE:
+		colony.update(0.2)
+		t += 0.2
+		if colony.drop_amount(colony._ground_cell(tree), "wood") > 0:
+			on_ground = true
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE and on_ground, "житель срубил дерево, дрова лежат на месте рубки (%.0f с)" % t)
+	t = 0.0
+	while t < 1500.0 and colony.inventory.get("wood", 0) <= wood:
 		colony.update(1.0)
 		t += 1.0
-	check(w.feature_at(tree) == WorldGen.FEATURE_NONE and colony.inventory["wood"] > wood, "житель дошёл и срубил дерево (%.0f с)" % t)
+	check(colony.drop_total("wood") == 0 and colony.inventory.get("wood", 0) > wood, "дрова отнесли на склад (%.0f с)" % t)
 
 
 func test_room_from_surface_realtime() -> void:
@@ -668,7 +677,7 @@ func test_nature() -> void:
 	check(w.berries(bush) == WorldData.BUSH_BERRIES, "у нетронутого куста полный урожай")
 	colony._complete_harvest(bush, null)
 	check(w.feature_at(bush) == WorldGen.FEATURE_BUSH and w.berries(bush) < 1.0, "куст остался без ягод")
-	check(colony.inventory.get("food", 0) == 6, "ягоды на складе")
+	check(colony.drop_amount(colony._ground_cell(bush), "food") == 6, "ягоды лежат у куста")
 	colony.grow_plants(Colony.BERRY_REGEN * 3)
 	check(w.berries(bush) >= 2.9, "ягоды отрастают (%.1f)" % w.berries(bush))
 	# Голодный житель при пустом складе ест ягоды с куста.
@@ -1253,3 +1262,71 @@ func test_economy() -> void:
 	var c2 := Colony.new(WorldData.new(WorldGen.new(81)))
 	c2.load_dict(JSON.parse_string(JSON.stringify(d)))
 	check(c2.research.has("bricks") and c2.research.has("drilling"), "исследования сохраняются")
+
+
+func test_drops_and_scouting() -> void:
+	# Новые миры: кустов втрое меньше, озёр в полтора раза больше; старые сохранения — по-старому.
+	var old := WorldGen.new(5, 1)
+	var neu := WorldGen.new(5)
+	var bushes := [0, 0]
+	for x in range(-3000, 3000):
+		if old.feature_at(x) == WorldGen.FEATURE_BUSH:
+			bushes[0] += 1
+		if neu.feature_at(x) == WorldGen.FEATURE_BUSH:
+			bushes[1] += 1
+	check(bushes[1] * 2 < bushes[0], "кустов стало втрое меньше (%d → %d)" % bushes)
+	var lakes := [0, 0]
+	for k in range(-60, 60):
+		if not old._lake_of_segment(k).is_empty():
+			lakes[0] += 1
+	for k in range(-90, 90):
+		if not neu._lake_of_segment(k).is_empty():
+			lakes[1] += 1
+	check(lakes[1] > lakes[0] * 1.3, "озёр на тот же участок больше (%d → %d)" % lakes)
+	# Комнаты — только 3 м в высоту.
+	check(not Project.size_error(Project.Kind.ROOM, Rect2i(0, 0, 6, 4)).is_empty(), "комната 6×4 нельзя — только 3 м")
+	check(Project.size_error(Project.Kind.ROOM, Rect2i(0, 0, 9, 3)).is_empty(), "комната 9×3 можно")
+	# Камень из шахты ложится в выработке, его подбирают для стройки.
+	var colony := _new_colony(91)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	colony.start_new(x)
+	colony.inventory = {"wood": 30}
+	var s := w.gen.surface_y(x)
+	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 8))
+	var t := 0.0
+	var dropped := false
+	while t < 3000.0 and shaft.phase != Project.Phase.DONE:
+		colony.update(0.5)
+		t += 0.5
+		for c in colony.drops:
+			if c.x == x and c.y > s:
+				dropped = true
+	check(shaft.phase == Project.Phase.DONE, "шахта выкопана")
+	check(dropped, "добытая порода падала на дно шахты")
+	# Оффлайн жители перетаскивают всё лежащее на склад.
+	colony.drop_item(Vector2i(x, s - 1), "stone", 4)
+	var st: int = colony.inventory.get("stone", 0)
+	colony.advance_offline(120.0)
+	check(colony.drops.is_empty() and colony.inventory.get("stone", 0) >= st + 4, "оффлайн всё лежащее унесли на склад")
+	# Стройка берёт материалы прямо из кучи.
+	colony.inventory = {}
+	var gx := _flat_x(w, x + 10)
+	colony.drop_item(Vector2i(gx - 2, w.gen.surface_y(gx - 2) - 1), "wood", 30)
+	var hut := colony.create_project(Project.Kind.ROOM, Rect2i(gx, w.gen.surface_y(gx) - 3, 3, 3))
+	colony.update(0.5)
+	check(hut != null and colony.supply_status(hut).all(func(e: Array) -> bool: return e[3]), "дерево в куче считается — плашки не красные")
+	t = 0.0
+	while t < 2000.0 and hut != null and hut.phase != Project.Phase.DONE:
+		colony.update(0.5)
+		t += 0.5
+	check(hut != null and hut.phase == Project.Phase.DONE, "дом построен из дерева, лежавшего на земле (%.0f с)" % t)
+	# Разведка: житель идёт в указанную точку.
+	var u := colony.units[0]
+	var target := Vector2i(u.cell().x + 25, w.gen.surface_y(u.cell().x + 25) - 1)
+	var to = colony.send_unit(u, target)
+	check(to != null and u.task == Unit.Task.GOTO, "житель отправлен на разведку")
+	var before := colony.explored_max
+	for i in 120:
+		colony.update(0.5)
+	check(absi(u.cell().x - target.x) <= 2 or colony.explored_max > before, "житель дошёл и разведал округу")

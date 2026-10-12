@@ -3,26 +3,35 @@ extends Control
 ## Интерфейс поверх мира. Строится кодом, чтобы легко менять раскладку.
 ## Сверху — ресурсы значками и дата, снизу — кнопки-значки и карточка выбранного.
 
-signal mode_changed(mode: int)
+## Выбран инструмент: режим и ширина комнаты (для комнат).
+signal mode_changed(mode: int, room_width: int)
 signal home_pressed
 signal speed_pressed
 signal science_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
 
-enum Mode { LOOK, TUNNEL, ROOM, HARVEST, BRIDGE }
+## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
+## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND }
 
-const MODE_NAMES := ["Осмотр", "Тоннель", "Комната", "Сбор", "Мост"]
-const MODE_GLYPHS := ["look", "tunnel", "room", "harvest", "bridge"]
-## Что входит в кнопку «Стройка».
-const BUILD_MODES := [Mode.TUNNEL, Mode.ROOM, Mode.BRIDGE]
-const MODE_HINTS := [
-	"",
-	"Тоннель: проведите пальцем рамку (высота от 2 м). Двумя пальцами — двигать карту.",
-	"Комната: проведите пальцем рамку от 3×3 до 24×8. Двумя пальцами — двигать карту.",
-	"Сбор: нажимайте на деревья, валуны и кусты. Кусты остаются — ягоды отрастают.",
-	"Мост: проведите ряд прямо над водой — от берега до берега (мостик) или от берега в воду (пристань).",
+## Инструменты «Стройки»: [режим, ширина комнаты, значок, подпись].
+const TOOLS := [
+	[Mode.TUNNEL, 0, "tunnel", "Тоннель"],
+	[Mode.ROOM, 3, "room", "Малая 3×3"],
+	[Mode.ROOM, 6, "room", "Средняя 6×3"],
+	[Mode.ROOM, 9, "room", "Большая 9×3"],
+	[Mode.BRIDGE, 0, "bridge", "Мост"],
 ]
+const TOOL_HINTS := {
+	Mode.TUNNEL: "Тоннель: проведите пальцем рамку (высота от 2 м). Двигать карту — двумя пальцами",
+	Mode.ROOM: "Комната: коснитесь, где поставить, и двигайте пальцем. Карта — двумя пальцами",
+	Mode.BRIDGE: "Мост: проведите пальцем над озером",
+}
+## Отступы от краёв экрана (скруглённые углы, вырезы камеры).
+const SIDE := 34.0
+const EDGE_TOP := 14.0
+const EDGE_BOTTOM := 12.0
 const LOG_LINES := 4
 const PANEL_WIDTH := 620
 ## Высота верхней строки и нижнего меню (карточка помещается между ними).
@@ -56,7 +65,8 @@ var _scroll: ScrollContainer
 var _body: VBoxContainer
 var _controls: VBoxContainer
 var _actions: HBoxContainer
-var _mode_buttons: Array[IconButton] = []
+var _hint: Label
+var _hint_cancel: Button
 var _btn_speed: IconButton
 var _dialog: PanelContainer
 var _dialog_title: Label
@@ -70,8 +80,10 @@ func _ready() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 10)
+	margin.add_theme_constant_override("margin_left", int(SIDE))
+	margin.add_theme_constant_override("margin_right", int(SIDE))
+	margin.add_theme_constant_override("margin_top", int(EDGE_TOP))
+	margin.add_theme_constant_override("margin_bottom", int(EDGE_BOTTOM))
 	add_child(margin)
 	var column := VBoxContainer.new()
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -87,8 +99,9 @@ func _ready() -> void:
 	_log = VBoxContainer.new()
 	_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_log)
-	_log.position = Vector2(12, TOP_H)
+	_log.position = Vector2(SIDE, TOP_H)
 	_log.size = Vector2(PANEL_WIDTH, 0)
+	_build_hint()
 	_build_panel()
 	_build_dialog()
 
@@ -228,28 +241,15 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
-	var group := ButtonGroup.new()
-	_mode_buttons.resize(MODE_NAMES.size())
-	# Подменю стройки стоит над кнопкой «Стройка».
-	var indent := Control.new()
-	indent.custom_minimum_size = Vector2(104, 0)
-	indent.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_build_row.add_child(indent)
-	for i in MODE_NAMES.size():
-		var b := IconButton.make(MODE_GLYPHS[i], MODE_NAMES[i])
-		b.toggle_mode = true
-		b.button_group = group
-		b.pressed.connect(_on_mode.bind(i))
-		_mode_buttons[i] = b
-		if BUILD_MODES.has(i):
-			_build_row.add_child(b)
-	bar.add_child(_mode_buttons[Mode.LOOK])
+	# Подменю «Стройки»: инструменты; после выбора — разовый режим установки.
+	for t in TOOLS:
+		var b := IconButton.make(t[2], t[3], 108, 80)
+		b.pressed.connect(func() -> void: _pick_tool(t[0], t[1], t[2], t[3]))
+		_build_row.add_child(b)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
-	_build_btn.toggled.connect(func(on: bool) -> void: _build_row.visible = on)
+	_build_btn.toggled.connect(_on_build_toggled)
 	bar.add_child(_build_btn)
-	bar.add_child(_mode_buttons[Mode.HARVEST])
-	_mode_buttons[Mode.LOOK].button_pressed = true
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -270,24 +270,72 @@ func _build_bottom(box: VBoxContainer) -> void:
 
 
 func _place_build_row() -> void:
-	_build_row.position = Vector2(10, size.y - BAR_H - _build_row.size.y + 2)
+	_build_row.position = Vector2(SIDE, size.y - BAR_H - _build_row.size.y + 2)
 
 
-func _on_mode(i: int) -> void:
+var _placing := false
+
+
+## «Стройка»: открыть инструменты; во время установки — отменить её.
+func _on_build_toggled(on: bool) -> void:
+	if _placing:
+		set_mode(Mode.LOOK)
+		mode_changed.emit(Mode.LOOK, 0)
+		return
+	_build_row.visible = on
+
+
+func _pick_tool(mode: int, width: int, glyph: String, caption: String) -> void:
 	hide_info()
-	var building: bool = BUILD_MODES.has(i)
-	_build_btn.set_pressed_no_signal(building)
-	_build_btn.glyph = MODE_GLYPHS[i] if building else "build"
-	_build_btn.set_caption(MODE_NAMES[i] if building else "Стройка")
-	_build_btn.queue_redraw()
 	_build_row.visible = false
-	if not MODE_HINTS[i].is_empty():
-		log_event(MODE_HINTS[i], "info")
-	mode_changed.emit(i)
+	_placing = true
+	_build_btn.set_pressed_no_signal(true)
+	_build_btn.glyph = glyph
+	_build_btn.set_caption(caption)
+	set_hint(TOOL_HINTS.get(mode, ""))
+	mode_changed.emit(mode, width)
 
 
+## Вернуть нижнее меню в обычный вид (после стройки или отмены).
 func set_mode(mode: int) -> void:
-	_mode_buttons[mode].button_pressed = true
+	if mode != Mode.LOOK:
+		return
+	_placing = false
+	_build_row.visible = false
+	_build_btn.set_pressed_no_signal(false)
+	_build_btn.glyph = "build"
+	_build_btn.set_caption("Стройка")
+	set_hint("")
+
+
+## Подсказка сверху по центру — что сейчас делать (с кнопкой «Отмена»).
+func _build_hint() -> void:
+	var box := HBoxContainer.new()
+	box.name = "Hint"
+	box.add_theme_constant_override("separation", 10)
+	box.visible = false
+	add_child(box)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _box(Color(0.06, 0.07, 0.1, 0.85), 12, 10))
+	box.add_child(panel)
+	_hint = _label("", 19, Color.WHITE)
+	panel.add_child(_hint)
+	_hint_cancel = Button.new()
+	_hint_cancel.text = "Отмена"
+	_hint_cancel.focus_mode = Control.FOCUS_NONE
+	_hint_cancel.custom_minimum_size = Vector2(120, 48)
+	_hint_cancel.pressed.connect(func() -> void:
+		set_mode(Mode.LOOK)
+		mode_changed.emit(Mode.LOOK, 0))
+	box.add_child(_hint_cancel)
+
+
+func set_hint(text: String) -> void:
+	var box := _hint.get_parent().get_parent() as Control
+	_hint.text = text
+	box.visible = not text.is_empty()
+	box.reset_size()
+	box.position = Vector2((size.x - box.size.x) * 0.5, TOP_H + 18)
 
 
 func set_speed_text(text: String) -> void:
@@ -391,7 +439,9 @@ func _fit_scroll() -> void:
 	# Прижата к нижнему меню и растёт вверх.
 	var ph := _info_panel.get_combined_minimum_size().y
 	_info_panel.size = Vector2(PANEL_WIDTH, ph)
-	_info_panel.position = Vector2(10, size.y - BAR_H - ph)
+	if not _hint.text.is_empty():
+		_info_panel.position.y = maxf(_info_panel.position.y, TOP_H + 60.0)
+	_info_panel.position = Vector2(SIDE, size.y - BAR_H - ph)
 
 
 func _fill_header(spec: Dictionary) -> void:

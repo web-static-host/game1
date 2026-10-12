@@ -140,6 +140,8 @@ var _full_warned := {}
 var game_time := 0.0
 ## Прогресс оффлайн-работ без своего места хранения (ходки за материалами, ремонт).
 var _offline_progress := {}
+## Добытое лежит там, где добыто, пока не унесут: клетка -> {ресурс: количество}.
+var drops := {}
 
 
 func _init(p_world: WorldData) -> void:
@@ -655,7 +657,7 @@ func supply_status(p: Project) -> Array:
 		var have: int = mini(p.delivered.get(k, 0), req[k])
 		if have >= req[k]:
 			continue
-		var source: bool = inventory.get(k, 0) > 0 or in_transit(p, k) > 0
+		var source: bool = inventory.get(k, 0) > 0 or in_transit(p, k) > 0 or drop_total(k) > 0
 		out.append([k, have, req[k], source])
 	return out
 
@@ -682,7 +684,7 @@ func _check_supply(p: Project) -> void:
 	var need := _needed_now(p)
 	var lacking: PackedStringArray = []
 	for k in need:
-		var have: int = p.delivered.get(k, 0) + in_transit(p, k) + inventory.get(k, 0)
+		var have: int = p.delivered.get(k, 0) + in_transit(p, k) + inventory.get(k, 0) + drop_total(k)
 		if have < need[k]:
 			lacking.append("%s %d" % [Mat.resource_name(k).to_lower(), need[k] - have])
 	if lacking.is_empty():
@@ -1077,7 +1079,7 @@ func toggle_harvest(x: int) -> String:
 
 ## Что даёт объект сейчас: [ресурс, количество] — дерево по росту, куст по ягодам.
 func feature_yield(x: int) -> Array:
-	var y: Array = world.gen.feature_yield(x)
+	var y: Array = world.gen.kind_yield(world.feature_at(x), x)
 	match world.feature_at(x):
 		WorldGen.FEATURE_TREE:
 			return ["wood", maxi(1, roundi(y[1] * world.growth(x)))]
@@ -1116,7 +1118,7 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 	if room != 0 and u != null and y[1] > 0:
 		_carry_to(u, room, y[0], y[1])
 	elif y[1] > 0:
-		_add(y[0], y[1])
+		drop_item(_ground_cell(x), y[0], y[1])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
 		var what := "собрал ягоды"
 		match kind:
@@ -1146,7 +1148,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		if Mat.is_ore(m):
 			var depth := c.y - world.gen.surface_y(c.x)
 			amount = 1 + int(WorldGen.hash01(c.x, c.y, 17) * (2.0 + depth / 250.0))
-		_add(key, amount)
+		drop_item(c, key, amount)
 		if p != null:
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
@@ -1158,7 +1160,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 	if c.y == world.gen.surface_y(c.x) and world.feature_at(c.x) != WorldGen.FEATURE_NONE:
 		var y: Array = feature_yield(c.x)
 		world.remove_feature(c.x)
-		_add(y[0], y[1])
+		drop_item(_ground_cell(c.x), y[0], y[1])
 	var hazards := {}
 	for n in world.reveal_around(c.x, c.y):
 		var nm := world.get_mat(n.x, n.y)
@@ -1300,9 +1302,17 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 	if left < 1.0:
 		return
 	fish[int(lake["id"])] = left - 1.0
-	var got := _add("food", 2)
-	if u != null and got > 0 and left - 1.0 < 1.0:
+	if u != null:
+		drop_item(u.cell(), "food", 2)
+	else:
+		_add("food", 2)
+	if u != null and left - 1.0 < 1.0:
 		_log("Рыба в озере кончилась — подождите, пока подрастёт новая", "warning")
+
+
+## В новых мирах кусты разрастаются втрое реже.
+func _bush_spread() -> float:
+	return BUSH_SPREAD / 3.0 if world.gen.version >= 2 else BUSH_SPREAD
 
 
 ## Свободная трава, где может вырасти растение.
@@ -1364,7 +1374,7 @@ func grow_plants(t: float) -> void:
 				if _grass_free(x):
 					world.sprout(x, WorldGen.FEATURE_TREE)
 					kinds[x] = WorldGen.FEATURE_TREE
-			elif roll < (trees * TREE_SPREAD + bushes * BUSH_SPREAD) * k:
+			elif roll < (trees * TREE_SPREAD + bushes * _bush_spread()) * k:
 				if _grass_free(x):
 					world.sprout(x, WorldGen.FEATURE_BUSH)
 					kinds[x] = WorldGen.FEATURE_BUSH
@@ -1587,6 +1597,28 @@ func _start_swim(u: Unit) -> void:
 		u.path = Pathing.path_to(parents, goal)
 
 
+## Сколько секунд разведчик осматривается на месте.
+const SCOUT_WAIT := 15.0
+
+
+## Отправить жителя в точку target (или как можно ближе к ней). Возвращает, куда он пойдёт.
+func send_unit(u: Unit, target: Vector2i) -> Variant:
+	var reach := pathing.explore(u.cell())
+	var dist: Dictionary = reach[1]
+	var best = null
+	var best_d := INF
+	for c: Vector2i in dist:
+		var d: float = Vector2(c - target).length() + dist[c] * 0.01
+		if d < best_d:
+			best_d = d
+			best = c
+	if best == null or best == u.cell():
+		return null
+	_drop(u)
+	_start(u, Unit.Task.GOTO, best, best, 0, reach[0])
+	return best
+
+
 ## Затопило готовую постройку.
 func on_flooded(p: Project, _c: Vector2i) -> void:
 	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
@@ -1682,6 +1714,10 @@ func _work(u: Unit, dt: float) -> void:
 				_haul_pickup(u)
 			else:
 				_haul_deliver(u)
+		Unit.Task.GOTO:
+			u.work_t += dt
+			if u.work_t >= SCOUT_WAIT:
+				_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
 			rp.repair_done += rate
@@ -1779,15 +1815,15 @@ func _task_valid(u: Unit) -> bool:
 				return room != null and room.purpose == RoomType.STORAGE and harvestable(u.target.x)
 			return world.feature_marks.has(u.target.x) and harvestable(u.target.x)
 		Unit.Task.HAUL:
-			var tp := project_by_id(u.project_id)
-			if tp == null:
+			if u.haul_stage == 0 and u.from_drop and drop_amount(u.haul_src, u.carry_key) <= 0:
 				return false
-			if u.gather_room != 0:
+			if u.to_store or u.gather_room != 0:
 				return true
-			if tp.paused:
+			var tp := project_by_id(u.project_id)
+			if tp == null or tp.paused:
 				return false
 			if u.haul_stage == 0:
-				return inventory.get(u.carry_key, 0) > 0 and not required(tp).is_empty()
+				return (u.from_drop or inventory.get(u.carry_key, 0) > 0) and not required(tp).is_empty()
 			return true
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
@@ -1804,7 +1840,7 @@ func _task_valid(u: Unit) -> bool:
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
 			return sp != null and not sp.paused and sp.phase == Project.Phase.DIG and sp.support_paid and sp.support_slice >= 0
-		Unit.Task.SLEEP:
+		Unit.Task.SLEEP, Unit.Task.GOTO:
 			return true
 	return false
 
@@ -1813,13 +1849,15 @@ func _drop(u: Unit) -> void:
 	var key = _reserve_key(u)
 	if key != null and reserved.get(key) == u.id:
 		reserved.erase(key)
-	# Брошенный груз возвращается в запасы.
+	# Брошенный груз остаётся лежать, где житель его бросил.
 	if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
-		_add(u.carry_key, u.carry_amount)
+		drop_item(u.cell(), u.carry_key, u.carry_amount)
 	u.carry_key = ""
 	u.carry_amount = 0
 	u.haul_stage = 0
 	u.gather_room = 0
+	u.from_drop = false
+	u.to_store = false
 	u.task = Unit.Task.NONE
 	u.project_id = 0
 	u.path.clear()
@@ -1865,7 +1903,7 @@ func _task_order(u: Unit) -> Array[String]:
 		order.append_array(["farm", "fish"])
 	if waiting_for_materials() or food_low():
 		order.append("harvest")
-	order.append_array(["storage", "projects", "farm", "fish", "craft", "science", "harvest"])
+	order.append_array(["storage", "projects", "cleanup", "farm", "fish", "craft", "science", "harvest"])
 	return order
 
 
@@ -1906,6 +1944,9 @@ func _assign(u: Unit) -> bool:
 					return true
 			"storage":
 				if _try_storage(u, parents, dist):
+					return true
+			"cleanup":
+				if _try_cleanup(u, parents, dist):
 					return true
 			"dig", "build", "projects":
 				for p in projects:
@@ -2002,8 +2043,8 @@ const SHORE_FISH_TIME := 80.0
 
 func shore_spots() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
-	var k0 := floori(float(home.x - PLANT_AREA) / WorldGen.LAKE_SEGMENT)
-	var k1 := floori(float(home.x + PLANT_AREA) / WorldGen.LAKE_SEGMENT)
+	var k0 := floori(float(home.x - PLANT_AREA) / world.gen.lake_segment())
+	var k1 := floori(float(home.x + PLANT_AREA) / world.gen.lake_segment())
 	for k in range(k0 - 1, k1 + 2):
 		var l := world.gen._lake_of_segment(k)
 		if l.is_empty():
@@ -2251,7 +2292,166 @@ func _source_spot(key: String, dist: Dictionary) -> Variant:
 func _claimed(key: String) -> int:
 	var n := 0
 	for u in units:
-		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.carry_key == key:
+		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.carry_key == key and not u.from_drop:
+			n += u.carry_amount
+	return n
+
+
+## Сколько из кучи на клетке c уже обещано носильщикам.
+func _claimed_drop(c: Vector2i, key: String) -> int:
+	var n := 0
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.from_drop and u.haul_src == c and u.carry_key == key:
+			n += u.carry_amount
+	return n
+
+
+# --- Добыча на земле ----------------------------------------------------------------------
+
+## Добытое ложится там, где добыто (падает на пол). Пустая порода — сразу в отвал,
+## оффлайн жители успевают всё перетаскать — сразу на склад.
+func drop_item(c: Vector2i, key: String, n: int) -> void:
+	if key.is_empty() or n <= 0:
+		return
+	known_resources[key] = true
+	if offline or RoomType.BULK.has(key):
+		_add(key, n)
+		return
+	var spot := _landing(c)
+	var d: Dictionary = drops.get(spot, {})
+	d[key] = int(d.get(key, 0)) + n
+	drops[spot] = d
+
+
+## Куда упадёт предмет из клетки c: до пола, настила или перекрытия.
+func _landing(c: Vector2i) -> Vector2i:
+	var k := c
+	for i in 64:
+		var below := k + Vector2i(0, 1)
+		if deck.has(k) or not world.is_open(below.x, below.y):
+			break
+		if room_cells.has(below) and room_cells[below] != room_cells.get(k, -1):
+			break
+		k = below
+	return k
+
+
+func drop_amount(c: Vector2i, key: String) -> int:
+	return int(drops.get(c, {}).get(key, 0))
+
+
+func _take_drop(c: Vector2i, key: String, n: int) -> int:
+	var have := drop_amount(c, key)
+	var take := mini(have, n)
+	if take <= 0:
+		return 0
+	var d: Dictionary = drops[c]
+	d[key] = have - take
+	if d[key] <= 0:
+		d.erase(key)
+	if d.is_empty():
+		drops.erase(c)
+	return take
+
+
+## Сколько ресурса лежит на земле по всему миру.
+func drop_total(key: String) -> int:
+	var n := 0
+	for c in drops:
+		n += int(drops[c].get(key, 0))
+	return n
+
+
+## Где встать, чтобы взять с кучи c.
+func _drop_stand(c: Vector2i, dist: Dictionary) -> Variant:
+	if dist.has(c):
+		return c
+	for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1)]:
+		if dist.has(c + d):
+			return c + d
+	return null
+
+
+## Ближайший источник ресурса: [где встать, клетка кучи или null, сколько можно взять].
+func _haul_source(key: String, dist: Dictionary) -> Array:
+	var best := [null, null, 0]
+	var best_d := 1 << 30
+	var store: int = inventory.get(key, 0) - _claimed(key)
+	if store > 0:
+		var s = _source_spot(key, dist)
+		if s != null:
+			best = [s, null, store]
+			best_d = dist[s]
+	for c: Vector2i in drops:
+		var avail := drop_amount(c, key) - _claimed_drop(c, key)
+		if avail <= 0:
+			continue
+		var stand = _drop_stand(c, dist)
+		if stand != null and dist[stand] < best_d:
+			best_d = dist[stand]
+			best = [stand, c, avail]
+	return best
+
+
+## Куда отнести ресурс на хранение: ближайший склад для него, иначе кучи у базы.
+func _store_spot(key: String, dist: Dictionary) -> Variant:
+	var best = null
+	var best_d := 1 << 30
+	for room in rooms_of(RoomType.STORAGE):
+		if not RoomType.stores(room, key):
+			continue
+		for x in range(RoomType.floor_start(room), room.rect.end.x):
+			var c := Vector2i(x, room.rect.end.y - 1)
+			if dist.has(c) and dist[c] < best_d:
+				best_d = dist[c]
+				best = c
+	if best == null:
+		for dx in range(-8, -1):
+			var c := _ground_cell(home.x + dx)
+			if dist.has(c) and dist[c] < best_d:
+				best_d = dist[c]
+				best = c
+	return best
+
+
+## Свободный житель уносит лежащее на земле на склад (если там есть место).
+func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var best = null
+	var best_c := Vector2i.ZERO
+	var best_k := ""
+	var best_n := 0
+	var best_d := 1 << 30
+	for c: Vector2i in drops:
+		var stand = _drop_stand(c, dist)
+		if stand == null or dist[stand] >= best_d:
+			continue
+		for k in drops[c]:
+			var avail := drop_amount(c, k) - _claimed_drop(c, k)
+			var room: int = capacity(k) - inventory.get(k, 0) - _incoming(k)
+			if avail > 0 and room > 0:
+				best = stand
+				best_c = c
+				best_k = k
+				best_n = mini(CARRY, mini(avail, room))
+				best_d = dist[stand]
+				break
+	if best == null:
+		return false
+	u.carry_key = best_k
+	u.carry_amount = best_n
+	u.haul_stage = 0
+	u.from_drop = true
+	u.haul_src = best_c
+	u.to_store = true
+	_start(u, Unit.Task.HAUL, best, best, 0, parents)
+	return true
+
+
+## Сколько ресурса уже несут на склад.
+func _incoming(key: String) -> int:
+	var n := 0
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.carry_key == key and (u.to_store or u.gather_room != 0):
 			n += u.carry_amount
 	return n
 
@@ -2265,33 +2465,39 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bo
 	var now := _needed_now(p)
 	keys.sort_custom(func(a: String, b: String) -> bool: return now.has(a) and not now.has(b))
 	for k in keys:
-		var have: int = inventory.get(k, 0) - _claimed(k)
-		if have <= 0:
-			continue
-		var src = _source_spot(k, dist)
-		if src == null:
+		var src := _haul_source(k, dist)
+		if src[0] == null:
 			continue
 		u.carry_key = k
-		u.carry_amount = mini(CARRY, mini(left[k], have))
+		u.carry_amount = mini(CARRY, mini(left[k], src[2]))
 		u.haul_stage = 0
-		_start(u, Unit.Task.HAUL, src, src, p.id, parents)
+		u.from_drop = src[1] != null
+		u.haul_src = src[1] if src[1] != null else Vector2i.ZERO
+		_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
 		return true
 	return false
 
 
-## Житель у склада: берёт ресурс и несёт к стройке.
+## Житель у склада или кучи: берёт ресурс и несёт к стройке или на склад.
 func _haul_pickup(u: Unit) -> void:
-	var have: int = inventory.get(u.carry_key, 0)
-	var take := mini(u.carry_amount, have)
 	var p := project_by_id(u.project_id)
-	if take <= 0 or p == null:
+	if p == null and not u.to_store:
 		_drop(u)
 		return
-	inventory[u.carry_key] = have - take
+	var take := 0
+	if u.from_drop:
+		take = _take_drop(u.haul_src, u.carry_key, u.carry_amount)
+	else:
+		take = mini(u.carry_amount, inventory.get(u.carry_key, 0))
+		if take > 0:
+			inventory[u.carry_key] -= take
+	if take <= 0:
+		_drop(u)
+		return
 	u.carry_amount = take
 	u.haul_stage = 1
 	var reach := pathing.explore(u.cell())
-	var stand = _near_rect(p.rect, reach[1])
+	var stand = _store_spot(u.carry_key, reach[1]) if u.to_store else _near_rect(p.rect, reach[1])
 	if stand == null:
 		_drop(u)
 		return
@@ -2305,11 +2511,13 @@ func _haul_deliver(u: Unit) -> void:
 	var p := project_by_id(u.project_id)
 	var k := u.carry_key
 	var n := u.carry_amount
-	var to_storage := u.gather_room != 0
+	var to_storage := u.gather_room != 0 or u.to_store
+	var spot := u.cell()
 	u.carry_amount = 0
 	_drop(u)
 	if to_storage or p == null:
-		_add(k, n)
+		# Не влезло на склад — остаётся лежать здесь.
+		drop_item(spot, k, n - _add(k, n))
 		return
 	p.delivered[k] = p.delivered.get(k, 0) + n
 	_try_pay(p)
@@ -2712,6 +2920,11 @@ func advance_offline(dt: float) -> int:
 	offline = true
 	for u in units:
 		_drop(u)
+	# Пока игрока нет, жители перетаскивают добытое на склад.
+	for c in drops:
+		for k in drops[c]:
+			_add(k, int(drops[c][k]))
+	drops.clear()
 	var dug_before := cells_dug
 	var remaining := dt
 	var guard := 200000
@@ -3067,10 +3280,18 @@ func to_dict() -> Dictionary:
 		"explored": [explored_min, explored_max, deepest_y, highest_y],
 		"fish": fish,
 		"elements": elements.to_dict(),
+		"drops": _drops_list(),
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
 	}
+
+
+func _drops_list() -> Array:
+	var out := []
+	for c: Vector2i in drops:
+		out.append([c.x, c.y, drops[c]])
+	return out
 
 
 func load_dict(d: Dictionary) -> void:
@@ -3120,6 +3341,12 @@ func load_dict(d: Dictionary) -> void:
 		deepest_y = home.y
 		highest_y = home.y
 	elements.load_dict(d.get("elements", {}))
+	for e in d.get("drops", []):
+		var dc := Vector2i(int(e[0]), int(e[1]))
+		var dd := {}
+		for k in e[2]:
+			dd[str(k)] = int(e[2][k])
+		drops[dc] = dd
 	loads.load_dict(d.get("loads", {}))
 	disasters = bool(d.get("disasters", true))
 	research.load_dict(d.get("research", {}))
