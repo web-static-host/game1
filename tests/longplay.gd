@@ -280,6 +280,13 @@ func _fix_shaft() -> bool:
 ## Осторожный игрок: рядом вода — копает дальше, газ или магма — бросает выработку
 ## и роет шахту в другом месте.
 func _answer_geologist() -> void:
+	if not OS.get_environment("RECKLESS").is_empty():
+		# Беспечный игрок: на любое предупреждение — «продолжить».
+		for p: Project in colony.projects:
+			if p.paused and not p.hazard_pending.is_empty():
+				events["беспечно: " + p.hazard_pending] = events.get("беспечно: " + p.hazard_pending, 0) + 1
+				colony.set_paused(p, false)
+		return
 	for p: Project in colony.projects.duplicate():
 		if not p.paused or p.hazard_pending.is_empty() or p.hazard_pending == "methane":
 			continue
