@@ -4,7 +4,7 @@ extends RefCounted
 
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL }
-enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT }
+enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR }
 enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
@@ -12,7 +12,7 @@ const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий",
 const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Наталья", "Татьяна", "Ирина", "Светлана", "Дарья", "Вера",
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма"}
-const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь"]
+const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит крепь", "носит материалы", "ремонтирует"]
 const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер"]
 ## Сколько секунд длится детство.
 const CHILD_TIME := 1800.0
@@ -47,6 +47,12 @@ var bed_room := 0
 var bed_index := 0
 ## Таймер текущего действия (еда).
 var work_t := 0.0
+## Переноска: что и сколько несёт (или собирается взять), этап: 0 — к складу, 1 — к цели.
+var carry_key := ""
+var carry_amount := 0
+var haul_stage := 0
+## Работает на склад: id склада, для которого добывает ресурсы (0 — нет).
+var gather_room := 0
 
 var state := State.IDLE
 var task := Task.NONE
@@ -87,6 +93,8 @@ static func skill_for(t: int) -> String:
 		Task.FISH:
 			return "gather"
 		Task.SUPPORT:
+			return "build"
+		Task.REPAIR:
 			return "build"
 	return ""
 

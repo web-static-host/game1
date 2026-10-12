@@ -64,6 +64,20 @@ var supported: Array[int] = []
 var support_slice := -1
 var support_paid := false
 var support_progress := 0.0
+## Материалы, уже принесённые на стройку: ключ -> количество.
+var delivered := {}
+## Износ готовой постройки 0..1 (1 — разрушается) и уровень последнего предупреждения.
+var wear := 0.0
+var wear_warned := 0
+## Ремонт: идёт ли, оплачен ли (материалы принесены), прогресс и сколько нужно.
+var repairing := false
+var repair_paid := false
+var repair_done := 0.0
+var repair_need := {}
+var repair_work := 0.0
+## Склад: сколько жителей сами добывают ресурсы и какой запас держать.
+var gatherers := 0
+var targets := {}
 
 
 func title() -> String:
@@ -85,11 +99,13 @@ func phase_name() -> String:
 		Phase.DIG:
 			return "копка"
 		Phase.BUILD:
-			return "строительство" if paid else "ждёт ресурсы"
+			return "строительство" if paid else "доставка материалов"
 		Phase.EQUIP:
 			if equip_ladder:
-				return "строится лестница" if equip_paid else "лестница ждёт ресурсы"
-			return "обустройство" if equip_paid else "обустройство ждёт ресурсы"
+				return "строится лестница" if equip_paid else "лестница: доставка материалов"
+			return "обустройство" if equip_paid else "обустройство: доставка материалов"
+	if repairing:
+		return "ремонт" if repair_paid else "ремонт: доставка материалов"
 	return "готово"
 
 
@@ -264,6 +280,16 @@ func to_dict() -> Dictionary:
 		"support_slice": support_slice,
 		"support_paid": support_paid,
 		"support_progress": support_progress,
+		"delivered": delivered,
+		"wear": wear,
+		"wear_warned": wear_warned,
+		"repairing": repairing,
+		"repair_paid": repair_paid,
+		"repair_done": repair_done,
+		"repair_need": repair_need,
+		"repair_work": repair_work,
+		"gatherers": gatherers,
+		"targets": targets,
 	}
 
 
@@ -303,4 +329,21 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_slice = int(d.get("support_slice", -1))
 	p.support_paid = bool(d.get("support_paid", false))
 	p.support_progress = float(d.get("support_progress", 0.0))
+	p.delivered = _int_dict(d.get("delivered", {}))
+	p.wear = float(d.get("wear", 0.0))
+	p.wear_warned = int(d.get("wear_warned", 0))
+	p.repairing = bool(d.get("repairing", false))
+	p.repair_paid = bool(d.get("repair_paid", false))
+	p.repair_done = float(d.get("repair_done", 0.0))
+	p.repair_need = _int_dict(d.get("repair_need", {}))
+	p.repair_work = float(d.get("repair_work", 0.0))
+	p.gatherers = int(d.get("gatherers", 0))
+	p.targets = _int_dict(d.get("targets", {}))
 	return p
+
+
+static func _int_dict(d: Dictionary) -> Dictionary:
+	var out := {}
+	for k in d:
+		out[str(k)] = int(d[k])
+	return out

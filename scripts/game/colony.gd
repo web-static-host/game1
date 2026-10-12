@@ -53,6 +53,25 @@ const PLANT_AREA := 160
 const FISH_REGEN := 60.0
 ## Источник еды для задачи EAT: куст на поверхности.
 const EAT_BUSH := -1
+## Сколько единиц ресурса житель уносит за раз.
+const CARRY := 5
+## Оффлайн одна ходка за материалами занимает столько секунд.
+const OFFLINE_HAUL_TIME := 20.0
+# Игровое время: сутки — минута, месяц — 30 суток, год — 12 месяцев (6 часов игры).
+const DAY := 60.0
+const MONTH := DAY * 30.0
+const YEAR := MONTH * 12.0
+const MONTH_NAMES := ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+## Сколько лет служит постройка до полного износа (на поверхности).
+const WEAR_YEARS := {"wood": 20.0, "clay": 40.0, "stone": 100.0, "metal": 60.0}
+## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
+const WEAR_UNDERGROUND := {"wood": 0.6, "clay": 0.85, "stone": 1.0, "metal": 0.6}
+## Предупреждения об износе.
+const WEAR_WARN := [0.7, 0.9]
+## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
+const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "food": WorldGen.FEATURE_BUSH}
+## Норма запаса для нового склада.
+const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "food": 30}
 
 var world: WorldData
 var pathing: Pathing
@@ -98,6 +117,10 @@ var deepest_y := 0
 var highest_y := 0
 var _explore_t := 0.0
 var _full_warned := {}
+## Игровое время с начала колонии, сек.
+var game_time := 0.0
+## Прогресс оффлайн-работ без своего места хранения (ходки за материалами, ремонт).
+var _offline_progress := {}
 
 
 func _init(p_world: WorldData) -> void:
@@ -479,10 +502,13 @@ func cancel_project(p: Project) -> void:
 		cancel_equip(p)
 		return
 	if p.phase == Project.Phase.DONE:
+		if p.repairing:
+			_cancel_repair(p)
 		return
 	if p.paid:
 		# Возвращаем неизрасходованную часть материалов.
 		_refund(p.cost(), 1.0 - p.build_done / p.build_work())
+	_return_delivered(p)
 	projects.erase(p)
 	for c in p.cells():
 		room_cells.erase(c)
@@ -515,6 +541,7 @@ func demolish(p: Project) -> bool:
 		for k in eq:
 			spent[k] = spent.get(k, 0) + eq[k]
 	_refund(spent, 0.5)
+	_return_delivered(p)
 	_release_beds(p)
 	projects.erase(p)
 	for c in p.cells():
@@ -540,6 +567,118 @@ func _cost_line(cost: Dictionary, part: float) -> String:
 func _refund(cost: Dictionary, part: float) -> void:
 	for k in cost:
 		_add(k, int(floor(cost[k] * part)))
+
+
+## Принесённые, но не израсходованные материалы уносят обратно на склад.
+func _return_delivered(p: Project) -> void:
+	for k in p.delivered:
+		_add(k, p.delivered[k])
+	p.delivered.clear()
+
+
+# --- Доставка материалов ------------------------------------------------------------
+
+## Сколько дерева ещё уйдёт на крепь незакреплённых срезов.
+func support_wood_left(p: Project) -> int:
+	if p.phase != Project.Phase.DIG:
+		return 0
+	var n := 0
+	for i in p.needs_support:
+		if not p.supported.has(i) and not (p.support_paid and p.support_slice == i):
+			n += 1
+	return n * p.slice_wood()
+
+
+## Материалы, которые нужно принести на стройку для оставшихся работ (всего).
+## Пока копают, носят дерево на крепь и заодно материалы на строительство.
+func required(p: Project) -> Dictionary:
+	var out := {}
+	match p.phase:
+		Project.Phase.DIG:
+			out = p.cost().duplicate()
+			var sw := support_wood_left(p)
+			if sw > 0:
+				out["wood"] = out.get("wood", 0) + sw
+		Project.Phase.BUILD:
+			if not p.paid:
+				out = p.cost().duplicate()
+		Project.Phase.EQUIP:
+			if not p.equip_paid:
+				out = RoomType.job_cost(p).duplicate()
+		Project.Phase.DONE:
+			if p.repairing and not p.repair_paid:
+				out = p.repair_need.duplicate()
+	return out
+
+
+## Сколько ресурса key несут (или идут брать) на стройку p.
+func in_transit(p: Project, key: String) -> int:
+	var n := 0
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.project_id == p.id and u.carry_key == key and u.gather_room == 0:
+			n += u.carry_amount
+	return n
+
+
+## Что ещё осталось принести (без учёта того, что уже несут).
+func remaining(p: Project) -> Dictionary:
+	var out := {}
+	var req := required(p)
+	for k in req:
+		var left: int = req[k] - p.delivered.get(k, 0) - in_transit(p, k)
+		if left > 0:
+			out[k] = left
+	return out
+
+
+## Плашки над стройкой: [[ресурс, принесено, нужно, есть откуда носить], ...].
+func supply_status(p: Project) -> Array:
+	var out := []
+	var req := required(p)
+	var keys := req.keys()
+	keys.sort()
+	for k in keys:
+		var have: int = mini(p.delivered.get(k, 0), req[k])
+		if have >= req[k]:
+			continue
+		var source: bool = inventory.get(k, 0) > 0 or in_transit(p, k) > 0
+		out.append([k, have, req[k], source])
+	return out
+
+
+## Материалы, которые нужны прямо сейчас (этап встал без них).
+func _needed_now(p: Project) -> Dictionary:
+	match p.phase:
+		Project.Phase.DIG:
+			var i := slice_to_support(p)
+			if i >= 0 and not (p.support_paid and p.support_slice == i):
+				return {"wood": p.slice_wood()}
+			return {}
+		Project.Phase.BUILD:
+			return p.cost() if not p.paid else {}
+		Project.Phase.EQUIP:
+			return RoomType.job_cost(p) if not p.equip_paid else {}
+		Project.Phase.DONE:
+			return p.repair_need if p.repairing and not p.repair_paid else {}
+	return {}
+
+
+## Хватит ли ресурсов вообще: на складе + несут + уже на месте.
+func _check_supply(p: Project) -> void:
+	var need := _needed_now(p)
+	var lacking: PackedStringArray = []
+	for k in need:
+		var have: int = p.delivered.get(k, 0) + in_transit(p, k) + inventory.get(k, 0)
+		if have < need[k]:
+			lacking.append("%s %d" % [Mat.resource_name(k).to_lower(), need[k] - have])
+	if lacking.is_empty():
+		if p.blocked.begins_with("Не хватает"):
+			p.blocked = ""
+		return
+	var msg := "Не хватает: " + ", ".join(lacking)
+	if p.blocked != msg:
+		p.blocked = msg
+		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
 
 
 ## Пока комнату копают, в ней леса — по ним можно лазить. Потом ходят по полу;
@@ -589,23 +728,17 @@ func slice_to_support(p: Project) -> int:
 	return -1
 
 
-## Списывает дерево на крепь среза. false — дерева нет (стройка ждёт).
+## Ставит на крепь среза принесённое дерево. false — дерево ещё не принесли.
 func _pay_support(p: Project, i: int) -> bool:
 	if p.support_paid and p.support_slice == i:
 		return true
 	var need := p.slice_wood()
-	if inventory.get("wood", 0) < need:
-		var msg := "Нет дерева на крепь (нужно %d)" % need
-		if p.blocked != msg:
-			p.blocked = msg
-			_log("%s: %s" % [p.title(), msg], "warning")
+	if p.delivered.get("wood", 0) < need:
 		return false
-	inventory["wood"] -= need
+	p.delivered["wood"] -= need
 	p.support_slice = i
 	p.support_paid = true
 	p.support_progress = 0.0
-	if p.blocked.begins_with("Нет дерева на крепь"):
-		p.blocked = ""
 	return true
 
 
@@ -685,37 +818,39 @@ func _check_liquids(p: Project) -> void:
 		p.blocked = ""
 
 
-## Списывает материалы этапа строительства или обустройства, если их хватает.
+## Начинает этап строительства, обустройства или ремонта, когда всё принесено.
 func _try_pay(p: Project) -> void:
 	var cost: Dictionary
 	if p.phase == Project.Phase.BUILD and not p.paid:
 		cost = p.cost()
 	elif p.phase == Project.Phase.EQUIP and not p.equip_paid:
 		cost = RoomType.job_cost(p)
+	elif p.phase == Project.Phase.DONE and p.repairing and not p.repair_paid:
+		cost = p.repair_need
 	else:
-		return
-	var lacking: PackedStringArray = []
-	for k in cost:
-		var have: int = inventory.get(k, 0)
-		if have < cost[k]:
-			lacking.append("%s %d" % [Mat.resource_name(k).to_lower(), cost[k] - have])
-	if not lacking.is_empty():
-		var msg := "Не хватает: " + ", ".join(lacking)
-		if p.blocked != msg:
-			p.blocked = msg
-			_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
+		_check_supply(p)
 		return
 	for k in cost:
-		inventory[k] -= cost[k]
-	if p.phase == Project.Phase.BUILD:
-		p.paid = true
-		p.exposed_t = 0.0
-	else:
-		p.equip_paid = true
+		if p.delivered.get(k, 0) < cost[k]:
+			_check_supply(p)
+			return
+	for k in cost:
+		p.delivered[k] -= cost[k]
+		if p.delivered[k] <= 0:
+			p.delivered.erase(k)
+	match p.phase:
+		Project.Phase.BUILD:
+			p.paid = true
+			p.exposed_t = 0.0
+		Project.Phase.EQUIP:
+			p.equip_paid = true
+		_:
+			p.repair_paid = true
 	p.blocked = ""
 
 
 func _finish_project(p: Project) -> void:
+	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
@@ -740,11 +875,10 @@ func _register_deck(p: Project) -> void:
 		room_cells[c] = p.id
 
 
+## Какой-то стройке не хватает материалов, которых нет на складе.
 func waiting_for_materials() -> bool:
 	for p in projects:
-		if p.paused:
-			continue
-		if (p.phase == Project.Phase.BUILD and not p.paid) or (p.phase == Project.Phase.EQUIP and not p.equip_paid):
+		if not p.paused and p.blocked.begins_with("Не хватает"):
 			return true
 	return false
 
@@ -788,6 +922,7 @@ func cancel_equip(p: Project) -> void:
 		return
 	if p.equip_paid:
 		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
+	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	if not p.equip_ladder:
 		p.purpose = RoomType.NONE
@@ -800,6 +935,7 @@ func cancel_equip(p: Project) -> void:
 
 
 func _finish_equip(p: Project) -> void:
+	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	p.blocked = ""
 	if p.equip_ladder:
@@ -821,6 +957,9 @@ func _finish_equip(p: Project) -> void:
 			_drop(u)
 	if p.purpose == RoomType.STORAGE:
 		_full_warned.clear()
+		if p.targets.is_empty():
+			p.targets = default_targets()
+			p.gatherers = 1
 	if p.purpose != RoomType.NONE:
 		_log("Готово: %s (%s)" % [p.title(), RoomType.HINTS[p.purpose]], "good")
 
@@ -948,7 +1087,8 @@ func _in_clearing(x: int) -> bool:
 	return false
 
 
-func _complete_harvest(x: int, u: Unit) -> void:
+## room — склад, для которого житель добывал: добычу он несёт туда сам.
+func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 	var y: Array = feature_yield(x)
 	var kind := world.feature_at(x)
 	harvest_progress.erase(x)
@@ -957,7 +1097,9 @@ func _complete_harvest(x: int, u: Unit) -> void:
 		world.set_berries(x, world.berries(x) - y[1])
 	else:
 		world.remove_feature(x)
-	if y[1] > 0:
+	if room != 0 and u != null and y[1] > 0:
+		_carry_to(u, room, y[0], y[1])
+	elif y[1] > 0:
 		_add(y[0], y[1])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
 		var what := "собрал ягоды"
@@ -1097,8 +1239,7 @@ func _kill(u: Unit, why: String) -> void:
 
 func _tick_exposure(dt: float) -> void:
 	for p: Project in projects.duplicate():
-		var idle := p.paused or (p.phase == Project.Phase.BUILD and not p.paid) \
-			or p.blocked.begins_with("Нет дерева на крепь")
+		var idle := p.paused or p.blocked.begins_with("Не хватает")
 		if (p.phase != Project.Phase.DIG and p.phase != Project.Phase.BUILD) or not idle:
 			p.exposed_t = 0.0
 			continue
@@ -1304,10 +1445,12 @@ func update(dt: float) -> void:
 	while remaining > 0.0:
 		var step := minf(remaining, SUBSTEP)
 		remaining -= step
+		game_time += step
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
 		_tick_exposure(step)
+		_wear_tick(step)
 		_plant_tick(step)
 		_life_tick(step, false)
 		for u: Unit in units.duplicate():
@@ -1442,8 +1585,19 @@ func _work(u: Unit, dt: float) -> void:
 			var x := u.target.x
 			harvest_progress[x] = harvest_progress.get(x, 0.0) + rate
 			if harvest_progress[x] >= HARVEST_TIME.get(world.feature_at(x), 20.0):
+				var room := u.gather_room
 				_drop(u)
-				_complete_harvest(x, u)
+				_complete_harvest(x, u, room)
+		Unit.Task.HAUL:
+			if u.haul_stage == 0:
+				_haul_pickup(u)
+			else:
+				_haul_deliver(u)
+		Unit.Task.REPAIR:
+			var rp := project_by_id(u.project_id)
+			rp.repair_done += rate
+			if rp.repair_done >= rp.repair_work:
+				_finish_repair(rp)
 		Unit.Task.FARM:
 			var p := project_by_id(u.project_id)
 			p.farm_progress += rate
@@ -1509,7 +1663,24 @@ func _task_valid(u: Unit) -> bool:
 				var hp := project_by_id(u.project_id)
 				if hp == null or hp.paused:
 					return false
+			if u.gather_room != 0:
+				var room := project_by_id(u.gather_room)
+				return room != null and room.purpose == RoomType.STORAGE and harvestable(u.target.x)
 			return world.feature_marks.has(u.target.x) and harvestable(u.target.x)
+		Unit.Task.HAUL:
+			var tp := project_by_id(u.project_id)
+			if tp == null:
+				return false
+			if u.gather_room != 0:
+				return true
+			if tp.paused:
+				return false
+			if u.haul_stage == 0:
+				return inventory.get(u.carry_key, 0) > 0 and not required(tp).is_empty()
+			return true
+		Unit.Task.REPAIR:
+			var rp := project_by_id(u.project_id)
+			return rp != null and not rp.paused and rp.repairing and rp.repair_paid
 		Unit.Task.EAT:
 			if u.project_id == EAT_BUSH:
 				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
@@ -1531,6 +1702,13 @@ func _drop(u: Unit) -> void:
 	var key = _reserve_key(u)
 	if key != null and reserved.get(key) == u.id:
 		reserved.erase(key)
+	# Брошенный груз возвращается в запасы.
+	if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
+		_add(u.carry_key, u.carry_amount)
+	u.carry_key = ""
+	u.carry_amount = 0
+	u.haul_stage = 0
+	u.gather_room = 0
 	u.task = Unit.Task.NONE
 	u.project_id = 0
 	u.path.clear()
@@ -1560,19 +1738,21 @@ func _reserve_key(u: Unit) -> Variant:
 func _task_order(u: Unit) -> Array[String]:
 	var order: Array[String] = []
 	match u.profession:
+		Unit.Prof.ANY:
+			order.append("storage")
 		Unit.Prof.DIGGER:
 			order.append("dig")
 		Unit.Prof.BUILDER:
 			order.append("build")
 		Unit.Prof.GATHERER:
-			order.append_array(["harvest", "fish"])
+			order.append_array(["storage", "harvest", "fish"])
 		Unit.Prof.FARMER:
 			order.append_array(["farm", "fish"])
 	if food_low():
 		order.append_array(["farm", "fish"])
 	if waiting_for_materials() or food_low():
 		order.append("harvest")
-	order.append_array(["projects", "farm", "fish", "harvest"])
+	order.append_array(["storage", "projects", "farm", "fish", "harvest"])
 	return order
 
 
@@ -1604,19 +1784,32 @@ func _assign(u: Unit) -> bool:
 			"fish":
 				if _try_fish(u, parents, dist):
 					return true
+			"storage":
+				if _try_storage(u, parents, dist):
+					return true
 			"dig", "build", "projects":
 				for p in projects:
-					if p.paused or workers_on(p) >= p.workers or p.phase == Project.Phase.DONE:
+					if p.paused or workers_on(p) >= p.workers:
+						continue
+					if p.phase == Project.Phase.DONE and not p.repairing:
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
 								or _try_dig(u, p, parents, dist):
 							return true
-					if kind != "dig" and p.phase == Project.Phase.BUILD and p.paid \
-							and _try_build(u, p, Unit.Task.BUILD, parents, dist):
+					if kind == "dig":
+						continue
+					var task := Unit.Task.NONE
+					match p.phase:
+						Project.Phase.BUILD:
+							task = Unit.Task.BUILD if p.paid else Unit.Task.NONE
+						Project.Phase.EQUIP:
+							task = Unit.Task.EQUIP if p.equip_paid else Unit.Task.NONE
+						Project.Phase.DONE:
+							task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
+					if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
 						return true
-					if kind != "dig" and p.phase == Project.Phase.EQUIP and p.equip_paid \
-							and _try_build(u, p, Unit.Task.EQUIP, parents, dist):
+					if _try_haul(u, p, parents, dist):
 						return true
 	return false
 
@@ -1798,7 +1991,16 @@ func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) ->
 
 
 func _try_build(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dictionary) -> bool:
-	var area := p.rect.grow(1)
+	var best = _near_rect(p.rect, dist)
+	if best == null:
+		return false
+	_start(u, task, p.rect.get_center(), best, p.id, parents)
+	return true
+
+
+## Ближайшая доступная клетка в зоне или вплотную к ней (или null).
+func _near_rect(r: Rect2i, dist: Dictionary) -> Variant:
+	var area := r.grow(1)
 	var best = null
 	var best_d := 1 << 30
 	for y in range(area.position.y, area.end.y):
@@ -1807,10 +2009,8 @@ func _try_build(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dicti
 			if dist.has(c) and dist[c] < best_d:
 				best_d = dist[c]
 				best = c
-	if best == null:
-		return false
-	_start(u, task, p.rect.get_center(), best, p.id, parents)
-	return true
+	return best
+
 
 
 func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
@@ -1855,6 +2055,407 @@ func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary, only: Array = 
 	return true
 
 
+# --- Переноска материалов ---------------------------------------------------------------
+
+func _ground_cell(x: int) -> Vector2i:
+	return Vector2i(x, world.gen.surface_y(x) - 1)
+
+
+## Где лежит ресурс: склады, кучи у базы, отвал пустой породы.
+func _source_spots(key: String) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if RoomType.BULK.has(key):
+		for dx in range(3, 6):
+			out.append(_ground_cell(home.x + dx))
+		return out
+	var split := stored_split(key)
+	if split.x > 0:
+		for room in rooms_of(RoomType.STORAGE):
+			if RoomType.stores(room, key):
+				for x in range(RoomType.floor_start(room), room.rect.end.x):
+					out.append(Vector2i(x, room.rect.end.y - 1))
+	if split.y > 0 or out.is_empty():
+		for dx in range(-8, -1):
+			out.append(_ground_cell(home.x + dx))
+	return out
+
+
+func _source_spot(key: String, dist: Dictionary) -> Variant:
+	var best = null
+	var best_d := 1 << 30
+	for c in _source_spots(key):
+		if dist.has(c) and dist[c] < best_d:
+			best_d = dist[c]
+			best = c
+	return best
+
+
+## Сколько ресурса уже обещано носильщикам, которые ещё не дошли до склада.
+func _claimed(key: String) -> int:
+	var n := 0
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.carry_key == key:
+			n += u.carry_amount
+	return n
+
+
+func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	var left := remaining(p)
+	if left.is_empty() or _near_rect(p.rect, dist) == null:
+		return false
+	# Сначала то, без чего стройка стоит прямо сейчас.
+	var keys := left.keys()
+	var now := _needed_now(p)
+	keys.sort_custom(func(a: String, b: String) -> bool: return now.has(a) and not now.has(b))
+	for k in keys:
+		var have: int = inventory.get(k, 0) - _claimed(k)
+		if have <= 0:
+			continue
+		var src = _source_spot(k, dist)
+		if src == null:
+			continue
+		u.carry_key = k
+		u.carry_amount = mini(CARRY, mini(left[k], have))
+		u.haul_stage = 0
+		_start(u, Unit.Task.HAUL, src, src, p.id, parents)
+		return true
+	return false
+
+
+## Житель у склада: берёт ресурс и несёт к стройке.
+func _haul_pickup(u: Unit) -> void:
+	var have: int = inventory.get(u.carry_key, 0)
+	var take := mini(u.carry_amount, have)
+	var p := project_by_id(u.project_id)
+	if take <= 0 or p == null:
+		_drop(u)
+		return
+	inventory[u.carry_key] = have - take
+	u.carry_amount = take
+	u.haul_stage = 1
+	var reach := pathing.explore(u.cell())
+	var stand = _near_rect(p.rect, reach[1])
+	if stand == null:
+		_drop(u)
+		return
+	u.path = Pathing.path_to(reach[0], stand)
+	u.path_i = 0
+	u.state = Unit.State.MOVE
+
+
+## Житель донёс груз: на стройку — в её запас, на склад — в общий.
+func _haul_deliver(u: Unit) -> void:
+	var p := project_by_id(u.project_id)
+	var k := u.carry_key
+	var n := u.carry_amount
+	var to_storage := u.gather_room != 0
+	u.carry_amount = 0
+	_drop(u)
+	if to_storage or p == null:
+		_add(k, n)
+		return
+	p.delivered[k] = p.delivered.get(k, 0) + n
+	_try_pay(p)
+
+
+## Житель с добычей идёт на склад room_id.
+func _carry_to(u: Unit, room_id: int, key: String, amount: int) -> void:
+	var room := project_by_id(room_id)
+	var stand = null
+	var reach := []
+	if room != null:
+		reach = pathing.explore(u.cell())
+		stand = _near_rect(room.rect, reach[1])
+	if stand == null:
+		_add(key, amount)
+		return
+	u.task = Unit.Task.HAUL
+	u.project_id = room_id
+	u.gather_room = room_id
+	u.carry_key = key
+	u.carry_amount = amount
+	u.haul_stage = 1
+	u.path = Pathing.path_to(reach[0], stand)
+	u.path_i = 0
+	u.work_t = 0.0
+	u.state = Unit.State.MOVE
+
+
+# --- Склад: жители сами добывают ресурсы до нормы -----------------------------------------
+
+func gatherers_on(p: Project) -> int:
+	var n := 0
+	for u in units:
+		if u.gather_room == p.id and u.task != Unit.Task.NONE:
+			n += 1
+	return n
+
+
+## Ресурсы склада, которых меньше нормы (и есть куда положить).
+func storage_deficit(p: Project) -> Array[String]:
+	var out: Array[String] = []
+	for k in p.targets:
+		if not GATHER_SOURCES.has(k) or not RoomType.stores(p, k):
+			continue
+		if inventory.get(k, 0) < mini(int(p.targets[k]), capacity(k)):
+			out.append(k)
+	# Чего не хватает сильнее — в первую очередь.
+	out.sort_custom(func(a: String, b: String) -> bool:
+		return inventory.get(a, 0) / float(maxi(1, p.targets[a])) < inventory.get(b, 0) / float(maxi(1, p.targets[b])))
+	return out
+
+
+## Нормы по умолчанию для нового склада.
+func default_targets() -> Dictionary:
+	var out := {}
+	for k in DEFAULT_TARGETS:
+		out[k] = mini(DEFAULT_TARGETS[k], capacity(k))
+	return out
+
+
+func _try_storage(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	for room in rooms_of(RoomType.STORAGE):
+		if room.paused or room.gatherers <= 0 or gatherers_on(room) >= room.gatherers:
+			continue
+		for k in storage_deficit(room):
+			if _try_gather(u, k, room, parents, dist):
+				return true
+	return false
+
+
+## Подходит ли объект для добычи жителями склада (метка игрока не нужна).
+func _gather_ok(x: int, kind: int) -> bool:
+	if world.feature_at(x) != kind or reserved.has("h%d" % x) or _in_clearing(x):
+		return false
+	match kind:
+		WorldGen.FEATURE_TREE:
+			# Молодые деревья не трогаем — пусть растут.
+			return world.growth(x) >= 0.6
+		WorldGen.FEATURE_BUSH:
+			return world.berries(x) >= 1.0
+	return true
+
+
+func _try_gather(u: Unit, key: String, room: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	var kind: int = GATHER_SOURCES[key]
+	var ux := u.cell().x
+	var best_x = null
+	var best_stand = null
+	var best_d := 1 << 30
+	for x in range(maxi(explored_min, ux - Pathing.MAX_RADIUS), mini(explored_max, ux + Pathing.MAX_RADIUS) + 1):
+		if not _gather_ok(x, kind):
+			continue
+		var base := _ground_cell(x)
+		for stand in [base, base + Vector2i(-1, 0), base + Vector2i(1, 0)]:
+			if dist.has(stand) and dist[stand] < best_d:
+				best_d = dist[stand]
+				best_x = x
+				best_stand = stand
+	if best_x == null:
+		if key == "food":
+			# Ягод нет — ловят рыбу.
+			u.gather_room = room.id
+			if _try_fish(u, parents, dist):
+				return true
+			u.gather_room = 0
+		return false
+	u.gather_room = room.id
+	_start(u, Unit.Task.HARVEST, _ground_cell(best_x), best_stand, 0, parents)
+	return true
+
+
+## Есть ли что добыть для ресурса key (для подсказки «нечего добывать»).
+func gather_source_exists(key: String) -> bool:
+	if not GATHER_SOURCES.has(key):
+		return false
+	var kind: int = GATHER_SOURCES[key]
+	for x in range(explored_min, explored_max + 1):
+		if _gather_ok(x, kind):
+			return true
+	return key == "food" and not shore_spots().is_empty()
+
+
+# --- Износ и ремонт ------------------------------------------------------------------------
+
+func wear_material(p: Project) -> String:
+	return p.material if p.kind == Project.Kind.ROOM else "wood"
+
+
+func is_underground(p: Project) -> bool:
+	var c := p.rect.get_center()
+	return c.y >= world.gen.surface_y(c.x)
+
+
+## Сколько лет постройка служит от новой до разрушения.
+func service_years(p: Project) -> float:
+	var m := wear_material(p)
+	var years: float = WEAR_YEARS.get(m, 20.0)
+	if p.is_water_structure():
+		years *= 0.75
+	elif is_underground(p):
+		years *= WEAR_UNDERGROUND.get(m, 1.0)
+		# В жаре глубоких шахт дерево и металл портятся ещё быстрее.
+		var c := p.rect.get_center()
+		var t := Env.temperature(c.y, world.gen.surface_y(c.x))
+		if m != "stone" and t > 40.0:
+			years /= 1.0 + (t - 40.0) / 60.0
+	return years
+
+
+## Сколько лет осталось до разрушения.
+func years_left(p: Project) -> float:
+	return (1.0 - p.wear) * service_years(p)
+
+
+func _wear_tick(dt: float) -> void:
+	for p: Project in projects.duplicate():
+		if not projects.has(p) or (p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP):
+			continue
+		p.wear = minf(1.0, p.wear + dt / (service_years(p) * YEAR))
+		for i in WEAR_WARN.size():
+			if p.wear < WEAR_WARN[i] or p.wear_warned > i:
+				continue
+			p.wear_warned = i + 1
+			if p.repairing:
+				continue
+			if i == 0:
+				_log("%s: износ %d%% — пора ремонтировать (нажмите на постройку → «Ремонт»)" % [
+					p.title(), roundi(WEAR_WARN[i] * 100)], "warning")
+			else:
+				_log("%s: износ %d%%! Скоро рухнет — срочно нужен ремонт" % [p.title(), roundi(WEAR_WARN[i] * 100)], "danger")
+		if p.wear >= 1.0:
+			if offline:
+				# Без игрока ничего не рушится: постройка держится «на честном слове».
+				p.wear = 0.999
+			else:
+				collapse(p, "износ 100%")
+
+
+func repair_error(p: Project) -> String:
+	if p.phase != Project.Phase.DONE:
+		return "Ремонтировать можно только готовую постройку"
+	if p.repairing:
+		return "Ремонт уже идёт"
+	if p.wear < 0.05:
+		return "Ремонт пока не нужен"
+	return ""
+
+
+## Материалы на ремонт: часть стоимости постройки по износу.
+func repair_cost(p: Project) -> Dictionary:
+	var base := p.cost()
+	if base.is_empty():
+		base = {"wood": maxi(2, p.area() / 3)}
+	var out := {}
+	for k in base:
+		out[k] = maxi(1, ceili(base[k] * p.wear * 0.6))
+	return out
+
+
+func start_repair(p: Project) -> bool:
+	if not repair_error(p).is_empty():
+		return false
+	p.repairing = true
+	p.repair_paid = false
+	p.repair_done = 0.0
+	p.repair_need = repair_cost(p)
+	p.repair_work = maxf(10.0, p.build_work() * p.wear * 0.5)
+	_log("%s: ремонт, нужно %s" % [p.title(), _cost_line(p.repair_need, 1.0)], "info")
+	_try_pay(p)
+	return true
+
+
+func _finish_repair(p: Project) -> void:
+	_return_delivered(p)
+	p.repairing = false
+	p.repair_paid = false
+	p.repair_done = 0.0
+	p.repair_need = {}
+	p.wear = 0.0
+	p.wear_warned = 0
+	p.blocked = ""
+	for u in units:
+		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
+			_drop(u)
+	_log("%s: ремонт закончен, как новая" % p.title(), "good")
+
+
+func _cancel_repair(p: Project) -> void:
+	if p.repair_paid:
+		_refund(p.repair_need, 1.0 - p.repair_done / maxf(1.0, p.repair_work))
+	_return_delivered(p)
+	p.repairing = false
+	p.repair_paid = false
+	p.repair_done = 0.0
+	p.repair_need = {}
+	p.blocked = ""
+	for u in units:
+		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
+			_drop(u)
+	_log("%s: ремонт отменён" % p.title(), "info")
+
+
+## Постройка рухнула: обломки, травмы, падают верхние этажи, порода может обвалиться.
+func collapse(p: Project, why: String) -> void:
+	if not projects.has(p):
+		return
+	_log("ОБРУШЕНИЕ: %s (%s)" % [p.title(), why], "danger")
+	_return_delivered(p)
+	_release_beds(p)
+	projects.erase(p)
+	for c in p.cells():
+		room_cells.erase(c)
+		interior.erase(c)
+		deck.erase(c)
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	for u: Unit in units.duplicate():
+		var c := u.cell()
+		if not (p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1))):
+			continue
+		if p.is_water_structure():
+			# Настил рухнул в воду — житель выбирается на берег.
+			u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
+			u.state = Unit.State.IDLE
+			injure(u, 10.0, "упал в воду с рухнувшего настила")
+			continue
+		injure(u, 40.0, "завалило обломками")
+	if p.kind == Project.Kind.ROOM:
+		# Стены и перекрытия ложатся обломками на пол.
+		var floor_y := p.rect.end.y - 1
+		for x in range(p.rect.position.x, p.rect.end.x):
+			if world.get_mat(x, floor_y) == Mat.AIR:
+				world.set_material(x, floor_y, Mat.RUBBLE)
+		for u in units:
+			if u.cell().y == floor_y and p.rect.has_point(u.cell()):
+				u.pos.y = floor_y - 1
+	# Этажи сверху теряют опору и тоже рушатся.
+	for q: Project in projects.duplicate():
+		if q.kind != Project.Kind.ROOM or q.rect.end.y != p.rect.position.y:
+			continue
+		if q.rect.position.x >= p.rect.end.x or q.rect.end.x <= p.rect.position.x:
+			continue
+		if not _room_supported(q):
+			collapse(q, "рухнул нижний этаж")
+	physics.check_area(p.cells())
+
+
+func _room_supported(q: Project) -> bool:
+	for x in range(q.rect.position.x, q.rect.end.x):
+		var below := Vector2i(x, q.rect.end.y)
+		if not interior.has(below) and not Mat.is_solid(world.get_mat(below.x, below.y)):
+			return false
+	return true
+
+
+## Дата по игровому календарю: «12 мар · год 1».
+func date_text() -> String:
+	var days := int(game_time / DAY)
+	return "%d %s · год %d" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], days / 360 + 1]
+
+
 # --- Оффлайн-симуляция --------------------------------------------------------------
 
 ## Упрощённая модель: жители не ходят, а сразу работают с меньшей эффективностью
@@ -1868,6 +2469,7 @@ func advance_offline(dt: float) -> int:
 	var guard := 200000
 	while remaining > 0.001 and guard > 0:
 		guard -= 1
+		_gather_miss.clear()
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
@@ -1893,12 +2495,16 @@ func advance_offline(dt: float) -> int:
 			step = minf(step, _offline_left(key, jobs[key]) / jobs[key][1])
 		step = maxf(step, 0.0)
 		remaining -= step
+		game_time += step
 		_tick_exposure(step)
+		_wear_tick(step)
 		_plant_tick(step)
 		_life_tick(step, true)
 		for u in units:
 			if u.task != Unit.Task.NONE:
-				u.skills[Unit.skill_for(u.task)] += step
+				var sk := Unit.skill_for(u.task)
+				if not sk.is_empty():
+					u.skills[sk] += step
 				u.task = Unit.Task.NONE
 		for key in jobs:
 			var j: Array = jobs[key]
@@ -1949,6 +2555,16 @@ func advance_offline(dt: float) -> int:
 					harvest_progress[x] = harvest_progress.get(x, 0.0) + j[1] * step
 					if harvest_progress[x] >= HARVEST_TIME.get(world.feature_at(x), 20.0) - 0.001:
 						_complete_harvest(x, j[2])
+				Unit.Task.HAUL:
+					_offline_progress[key] = _offline_progress.get(key, 0.0) + j[1] * step
+					if _offline_progress[key] >= OFFLINE_HAUL_TIME - 0.001:
+						_offline_progress.erase(key)
+						_offline_deliver(j[3])
+				Unit.Task.REPAIR:
+					var p: Project = j[3]
+					p.repair_done += j[1] * step
+					if p.repair_done >= p.repair_work - 0.001:
+						_finish_repair(p)
 	offline = false
 	return cells_dug - dug_before
 
@@ -1971,7 +2587,49 @@ func _offline_left(key: Variant, job: Array) -> float:
 		Unit.Task.HARVEST:
 			var x: int = int(key.substr(1))
 			return HARVEST_TIME.get(world.feature_at(x), 20.0) - harvest_progress.get(x, 0.0)
+		Unit.Task.HAUL:
+			return OFFLINE_HAUL_TIME - _offline_progress.get(key, 0.0)
+		Unit.Task.REPAIR:
+			var p: Project = job[3]
+			return p.repair_work - p.repair_done
 	return 0.0
+
+
+## Оффлайн-ходка: приносит на стройку то, чего не хватает.
+func _offline_deliver(p: Project) -> void:
+	if not projects.has(p):
+		return
+	var left := remaining(p)
+	for k in left:
+		var n := mini(CARRY, mini(left[k], inventory.get(k, 0)))
+		if n <= 0:
+			continue
+		inventory[k] -= n
+		p.delivered[k] = p.delivered.get(k, 0) + n
+		break
+	_try_pay(p)
+
+
+## Объект для добычи оффлайн; промахи по виду запоминаются на шаг расчёта.
+var _gather_miss := {}
+
+
+func _offline_gather_x(kind: int, taken: Dictionary) -> Variant:
+	if _gather_miss.has(kind):
+		return null
+	for x in range(maxi(explored_min, home.x - PLANT_AREA), mini(explored_max, home.x + PLANT_AREA) + 1):
+		if not taken.has("h%d" % x) and _gather_ok(x, kind):
+			return x
+	_gather_miss[kind] = true
+	return null
+
+
+func _offline_can_haul(p: Project) -> bool:
+	var left := remaining(p)
+	for k in left:
+		if inventory.get(k, 0) > 0:
+			return true
+	return false
 
 
 ## [ключ цели, вид задачи, проект] или [] если работы нет.
@@ -1988,6 +2646,17 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if not p.paused and taken.get(slot, 0) < RoomType.farm_slots(p):
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["f%d" % p.id, Unit.Task.FARM, p]
+			"storage":
+				for room in rooms_of(RoomType.STORAGE):
+					var gslot := "g%d" % room.id
+					if room.paused or taken.get(gslot, 0) >= room.gatherers:
+						continue
+					for k in storage_deficit(room):
+						var x = _offline_gather_x(GATHER_SOURCES[k], taken)
+						if x != null:
+							taken["h%d" % x] = true
+							taken[gslot] = taken.get(gslot, 0) + 1
+							return ["h%d" % x, Unit.Task.HARVEST, null]
 			"fish":
 				for p in projects:
 					var slot := "w%d" % p.id
@@ -2005,6 +2674,8 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					var slot := "w%d" % p.id
 					if p.paused or taken.get(slot, 0) >= p.workers:
 						continue
+					if p.phase == Project.Phase.DONE and not p.repairing:
+						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						for x in uncleared(p):
 							if not taken.has("h%d" % x):
@@ -2012,25 +2683,32 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 								taken[slot] = taken.get(slot, 0) + 1
 								return ["h%d" % x, Unit.Task.HARVEST, p]
 						var si := slice_to_support(p)
-						if si >= 0:
-							if _pay_support(p, si):
-								taken[slot] = taken.get(slot, 0) + 1
-								return ["sup%d" % p.id, Unit.Task.SUPPORT, p]
-							continue
-						for c in diggable_now(p):
-							if taken.has(c):
-								continue
-							for d in DIRS4:
-								if world.is_open(c.x + d.x, c.y + d.y):
-									taken[c] = true
-									taken[slot] = taken.get(slot, 0) + 1
-									return [c, Unit.Task.DIG, p]
-					elif kind != "dig" and p.phase == Project.Phase.BUILD and p.paid:
+						if si >= 0 and _pay_support(p, si):
+							taken[slot] = taken.get(slot, 0) + 1
+							return ["sup%d" % p.id, Unit.Task.SUPPORT, p]
+						if si < 0:
+							for c in diggable_now(p):
+								if taken.has(c):
+									continue
+								for d in DIRS4:
+									if world.is_open(c.x + d.x, c.y + d.y):
+										taken[c] = true
+										taken[slot] = taken.get(slot, 0) + 1
+										return [c, Unit.Task.DIG, p]
+					if kind == "dig":
+						continue
+					if p.phase == Project.Phase.BUILD and p.paid:
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["b%d" % p.id, Unit.Task.BUILD, p]
-					elif kind != "dig" and p.phase == Project.Phase.EQUIP and p.equip_paid:
+					if p.phase == Project.Phase.EQUIP and p.equip_paid:
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["e%d" % p.id, Unit.Task.EQUIP, p]
+					if p.phase == Project.Phase.DONE and p.repair_paid:
+						taken[slot] = taken.get(slot, 0) + 1
+						return ["r%d" % p.id, Unit.Task.REPAIR, p]
+					if _offline_can_haul(p):
+						taken[slot] = taken.get(slot, 0) + 1
+						return ["haul%d:%d" % [p.id, u.id], Unit.Task.HAUL, p]
 	return []
 
 
@@ -2092,8 +2770,14 @@ func to_dict() -> Dictionary:
 	var us := []
 	for u in units:
 		us.append(u.to_dict())
+	# Груз в руках жителей сохраняем как запас склада.
+	var inv := inventory.duplicate()
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
+			inv[u.carry_key] = inv.get(u.carry_key, 0) + u.carry_amount
 	return {
-		"inventory": inventory,
+		"game_time": game_time,
+		"inventory": inv,
 		"known_resources": known_resources.keys(),
 		"cells_dug": cells_dug,
 		"discovered": discovered.keys(),
@@ -2120,6 +2804,7 @@ func load_dict(d: Dictionary) -> void:
 	for k in d.get("known_resources", []):
 		known_resources[str(k)] = true
 	cells_dug = int(d.get("cells_dug", 0))
+	game_time = float(d.get("game_time", 0.0))
 	for m in d.get("discovered", []):
 		discovered[int(m)] = true
 	for e in d.get("dig_progress", []):

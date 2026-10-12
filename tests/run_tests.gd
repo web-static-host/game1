@@ -28,6 +28,10 @@ func _initialize() -> void:
 	test_nature()
 	test_slices()
 	test_lakes_and_fishing()
+	test_hauling()
+	test_storage_workers()
+	test_wear_and_repair()
+	test_calendar()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -191,7 +195,8 @@ func test_pause_and_materials() -> void:
 	colony.set_paused(p, false)
 	colony.advance_offline(5000.0)
 	check(p.phase == Project.Phase.DIG and p.supported.is_empty(), "без дерева на крепь копка встала")
-	check(p.blocked.begins_with("Нет дерева на крепь"), "игрок видит, чего не хватает: " + p.blocked)
+	check(p.blocked.begins_with("Не хватает: дерево"), "игрок видит, чего не хватает: " + p.blocked)
+	check(not colony.supply_status(p).is_empty() and not colony.supply_status(p)[0][3], "плашка дерева красная — носить неоткуда")
 	# Ищем дерево и отмечаем его на сбор.
 	var tree := 0
 	for tx in range(-200, 200):
@@ -836,3 +841,142 @@ func test_generation_speed() -> void:
 	var per_chunk := (Time.get_ticks_usec() - t) / 20000.0
 	print("  генерация: %.2f мс/чанк" % per_chunk)
 	check(per_chunk < 50.0, "генерация чанка быстрее 50 мс на ПК")
+
+
+## Ровная площадка шириной 6 м на поверхности (без озёр) правее x0.
+func _flat_x(w: WorldData, x0: int) -> int:
+	for tx in range(x0, x0 + 400):
+		var ts := w.gen.surface_y(tx)
+		var flat := true
+		for dx in range(-1, 6):
+			if w.gen.surface_y(tx + dx) != ts or w.gen.water_level(tx + dx) < ts:
+				flat = false
+		if flat:
+			return tx
+	return x0
+
+
+func test_hauling() -> void:
+	var colony := _new_colony(41)
+	var w := colony.world
+	colony.start_new(0)
+	colony.inventory = {"wood": 30, "stone": 20}
+	var gx := _flat_x(w, 8)
+	# Один рабочий — носит по очереди, плашка растёт постепенно.
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(gx, w.gen.surface_y(gx) - 3, 4, 3), 1)
+	check(room != null, "дом на земле заложен")
+	if room == null:
+		return
+	var st := colony.supply_status(room)
+	check(not st.is_empty() and st[0][1] == 0 and st[0][3], "плашки: сначала 0 из N, на складе ресурс есть")
+	var max_carry := 0
+	var partial := false
+	var t := 0.0
+	while t < 2000.0 and room.phase != Project.Phase.DONE:
+		colony.update(0.5)
+		t += 0.5
+		for u in colony.units:
+			if u.task == Unit.Task.HAUL and u.haul_stage == 1:
+				max_carry = maxi(max_carry, u.carry_amount)
+		for e in colony.supply_status(room):
+			if e[1] > 0 and e[1] < e[2]:
+				partial = true
+	check(room.phase == Project.Phase.DONE, "материалы принесли, дом построен (%.0f с)" % t)
+	check(max_carry > 0 and max_carry <= Colony.CARRY, "жители носили материалы по %d" % max_carry)
+	check(partial, "плашки заполнялись постепенно")
+	check(room.delivered.is_empty(), "лишнего на стройке не осталось")
+	# Без ресурса на складе плашка красная.
+	colony.inventory = {}
+	var gx2 := _flat_x(w, gx + 8)
+	var shed := colony.create_project(Project.Kind.ROOM, Rect2i(gx2, w.gen.surface_y(gx2) - 3, 3, 3))
+	if shed != null:
+		colony.update(1.0)
+		var red := false
+		for e in colony.supply_status(shed):
+			if not e[3]:
+				red = true
+		check(red, "нет ресурса нигде — плашка красная")
+
+
+func test_storage_workers() -> void:
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	check(room.purpose == RoomType.STORAGE, "склад обустроен")
+	check(not room.targets.is_empty() and room.gatherers > 0, "у склада есть нормы запаса и рабочие")
+	colony.inventory = {}
+	room.targets = {"wood": 15, "stone": 0, "food": 0}
+	room.gatherers = 2
+	var carried := false
+	var t := 0.0
+	while t < 3000.0 and colony.inventory.get("wood", 0) < 15:
+		colony.update(0.5)
+		t += 0.5
+		for u in colony.units:
+			if u.task == Unit.Task.HAUL and u.gather_room == room.id:
+				carried = true
+	check(colony.inventory.get("wood", 0) >= 15, "работники склада сами нарубили дерева до нормы (%.0f с)" % t)
+	check(carried, "добычу несли на склад")
+	for i in 1200:
+		colony.update(0.5)
+	check(colony.inventory.get("wood", 0) < 15 + 12, "выше нормы не добывают (%d)" % colony.inventory.get("wood", 0))
+	colony.inventory = {}
+	room.targets = {"stone": 10}
+	colony.advance_offline(3000.0)
+	check(colony.inventory.get("stone", 0) > 0, "оффлайн склад тоже пополняется")
+
+
+func test_wear_and_repair() -> void:
+	var colony := _new_colony(52)
+	var w := colony.world
+	colony.start_new(0)
+	colony.inventory = {"wood": 80, "stone": 40}
+	var logs := []
+	colony.event_logged.connect(func(text: String, _k: String) -> void: logs.append(text))
+	var gx := _flat_x(w, 8)
+	var s := w.gen.surface_y(gx)
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(gx, s - 3, 4, 3))
+	colony.advance_offline(4000.0)
+	check(room.phase == Project.Phase.DONE, "деревянный дом построен")
+	check(absf(colony.service_years(room) - 20.0) < 0.01, "дерево на поверхности служит 20 лет")
+	var deep := Project.new()
+	deep.kind = Project.Kind.ROOM
+	deep.rect = Rect2i(gx, s + 6, 4, 3)
+	deep.material = "wood"
+	var wood_under := colony.service_years(deep)
+	deep.material = "stone"
+	check(wood_under < 20.0 and wood_under > 5.0, "под землёй дерево изнашивается быстрее (%.0f лет)" % wood_under)
+	check(absf(colony.service_years(deep) - 100.0) < 0.01, "камню всё равно, где стоять")
+	room.wear = 0.69
+	colony._wear_tick(Colony.YEAR * 0.5)
+	check(logs.any(func(l: String) -> bool: return l.contains("износ 70%")), "предупреждение об износе")
+	var wood0: int = colony.inventory.get("wood", 0)
+	check(colony.start_repair(room), "ремонт начат")
+	colony.advance_offline(3000.0)
+	check(room.wear < 0.01 and not room.repairing, "дом отремонтирован")
+	check(colony.inventory.get("wood", 0) < wood0, "на ремонт ушло дерево")
+	# Оффлайн не рушится.
+	room.wear = 0.995
+	colony.offline = true
+	colony._wear_tick(Colony.YEAR)
+	colony.offline = false
+	check(colony.projects.has(room) and room.wear < 1.0, "без игрока постройка не рушится")
+	# Второй этаж и обрушение от ветхости.
+	colony.inventory = {"wood": 80, "stone": 40}
+	room.wear = 0.0
+	var upper := colony.create_project(Project.Kind.ROOM, Rect2i(gx, s - 6, 4, 3))
+	check(upper != null, "второй этаж заложен")
+	colony.advance_offline(6000.0)
+	check(upper != null and upper.phase == Project.Phase.DONE and room.ladder, "второй этаж достроен, внизу лестница")
+	room.wear = 0.9999
+	colony._wear_tick(Colony.YEAR)
+	check(not colony.projects.has(room), "ветхий дом рухнул")
+	check(not colony.projects.has(upper), "второй этаж рухнул вместе с ним")
+	check(w.get_mat(gx + 1, s - 1) == Mat.RUBBLE, "на месте дома обломки")
+
+
+func test_calendar() -> void:
+	var colony := _new_colony(1)
+	check(colony.date_text() == "1 янв · год 1", "календарь начинается с 1 января: " + colony.date_text())
+	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + 5.0
+	check(colony.date_text() == "5 мар · год 2", "дата считается по игровым суткам: " + colony.date_text())
