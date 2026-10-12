@@ -89,12 +89,14 @@ func _act(_what: String) -> void:
 
 
 func _on_log(text: String, kind: String) -> void:
+	if not OS.get_environment("LOGALL").is_empty() and t >= float(OS.get_environment("LOGALL")) * 60.0:
+		print("LOG %s %s" % [_time(), text])
 	for pair in [["ОБВАЛ", "обвал"], ["Осыпь", "осыпь"], ["ОБРУШЕНИЕ", "обрушение постройки"], ["Буря:", "буря"],
 			["ЗЕМЛЕТРЯСЕНИЕ", "землетрясение"], ["ВЗРЫВ", "взрыв метана"], ["Затопило", "затопление"],
 			["лава течёт", "прорыв лавы"], ["сочится", "водоносный пласт"], ["Геолог", "предупреждение геолога"],
 			["истощ", "истощение от голода"], ["перегружена", "перегрузка"], ["износ 70", "износ 70%"],
 			["Склад полон", "склад полон"], ["Не хватает", "нехватка материалов"], ["Новая находка", "новая находка"],
-			["Изучено", "исследование"], ["Родился", "рождение"], ["стали парой", "пара"]]:
+			["Изучено", "исследование"], ["на разведку", "разведка за сырьём"], ["Метан в выработке", "газовая тревога"], ["Родился", "рождение"], ["стали парой", "пара"]]:
 		if text.contains(pair[0]):
 			events[pair[1]] = events.get(pair[1], 0) + 1
 	if text.contains("погиб"):
@@ -119,12 +121,12 @@ func _debug() -> void:
 		var to_farm = null
 		for f in farms:
 			to_farm = colony._near_rect(f.rect, reach[1])
-		print("   %s %s %s st%d сыт %d бодр %d здор %d проф %d | до фермы %s, узлов %d" % [u.name, u.cell(),
+		var xs: Array = reach[1].keys().map(func(c: Vector2i) -> int: return c.x)
+		print("   %s %s %s st%d сыт %d бодр %d здор %d проф %d | до фермы %s, узлов %d, x %d..%d" % [u.name, u.cell(),
 			Unit.TASK_NAMES[u.task], u.state, roundi(u.satiety), roundi(u.energy), roundi(u.health), u.profession,
-			to_farm, reach[1].size()])
+			to_farm, reach[1].size(), xs.min(), xs.max()])
 	for p in colony.projects:
-		if p.phase != Project.Phase.DONE:
-			print("   стройка %s %s %s раб %d/%d" % [p.title(), p.phase_name(), p.blocked, colony.workers_on(p), p.workers])
+		print("   стройка %s %s %s %s раб %d/%d" % [p.title(), p.rect, p.phase_name(), p.blocked, colony.workers_on(p), p.workers])
 
 
 func _slice() -> void:

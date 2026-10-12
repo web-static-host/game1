@@ -1878,6 +1878,8 @@ func _move(u: Unit, dt: float) -> void:
 		var spd := (CLIMB_SPEED if absf(delta.y) > absf(delta.x) else WALK_SPEED) * jam * u.move_factor()
 		if u.child:
 			spd *= 0.8
+		if world.get_mat(u.cell().x, u.cell().y) == Mat.WATER:
+			spd *= 0.5 # плывут
 		var dist := delta.length()
 		if dist <= spd * budget:
 			u.pos = next
