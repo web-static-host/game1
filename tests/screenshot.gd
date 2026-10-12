@@ -69,6 +69,9 @@ func _process(_delta: float) -> bool:
 		_prepare_elements()
 	if _frame == 470:
 		_shot("elements")
+		_main.hud._new_game.visible = true
+	if _frame == 480:
+		_shot("new_game")
 		return true
 	return false
 

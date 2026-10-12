@@ -33,6 +33,7 @@ func _initialize() -> void:
 	test_wear_and_repair()
 	test_calendar()
 	test_elements()
+	test_loads()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -1124,3 +1125,81 @@ func test_elements() -> void:
 	check(gp.paused and gp.hazard_pending == "water" and gp.blocked.begins_with("Геолог"), "геолог предупредил о воде: " + gp.blocked)
 	gc.set_paused(gp, false)
 	check(not gp.paused and gp.hazard_ack.has("water"), "игрок разрешил копать дальше")
+
+
+func test_loads() -> void:
+	var colony := _new_colony(71)
+	var w := colony.world
+	colony.start_new(0)
+	var gx := _flat_x(w, 10)
+	var s := w.gen.surface_y(gx)
+	colony.inventory = {"wood": 50, "stone": 50}
+	colony.known_resources = {"wood": true, "stone": true}
+	var base := colony.create_project(Project.Kind.ROOM, Rect2i(gx, s - 3, 5, 3), -1, "stone")
+	colony.advance_offline(6000.0)
+	check(base != null and base.phase == Project.Phase.DONE, "каменное основание построено")
+	# Лёгкие деревянные этажи на каменном основании: можно больше, чем раньше разрешалось.
+	var floors: Array[Project] = [base]
+	for i in 4:
+		colony.inventory = {"wood": 60, "stone": 60}
+		var r := Rect2i(gx, s - 6 - i * 3, 5, 3)
+		var err := colony.validate(Project.Kind.ROOM, r, "wood")
+		if not err.is_empty():
+			check(i >= 1, "на камень встаёт хотя бы 2 деревянных этажа: " + err)
+			break
+		var f := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
+		colony.advance_offline(6000.0)
+		floors.append(f)
+	var top: Project = floors[floors.size() - 1]
+	var err2 := colony.validate(Project.Kind.ROOM, Rect2i(gx, top.rect.position.y - 3, 5, 3), "wood")
+	check(not err2.is_empty(), "дальше не пускает вес или ветер: " + err2)
+	colony.loads.loads = colony.loads.compute()
+	check(colony.loads.utilization(base) > 0.0 and colony.loads.utilization(base) <= 1.0, "основание нагружено, но держит")
+	check(colony.loads.load_on(base) > colony.loads.load_on(floors[1]), "нижнему тяжелее, чем верхним")
+	# Тонкая башня опрокидывается ветром.
+	var tower := colony.loads.tower_of(Rect2i(gx, top.rect.position.y - 3, 5, 3), "wood")
+	check(tower[0] == s - top.rect.position.y + 3 and tower[1] == 5 and tower[2] == "stone",
+		"высота башни — от земли, основание — нижний этаж (%d м, %d м)" % [tower[0], tower[1]])
+	# Обветшавший и перегруженный этаж трещит и рушится через минуту.
+	var lower: Project = floors[1] if floors.size() > 2 else base
+	lower.wear = 0.99
+	var logs := []
+	colony.event_logged.connect(func(t: String, _k: String) -> void: logs.append(t))
+	for p in colony.projects:
+		if p != lower:
+			p.wear = 0.0
+	var over := colony.loads.utilization(lower, colony.loads.compute()) > 1.0
+	if over:
+		for i in 70:
+			colony.loads.update(1.0)
+		check(logs.any(func(t: String) -> bool: return t.contains("перегружена")), "сначала предупреждение о перегрузке")
+		check(not colony.projects.has(lower), "перегруженный этаж рухнул")
+	# Землетрясение изнашивает постройки.
+	var c2 := _new_colony(72)
+	c2.start_new(0)
+	c2.inventory = {"wood": 50}
+	var gx2 := _flat_x(c2.world, 10)
+	var hut := c2.create_project(Project.Kind.ROOM, Rect2i(gx2, c2.world.gen.surface_y(gx2) - 3, 4, 3))
+	c2.advance_offline(4000.0)
+	var w0 := hut.wear
+	var mags := []
+	c2.quaked.connect(func(m: int) -> void: mags.append(m))
+	c2.loads.quake(2)
+	check(hut.wear > w0 + 0.03 and mags == [2], "землетрясение изнашивает и трясёт камеру")
+	# Буря изнашивает наземные постройки.
+	var w1 := hut.wear
+	c2.loads.storm_t = 0.0
+	for i in 60:
+		c2.loads.update(1.0)
+	check(c2.loads.storm_left > 0.0 or hut.wear > w1, "началась буря")
+	check(hut.wear > w1, "в бурю наземный дом ветшает быстрее")
+	# Без стихийных бедствий ни бурь, ни землетрясений.
+	c2.disasters = false
+	c2.loads.storm_left = 0.0
+	c2.loads.storm_t = 0.0
+	c2.loads.quake_t = 0.0
+	mags.clear()
+	for i in 30:
+		c2.loads.update(1.0)
+	check(c2.loads.storm_left <= 0.0 and mags.is_empty(), "галочка «Стихийные бедствия» выключает бури и землетрясения")
+	check(Loads.STORM_EVERY.x >= 3600.0 * 4 and Loads.QUAKE_EVERY.x >= 3600.0 * 12, "бедствия очень редкие")

@@ -30,6 +30,8 @@ var _pending_workers := 1
 var _pending_material := "wood"
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
+## Тряска камеры при землетрясении, сек.
+var _shake := 0.0
 
 
 func _ready() -> void:
@@ -40,9 +42,11 @@ func _ready() -> void:
 	_home = Vector2i(0, world.gen.surface_y(0))
 	_build_scene()
 	colony.event_logged.connect(hud.log_event)
+	colony.quaked.connect(func(mag: int) -> void: _shake = 1.2 + mag * 0.8)
 
 	var start := _home + Vector2i(0, -3)
 	if data.is_empty():
+		colony.disasters = _new_game_settings().get("disasters", true)
 		colony.start_new(_home.x)
 		hud.log_event("У вас 5 жителей и пустой склад. Начните со «Сбора»: кусты с ягодами — еда, деревья и валуны — дерево и камень.", "info")
 	else:
@@ -106,6 +110,11 @@ func _process(delta: float) -> void:
 	var dt := minf(delta, 0.25)
 	colony.update(dt * SPEEDS[_speed_idx])
 	_clamp_camera()
+	if _shake > 0.0:
+		_shake -= delta
+		camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * 10.0 * minf(1.0, _shake)
+	elif camera.offset != Vector2.ZERO:
+		camera.offset = Vector2.ZERO
 	_update_sky()
 	_status_timer -= delta
 	if _status_timer <= 0.0:
@@ -133,7 +142,23 @@ func _notification(what: int) -> void:
 				_save()
 
 
-func _new_game() -> void:
+const NEW_GAME_PATH := "user://new_game.json"
+
+
+## Настройки новой игры, выбранные в меню (читаются один раз).
+func _new_game_settings() -> Dictionary:
+	if not FileAccess.file_exists(NEW_GAME_PATH):
+		return {}
+	var d = JSON.parse_string(FileAccess.get_file_as_string(NEW_GAME_PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(NEW_GAME_PATH))
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func _new_game(disasters: bool) -> void:
+	var f := FileAccess.open(NEW_GAME_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify({"disasters": disasters}))
+		f.close()
 	_restarting = true
 	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
@@ -469,7 +494,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		rows.append(_progress("Износ", p.wear, "%d%% · ещё ~%s" % [roundi(p.wear * 100.0), _years(colony.years_left(p))],
 			_wear_color(p.wear)))
 		if p.kind == Project.Kind.ROOM:
-			chips.append(["", "этажей сверху: до %d" % Project.FLOORS_ABOVE.get(p.material, 1)])
+			var util := colony.loads.utilization(p)
+			rows.append(_progress("Нагрузка", minf(util, 1.0), "%d т из %d т" % [roundi(colony.loads.load_on(p)),
+				roundi(Loads.bearing(p))], _wear_color(util * 0.9)))
+			if not colony.is_underground(p):
+				var tower := colony.loads.tower_of(p.rect, p.material)
+				chips.append(["", "ветер %d м/с" % roundi(colony.loads.wind(tower[0]))])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		match p.purpose:
 			RoomType.HOME:
@@ -680,6 +710,24 @@ func _pending_spec() -> Dictionary:
 			Mat.name_of(span[1]).to_lower(), span[0]]})
 	for lower in colony.ladders_needed(r):
 		rows.append({"type": "resources", "label": "Лестница внизу", "items": _cost_items(RoomType.ladder_cost(lower))})
+	if kind == Project.Kind.ROOM and not colony.rooms_below(r).is_empty():
+		var tmp := Project.new()
+		tmp.id = -1
+		tmp.kind = kind
+		tmp.rect = r
+		tmp.material = _pending_material
+		var predicted := colony.loads.compute(tmp)
+		for lower in colony.rooms_below(r):
+			var util := colony.loads.utilization(lower, predicted)
+			rows.append(_progress("Нагрузка внизу", minf(util, 1.0), "%s: %d%%" % [lower.title(), roundi(util * 100.0)],
+				_wear_color(util * 0.9)))
+	if kind == Project.Kind.ROOM and r.position.y < world.gen.surface_y(r.get_center().x):
+		var tower := colony.loads.tower_of(r, _pending_material)
+		var limit := int(tower[1] * Loads.SLENDER.get(tower[2], 3.0))
+		chips.append(["", "башня %d м из %d возможных" % [tower[0], limit]])
+	var verr := colony.validate(kind, r, _pending_material)
+	if not verr.is_empty():
+		rows.append({"type": "warning", "text": verr})
 	if kind == Project.Kind.TUNNEL:
 		var lanes := Colony.tunnel_lanes(r)
 		chips.append(["people", "%d %s" % [lanes, "поток" if lanes == 1 else "потока"]])
@@ -718,6 +766,10 @@ func _support_estimate(kind: int, r: Rect2i) -> int:
 
 
 func _confirm_pending() -> void:
+	var err := colony.validate(_pending_kind, _pending, _pending_material)
+	if not err.is_empty():
+		hud.log_event(err, "warning")
+		return
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	_clear_preview()
 	if p != null:

@@ -6,6 +6,8 @@ extends RefCounted
 ## (update), оффлайн — упрощённо (advance_offline).
 
 signal event_logged(text: String, kind: String)
+## Землетрясение (для тряски камеры).
+signal quaked(magnitude: int)
 
 const START_UNITS := 5
 ## Ресурсов на старте нет — их сначала нужно собрать.
@@ -83,6 +85,11 @@ var world: WorldData
 var pathing: Pathing
 var physics: Physics
 var elements: Elements
+var loads: Loads
+## Во время толчков своды держат меньше.
+var quake_factor := 1.0
+## Стихийные бедствия (бури, землетрясения) — выбирается при создании игры.
+var disasters := true
 ## Идёт оффлайн-расчёт (без анимаций и гибели).
 var offline := false
 var units: Array[Unit] = []
@@ -135,6 +142,7 @@ func _init(p_world: WorldData) -> void:
 	pathing = Pathing.new(world, interior, room_cells, deck)
 	physics = Physics.new(self)
 	elements = Elements.new(self)
+	loads = Loads.new(self)
 	rng.seed = world.gen.world_seed + 12345
 
 
@@ -245,7 +253,7 @@ static func tunnel_lanes(r: Rect2i) -> int:
 	return maxi(1, r.size.y - 1)
 
 
-func validate(kind: int, r: Rect2i) -> String:
+func validate(kind: int, r: Rect2i, material := "wood") -> String:
 	var err := Project.size_error(kind, r)
 	if not err.is_empty():
 		return err
@@ -270,7 +278,7 @@ func validate(kind: int, r: Rect2i) -> String:
 				or Mat.is_solid(world.get_mat(below.x, below.y))
 			if not ok:
 				return "Комнате не на что опереться — нужен грунт или постройка снизу"
-		var floors_err := _floors_error(r)
+		var floors_err := _floors_error(r, material)
 		if not floors_err.is_empty():
 			return floors_err
 		# Пролёт под землёй ограничен прочностью породы потолка: шире — нужна крепь,
@@ -366,7 +374,7 @@ func _water_structure_error(kind: int, r: Rect2i) -> String:
 ## Наибольший пролёт без крепи для породы m на глубине клетки c.
 func span_limit(m: int, c: Vector2i) -> int:
 	var depth := c.y - world.gen.surface_y(c.x)
-	var k := clampf(1.0 - depth / 8000.0, 0.4, 1.0)
+	var k := clampf(1.0 - depth / 8000.0, 0.4, 1.0) * quake_factor
 	return maxi(2, roundi(Mat.max_span(m) * k))
 
 
@@ -380,28 +388,12 @@ func rooms_below(r: Rect2i) -> Array[Project]:
 	return out
 
 
-## Выдержат ли нижние этажи ещё один сверху.
-func _floors_error(r: Rect2i) -> String:
-	var chain := rooms_below(r)
-	var level := 1
-	var seen := {}
-	while not chain.is_empty():
-		var next: Array[Project] = []
-		for p in chain:
-			if seen.has(p.id):
-				continue
-			seen[p.id] = true
-			if p.phase != Project.Phase.DONE:
-				return "Нижнее здание ещё не достроено или обустраивается"
-			var allowed: int = Project.FLOORS_ABOVE.get(p.material, 1)
-			if level > allowed:
-				return "%s стены не выдержат %d эт. сверху (максимум %d) — нужен материал прочнее" % [
-					{"wood": "Деревянные", "clay": "Глиняные", "stone": "Каменные"}.get(p.material, "Эти"), level, allowed]
-			for q in rooms_below(p.rect):
-				next.append(q)
-		chain = next
-		level += 1
-	return ""
+## Выдержат ли нижние этажи вес новой комнаты и не опрокинет ли башню ветер.
+func _floors_error(r: Rect2i, material: String) -> String:
+	for p in rooms_below(r):
+		if p.phase != Project.Phase.DONE:
+			return "Нижнее здание ещё не достроено или обустраивается"
+	return loads.room_error(r, material)
 
 
 ## Пол комнаты ниже поверхности земли — без лестницы из неё не выбраться.
@@ -455,7 +447,7 @@ func has_access(r: Rect2i) -> bool:
 
 
 func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> Project:
-	if not validate(kind, r).is_empty():
+	if not validate(kind, r, material).is_empty():
 		return null
 	var p := Project.new()
 	p.id = next_project_id
@@ -1477,6 +1469,7 @@ func update(dt: float) -> void:
 			_update_unit(u, step)
 	physics.update(dt)
 	elements.update(dt)
+	loads.update(dt)
 	_explore_t += dt
 	if _explore_t >= 1.0:
 		_explore_t = 0.0
@@ -2911,6 +2904,8 @@ func to_dict() -> Dictionary:
 		"explored": [explored_min, explored_max, deepest_y, highest_y],
 		"fish": fish,
 		"elements": elements.to_dict(),
+		"loads": loads.to_dict(),
+		"disasters": disasters,
 	}
 
 
@@ -2961,5 +2956,8 @@ func load_dict(d: Dictionary) -> void:
 		deepest_y = home.y
 		highest_y = home.y
 	elements.load_dict(d.get("elements", {}))
+	loads.load_dict(d.get("loads", {}))
+	disasters = bool(d.get("disasters", true))
+	loads.loads = loads.compute()
 	explore()
 	_refresh_bushes()

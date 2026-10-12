@@ -7,7 +7,7 @@ signal mode_changed(mode: int)
 signal home_pressed
 signal speed_pressed
 signal save_pressed
-signal new_game_confirmed
+signal new_game_confirmed(disasters: bool)
 
 enum Mode { LOOK, TUNNEL, ROOM, HARVEST, BRIDGE }
 
@@ -45,7 +45,8 @@ var _build_btn: IconButton
 var _build_row: HBoxContainer
 var _menu: PanelContainer
 var _menu_new: Button
-var _new_armed := false
+var _new_game: PanelContainer
+var _disasters: CheckButton
 var _log: VBoxContainer
 var _info_panel: PanelContainer
 var _title: Label
@@ -257,8 +258,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	home.pressed.connect(func() -> void: home_pressed.emit())
 	_btn_speed.pressed.connect(func() -> void: speed_pressed.emit())
 	menu.pressed.connect(func() -> void:
-		_new_armed = false
-		_menu_new.text = "Новая игра"
+		_new_game.visible = false
 		_menu.visible = not _menu.visible)
 
 
@@ -631,12 +631,47 @@ func _build_menu(center: CenterContainer) -> void:
 		_menu.visible = false)
 	_menu_new = _menu_button(v, "Новая игра")
 	_menu_new.pressed.connect(func() -> void:
-		if not _new_armed:
-			_new_armed = true
-			_menu_new.text = "Точно? Прогресс пропадёт — нажмите ещё раз"
-			return
 		_menu.visible = false
-		new_game_confirmed.emit())
+		_new_game.visible = true)
+	_build_new_game(center)
+
+
+## Окно новой игры: настройки и подтверждение (текущий прогресс пропадёт).
+func _build_new_game(center: CenterContainer) -> void:
+	_new_game = PanelContainer.new()
+	_new_game.visible = false
+	_new_game.custom_minimum_size = Vector2(560, 0)
+	center.add_child(_new_game)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	_new_game.add_child(v)
+	var title := _label("Новая игра", 28, Color.WHITE)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	_disasters = CheckButton.new()
+	_disasters.text = "Стихийные бедствия"
+	_disasters.button_pressed = true
+	_disasters.focus_mode = Control.FOCUS_NONE
+	_disasters.add_theme_font_size_override("font_size", 22)
+	v.add_child(_disasters)
+	var hint := _label("Очень редкие бури (раз в 4–10 часов игры) и землетрясения (раз в 12–30 часов), с предупреждением и только пока вы в игре.", 17, MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(520, 0)
+	v.add_child(hint)
+	var warn := _label("Текущая колония будет удалена.", 18, Color(1.0, 0.6, 0.5))
+	v.add_child(warn)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	v.add_child(row)
+	var start := _menu_button(row, "Начать")
+	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start.add_theme_stylebox_override("normal", _box(Color(0.75, 0.52, 0.12, 0.95), 14, 10))
+	var cancel := _menu_button(row, "Отмена")
+	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start.pressed.connect(func() -> void:
+		_new_game.visible = false
+		new_game_confirmed.emit(_disasters.button_pressed))
+	cancel.pressed.connect(func() -> void: _new_game.visible = false)
 
 
 func _menu_button(parent: Control, text: String) -> Button:

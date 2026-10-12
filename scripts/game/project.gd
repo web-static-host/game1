@@ -18,8 +18,6 @@ const MATERIALS := {
 	"clay": ["Глина", 1.2],
 	"stone": ["Камень", 1.5],
 }
-## Сколько этажей можно поставить сверху на комнату из материала.
-const FLOORS_ABOVE := {"wood": 1, "clay": 2, "stone": 4}
 
 var id := 0
 var kind := Kind.TUNNEL
