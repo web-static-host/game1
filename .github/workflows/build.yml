@@ -36,6 +36,18 @@ jobs:
             cp -r /root/.config/godot ~/.config/godot
             cp -r /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
           fi
+      # Версия = <основная из project.godot>.<номер сборки>, versionCode = номер сборки.
+      # Чтобы поднять основную версию, поменяйте config/version в project.godot (например на "0.3.0").
+      - name: Номер версии
+        run: |
+          BASE=$(grep '^config/version=' project.godot | sed -E 's/.*"([0-9]+\.[0-9]+).*/\1/')
+          VERSION="$BASE.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i -E "s/^version\/code=.*/version\/code=${{ github.run_number }}/" export_presets.cfg
+          sed -i -E "s/^version\/name=.*/version\/name=\"$VERSION\"/" export_presets.cfg
+          sed -i -E "s/^config\/version=.*/config\/version=\"$VERSION\"/" project.godot
+          grep -E '^version/(code|name)=' export_presets.cfg
+          grep '^config/version=' project.godot
       - name: Отладочный ключ подписи
         run: keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore "$GITHUB_WORKSPACE/debug.keystore" -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
       - name: Сборка APK
@@ -58,11 +70,12 @@ jobs:
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Сборка ${{ github.run_number }}
+          tag_name: v${{ env.VERSION }}
+          name: Версия ${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: build/vertikal.apk
           make_latest: true
           body: |
+            Версия ${{ env.VERSION }} (versionCode ${{ github.run_number }}).
             Отладочная сборка из ветки `${{ github.ref_name }}`, коммит ${{ github.sha }}.
             Скачайте `vertikal.apk` ниже и установите на Android-телефон.

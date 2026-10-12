@@ -57,6 +57,15 @@ func _ready() -> void:
 	column.add_child(spacer)
 	_build_bottom(column)
 	_build_dialog()
+	var version := Label.new()
+	version.text = "v" + str(ProjectSettings.get_setting("application/config/version", "dev"))
+	version.add_theme_font_size_override("font_size", 16)
+	version.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	version.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
+	version.add_theme_constant_override("outline_size", 4)
+	version.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(version)
+	version.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 10)
 
 
 func _make_theme() -> Theme:
