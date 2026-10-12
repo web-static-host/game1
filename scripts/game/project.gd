@@ -23,6 +23,10 @@ var build_done := 0.0
 var found := {}
 ## Почему стройка стоит (пусто — всё в порядке).
 var blocked := ""
+## Сколько жителей одновременно работает на стройке.
+var workers := 1
+## Лестница у левой стены (нужна, если пол комнаты ниже поверхности).
+var ladder := false
 
 
 func title() -> String:
@@ -81,6 +85,12 @@ func build_work() -> float:
 	return work_for(kind, rect)
 
 
+## Рекомендуемое число рабочих: примерно один на 6–8 клеток площади.
+static func recommended_workers(k: int, r: Rect2i, max_workers: int) -> int:
+	var per := 8.0 if k == Kind.ROOM else 6.0
+	return clampi(ceili(r.size.x * r.size.y / per), 1, maxi(1, max_workers))
+
+
 ## Проверка размеров. Остальные проверки (пересечения, опора) — в Colony.
 static func size_error(k: int, r: Rect2i) -> String:
 	var w := r.size.x
@@ -111,6 +121,8 @@ func to_dict() -> Dictionary:
 		"build_done": build_done,
 		"found": found,
 		"blocked": blocked,
+		"workers": workers,
+		"ladder": ladder,
 	}
 
 
@@ -128,4 +140,6 @@ static func from_dict(d: Dictionary) -> Project:
 	for k in f:
 		p.found[k] = int(f[k])
 	p.blocked = str(d.get("blocked", ""))
+	p.workers = int(d.get("workers", 2))
+	p.ladder = bool(d.get("ladder", false))
 	return p

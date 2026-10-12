@@ -8,7 +8,8 @@ extends RefCounted
 signal event_logged(text: String, kind: String)
 
 const START_UNITS := 5
-const START_INVENTORY := {"wood": 20, "stone": 15}
+## Ресурсов на старте нет — их сначала нужно собрать.
+const START_INVENTORY := {}
 const SUBSTEP := 0.2
 const WALK_SPEED := 3.0
 const CLIMB_SPEED := 1.6
@@ -124,6 +125,23 @@ func validate(kind: int, r: Rect2i) -> String:
 	return ""
 
 
+## Пол комнаты ниже поверхности земли — без лестницы из неё не выбраться.
+func _floor_below_surface(r: Rect2i) -> bool:
+	var floor_y := r.end.y - 1
+	for x in range(r.position.x - 1, r.end.x + 1):
+		if floor_y >= world.gen.surface_y(x):
+			return true
+	return false
+
+
+func workers_on(p: Project) -> int:
+	var n := 0
+	for u in units:
+		if u.project_id == p.id:
+			n += 1
+	return n
+
+
 ## Есть ли у зоны выход к открытому пространству или к другой стройке.
 func has_access(r: Rect2i) -> bool:
 	for y in range(r.position.y - 1, r.end.y + 1):
@@ -133,7 +151,7 @@ func has_access(r: Rect2i) -> bool:
 	return false
 
 
-func create_project(kind: int, r: Rect2i) -> Project:
+func create_project(kind: int, r: Rect2i, workers := -1) -> Project:
 	if not validate(kind, r).is_empty():
 		return null
 	var p := Project.new()
@@ -141,6 +159,8 @@ func create_project(kind: int, r: Rect2i) -> Project:
 	next_project_id += 1
 	p.kind = kind
 	p.rect = r
+	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, units.size())
+	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	projects.append(p)
 	_check_phase(p)
 	return p
@@ -171,13 +191,13 @@ func cancel_project(p: Project) -> void:
 	_log("%s отменена" % p.title(), "info")
 
 
-## Пока комнату копают, в ней леса — по ним можно лазить. Потом лестницы остаются
-## только у боковых стен.
+## Пока комнату копают, в ней леса — по ним можно лазить. Потом ходят по полу;
+## у заглублённой комнаты остаётся лестница у левой стены.
 func _register_room(p: Project) -> void:
 	if p.kind != Project.Kind.ROOM or p.phase == Project.Phase.DIG:
 		return
 	for c in p.cells():
-		if c.x > p.rect.position.x and c.x < p.rect.end.x - 1:
+		if not (p.ladder and c.x == p.rect.position.x):
 			room_cells[c] = p.id
 
 
@@ -487,7 +507,7 @@ func _assign(u: Unit) -> bool:
 	if harvest_first and _try_harvest(u, parents, dist):
 		return true
 	for p in projects:
-		if p.paused:
+		if p.paused or workers_on(p) >= p.workers:
 			continue
 		if p.phase == Project.Phase.DIG and _try_dig(u, p, parents, dist):
 			return true
@@ -667,7 +687,8 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 		if not h.is_empty():
 			return h
 	for p in projects:
-		if p.paused:
+		var slot := "w%d" % p.id
+		if p.paused or taken.get(slot, 0) >= p.workers:
 			continue
 		if p.phase == Project.Phase.DIG:
 			for c in remaining_dig(p):
@@ -676,8 +697,10 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 				for d in DIRS4:
 					if world.is_open(c.x + d.x, c.y + d.y):
 						taken[c] = true
+						taken[slot] = taken.get(slot, 0) + 1
 						return [c, Unit.Task.DIG, p]
 		elif p.phase == Project.Phase.BUILD and p.paid:
+			taken[slot] = taken.get(slot, 0) + 1
 			return ["b%d" % p.id, Unit.Task.BUILD, p]
 	if not harvest_first:
 		return _offline_harvest(taken)

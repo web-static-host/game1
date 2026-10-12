@@ -30,6 +30,7 @@ var _log: VBoxContainer
 var _info_panel: PanelContainer
 var _info_label: Label
 var _info_buttons: HBoxContainer
+var _info_stepper: HBoxContainer
 var _mode_buttons: Array[Button] = []
 var _btn_speed: Button
 var _dialog: PanelContainer
@@ -136,6 +137,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_info_label.add_theme_font_size_override("font_size", 20)
 	v.add_child(_info_label)
+	_info_stepper = HBoxContainer.new()
+	_info_stepper.add_theme_constant_override("separation", 8)
+	v.add_child(_info_stepper)
 	_info_buttons = HBoxContainer.new()
 	_info_buttons.add_theme_constant_override("separation", 8)
 	v.add_child(_info_buttons)
@@ -229,8 +233,14 @@ func set_resources(inventory: Dictionary) -> void:
 
 
 ## Панель с описанием и кнопками. actions: [[текст, Callable], ...]
-func show_info(text: String, actions: Array = []) -> void:
+## stepper: {"label": String, "value": int, "min": int, "max": int, "changed": Callable(int)}
+func show_info(text: String, actions: Array = [], stepper: Dictionary = {}) -> void:
 	_info_label.text = text
+	for c in _info_stepper.get_children():
+		c.queue_free()
+	_info_stepper.visible = not stepper.is_empty()
+	if not stepper.is_empty():
+		_build_stepper(stepper)
 	for c in _info_buttons.get_children():
 		c.queue_free()
 	for a in actions:
@@ -240,6 +250,42 @@ func show_info(text: String, actions: Array = []) -> void:
 		b.pressed.connect(cb)
 	_info_buttons.visible = not actions.is_empty()
 	_info_panel.visible = true
+
+
+## Строка «Рабочих: [−] 3 [+]».
+func _build_stepper(st: Dictionary) -> void:
+	var label := Label.new()
+	label.text = st["label"]
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_info_stepper.add_child(label)
+	var value := Label.new()
+	value.custom_minimum_size = Vector2(56, 0)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value.add_theme_font_size_override("font_size", 28)
+	var minus := Button.new()
+	minus.text = "−"
+	minus.custom_minimum_size = Vector2(72, 56)
+	var plus := Button.new()
+	plus.text = "+"
+	plus.custom_minimum_size = Vector2(72, 56)
+	_info_stepper.add_child(minus)
+	_info_stepper.add_child(value)
+	_info_stepper.add_child(plus)
+	var state := {"v": int(st["value"])}
+	var refresh := func() -> void:
+		value.text = str(state["v"])
+		minus.disabled = state["v"] <= int(st["min"])
+		plus.disabled = state["v"] >= int(st["max"])
+	refresh.call()
+	var changed: Callable = st["changed"]
+	minus.pressed.connect(func() -> void:
+		state["v"] = maxi(int(st["min"]), state["v"] - 1)
+		refresh.call()
+		changed.call(state["v"]))
+	plus.pressed.connect(func() -> void:
+		state["v"] = mini(int(st["max"]), state["v"] + 1)
+		refresh.call()
+		changed.call(state["v"]))
 
 
 func update_info_text(text: String) -> void:

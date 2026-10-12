@@ -66,9 +66,9 @@ func _draw_done(p: Project) -> void:
 		draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), ROOM_FRAME)
 		draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), ROOM_FRAME)
 		draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), ROOM_FRAME)
-		# Лестницы у боковых стен.
-		for lx in [r.position.x + TILE * 0.5, r.end.x - TILE * 0.5]:
-			_ladder(lx, r.position.y + 5, r.end.y - 6, 1.0)
+		# Лестница — только у заглублённой комнаты, иначе вход с уровня земли.
+		if p.ladder:
+			_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
 		var lamp := Vector2(r.get_center().x, r.position.y + 9)
 		draw_circle(lamp, 14, Color(LAMP, 0.18))
 		draw_circle(lamp, 5, LAMP)

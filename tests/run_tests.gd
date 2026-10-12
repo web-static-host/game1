@@ -16,6 +16,7 @@ func _initialize() -> void:
 	test_pause_and_materials()
 	test_units_realtime()
 	test_room_from_surface_realtime()
+	test_workers_and_ladder()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -121,7 +122,7 @@ func _find_solid_column(world: WorldData, from := 0) -> int:
 func _new_colony(seed_value: int) -> Colony:
 	var world := WorldData.new(WorldGen.new(seed_value))
 	var colony := Colony.new(world)
-	colony.inventory = Colony.START_INVENTORY.duplicate()
+	colony.inventory = {"wood": 20, "stone": 15}
 	return colony
 
 
@@ -147,6 +148,8 @@ func test_offline_build() -> void:
 	var colony := _new_colony(99)
 	var w := colony.world
 	colony.start_new(0)
+	check(colony.inventory.is_empty(), "на старте склад пуст")
+	colony.inventory = {"wood": 20, "stone": 15}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
 	check(not w.is_revealed(x, s + 3), "глубже поверхности — неизвестность")
@@ -195,6 +198,7 @@ func test_units_realtime() -> void:
 	var w := colony.world
 	var x := _find_solid_column(w, 0)
 	colony.start_new(x)
+	colony.inventory = {"wood": 20, "stone": 15}
 	var s := w.gen.surface_y(x)
 	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 5))
 	var drift := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 1, s + 3, 4, 2))
@@ -232,6 +236,7 @@ func test_room_from_surface_realtime() -> void:
 		var colony := _new_colony(seed_value * 1000 + 6)
 		var w := colony.world
 		colony.start_new(0)
+		colony.inventory = {"wood": 40, "stone": 30}
 		var s := w.gen.surface_y(4)
 		var room := colony.create_project(Project.Kind.ROOM, Rect2i(3, s, 6, 3))
 		var t := 0.0
@@ -252,11 +257,44 @@ func test_room_from_surface_realtime() -> void:
 	check(not _new_colony(3).has_access(Rect2i(0, 50, 4, 2)), "у зоны в толще породы нет доступа")
 
 
+func test_workers_and_ladder() -> void:
+	var colony := _new_colony(77)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	colony.start_new(x)
+	colony.inventory = {"wood": 50, "stone": 50}
+	var s := w.gen.surface_y(x)
+	check(Project.recommended_workers(Project.Kind.TUNNEL, Rect2i(0, 0, 1, 6), 5) == 1, "на шахту 1×6 рекомендуется 1 рабочий")
+	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 8, 4), 5) == 4, "на комнату 8×4 — 4 рабочих")
+	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 24, 8), 5) == 5, "не больше, чем жителей")
+	var p := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 3, 8), 2)
+	var max_seen := 0
+	for i in 300:
+		colony.update(0.5)
+		max_seen = maxi(max_seen, colony.workers_on(p))
+	check(max_seen == 2, "на стройке не больше выбранных 2 рабочих (было %d)" % max_seen)
+	var sunk := colony.create_project(Project.Kind.ROOM, Rect2i(x + 3, s + 4, 4, 3))
+	check(sunk != null and sunk.ladder, "у подземной комнаты есть лестница")
+	var ground := 0
+	for tx in range(x + 20, x + 200):
+		var ts := w.gen.surface_y(tx)
+		var flat := true
+		for dx in range(-1, 5):
+			if w.gen.surface_y(tx + dx) != ts:
+				flat = false
+		if flat:
+			ground = tx
+			break
+	var house := colony.create_project(Project.Kind.ROOM, Rect2i(ground, w.gen.surface_y(ground) - 3, 4, 3))
+	check(house != null and not house.ladder, "у наземного дома лестницы нет")
+
+
 func test_save_roundtrip() -> void:
 	var path := "user://test_save.json"
 	var colony := _new_colony(4242)
 	var w := colony.world
 	colony.start_new(0)
+	colony.inventory = {"wood": 20, "stone": 15}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
 	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 4))

@@ -23,6 +23,7 @@ var _paused_at := 0.0
 var _drag_start := Vector2i.ZERO
 var _pending := Rect2i()
 var _pending_kind := 0
+var _pending_workers := 1
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
 
@@ -39,7 +40,7 @@ func _ready() -> void:
 	var start := _home + Vector2i(0, -3)
 	if data.is_empty():
 		colony.start_new(_home.x)
-		hud.log_event("У вас 5 жителей, немного дерева и камня. Заложите тоннель или комнату, деревья и валуны отметьте в «Сборе».", "info")
+		hud.log_event("У вас 5 жителей и пустой склад. Начните со «Сбора»: отметьте деревья и валуны — это дерево и камень для стройки.", "info")
 	else:
 		SaveSystem.apply(data, world, colony)
 		var cam: Array = data.get("camera", [])
@@ -233,7 +234,15 @@ func _show_project(p: Project) -> void:
 		actions.append(["Отменить", func() -> void:
 			colony.cancel_project(p)
 			_select(null, null)])
+		hud.show_info(_project_text(p), actions, _workers_stepper(p.workers, func(v: int) -> void:
+			p.workers = v
+			hud.update_info_text(_project_text(p))))
+		return
 	hud.show_info(_project_text(p), actions)
+
+
+func _workers_stepper(value: int, changed: Callable) -> Dictionary:
+	return {"label": "Рабочих:", "value": value, "min": 1, "max": maxi(1, colony.units.size()), "changed": changed}
 
 
 func _project_text(p: Project) -> String:
@@ -246,6 +255,7 @@ func _project_text(p: Project) -> String:
 			lines.append("Этап 2 из 2: строительство %d%%" % pct)
 	if p.phase != Project.Phase.DONE:
 		lines.append("Материалы: " + _cost_text(p.cost()) + (" (оплачено)" if p.paid else ""))
+		lines.append("Сейчас работают: %d из %d" % [colony.workers_on(p), p.workers])
 	if not p.found.is_empty():
 		var f: PackedStringArray = []
 		for k in p.found:
@@ -300,22 +310,25 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 		return
 	_pending = r
 	_pending_kind = kind
+	var rec := Project.recommended_workers(kind, r, colony.units.size())
+	_pending_workers = rec
 	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
 	lines.append("Материалы на 2-м этапе: " + _cost_text(Project.cost_for(kind, r)))
 	lines.append("Сначала жители выкопают зону, потом построят.")
 	if not colony.has_access(r):
 		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
+	lines.append("Рекомендуется рабочих: %d" % rec)
 	hud.show_info("\n".join(lines), [
 		["Построить", _confirm_pending],
 		["Отмена", _clear_preview],
-	])
+	], _workers_stepper(rec, func(v: int) -> void: _pending_workers = v))
 
 
 func _confirm_pending() -> void:
-	var p := colony.create_project(_pending_kind, _pending)
+	var p := colony.create_project(_pending_kind, _pending, _pending_workers)
 	_clear_preview()
 	if p != null:
-		hud.log_event("Заложено: %s" % p.title(), "info")
+		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")
 
 
 func _clear_preview() -> void:

@@ -35,6 +35,16 @@ func _process(_delta: float) -> bool:
 		_reveal_area(Vector2i(_main._home.x, 1200), 40, 50)
 	if _frame == 360:
 		_shot("deep_revealed")
+		# Окно подтверждения стройки с выбором рабочих.
+		var h: Vector2i = _main._home
+		_main.world_view.focus_cell(h + Vector2i(22, 2))
+		_main.camera.zoom = Vector2(1.0, 1.0)
+		_main.mode = Hud.Mode.ROOM
+		var sy: int = _main.world.gen.surface_y(h.x + 24) + 2
+		_main.world_view.structures.preview = Rect2i(h.x + 24, sy, 6, 3)
+		_main._on_paint_end(Vector2.ZERO)
+	if _frame == 390:
+		_shot("confirm")
 		return true
 	return false
 
