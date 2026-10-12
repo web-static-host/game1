@@ -226,7 +226,15 @@ func _draw_site(p: Project, font: Font) -> void:
 	if p.phase == Project.Phase.DIG:
 		for c in colony.remaining_dig(p):
 			draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)
-	else:
+		# Закреплённые срезы и срез, где сейчас ставят крепь.
+		for i in p.supported:
+			_draw_slice_support(p, i, 1.0)
+		if p.support_slice >= 0:
+			_draw_slice_support(p, p.support_slice, 0.25 + 0.6 * clampf(p.support_progress / p.slice_work(), 0.0, 1.0))
+	elif p.phase == Project.Phase.BUILD and not p.needs_support.is_empty():
+		for i in p.supported:
+			_draw_slice_support(p, i, 1.0)
+	if p.phase != Project.Phase.DIG:
 		var t := clampf(p.build_done / p.build_work(), 0.0, 1.0) if p.paid else 0.0
 		if p.is_water_structure():
 			_draw_deck(p, r, 0.3 + 0.7 * t)
@@ -394,3 +402,20 @@ func _draw_deck(p: Project, r: Rect2, alpha: float) -> void:
 			Vector2(hx + hw + 4, deck_y - TILE * 1.3)]), Color(0.55, 0.25, 0.2, alpha))
 		# Сети на шестах.
 		draw_line(Vector2(hx + hw + 10, deck_y), Vector2(hx + hw + 10, deck_y - 30), dark, 2.0)
+
+
+
+## Крепь одного среза: стойки по краям и верхняя балка (в шахте — пролёт лестницы).
+func _draw_slice_support(p: Project, i: int, alpha: float) -> void:
+	var cells := p.slice_cells(i)
+	if cells.is_empty():
+		return
+	var col := Color(BEAM, alpha)
+	var a := view.cell_to_local(cells[0])
+	var b := view.cell_to_local(cells[cells.size() - 1]) + Vector2(TILE, TILE)
+	if p.vertical():
+		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha)
+		return
+	draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
+	draw_line(Vector2(b.x - 4, a.y + 3), Vector2(b.x - 4, b.y), col, 4.0)
+	draw_line(Vector2(a.x, a.y + 3), Vector2(b.x, a.y + 3), col, 5.0)

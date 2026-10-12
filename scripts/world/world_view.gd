@@ -16,6 +16,7 @@ var colony: Colony
 var camera: Camera2D
 var structures: StructureLayer
 var units_layer: UnitLayer
+var fog: FogLayer
 ## Клетка мира, находящаяся в локальной точке (0, 0).
 var origin := Vector2i.ZERO
 var _views := {}
@@ -35,6 +36,11 @@ func setup(p_world: WorldData, p_colony: Colony, p_camera: Camera2D) -> void:
 	units_layer.colony = colony
 	units_layer.z_index = 10
 	add_child(units_layer)
+	fog = FogLayer.new()
+	fog.view = self
+	fog.colony = colony
+	fog.z_index = 20
+	add_child(fog)
 
 
 func cell_to_local(c: Vector2i) -> Vector2:

@@ -20,6 +20,9 @@ var _autosave := 0.0
 var _status_timer := 0.0
 var _home := Vector2i.ZERO
 var _paused_at := 0.0
+var _restarting := false
+## Варианты постройки над водой: [[вид, рамка], ...].
+var _water_options := []
 var _drag_start := Vector2i.ZERO
 var _pending := Rect2i()
 var _pending_kind := 0
@@ -92,12 +95,17 @@ func _build_scene() -> void:
 	hud.mode_changed.connect(_set_mode)
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_pressed.connect(_cycle_speed)
+	hud.save_pressed.connect(func() -> void:
+		_save()
+		hud.log_event("Игра сохранена", "good"))
+	hud.new_game_confirmed.connect(_new_game)
 
 
 func _process(delta: float) -> void:
 	# Большие паузы (сворачивание) учитываются как оффлайн, а не через delta.
 	var dt := minf(delta, 0.25)
 	colony.update(dt * SPEEDS[_speed_idx])
+	_clamp_camera()
 	_update_sky()
 	_status_timer -= delta
 	if _status_timer <= 0.0:
@@ -125,7 +133,16 @@ func _notification(what: int) -> void:
 				_save()
 
 
+func _new_game() -> void:
+	_restarting = true
+	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
+	get_tree().reload_current_scene()
+
+
 func _save() -> void:
+	if _restarting:
+		return
 	SaveSystem.save(world, colony, world_view.camera_cell())
 
 
@@ -191,6 +208,9 @@ func _on_tap(screen_pos: Vector2) -> void:
 	var c := world_view.screen_to_cell(screen_pos)
 	if mode == Hud.Mode.HARVEST:
 		var x = _feature_near(c)
+		if not colony.is_explored(c.x):
+			hud.log_event("Туда ещё никто не ходил", "warning")
+			return
 		if x == null:
 			hud.log_event("Здесь нечего собирать — нажмите на дерево, валун или куст.", "warning")
 		else:
@@ -376,6 +396,7 @@ func _project_text(p: Project, preview_purpose := -1) -> String:
 		if preview_purpose > 0 and preview_purpose != p.purpose:
 			lines.append("Обустроить под «%s» (%s): %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose],
 				_cost_text(RoomType.equip_cost(preview_purpose, p))])
+	lines.append("Условия: " + _env_text(p.rect.get_center()))
 	if not p.found.is_empty():
 		var f: PackedStringArray = []
 		for k in p.found:
@@ -410,17 +431,33 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		hud.hide_info()
 	var r := Rect2i(Vector2i(mini(c.x, _drag_start.x), mini(c.y, _drag_start.y)),
 		(c - _drag_start).abs() + Vector2i.ONE)
-	if mode == Hud.Mode.BRIDGE:
-		# Мост — один ряд на высоте, где начали вести пальцем.
-		r = Rect2i(r.position.x, _drag_start.y, r.size.x, 1)
 	var kind := _mode_kind()
-	var err := colony.validate(kind, r)
-	if kind == Project.Kind.BRIDGE and not err.is_empty() and colony.validate(Project.Kind.PIER, r).is_empty():
-		err = ""
+	var err := ""
+	if mode == Hud.Mode.BRIDGE:
+		# Над водой ряд сам привязывается к уровню воды и тянется до берега.
+		_water_options = []
+		var w := colony.water_rects(_drag_start.x, c.x)
+		for k in [Project.Kind.BRIDGE, Project.Kind.PIER]:
+			var wr: Rect2i = w["bridge" if k == Project.Kind.BRIDGE else "pier"]
+			if wr.size != Vector2i.ZERO and colony.validate(k, wr).is_empty():
+				_water_options.append([k, wr])
+		if _water_options.is_empty():
+			r = Rect2i(r.position.x, _drag_start.y, r.size.x, 1)
+			err = "Проведите пальцем над озером"
+		else:
+			# Длинный жест через воду — мостик, короткий от берега — пристань.
+			var pick: Array = _water_options[0]
+			if _water_options.size() > 1 and absi(c.x - _drag_start.x) + 1 < (pick[1] as Rect2i).size.x * 0.6:
+				pick = _water_options[1]
+			kind = pick[0]
+			r = pick[1]
+	else:
+		err = colony.validate(kind, r)
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
-	s.preview_text = "%d×%d" % [r.size.x, r.size.y]
+	s.preview_text = "%d×%d" % [r.size.x, r.size.y] if mode != Hud.Mode.BRIDGE else \
+		("%s %d м" % [Project.kind_name(kind), r.size.x] if err.is_empty() else err)
 
 
 func _on_paint_end(_screen_pos: Vector2) -> void:
@@ -429,10 +466,11 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 		return
 	var kind := _mode_kind()
 	var err := colony.validate(kind, r)
-	if kind == Project.Kind.BRIDGE and not err.is_empty() and colony.validate(Project.Kind.PIER, r).is_empty():
-		# От берега в воду — это пристань.
-		kind = Project.Kind.PIER
-		err = ""
+	if mode == Hud.Mode.BRIDGE:
+		err = "Мостик и пристань строятся над озером" if _water_options.is_empty() else ""
+		for o in _water_options:
+			if o[1] == r:
+				kind = o[0]
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		_clear_preview()
@@ -459,17 +497,19 @@ func _show_pending() -> void:
 	var controls := [_workers_stepper(_pending_workers, func(v: int) -> void: _pending_workers = v)]
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		var opts := []
-		var kinds := []
-		for k in [Project.Kind.BRIDGE, Project.Kind.PIER]:
-			if colony.validate(k, r).is_empty():
-				opts.append(Project.kind_name(k))
-				kinds.append(k)
-		if kinds.size() > 1:
+		var idx := 0
+		for i in _water_options.size():
+			opts.append(Project.kind_name(_water_options[i][0]))
+			if _water_options[i][0] == kind:
+				idx = i
+		if opts.size() > 1:
 			controls.push_front({
-				"label": "Постройка:", "value": kinds.find(kind), "min": 0, "max": kinds.size() - 1,
+				"label": "Постройка:", "value": idx, "min": 0, "max": opts.size() - 1,
 				"options": opts,
 				"changed": func(v: int) -> void:
-					_pending_kind = kinds[v]
+					_pending_kind = _water_options[v][0]
+					_pending = _water_options[v][1]
+					world_view.structures.preview = _pending
 					hud.update_info_text(_pending_text()),
 			})
 	if kind == Project.Kind.ROOM:
@@ -494,12 +534,13 @@ func _pending_text() -> String:
 	var lines: PackedStringArray = ["%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]]
 	var cost := Project.cost_for(kind, r, _pending_material)
 	var support := colony.support_needed(kind, r)
-	if support > 0:
-		cost["wood"] = cost.get("wood", 0) + support
-	lines.append("Материалы на 2-м этапе: " + _cost_text(cost))
+	if not cost.is_empty():
+		lines.append("Материалы на 2-м этапе: " + _cost_text(cost))
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
+		lines.append("Копают по срезам и сразу крепят: ~%d дерева по ходу работ" % _support_estimate(kind, r))
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
-		lines.append("Потолок из «%s» держит без опор %d м — в цене крепь: +%d дерева" % [
+		lines.append("Потолок из «%s» держит без опор %d м — крепь усиленная: +%d дерева" % [
 			Mat.name_of(span[1]).to_lower(), span[0], support])
 	for lower in colony.ladders_needed(r):
 		lines.append("+ лестница в нижнем здании: " + _cost_text(RoomType.ladder_cost(lower)))
@@ -522,6 +563,22 @@ func _pending_text() -> String:
 		lines.append("Внимание: к зоне нет прохода — сначала проложите к ней тоннель.")
 	lines.append("Без крепи выработка держится, пока идут работы; простой дольше 3 мин — риск обвала.")
 	return "\n".join(lines)
+
+
+## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).
+func _support_estimate(kind: int, r: Rect2i) -> int:
+	var tmp := Project.new()
+	tmp.kind = kind
+	tmp.rect = r
+	tmp.support_wood = colony.support_needed(kind, r)
+	var n := 0
+	for i in tmp.slice_count():
+		for c in tmp.slice_cells(i):
+			if Mat.is_solid(world.get_mat(c.x, c.y)):
+				n += 1
+				break
+	tmp.needs_support.resize(n)
+	return tmp.slice_wood() * n
 
 
 func _confirm_pending() -> void:
@@ -592,32 +649,28 @@ func _env_text(c: Vector2i) -> String:
 
 func _update_status() -> void:
 	var c := world_view.camera_cell()
-	var surf := world.gen.surface_y(c.x)
-	var depth := c.y - surf
-	var where: String
-	if depth < 0:
-		where = "Высота %s м" % Fmt.int_spaced(-c.y)
-	else:
-		where = "Глубина %s м" % Fmt.int_spaced(depth)
-	var kids := 0
+	var depth := c.y - world.gen.surface_y(c.x)
+	hud.set_status(("Высота %s м" % Fmt.int_spaced(-c.y)) if depth < 0 else ("Глубина %s м" % Fmt.int_spaced(depth)))
 	var hungry := 0
 	for u in colony.units:
-		if u.child:
-			kids += 1
 		if u.satiety < 25.0:
 			hungry += 1
-	var active := 0
-	for p in colony.projects:
-		if p.phase != Project.Phase.DONE:
-			active += 1
 	var people := "Жители %d" % colony.units.size()
-	if kids > 0:
-		people += " (дети %d)" % kids
-	var line2 := "%s · кроватей %d · стройки %d" % [people, colony.beds_total(), active]
 	if hungry > 0:
-		line2 += " · голодают: %d" % hungry
-	hud.set_status("%s · %s · %s\n%s" % [where, world.gen.zone_name(c.x, c.y), _env_text(c), line2])
-	hud.set_resources(colony.inventory)
+		people += " (голодают %d)" % hungry
+	hud.set_resources(colony.inventory, people)
+
+
+## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
+## вниз — до самых глубоких работ, вверх — чуть выше самых высоких построек.
+func _clamp_camera() -> void:
+	var o := Vector2(world_view.origin)
+	var t := ChunkView.TILE
+	var min_x := (colony.explored_min - 4 - o.x) * t
+	var max_x := (colony.explored_max + 5 - o.x) * t
+	var min_y := (mini(colony.highest_y, colony.home.y) - 40 - o.y) * t
+	var max_y := (maxi(colony.deepest_y, colony.home.y) + 14 - o.y) * t
+	camera.position = Vector2(clampf(camera.position.x, min_x, max_x), clampf(camera.position.y, min_y, max_y))
 
 
 func _update_sky() -> void:

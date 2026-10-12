@@ -56,6 +56,14 @@ var store_filter: Array[String] = []
 var exposed_t := 0.0
 ## Дополнительная крепь (дерево), если пролёт шире, чем держит порода.
 var support_wood := 0
+## Копка по срезам: срез выкопали — закрепили — следующий.
+## Срезы, где есть порода (их надо крепить), и уже закреплённые.
+var needs_support: Array[int] = []
+var supported: Array[int] = []
+## Крепь текущего среза: номер, оплачена ли, прогресс работ.
+var support_slice := -1
+var support_paid := false
+var support_progress := 0.0
 
 
 func title() -> String:
@@ -113,7 +121,8 @@ static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 		return {"wood": 2 * r.size.x}
 	if k == Kind.PIER:
 		return {"wood": 4 * r.size.x, "stone": 4}
-	return {"wood": ceili(cells_n / 4.0)}
+	# Тоннель крепится по ходу копки — на втором этапе только отделка.
+	return {}
 
 
 ## Объём работ второго этапа, сек (для жителя с навыком 1).
@@ -125,14 +134,55 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 		return r.size.x * 4.0
 	if k == Kind.PIER:
 		return r.size.x * 8.0
-	return cells_n * 2.0
+	return cells_n * 1.0
 
 
 func cost() -> Dictionary:
-	var c := cost_for(kind, rect, material)
-	if support_wood > 0:
-		c["wood"] = c.get("wood", 0) + support_wood
-	return c
+	return cost_for(kind, rect, material)
+
+
+## --- Срезы копки -------------------------------------------------------------
+
+## Вертикальная шахта крепится по 2 ряда, остальное — по столбцам.
+func vertical() -> bool:
+	return kind == Kind.TUNNEL and rect.size.y > rect.size.x
+
+
+func slice_count() -> int:
+	return ceili(rect.size.y / 2.0) if vertical() else rect.size.x
+
+
+func slice_of(c: Vector2i) -> int:
+	return (c.y - rect.position.y) / 2 if vertical() else c.x - rect.position.x
+
+
+func slice_cells(i: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for c in cells():
+		if slice_of(c) == i:
+			out.append(c)
+	return out
+
+
+## Дерево на крепь одного среза (у широкой комнаты в слабой породе — больше).
+func slice_wood() -> int:
+	if kind == Kind.ROOM:
+		return 1 + ceili(support_wood / float(maxi(1, needs_support.size())))
+	return 1
+
+
+func slice_work() -> float:
+	return rect.size.y * 3.0 if kind == Kind.ROOM else 6.0
+
+
+func support_total() -> int:
+	return slice_wood() * needs_support.size()
+
+
+## Клетка под закреплённым срезом.
+func cell_supported(c: Vector2i) -> bool:
+	var i := slice_of(c)
+	return supported.has(i) and needs_support.has(i)
 
 
 func build_work() -> float:
@@ -209,6 +259,11 @@ func to_dict() -> Dictionary:
 		"store_filter": store_filter,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
+		"needs_support": needs_support,
+		"supported": supported,
+		"support_slice": support_slice,
+		"support_paid": support_paid,
+		"support_progress": support_progress,
 	}
 
 
@@ -241,4 +296,11 @@ static func from_dict(d: Dictionary) -> Project:
 		p.store_filter.append(str(k))
 	p.exposed_t = float(d.get("exposed_t", 0.0))
 	p.support_wood = int(d.get("support_wood", 0))
+	for i in d.get("needs_support", []):
+		p.needs_support.append(int(i))
+	for i in d.get("supported", []):
+		p.supported.append(int(i))
+	p.support_slice = int(d.get("support_slice", -1))
+	p.support_paid = bool(d.get("support_paid", false))
+	p.support_progress = float(d.get("support_progress", 0.0))
 	return p

@@ -28,7 +28,7 @@ func _init(p_colony: Colony) -> void:
 
 ## Клетка защищена готовой постройкой.
 func is_protected(c: Vector2i) -> bool:
-	return colony.interior.has(c)
+	return colony.interior.has(c) or colony.cell_supported(c)
 
 
 ## Пустота без защиты: туда может осыпаться порода.
@@ -66,7 +66,8 @@ func check_area(cells: Array[Vector2i]) -> void:
 func drop_column(c: Vector2i) -> int:
 	var moved := 0
 	var k := c
-	while moved < MAX_FALL and hollow(k):
+	# Под идущей стройкой временные стойки — ничего не осыпается.
+	while moved < MAX_FALL and hollow(k) and not temporarily_supported(k):
 		var src := k + UP
 		var m := world.get_mat(src.x, src.y)
 		if not Mat.is_loose(m) or is_protected(src) or not Mat.is_solid(m):

@@ -26,6 +26,7 @@ func _initialize() -> void:
 	test_build_rules_v2()
 	test_physics()
 	test_nature()
+	test_slices()
 	test_lakes_and_fishing()
 	test_save_roundtrip()
 	test_environment()
@@ -189,8 +190,8 @@ func test_pause_and_materials() -> void:
 	check(colony.advance_offline(5000.0) == 0, "на паузе работы не идут")
 	colony.set_paused(p, false)
 	colony.advance_offline(5000.0)
-	check(p.phase == Project.Phase.BUILD and not p.paid, "без дерева стройка ждёт материалы")
-	check(p.blocked.begins_with("Не хватает"), "игрок видит, чего не хватает")
+	check(p.phase == Project.Phase.DIG and p.supported.is_empty(), "без дерева на крепь копка встала")
+	check(p.blocked.begins_with("Нет дерева на крепь"), "игрок видит, чего не хватает: " + p.blocked)
 	# Ищем дерево и отмечаем его на сбор.
 	var tree := 0
 	for tx in range(-200, 200):
@@ -591,7 +592,7 @@ func test_physics() -> void:
 		w2.set_dug(x, c2.y + 1)
 	var p := Project.new()
 	p.id = 77
-	p.kind = Project.Kind.TUNNEL
+	p.kind = Project.Kind.ROOM
 	p.rect = Rect2i(c2.x - 6, c2.y, 12, 2)
 	p.phase = Project.Phase.BUILD
 	colony2.projects.append(p)
@@ -606,13 +607,43 @@ func test_physics() -> void:
 	colony3.start_new(x3)
 	colony3.inventory = {"wood": 40, "stone": 40}
 	var s3 := w3.gen.surface_y(x3)
-	var t := colony3.create_project(Project.Kind.TUNNEL, Rect2i(x3, s3, 1, 8))
+	var t := colony3.create_project(Project.Kind.ROOM, Rect2i(x3, s3 - 3, 4, 3))
 	colony3.advance_offline(20000.0)
-	check(t.phase == Project.Phase.DONE, "шахта построена")
+	check(t != null and t.phase == Project.Phase.DONE, "дом построен")
 	var wood := int(colony3.inventory.get("wood", 0))
-	check(colony3.demolish(t), "шахта снесена")
+	check(colony3.demolish(t), "дом снесён")
 	check(int(colony3.inventory.get("wood", 0)) == wood + t.cost()["wood"] / 2, "вернулась половина дерева")
-	check(colony3.project_by_id(t.id) == null and not colony3.interior.has(Vector2i(x3, s3 + 2)), "постройки больше нет")
+	check(colony3.project_by_id(t.id) == null and not colony3.interior.has(Vector2i(x3 + 1, s3 - 2)), "постройки больше нет")
+
+
+func test_slices() -> void:
+	var colony := _new_colony(61)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	colony.start_new(x)
+	colony.inventory = {"wood": 40}
+	var s := w.gen.surface_y(x)
+	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 4))
+	colony.advance_offline(20000.0)
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x + 1, s + 1, 5, 3))
+	check(room.needs_support.size() == 5, "у подземной комнаты 5 срезов под крепь")
+	var max_open := 0
+	var t := 0.0
+	while t < 4000.0 and room.phase == Project.Phase.DIG:
+		colony.update(1.0)
+		t += 1.0
+		var open_unsupported := 0
+		for i in room.needs_support:
+			if not room.supported.has(i):
+				for c in room.slice_cells(i):
+					if w.is_open(c.x, c.y):
+						open_unsupported += 1
+						break
+		max_open = maxi(max_open, open_unsupported)
+	check(room.phase != Project.Phase.DIG, "комнату выкопали срез за срезом (%.0f с)" % t)
+	check(max_open <= 1, "одновременно открыт не больше одного незакреплённого среза (%d)" % max_open)
+	check(room.supported.size() == 5, "все срезы закреплены")
+	check(colony.inventory.get("wood", 0) < 40 - 4, "крепь стоила дерева")
 
 
 func test_nature() -> void:
@@ -727,6 +758,31 @@ func test_lakes_and_fishing() -> void:
 	colony.fish[int(lake["id"])] = 0.0
 	colony.grow_plants(Colony.FISH_REGEN * 5)
 	check(absf(colony.fish_in(lake) - 5.0) < 0.01, "рыба восстанавливается")
+	# Привязка мостика: ряд, проведённый над озером, становится мостиком от берега до берега.
+	var fresh := _new_colony(52)
+	var wr := fresh.water_rects(x0 + 2, x0 + 4)
+	var b: Rect2i = wr["bridge"]
+	check(b.position.y == row and fresh.validate(Project.Kind.BRIDGE, b).is_empty() \
+		and fresh.validate(Project.Kind.PIER, wr["pier"]).is_empty(), "над водой предлагаются мостик и пристань")
+	check(b.size.x >= x1 - x0 - 1, "мостик дотягивается до берегов (%d)" % b.size.x)
+	# Рыбалка с берега — без построек.
+	var c2 := _new_colony(52)
+	c2.start_new(x0 - 3)
+	c2.inventory = {"food": 0}
+	c2.fish.erase(int(lake["id"]))
+	check(not c2.shore_spots().is_empty(), "есть места для рыбалки с берега")
+	for u in c2.units:
+		u.profession = Unit.Prof.GATHERER
+	var tt := 0.0
+	while tt < 600.0 and c2.inventory.get("food", 0) == 0:
+		c2.update(1.0)
+		tt += 1.0
+	check(c2.inventory.get("food", 0) > 0, "с берега поймали рыбу (%.0f с)" % tt)
+	# Разведка: жители открывают карту, где ходят.
+	var ex := c2.explored_max
+	c2.units[0].pos = Vector2(ex + 30, c2.units[0].pos.y)
+	c2.explore()
+	check(c2.explored_max >= ex + 30 and c2.is_explored(ex + 25), "карта открывается там, куда дошёл житель")
 
 
 func test_save_roundtrip() -> void:

@@ -194,6 +194,22 @@ func lake_at(x: int) -> Dictionary:
 	return {}
 
 
+## Столбцы с водой у озера: [первый, последний] (кэшируется).
+func lake_water_span(l: Dictionary) -> Vector2i:
+	if l.has("a"):
+		return Vector2i(int(l["a"]), int(l["b"]))
+	var level: int = l["level"]
+	var a := 1 << 30
+	var b := -(1 << 30)
+	for x in range(int(l["cx"]) - int(l["w"]), int(l["cx"]) + int(l["w"]) + 1):
+		if surface_y(x) > level:
+			a = mini(a, x)
+			b = maxi(b, x)
+	l["a"] = a
+	l["b"] = b
+	return Vector2i(a, b)
+
+
 ## y верхней клетки воды в столбце (вода — от неё до дна), иначе очень большое число.
 func water_level(x: int) -> int:
 	var l := lake_at(x)
@@ -237,9 +253,9 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 	var d := y - surf
 	if d < 0:
 		return Mat.AIR
-	if d < 2 and water_level(x) < surf:
-		# Дно озера — ил: песок и глина.
-		return Mat.SAND if hash01(x, y, world_seed + 8) < 0.5 else Mat.CLAY
+	if d < 4 and water_level(x) < surf:
+		# Дно озера — в основном песок, местами глина.
+		return Mat.SAND if hash01(x, y, world_seed + 8) < 0.8 else Mat.CLAY
 	if d < soil:
 		return Mat.TOPSOIL
 	if d < SUBSOIL_BASE + soil * 2:

@@ -89,6 +89,14 @@ var fish := {}
 var deck := {}
 ## Кусты в полосе вокруг базы (обновляется при росте растений).
 var _bushes: Array[int] = []
+var _shore_progress := {}
+## Разведанная часть мира: столбцы, куда доходили жители, и глубина/высота работ.
+const EXPLORE_RADIUS := 20
+var explored_min := 0
+var explored_max := 0
+var deepest_y := 0
+var highest_y := 0
+var _explore_t := 0.0
 var _full_warned := {}
 
 
@@ -104,6 +112,10 @@ func _init(p_world: WorldData) -> void:
 func start_new(home_x: int) -> void:
 	inventory = START_INVENTORY.duplicate()
 	home = Vector2i(home_x, world.gen.surface_y(home_x))
+	explored_min = home_x - EXPLORE_RADIUS
+	explored_max = home_x + EXPLORE_RADIUS
+	deepest_y = home.y
+	highest_y = home.y
 	_refresh_bushes()
 	var sexes := [Unit.Sex.MALE, Unit.Sex.FEMALE, Unit.Sex.MALE, Unit.Sex.FEMALE]
 	sexes.append(rng.randi_range(0, 1))
@@ -264,6 +276,37 @@ func support_needed(kind: int, r: Rect2i) -> int:
 	return maxi(0, r.size.x - span[0]) * r.size.y
 
 
+## Мостик и пристань для ряда, проведённого над озером: ряд привязывается к уровню
+## воды, мостик тянется от берега до берега, пристань — от берега, где начали.
+## Возвращает {"bridge": Rect2i, "pier": Rect2i} (пустой Rect2i — нельзя).
+func water_rects(start_x: int, end_x: int) -> Dictionary:
+	var out := {"bridge": Rect2i(), "pier": Rect2i()}
+	var lake := {}
+	for x in range(mini(start_x, end_x), maxi(start_x, end_x) + 1):
+		lake = world.gen.lake_at(x)
+		if not lake.is_empty():
+			break
+	if lake.is_empty():
+		return out
+	var span := world.gen.lake_water_span(lake)
+	var row: int = int(lake["level"]) - 1
+	var left := span.x - 1
+	var right := span.y + 1
+	if world.get_mat(left, row) != Mat.AIR:
+		left += 1
+	if world.get_mat(right, row) != Mat.AIR:
+		right -= 1
+	out["bridge"] = Rect2i(left, row, right - left + 1, 1)
+	# Пристань: от ближайшего к началу берега, длиной как провели (3–10 м).
+	var length := clampi(absi(end_x - start_x) + 1, 3, 10)
+	if absi(start_x - left) <= absi(start_x - right):
+		out["pier"] = Rect2i(left, row, mini(length, right - left), 1)
+	else:
+		var l := maxi(left + 1, right - length + 1)
+		out["pier"] = Rect2i(l, row, right - l + 1, 1)
+	return out
+
+
 ## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
 func _water_structure_error(kind: int, r: Rect2i) -> String:
 	var over_water := 0
@@ -277,8 +320,11 @@ func _water_structure_error(kind: int, r: Rect2i) -> String:
 			return "Под мостом должна быть вода или берег — проведите ряд прямо над водой"
 	if over_water == 0:
 		return "Мост и пристань строятся над водой"
-	var left := Mat.is_solid(world.get_mat(r.position.x, r.position.y + 1))
-	var right := Mat.is_solid(world.get_mat(r.end.x - 1, r.position.y + 1))
+	# Конец опирается на берег: под ним грунт или он упирается в крутой берег.
+	var left := Mat.is_solid(world.get_mat(r.position.x, r.position.y + 1)) \
+		or Mat.is_solid(world.get_mat(r.position.x - 1, r.position.y))
+	var right := Mat.is_solid(world.get_mat(r.end.x - 1, r.position.y + 1)) \
+		or Mat.is_solid(world.get_mat(r.end.x, r.position.y))
 	if kind == Project.Kind.BRIDGE and not (left and right):
 		return "Мост должен опираться на оба берега"
 	if kind == Project.Kind.PIER and not (left or right):
@@ -389,6 +435,13 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
+	# Срезы, где есть порода: их копают по одному и сразу крепят.
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
+		for i in p.slice_count():
+			for c in p.slice_cells(i):
+				if Mat.is_solid(world.get_mat(c.x, c.y)):
+					p.needs_support.append(i)
+					break
 	# Деревья, кусты и валуны на месте стройки убираются на этапе 1 — как ресурс.
 	for x in features_in(r):
 		p.clear_x.append(x)
@@ -499,6 +552,89 @@ func _register_room(p: Project) -> void:
 			room_cells[c] = p.id
 
 
+## Клетка под закреплённым срезом идущей стройки.
+func cell_supported(c: Vector2i) -> bool:
+	var p := project_at(c)
+	return p != null and (p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD) and p.cell_supported(c)
+
+
+## Срезы, начатые и ещё не закреплённые (в них уже копают).
+func active_slices(p: Project) -> Array[int]:
+	var out: Array[int] = []
+	for i in p.needs_support:
+		if p.supported.has(i):
+			continue
+		for c in p.slice_cells(i):
+			if reserved.has(c) or (world.is_open(c.x, c.y) and not world.get_mat(c.x, c.y) == Mat.WATER):
+				out.append(i)
+				break
+	return out
+
+
+## Срез выкопан целиком.
+func slice_dug(p: Project, i: int) -> bool:
+	for c in p.slice_cells(i):
+		if Mat.is_solid(world.get_mat(c.x, c.y)):
+			return false
+	return true
+
+
+## Выкопанный, но не закреплённый срез (ждёт крепь), иначе -1.
+func slice_to_support(p: Project) -> int:
+	if p.support_slice >= 0 and not p.supported.has(p.support_slice):
+		return p.support_slice
+	for i in active_slices(p):
+		if slice_dug(p, i):
+			return i
+	return -1
+
+
+## Списывает дерево на крепь среза. false — дерева нет (стройка ждёт).
+func _pay_support(p: Project, i: int) -> bool:
+	if p.support_paid and p.support_slice == i:
+		return true
+	var need := p.slice_wood()
+	if inventory.get("wood", 0) < need:
+		var msg := "Нет дерева на крепь (нужно %d)" % need
+		if p.blocked != msg:
+			p.blocked = msg
+			_log("%s: %s" % [p.title(), msg], "warning")
+		return false
+	inventory["wood"] -= need
+	p.support_slice = i
+	p.support_paid = true
+	p.support_progress = 0.0
+	if p.blocked.begins_with("Нет дерева на крепь"):
+		p.blocked = ""
+	return true
+
+
+func _finish_support(p: Project) -> void:
+	p.supported.append(p.support_slice)
+	p.support_slice = -1
+	p.support_paid = false
+	p.support_progress = 0.0
+	for c in p.cells():
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	for u in units:
+		if u.task == Unit.Task.SUPPORT and u.project_id == p.id:
+			_drop(u)
+	_check_phase(p)
+
+
+## Клетки, которые можно копать сейчас: только в начатом срезе, пока он не закреплён.
+func diggable_now(p: Project) -> Array[Vector2i]:
+	var all := remaining_dig(p)
+	var active := active_slices(p)
+	if active.is_empty():
+		return all
+	var out: Array[Vector2i] = []
+	for c in all:
+		if active.has(p.slice_of(c)) and not slice_dug(p, p.slice_of(c)):
+			out.append(c)
+	return out
+
+
 func remaining_dig(p: Project) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for c in p.cells():
@@ -521,14 +657,19 @@ func _check_phase(p: Project) -> void:
 	if p.phase != Project.Phase.DIG:
 		return
 	_check_liquids(p)
-	if remaining_dig(p).is_empty() and uncleared(p).is_empty():
+	var all_supported := true
+	for i in p.needs_support:
+		if not p.supported.has(i):
+			all_supported = false
+	if remaining_dig(p).is_empty() and uncleared(p).is_empty() and all_supported:
 		p.phase = Project.Phase.BUILD
 		_register_room(p)
 		var lines: PackedStringArray = []
 		for k in p.found:
 			lines.append("%s %d" % [Mat.resource_name(k), p.found[k]])
 		if lines.is_empty():
-			_log("%s: копка завершена, начинаем строительство" % p.title(), "info")
+			if not p.needs_support.is_empty():
+				_log("%s: копка завершена, начинаем строительство" % p.title(), "info")
 		else:
 			_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(lines)], "good")
 		_try_pay(p)
@@ -576,6 +717,7 @@ func _try_pay(p: Project) -> void:
 
 func _finish_project(p: Project) -> void:
 	p.phase = Project.Phase.DONE
+	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
 	for c in p.cells():
 		interior[c] = p.id
@@ -839,6 +981,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 	dig_progress.erase(c)
 	world.set_dug(c.x, c.y)
 	cells_dug += 1
+	deepest_y = maxi(deepest_y, c.y)
 	var key := Mat.resource(m)
 	if not key.is_empty():
 		var amount := 1
@@ -954,7 +1097,8 @@ func _kill(u: Unit, why: String) -> void:
 
 func _tick_exposure(dt: float) -> void:
 	for p: Project in projects.duplicate():
-		var idle := p.paused or (p.phase == Project.Phase.BUILD and not p.paid)
+		var idle := p.paused or (p.phase == Project.Phase.BUILD and not p.paid) \
+			or p.blocked.begins_with("Нет дерева на крепь")
 		if (p.phase != Project.Phase.DIG and p.phase != Project.Phase.BUILD) or not idle:
 			p.exposed_t = 0.0
 			continue
@@ -988,7 +1132,10 @@ func fish_left(p: Project) -> float:
 
 
 func _catch_fish(p: Project, u: Unit) -> void:
-	var lake := lake_of(p)
+	_catch_from(lake_of(p), u)
+
+
+func _catch_from(lake: Dictionary, u: Unit) -> void:
 	var left := fish_in(lake)
 	if left < 1.0:
 		return
@@ -1166,6 +1313,23 @@ func update(dt: float) -> void:
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)
+	_explore_t += dt
+	if _explore_t >= 1.0:
+		_explore_t = 0.0
+		explore()
+
+
+## Жители открывают карту вокруг себя.
+func explore() -> void:
+	for u in units:
+		explored_min = mini(explored_min, roundi(u.pos.x) - EXPLORE_RADIUS)
+		explored_max = maxi(explored_max, roundi(u.pos.x) + EXPLORE_RADIUS)
+		deepest_y = maxi(deepest_y, roundi(u.pos.y))
+		highest_y = mini(highest_y, roundi(u.pos.y))
+
+
+func is_explored(x: int) -> bool:
+	return x >= explored_min and x <= explored_max
 
 
 func _update_unit(u: Unit, dt: float) -> void:
@@ -1307,12 +1471,22 @@ func _work(u: Unit, dt: float) -> void:
 					inventory["food"] -= portion
 					u.satiety = minf(100.0, u.satiety + (MEAL_DINING if u.project_id != 0 else MEAL))
 				_drop(u)
+		Unit.Task.SUPPORT:
+			var sp := project_by_id(u.project_id)
+			sp.support_progress += rate
+			if sp.support_progress >= sp.slice_work():
+				_finish_support(sp)
 		Unit.Task.FISH:
-			var fp := project_by_id(u.project_id)
 			u.work_t += rate
-			if u.work_t >= fp.fish_time():
-				_catch_fish(fp, u)
-				_drop(u)
+			if u.project_id == 0:
+				if u.work_t >= SHORE_FISH_TIME:
+					_catch_from(_lake_near(u.target.x), u)
+					_drop(u)
+			else:
+				var fp := project_by_id(u.project_id)
+				if u.work_t >= fp.fish_time():
+					_catch_fish(fp, u)
+					_drop(u)
 
 
 func _task_valid(u: Unit) -> bool:
@@ -1341,8 +1515,13 @@ func _task_valid(u: Unit) -> bool:
 				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
 			return true
 		Unit.Task.FISH:
+			if u.project_id == 0:
+				return fish_in(_lake_near(u.target.x)) >= 1.0
 			var fp := project_by_id(u.project_id)
 			return fp != null and not fp.paused and fp.phase == Project.Phase.DONE and fish_left(fp) >= 1.0
+		Unit.Task.SUPPORT:
+			var sp := project_by_id(u.project_id)
+			return sp != null and not sp.paused and sp.phase == Project.Phase.DIG and sp.support_paid and sp.support_slice >= 0
 		Unit.Task.SLEEP:
 			return true
 	return false
@@ -1371,6 +1550,9 @@ func _reserve_key(u: Unit) -> Variant:
 		Unit.Task.EAT:
 			if u.project_id == EAT_BUSH:
 				return "e%d" % u.target.x
+		Unit.Task.FISH:
+			if u.project_id == 0:
+				return "f%d,%d" % [u.target.x, u.target.y]
 	return null
 
 
@@ -1427,7 +1609,8 @@ func _assign(u: Unit) -> bool:
 					if p.paused or workers_on(p) >= p.workers or p.phase == Project.Phase.DONE:
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
-						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_dig(u, p, parents, dist):
+						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
+								or _try_dig(u, p, parents, dist):
 							return true
 					if kind != "dig" and p.phase == Project.Phase.BUILD and p.paid \
 							and _try_build(u, p, Unit.Task.BUILD, parents, dist):
@@ -1500,8 +1683,34 @@ func _start_eat_bush(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	return true
 
 
+## Места для рыбалки с берега: у кромки воды озёр возле базы.
+const SHORE_FISH_TIME := 80.0
+
+
+func shore_spots() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var k0 := floori(float(home.x - PLANT_AREA) / WorldGen.LAKE_SEGMENT)
+	var k1 := floori(float(home.x + PLANT_AREA) / WorldGen.LAKE_SEGMENT)
+	for k in range(k0 - 1, k1 + 2):
+		var l := world.gen._lake_of_segment(k)
+		if l.is_empty():
+			continue
+		var span := world.gen.lake_water_span(l)
+		if span.x > span.y:
+			continue
+		var row: int = int(l["level"]) - 1
+		for x in [span.x - 1, span.y + 1]:
+			var c := Vector2i(x, mini(row, world.gen.surface_y(x) - 1))
+			if absi(x - home.x) <= PLANT_AREA:
+				out.append(c)
+	return out
+
+
 func _try_fish(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
-	for p in projects:
+	# Быстрее всего — с пристани, потом с мостика, медленнее всего — с берега.
+	var structures := projects.filter(func(q: Project) -> bool: return q.is_water_structure())
+	structures.sort_custom(func(a: Project, b: Project) -> bool: return a.fish_time() < b.fish_time())
+	for p: Project in structures:
 		if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused:
 			continue
 		if workers_on(p) >= p.fish_slots() or fish_left(p) < 1.0:
@@ -1515,7 +1724,23 @@ func _try_fish(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		if best != null:
 			_start(u, Unit.Task.FISH, best + Vector2i(0, 1), best, p.id, parents)
 			return true
+	for spot in shore_spots():
+		if reserved.has("f%d,%d" % [spot.x, spot.y]) or not dist.has(spot):
+			continue
+		var lake := _lake_near(spot.x)
+		if fish_in(lake) < 1.0:
+			continue
+		_start(u, Unit.Task.FISH, spot, spot, 0, parents)
+		return true
 	return false
+
+
+func _lake_near(x: int) -> Dictionary:
+	for dx in [0, 1, -1, 2, -2]:
+		var l := world.gen.lake_at(x + dx)
+		if not l.is_empty():
+			return l
+	return {}
 
 
 ## Откуда житель может работать с клеткой c: стоя рядом (ноги или голова у клетки).
@@ -1534,7 +1759,7 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 	var best_stand = null
 	var best_d := 1 << 30
 	var any_free := false
-	for c in remaining_dig(p):
+	for c in diggable_now(p):
 		if reserved.has(c):
 			continue
 		any_free = true
@@ -1551,6 +1776,24 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 	if p.blocked.begins_with("Нет доступа"):
 		p.blocked = ""
 	_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
+	return true
+
+
+## Крепь выкопанного среза: житель встаёт в срезе или рядом.
+func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	var i := slice_to_support(p)
+	if i < 0 or not _pay_support(p, i):
+		return false
+	var best = null
+	var best_d := 1 << 30
+	for c in p.slice_cells(i):
+		for stand in [c, c + Vector2i(-1, 0), c + Vector2i(1, 0), c + Vector2i(0, 1), c + Vector2i(0, -1)]:
+			if dist.has(stand) and dist[stand] < best_d:
+				best_d = dist[stand]
+				best = stand
+	if best == null:
+		return false
+	_start(u, Unit.Task.SUPPORT, p.slice_cells(i)[0], best, p.id, parents)
 	return true
 
 
@@ -1680,13 +1923,27 @@ func advance_offline(dt: float) -> int:
 					while p.farm_progress >= RoomType.FARM_CYCLE:
 						p.farm_progress -= RoomType.FARM_CYCLE
 						_add("food", 1)
-				Unit.Task.FISH:
-					# У пристаней прогресс улова хранится в farm_progress.
+				Unit.Task.SUPPORT:
 					var p: Project = j[3]
-					p.farm_progress += j[1] * step
-					while p.farm_progress >= p.fish_time() and fish_left(p) >= 1.0:
-						p.farm_progress -= p.fish_time()
-						_catch_fish(p, null)
+					p.support_progress += j[1] * step
+					if p.support_progress >= p.slice_work() - 0.001:
+						_finish_support(p)
+				Unit.Task.FISH:
+					var p: Project = j[3]
+					if p == null:
+						# С берега: прогресс по месту ловли.
+						var sx := int(String(key).substr(1).split(",")[0])
+						var lake := _lake_near(sx)
+						_shore_progress[key] = _shore_progress.get(key, 0.0) + j[1] * step
+						while _shore_progress[key] >= SHORE_FISH_TIME and fish_in(lake) >= 1.0:
+							_shore_progress[key] -= SHORE_FISH_TIME
+							_catch_from(lake, null)
+					else:
+						# У пристаней прогресс улова хранится в farm_progress.
+						p.farm_progress += j[1] * step
+						while p.farm_progress >= p.fish_time() and fish_left(p) >= 1.0:
+							p.farm_progress -= p.fish_time()
+							_catch_fish(p, null)
 				Unit.Task.HARVEST:
 					var x: int = int(key.substr(1))
 					harvest_progress[x] = harvest_progress.get(x, 0.0) + j[1] * step
@@ -1708,6 +1965,9 @@ func _offline_left(key: Variant, job: Array) -> float:
 			return RoomType.job_work(p) - p.equip_done
 		Unit.Task.FARM, Unit.Task.FISH:
 			return OFFLINE_STEP
+		Unit.Task.SUPPORT:
+			var p: Project = job[3]
+			return p.slice_work() - p.support_progress
 		Unit.Task.HARVEST:
 			var x: int = int(key.substr(1))
 			return HARVEST_TIME.get(world.feature_at(x), 20.0) - harvest_progress.get(x, 0.0)
@@ -1735,6 +1995,11 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 							and taken.get(slot, 0) < p.fish_slots() and fish_left(p) >= 1.0:
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["fish%d" % p.id, Unit.Task.FISH, p]
+				for spot in shore_spots():
+					var key := "f%d,%d" % [spot.x, spot.y]
+					if not taken.has(key) and fish_in(_lake_near(spot.x)) >= 1.0:
+						taken[key] = true
+						return [key, Unit.Task.FISH, null]
 			"dig", "build", "projects":
 				for p in projects:
 					var slot := "w%d" % p.id
@@ -1746,7 +2011,13 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 								taken["h%d" % x] = true
 								taken[slot] = taken.get(slot, 0) + 1
 								return ["h%d" % x, Unit.Task.HARVEST, p]
-						for c in remaining_dig(p):
+						var si := slice_to_support(p)
+						if si >= 0:
+							if _pay_support(p, si):
+								taken[slot] = taken.get(slot, 0) + 1
+								return ["sup%d" % p.id, Unit.Task.SUPPORT, p]
+							continue
+						for c in diggable_now(p):
 							if taken.has(c):
 								continue
 							for d in DIRS4:
@@ -1835,6 +2106,7 @@ func to_dict() -> Dictionary:
 		"social_t": _social_t,
 		"home": [home.x, home.y],
 		"plant_t": _plant_t,
+		"explored": [explored_min, explored_max, deepest_y, highest_y],
 		"fish": fish,
 	}
 
@@ -1868,9 +2140,21 @@ func load_dict(d: Dictionary) -> void:
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	_social_t = float(d.get("social_t", 0.0))
 	_plant_t = float(d.get("plant_t", 0.0))
+	var ex: Array = d.get("explored", [])
 	var fd: Dictionary = d.get("fish", {})
 	for k in fd:
 		fish[int(k)] = float(fd[k])
 	var h: Array = d.get("home", [0, world.gen.surface_y(0)])
 	home = Vector2i(int(h[0]), int(h[1]))
+	if ex.size() == 4:
+		explored_min = int(ex[0])
+		explored_max = int(ex[1])
+		deepest_y = int(ex[2])
+		highest_y = int(ex[3])
+	else:
+		explored_min = home.x - EXPLORE_RADIUS
+		explored_max = home.x + EXPLORE_RADIUS
+		deepest_y = home.y
+		highest_y = home.y
+	explore()
 	_refresh_bushes()
