@@ -253,7 +253,32 @@ func show_info(text: String, actions: Array = [], controls: Array = []) -> void:
 	_info_panel.visible = true
 
 
+## Набор галочек: {"type": "checks", "label", "items": [[ключ, подпись, вкл]], "toggled": Callable(ключ, вкл)}
+func _build_checks(st: Dictionary) -> void:
+	var label := Label.new()
+	label.text = st["label"]
+	_info_stepper.add_child(label)
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 6)
+	flow.add_theme_constant_override("v_separation", 6)
+	_info_stepper.add_child(flow)
+	var toggled: Callable = st["toggled"]
+	for item in st["items"]:
+		var b := Button.new()
+		b.toggle_mode = true
+		b.text = item[1]
+		b.button_pressed = item[2]
+		b.custom_minimum_size = Vector2(0, 48)
+		b.add_theme_font_size_override("font_size", 19)
+		var key: String = item[0]
+		b.toggled.connect(func(on: bool) -> void: toggled.call(key, on))
+		flow.add_child(b)
+
+
 func _build_stepper(st: Dictionary) -> void:
+	if st.get("type", "") == "checks":
+		_build_checks(st)
+		return
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	_info_stepper.add_child(row)

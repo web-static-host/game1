@@ -272,6 +272,12 @@ func _show_project(p: Project) -> void:
 			p.workers = v
 			hud.update_info_text(_project_text(p))))
 	elif p.kind == Project.Kind.ROOM:
+		if not p.ladder:
+			actions.append(["Лестница", func() -> void:
+				colony.add_ladder(p)
+				_show_project(p)])
+		if p.purpose == RoomType.STORAGE:
+			controls.append(_storage_checks(p))
 		# Готовая комната: выбор назначения.
 		var choice := {"v": maxi(p.purpose, 1)}
 		controls.append({
@@ -287,6 +293,27 @@ func _show_project(p: Project) -> void:
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
 	hud.show_info(_project_text(p, maxi(p.purpose, 1)), actions, controls)
+
+
+## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.
+func _storage_checks(p: Project) -> Dictionary:
+	var items := [["*", "Всё", p.store_filter.is_empty()]]
+	var keys: Array = colony.known_resources.keys()
+	keys.sort()
+	for k in keys:
+		if not RoomType.BULK.has(k):
+			items.append([k, Mat.resource_name(k), p.store_filter.has(k)])
+	return {"type": "checks", "label": "Хранить на складе:", "items": items,
+		"toggled": func(key: String, on: bool) -> void:
+			var f: Array[String] = p.store_filter.duplicate()
+			if key == "*":
+				f.clear()
+			elif on and not f.has(key):
+				f.append(key)
+			elif not on:
+				f.erase(key)
+			colony.set_store_filter(p, f)
+			_show_project(p)}
 
 
 func _workers_stepper(value: int, changed: Callable) -> Dictionary:
@@ -306,10 +333,15 @@ func _project_text(p: Project, preview_purpose := -1) -> String:
 			var pct := int(100.0 * p.build_done / p.build_work()) if p.paid else 0
 			lines.append("Этап 2 из 2: строительство %d%%" % pct)
 		Project.Phase.EQUIP:
-			var w := RoomType.equip_work(p.equip_target, p)
+			var w := RoomType.job_work(p)
 			var pct := int(100.0 * p.equip_done / w) if p.equip_paid else 0
-			lines.append("Обустройство под «%s»: %d%%" % [RoomType.NAMES[p.equip_target], pct])
-			lines.append("Материалы: " + _cost_text(RoomType.equip_cost(p.equip_target, p)) + (" (оплачено)" if p.equip_paid else ""))
+			if p.equip_ladder:
+				lines.append("Строится лестница: %d%%" % pct)
+			else:
+				lines.append("Обустройство под «%s»: %d%%" % [RoomType.NAMES[p.equip_target], pct])
+			lines.append("Материалы: " + _cost_text(RoomType.job_cost(p)) + (" (оплачено)" if p.equip_paid else ""))
+	if p.phase == Project.Phase.DIG and not colony.uncleared(p).is_empty():
+		lines.append("Сначала убрать с места стройки: %d (деревья, кусты, валуны)" % colony.uncleared(p).size())
 	if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 		lines.append("Материалы: " + _cost_text(p.cost()) + (" (оплачено)" if p.paid else ""))
 	if p.phase != Project.Phase.DONE:
@@ -321,13 +353,18 @@ func _project_text(p: Project, preview_purpose := -1) -> String:
 				for u in colony.units:
 					if u.bed_room == p.id:
 						used += 1
-				lines.append("Кроватей: %d, занято: %d" % [RoomType.beds(p), used])
+				lines.append("Кроватей: %d (по одной на жителя), занято: %d" % [RoomType.beds(p), used])
+				var free := colony.beds_total() - colony.units.size() - colony.pregnant_count()
+				lines.append("Свободных мест для детей во всей колонии: %d" % maxi(0, free))
+				lines.append("Ребёнок рождается у пары, если есть свободная кровать, еда (от 3) и мама сыта; шанс ~12%% каждые 20 сек.")
 			RoomType.STORAGE:
-				lines.append("Вместимость склада: +%d каждого ресурса" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)))
+				lines.append("Вместимость: +%d каждого выбранного ресурса" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)))
 			RoomType.FARM:
 				lines.append("Фермеров: %d из %d мест" % [colony.workers_on(p), RoomType.farm_slots(p)])
 			RoomType.DINING:
 				lines.append("Еда здесь сытнее и поднимает настроение")
+		if not p.ladder:
+			lines.append("Лестницы нет: на эту комнату нельзя ставить второй этаж (%s)" % _cost_text(RoomType.ladder_cost(p)))
 		if preview_purpose > 0 and preview_purpose != p.purpose:
 			lines.append("Обустроить под «%s» (%s): %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose],
 				_cost_text(RoomType.equip_cost(preview_purpose, p))])

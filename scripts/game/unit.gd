@@ -17,6 +17,11 @@ const PROF_NAMES := ["Разнорабочий", "Копатель", "Строи
 ## Сколько секунд длится детство.
 const CHILD_TIME := 1800.0
 
+
+## Рост ребёнка 0..1 (для размера фигуры).
+func growth() -> float:
+	return clampf(age / CHILD_TIME, 0.0, 1.0) if child else 1.0
+
 var id := 0
 var name := ""
 var sex := Sex.MALE
@@ -104,7 +109,8 @@ func status_text() -> String:
 		parts.append("%s %d" % [SKILL_NAMES[k], level(k)])
 	var who := "муж." if sex == Sex.MALE else "жен."
 	if child:
-		who = "ребёнок, вырастет через %s" % Fmt.duration(CHILD_TIME - age)
+		who = "%s, вырастет через %s, ест вдвое больше" % [
+			"малыш" if age < CHILD_TIME * 0.5 else "подросток", Fmt.duration(CHILD_TIME - age)]
 	var lines: PackedStringArray = ["%s (%s) — %s" % [name, who, TASK_NAMES[task]]]
 	lines.append("Сытость %d%% · бодрость %d%% · настроение %d%%" % [roundi(satiety), roundi(energy), roundi(mood())])
 	if not child:

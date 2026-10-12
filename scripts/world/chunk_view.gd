@@ -15,9 +15,11 @@ const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0,
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.36, 0.62, 0.27)
 const GRASS_DARK := Color(0.27, 0.5, 0.22)
-const FOG_TOP := Color(0.17, 0.14, 0.12)
-const FOG_DEEP := Color(0.1, 0.08, 0.09)
-const FOG_HOT := Color(0.2, 0.08, 0.05)
+## Неразведанная земля — приглушённый землистый тон (не чернота), чтобы переход
+## к разведанной породе был мягким, а не «свечением».
+const FOG_TOP := Color(0.33, 0.27, 0.22)
+const FOG_DEEP := Color(0.27, 0.25, 0.26)
+const FOG_HOT := Color(0.36, 0.2, 0.14)
 
 var world: WorldData
 var chunk: ChunkData
@@ -57,7 +59,17 @@ static func fog_color(depth: int, v: float) -> Color:
 	var c := FOG_TOP.lerp(FOG_DEEP, clampf(depth / 1500.0, 0.0, 1.0))
 	if depth > 3000:
 		c = c.lerp(FOG_HOT, clampf((depth - 3000) / 30000.0, 0.0, 0.8))
-	return c.lightened((v - 0.5) * 0.03)
+	return c.lightened((v - 0.5) * 0.08) if v >= 0.5 else c.darkened((0.5 - v) * 0.08)
+
+
+## Цвет породы с яркостью, подтянутой к окружающей земле: у выработки виден
+## оттенок породы, но без «свечения» светлых пород на тёмном фоне.
+static func match_luma(base: Color, fog: Color) -> Color:
+	var lb := base.get_luminance()
+	if lb <= 0.001:
+		return base
+	var k := lerpf(1.0, fog.get_luminance() * 1.15 / lb, 0.75)
+	return Color(clampf(base.r * k, 0, 1), clampf(base.g * k, 0, 1), clampf(base.b * k, 0, 1), base.a)
 
 
 static func rock_color(m: int, v: float) -> Color:
@@ -149,9 +161,9 @@ func _draw_open_cell(lx: int, ly: int, r: Rect2, m: int, dug: bool, depth: int, 
 	# Задняя стена: тёмный вариант породы.
 	var back: Color
 	if dug:
-		back = rock_color(_ore_host(lx, ly) if Mat.is_ore(m) else m, v).darkened(0.62)
+		back = rock_color(_ore_host(lx, ly) if Mat.is_ore(m) else m, v).darkened(0.72)
 	else:
-		back = fog_color(depth, v).darkened(0.25)
+		back = fog_color(depth, v).darkened(0.55)
 	draw_rect(r, back)
 	if m == Mat.WATER and not dug:
 		var w := Mat.color(Mat.WATER).lightened((v - 0.5) * 0.08)
@@ -199,19 +211,18 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	if open_d and open_l:
 		mask |= 8
 	# Под землёй порода видна только у самой выработки и плавно уходит в темноту.
-	var faded := mask == 0 and not _near_sky(lx, ly)
+	var faded := mask == 0
+	var fog := fog_color(y - surf, v)
 	if faded:
-		draw_rect(r, fog_color(y - surf, v))
-		_fade_edges(lx, ly, r, base, open_l, open_r, open_u, open_d)
+		draw_rect(r, fog)
+		_fade_edges(lx, ly, r, match_luma(base, fog), open_l, open_r, open_u, open_d)
 	elif mask == 0:
 		draw_rect(r, base)
-	elif _near_sky(lx, ly):
-		draw_colored_polygon(_rounded_rect(r, mask), base)
 	else:
 		# Выступ между выработками: приглушённый, как и остальная порода у края.
 		var pts := _rounded_rect(r, mask)
-		draw_colored_polygon(pts, fog_color(y - surf, v))
-		draw_colored_polygon(pts, Color(base, 0.55))
+		draw_colored_polygon(pts, fog)
+		draw_colored_polygon(pts, Color(match_luma(base, fog), 0.45))
 
 	# Тени по краям, обращённым к пустоте.
 	var shade := base.darkened(0.28)
@@ -443,17 +454,6 @@ func _band_poly(lx: int, ly: int, line: Vector3) -> PackedVector2Array:
 
 static func _rect_poly(r: Rect2) -> PackedVector2Array:
 	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
-
-
-## Рядом открытое небо (поверхность, склоны) — такие клетки видны полностью.
-func _near_sky(lx: int, ly: int) -> bool:
-	for d: Vector2i in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1),
-			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
-		var f := _flags_at(lx + d.x, ly + d.y)
-		if f >= 0 and f & ChunkData.F_REVEALED and f & (ChunkData.F_DUG | ChunkData.F_CAVE) == 0 \
-				and _mat_at(lx + d.x, ly + d.y) == Mat.AIR:
-			return true
-	return false
 
 
 ## Градиент от цвета породы у открытой стороны к темноте вглубь.

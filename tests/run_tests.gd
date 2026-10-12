@@ -23,6 +23,7 @@ func _initialize() -> void:
 	test_family()
 	test_tunnel_throughput()
 	test_professions()
+	test_build_rules_v2()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -435,6 +436,55 @@ func test_professions() -> void:
 	var kid := colony._new_unit(Unit.Sex.FEMALE, Vector2.ZERO)
 	kid.child = true
 	check(colony.adults() == 5, "дети не считаются рабочими")
+
+
+func test_build_rules_v2() -> void:
+	var colony := _new_colony(31)
+	var w := colony.world
+	colony.start_new(0)
+	colony.inventory = {"wood": 30, "stone": 30}
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	check(not colony.validate(Project.Kind.TUNNEL, Rect2i(x, s - 3, 1, 6)).is_empty(), "тоннель над землёй запрещён")
+	check(colony.validate(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6)).is_empty(), "тоннель от поверхности вниз разрешён")
+	# Дерево на месте комнаты срубается на этапе 1 и даёт дерево.
+	var tree := 0
+	for tx in range(-300, 300):
+		if w.feature_at(tx) == WorldGen.FEATURE_TREE and w.gen.surface_y(tx - 2) == w.gen.surface_y(tx) \
+				and w.gen.surface_y(tx + 3) == w.gen.surface_y(tx):
+			tree = tx
+			break
+	var ts := w.gen.surface_y(tree)
+	var house := colony.create_project(Project.Kind.ROOM, Rect2i(tree - 1, ts - 3, 4, 3))
+	check(house != null and house.clear_x.has(tree), "дерево попало в расчистку стройки")
+	var wood_before: int = colony.inventory["wood"]
+	colony.advance_offline(20000.0)
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE, "дерево на месте стройки срублено")
+	check(house.phase == Project.Phase.DONE, "дом построен после расчистки")
+	check(colony.known_resources.has("wood") and colony.inventory["wood"] > wood_before - house.cost()["wood"], "срубленное дерево пошло в запас")
+	# Второй этаж — только с лестницей в нижнем.
+	var upper := Rect2i(tree - 1, ts - 6, 4, 3)
+	check(colony.validate(Project.Kind.ROOM, upper).begins_with("В нижнем здании нет лестницы"), "без лестницы второй этаж нельзя")
+	check(colony.add_ladder(house), "лестница заложена")
+	colony.advance_offline(5000.0)
+	check(house.ladder, "лестница построена")
+	check(colony.validate(Project.Kind.ROOM, upper).is_empty(), "с лестницей второй этаж можно")
+	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree + 3, ts - 6, 4, 3)).is_empty(), "висящий второй этаж нельзя")
+	# Отвал не ограничен, склад хранит выбранное.
+	colony._add("sand", 5000)
+	check(colony.inventory["sand"] == 5000, "песок уходит в отвал без лимита")
+	var stone_cap := colony.capacity("stone")
+	colony.inventory["stone"] = 0
+	colony._add("stone", 500)
+	check(colony.inventory["stone"] == stone_cap, "камень без склада ограничен кучей на земле")
+	# Ребёнок ест вдвое больше.
+	var kid := colony._new_unit(Unit.Sex.MALE, colony.units[0].pos)
+	kid.child = true
+	kid.satiety = 10.0
+	colony.inventory["food"] = 10
+	for i in 40:
+		colony.update(0.5)
+	check(colony.inventory["food"] == 8 or kid.satiety > 50.0 and colony.inventory["food"] <= 8, "ребёнок съел двойную порцию")
 
 
 func test_save_roundtrip() -> void:

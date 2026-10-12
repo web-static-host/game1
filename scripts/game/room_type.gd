@@ -12,9 +12,12 @@ const HINTS := [
 	"грибные грядки: производство еды",
 	"еда в столовой сытнее и поднимает настроение",
 ]
-## Базовая вместимость склада на каждый ресурс и прибавка за клетку ширины склада.
-const BASE_CAPACITY := 100
+## Пока складов нет, ресурсы лежат кучами на земле у базы — немного.
+const BASE_CAPACITY := 50
+## Прибавка вместимости за клетку ширины склада (для разрешённых в нём ресурсов).
 const CAPACITY_PER_CELL := 40
+## Пустая порода из шахт: ссыпается в отвал, места на складе не занимает.
+const BULK := ["soil", "sand", "gravel"]
 ## Сколько секунд работы фермера даёт 1 еду.
 const FARM_CYCLE := 12.0
 
@@ -52,3 +55,24 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 
 static func equip_work(t: int, p: Project) -> float:
 	return 6.0 * usable_width(p) if t != NONE else 0.0
+
+
+static func ladder_cost(p: Project) -> Dictionary:
+	return {"wood": p.rect.size.y * 2}
+
+
+static func ladder_work(p: Project) -> float:
+	return p.rect.size.y * 8.0
+
+
+## Стоимость и объём текущего обустройства (назначение или лестница).
+static func job_cost(p: Project) -> Dictionary:
+	return ladder_cost(p) if p.equip_ladder else equip_cost(p.equip_target, p)
+
+
+static func job_work(p: Project) -> float:
+	return ladder_work(p) if p.equip_ladder else equip_work(p.equip_target, p)
+
+
+static func stores(p: Project, key: String) -> bool:
+	return p.store_filter.is_empty() or p.store_filter.has(key)

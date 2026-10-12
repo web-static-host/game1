@@ -37,6 +37,7 @@ func _draw() -> void:
 	if colony == null:
 		return
 	var font := ThemeDB.fallback_font
+	_draw_stockpile(font)
 	for p in colony.projects:
 		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			_draw_done(p)
@@ -71,9 +72,13 @@ func _draw_done(p: Project) -> void:
 	if p.kind == Project.Kind.ROOM:
 		_draw_room_shell(p, r)
 		if p.phase == Project.Phase.EQUIP:
-			var w := RoomType.equip_work(p.equip_target, p)
+			var w := RoomType.job_work(p)
 			var t := clampf(p.equip_done / w, 0.0, 1.0) if p.equip_paid else 0.0
-			_draw_furniture(p, r, p.equip_target, 0.25 + 0.6 * t)
+			if p.equip_ladder:
+				_draw_furniture(p, r, p.purpose, 1.0)
+				_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 0.25 + 0.6 * t)
+			else:
+				_draw_furniture(p, r, p.equip_target, 0.25 + 0.6 * t)
 			var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
 			draw_rect(bar, BAR_BG)
 			draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
@@ -139,20 +144,32 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				draw_rect(Rect2(bx + 3, floor_y - 24, 14, 7), Color(0.95, 0.95, 0.92, alpha))
 				draw_rect(Rect2(bx, floor_y - 26, 4, 26), Color(BED_FRAME, alpha))
 		RoomType.STORAGE:
-			var fill := 0.0
-			var cap := float(colony.capacity(""))
-			for k in colony.inventory:
-				fill = maxf(fill, colony.inventory[k] / cap)
 			var w := RoomType.usable_width(p)
-			# Стеллаж и ящики: чем полнее склад, тем больше ящиков.
+			var room_cap := RoomType.CAPACITY_PER_CELL * w
+			# Полка на половине высоты и ящики по видам ресурсов: чем больше, тем больше ящиков.
 			draw_line(Vector2(x0 + 4, floor_y - 40), Vector2(x0 + w * TILE - 4, floor_y - 40), Color(BED_FRAME, alpha), 3.0)
-			var boxes := ceili(w * 2 * clampf(fill, 0.1, 1.0))
-			for i in boxes:
-				var lvl := i % 2
-				var bx := x0 + 6 + (i / 2) * TILE
-				var by := floor_y - 18 - lvl * 40
-				draw_rect(Rect2(bx, by, 20, 18), Color(CRATE, alpha))
-				draw_rect(Rect2(bx, by, 20, 18), Color(CRATE.darkened(0.35), alpha), false, 1.5)
+			var slots := w * 2
+			var slot := 0
+			var keys: Array = colony.inventory.keys()
+			keys.sort()
+			for k in keys:
+				if RoomType.BULK.has(k) or not RoomType.stores(p, k):
+					continue
+				var total_cap := colony.storage_capacity(k)
+				if total_cap <= 0:
+					continue
+				var mine := colony.stored_split(k).x * room_cap / total_cap
+				var boxes := ceili(mine / 10.0)
+				for i in boxes:
+					if slot >= slots * 2:
+						break
+					var lvl := (slot / slots) % 2
+					var bx := x0 + 6 + (slot % slots) * TILE * 0.5
+					var by := floor_y - 16 - lvl * 40
+					draw_rect(Rect2(bx, by, 14, 16), Color(CRATE, alpha))
+					draw_rect(Rect2(bx + 3, by + 3, 8, 6), Color(res_color(k), alpha))
+					draw_rect(Rect2(bx, by, 14, 16), Color(CRATE.darkened(0.35), alpha), false, 1.0)
+					slot += 1
 		RoomType.FARM:
 			var w := RoomType.usable_width(p)
 			draw_rect(Rect2(x0 + 2, floor_y - 8, w * TILE - 4, 8), Color(SOIL, alpha))
@@ -257,3 +274,76 @@ func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 	while y < bottom:
 		draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 2.5)
 		y += 10
+
+
+const RES_COLORS := {
+	"wood": Color(0.55, 0.38, 0.2), "stone": Color(0.6, 0.6, 0.62), "clay": Color(0.66, 0.42, 0.3),
+	"food": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
+	"copper": Color(0.25, 0.68, 0.57), "silver": Color(0.84, 0.87, 0.9), "gold": Color(0.95, 0.79, 0.23),
+	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
+	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
+	"soil": Color(0.36, 0.25, 0.16), "sand": Color(0.85, 0.75, 0.52), "gravel": Color(0.55, 0.52, 0.47),
+}
+
+
+static func res_color(k: String) -> Color:
+	return RES_COLORS.get(k, Color(0.6, 0.6, 0.6))
+
+
+func _ground_y(x: float) -> float:
+	return view.cell_to_local(Vector2i.ZERO).y + colony.world.gen.surface_smooth(x) * TILE
+
+
+## Ресурсы, которым не хватило места на складах, лежат кучами у базы;
+## пустая порода — в отвале справа от базы.
+func _draw_stockpile(font: Font) -> void:
+	var home := colony.home
+	var bulk := 0
+	for k in RoomType.BULK:
+		bulk += colony.inventory.get(k, 0)
+	if bulk > 0:
+		var cx := home.x + 4.0
+		var base := Vector2(view.cell_to_local(Vector2i(0, 0)).x + cx * TILE, _ground_y(cx))
+		var rad := clampf(sqrt(bulk) * 3.0, 10.0, TILE * 3.0)
+		var pts := PackedVector2Array()
+		for i in 13:
+			var a := PI + i * PI / 12.0
+			pts.append(base + Vector2(cos(a) * rad * 1.4, sin(a) * rad * 0.7))
+		draw_colored_polygon(pts, res_color("sand").lerp(res_color("soil"), 0.5))
+		draw_circle(base + Vector2(-rad * 0.3, -rad * 0.45), rad * 0.18, res_color("gravel"))
+		_label(font, base + Vector2(-20, -rad * 0.8 - 6), "отвал %d" % bulk, Color(0.95, 0.9, 0.8))
+	var keys: Array = colony.inventory.keys()
+	keys.sort()
+	var i := 0
+	for k in keys:
+		if RoomType.BULK.has(k):
+			continue
+		var ground := colony.stored_split(k).y
+		if ground <= 0:
+			continue
+		var cx := home.x - 3.0 - i * 1.6
+		i += 1
+		var base := Vector2(view.cell_to_local(Vector2i(0, 0)).x + cx * TILE, _ground_y(cx))
+		var col := res_color(k)
+		if k == "wood":
+			# Штабель брёвен.
+			var logs := clampi(ceili(ground / 4.0), 1, 10)
+			var row := 0
+			var left := logs
+			while left > 0:
+				var in_row := mini(left, 4 - row)
+				for j in in_row:
+					var c := base + Vector2((j - (in_row - 1) * 0.5) * 9.0, -5.0 - row * 8.0)
+					draw_circle(c, 4.5, col)
+					draw_circle(c, 2.0, col.lightened(0.35))
+				left -= in_row
+				row += 1
+		else:
+			var rad := clampf(sqrt(ground) * 2.2, 5.0, TILE * 0.9)
+			var pts := PackedVector2Array()
+			for j in 11:
+				var a := PI + j * PI / 10.0
+				pts.append(base + Vector2(cos(a) * rad, sin(a) * rad * 0.8))
+			draw_colored_polygon(pts, col)
+			draw_circle(base + Vector2(-rad * 0.3, -rad * 0.5), rad * 0.2, col.lightened(0.25))
+		_label(font, base + Vector2(-8, -30), str(ground), Color(1, 1, 1, 0.9))

@@ -43,6 +43,12 @@ var equip_paid := false
 var equip_done := 0.0
 ## Прогресс фермы до следующей единицы еды.
 var farm_progress := 0.0
+## Обустройство — это постройка лестницы (назначение не меняется).
+var equip_ladder := false
+## Объекты поверхности (столбцы x), которые надо убрать на этапе 1.
+var clear_x: Array[int] = []
+## Что хранит склад (пусто — всё).
+var store_filter: Array[String] = []
 
 
 func title() -> String:
@@ -62,6 +68,8 @@ func phase_name() -> String:
 		Phase.BUILD:
 			return "строительство" if paid else "ждёт ресурсы"
 		Phase.EQUIP:
+			if equip_ladder:
+				return "строится лестница" if equip_paid else "лестница ждёт ресурсы"
 			return "обустройство" if equip_paid else "обустройство ждёт ресурсы"
 	return "готово"
 
@@ -157,6 +165,9 @@ func to_dict() -> Dictionary:
 		"equip_paid": equip_paid,
 		"equip_done": equip_done,
 		"farm_progress": farm_progress,
+		"equip_ladder": equip_ladder,
+		"clear_x": clear_x,
+		"store_filter": store_filter,
 	}
 
 
@@ -182,4 +193,9 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_paid = bool(d.get("equip_paid", false))
 	p.equip_done = float(d.get("equip_done", 0.0))
 	p.farm_progress = float(d.get("farm_progress", 0.0))
+	p.equip_ladder = bool(d.get("equip_ladder", false))
+	for x in d.get("clear_x", []):
+		p.clear_x.append(int(x))
+	for k in d.get("store_filter", []):
+		p.store_filter.append(str(k))
 	return p

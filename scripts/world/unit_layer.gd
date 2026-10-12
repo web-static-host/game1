@@ -36,7 +36,7 @@ func _draw() -> void:
 		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK:
 			_draw_sleeping(u, foot)
 		else:
-			var sc := 0.68 if u.child else 1.0
+			var sc := lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
 			draw_set_transform(foot, 0.0, Vector2(sc, sc))
 			_draw_unit(u, Vector2.ZERO)
 			draw_set_transform(Vector2.ZERO)
@@ -53,7 +53,7 @@ func _draw() -> void:
 func _draw_sleeping(u: Unit, foot: Vector2) -> void:
 	var k := int(u.look * 1000.0)
 	var shirts: Array = SHIRT_M if u.sex == Unit.Sex.MALE else SHIRT_F
-	var sc := 0.68 if u.child else 1.0
+	var sc := lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
 	var y := foot.y - 22 * sc
 	draw_rect(Rect2(foot.x - 22 * sc, y, 36 * sc, 10 * sc), shirts[(k / 7) % shirts.size()])
 	draw_circle(Vector2(foot.x + 20 * sc, y + 4 * sc), 7 * sc, SKIN[k % SKIN.size()])

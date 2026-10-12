@@ -59,6 +59,8 @@ var discovered := {}
 var next_project_id := 1
 var next_unit_id := 1
 var rng := RandomNumberGenerator.new()
+## Клетка базы на поверхности: возле неё кучи ресурсов и отвал.
+var home := Vector2i.ZERO
 var _social_t := 0.0
 var _full_warned := {}
 
@@ -73,6 +75,7 @@ func _init(p_world: WorldData) -> void:
 
 func start_new(home_x: int) -> void:
 	inventory = START_INVENTORY.duplicate()
+	home = Vector2i(home_x, world.gen.surface_y(home_x))
 	var sexes := [Unit.Sex.MALE, Unit.Sex.FEMALE, Unit.Sex.MALE, Unit.Sex.FEMALE]
 	sexes.append(rng.randi_range(0, 1))
 	for i in START_UNITS:
@@ -181,6 +184,10 @@ func validate(kind: int, r: Rect2i) -> String:
 				return "Пересекается с другой стройкой"
 			if world.is_revealed(x, y) and Mat.is_fluid(world.get_mat(x, y)):
 				return "В зоне стройки %s" % Mat.name_of(world.get_mat(x, y)).to_lower()
+	if kind == Project.Kind.TUNNEL:
+		for x in range(r.position.x, r.end.x):
+			if r.position.y < world.gen.surface_y(x):
+				return "Тоннели — только под землёй. Над землёй стройте комнаты"
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -189,6 +196,10 @@ func validate(kind: int, r: Rect2i) -> String:
 				or Mat.is_solid(world.get_mat(below.x, below.y))
 			if not ok:
 				return "Комнате не на что опереться — нужен грунт или постройка снизу"
+			# Второй этаж: в нижнем здании нужна лестница наверх.
+			var lower := project_at(below)
+			if lower != null and lower.kind == Project.Kind.ROOM and not lower.ladder:
+				return "В нижнем здании нет лестницы — выберите его и нажмите «Лестница»"
 	return ""
 
 
@@ -207,6 +218,30 @@ func workers_on(p: Project) -> int:
 		if u.project_id == p.id and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 			n += 1
 	return n
+
+
+## Столбцы объектов поверхности, которые пересекаются с зоной.
+func features_in(r: Rect2i) -> Array[int]:
+	var out: Array[int] = []
+	for x in range(r.position.x - 1, r.end.x + 1):
+		var f := world.feature_at(x)
+		if f == WorldGen.FEATURE_NONE:
+			continue
+		var base := world.gen.surface_y(x) - 1
+		var top := base - (world.gen.tree_height(x) if f == WorldGen.FEATURE_TREE else 0)
+		var left := x - (1 if f == WorldGen.FEATURE_TREE else 0)
+		var right := x + (1 if f == WorldGen.FEATURE_TREE else 0)
+		if right >= r.position.x and left < r.end.x and base >= r.position.y and top < r.end.y:
+			out.append(x)
+	return out
+
+
+func uncleared(p: Project) -> Array[int]:
+	var out: Array[int] = []
+	for x in p.clear_x:
+		if world.feature_at(x) != WorldGen.FEATURE_NONE:
+			out.append(x)
+	return out
 
 
 ## Есть ли у зоны выход к открытому пространству или к другой стройке.
@@ -229,6 +264,10 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 	p.material = material if kind == Project.Kind.ROOM else "wood"
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
+	# Деревья, кусты и валуны на месте стройки убираются на этапе 1 — как ресурс.
+	for x in features_in(r):
+		p.clear_x.append(x)
+		world.set_feature_mark(x, true)
 	projects.append(p)
 	_check_phase(p)
 	return p
@@ -296,7 +335,7 @@ func _check_phase(p: Project) -> void:
 	if p.phase != Project.Phase.DIG:
 		return
 	_check_liquids(p)
-	if remaining_dig(p).is_empty():
+	if remaining_dig(p).is_empty() and uncleared(p).is_empty():
 		p.phase = Project.Phase.BUILD
 		_register_room(p)
 		var lines: PackedStringArray = []
@@ -325,7 +364,7 @@ func _try_pay(p: Project) -> void:
 	if p.phase == Project.Phase.BUILD and not p.paid:
 		cost = p.cost()
 	elif p.phase == Project.Phase.EQUIP and not p.equip_paid:
-		cost = RoomType.equip_cost(p.equip_target, p)
+		cost = RoomType.job_cost(p)
 	else:
 		return
 	var lacking: PackedStringArray = []
@@ -379,6 +418,7 @@ func set_purpose(p: Project, t: int) -> bool:
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
 	_release_beds(p)
+	p.equip_ladder = false
 	p.equip_target = t
 	p.equip_paid = false
 	p.equip_done = 0.0
@@ -391,13 +431,29 @@ func set_purpose(p: Project, t: int) -> bool:
 	return true
 
 
+## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
+func add_ladder(p: Project) -> bool:
+	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or p.ladder:
+		return false
+	p.equip_ladder = true
+	p.equip_target = p.purpose
+	p.equip_paid = false
+	p.equip_done = 0.0
+	p.phase = Project.Phase.EQUIP
+	_log("%s: строим лестницу" % p.title(), "info")
+	_try_pay(p)
+	return true
+
+
 func cancel_equip(p: Project) -> void:
 	if p.phase != Project.Phase.EQUIP:
 		return
 	if p.equip_paid:
-		_refund(RoomType.equip_cost(p.equip_target, p), 1.0 - p.equip_done / RoomType.equip_work(p.equip_target, p))
+		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
 	p.phase = Project.Phase.DONE
-	p.purpose = RoomType.NONE
+	if not p.equip_ladder:
+		p.purpose = RoomType.NONE
+	p.equip_ladder = false
 	p.blocked = ""
 	for u in units:
 		if u.project_id == p.id:
@@ -406,9 +462,21 @@ func cancel_equip(p: Project) -> void:
 
 
 func _finish_equip(p: Project) -> void:
-	p.purpose = p.equip_target
 	p.phase = Project.Phase.DONE
 	p.blocked = ""
+	if p.equip_ladder:
+		p.equip_ladder = false
+		p.ladder = true
+		_release_beds(p)
+		for c in p.cells():
+			if c.x == p.rect.position.x:
+				room_cells.erase(c)
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("%s: лестница готова" % p.title(), "good")
+		return
+	p.purpose = p.equip_target
 	p.farm_progress = 0.0
 	for u in units:
 		if u.project_id == p.id:
@@ -427,11 +495,31 @@ func rooms_of(t: int) -> Array[Project]:
 	return out
 
 
-func capacity(_key: String) -> int:
-	var c := RoomType.BASE_CAPACITY
+func capacity(key: String) -> int:
+	if RoomType.BULK.has(key):
+		return 1 << 30
+	return RoomType.BASE_CAPACITY + storage_capacity(key)
+
+
+## Вместимость складов для ресурса (без кучи на земле).
+func storage_capacity(key: String) -> int:
+	var c := 0
 	for p in rooms_of(RoomType.STORAGE):
-		c += RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+		if RoomType.stores(p, key):
+			c += RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
 	return c
+
+
+## Сколько ресурса лежит на складах, сколько — кучей на земле.
+func stored_split(key: String) -> Vector2i:
+	var have: int = inventory.get(key, 0)
+	var inside := mini(have, storage_capacity(key))
+	return Vector2i(inside, have - inside)
+
+
+func set_store_filter(p: Project, keys: Array[String]) -> void:
+	p.store_filter = keys
+	_full_warned.clear()
 
 
 func beds_total() -> int:
@@ -507,6 +595,9 @@ func _complete_harvest(x: int, u: Unit) -> void:
 			_:
 				what = "собрала ягоды" if fem else "собрал ягоды"
 		_log("%s %s: +%d %s" % [u.name if u != null else "Жители", what, y[1], Mat.resource_name(y[0]).to_lower()], "info")
+	for p in projects:
+		if p.phase == Project.Phase.DIG:
+			_check_phase(p)
 
 
 # --- Копка -----------------------------------------------------------------------
@@ -578,8 +669,9 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
-			if u.satiety < HUNGRY + 5.0 and inventory.get("food", 0) > 0:
-				inventory["food"] -= 1
+			var portion := 2 if u.child else 1
+			if u.satiety < HUNGRY + 5.0 and inventory.get("food", 0) >= portion:
+				inventory["food"] -= portion
 				u.satiety = minf(100.0, u.satiety + (MEAL_DINING if not rooms_of(RoomType.DINING).is_empty() else MEAL))
 			u.energy = maxf(u.energy, 60.0)
 		if u.child:
@@ -764,7 +856,7 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.EQUIP:
 			var p := project_by_id(u.project_id)
 			p.equip_done += rate
-			if p.equip_done >= RoomType.equip_work(p.equip_target, p):
+			if p.equip_done >= RoomType.job_work(p):
 				_finish_equip(p)
 		Unit.Task.HARVEST:
 			var x := u.target.x
@@ -788,8 +880,10 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.EAT:
 			u.work_t += dt
 			if u.work_t >= EAT_TIME:
-				if inventory.get("food", 0) > 0:
-					inventory["food"] -= 1
+				# Растущий ребёнок съедает вдвое больше.
+				var portion := 2 if u.child else 1
+				if inventory.get("food", 0) >= portion:
+					inventory["food"] -= portion
 					u.satiety = minf(100.0, u.satiety + (MEAL_DINING if u.project_id != 0 else MEAL))
 				_drop(u)
 
@@ -810,6 +904,10 @@ func _task_valid(u: Unit) -> bool:
 				Unit.Task.FARM:
 					return p.phase == Project.Phase.DONE and p.purpose == RoomType.FARM
 		Unit.Task.HARVEST:
+			if u.project_id != 0:
+				var hp := project_by_id(u.project_id)
+				if hp == null or hp.paused:
+					return false
 			return world.feature_marks.has(u.target.x) and world.feature_at(u.target.x) != WorldGen.FEATURE_NONE
 		Unit.Task.SLEEP, Unit.Task.EAT:
 			return true
@@ -884,8 +982,9 @@ func _assign(u: Unit) -> bool:
 				for p in projects:
 					if p.paused or workers_on(p) >= p.workers:
 						continue
-					if kind != "build" and p.phase == Project.Phase.DIG and _try_dig(u, p, parents, dist):
-						return true
+					if kind != "build" and p.phase == Project.Phase.DIG:
+						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_dig(u, p, parents, dist):
+							return true
 					if kind != "dig" and p.phase == Project.Phase.BUILD and p.paid \
 							and _try_build(u, p, Unit.Task.BUILD, parents, dist):
 						return true
@@ -1007,12 +1106,15 @@ func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	return false
 
 
-func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+## only — ограничить список столбцов (расчистка места под стройку pid).
+func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary, only: Array = [], pid := 0) -> bool:
+	if pid != 0 and only.is_empty():
+		return false
 	var best_x = null
 	var best_stand = null
 	var best_d := 1 << 30
 	var want_food := food_low()
-	for x in world.feature_marks:
+	for x in (only if pid != 0 else world.feature_marks.keys()):
 		if reserved.has("h%d" % x):
 			continue
 		var base := Vector2i(x, world.gen.surface_y(x) - 1)
@@ -1025,7 +1127,7 @@ func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 				best_stand = stand
 	if best_x == null:
 		return false
-	_start(u, Unit.Task.HARVEST, Vector2i(best_x, world.gen.surface_y(best_x) - 1), best_stand, 0, parents)
+	_start(u, Unit.Task.HARVEST, Vector2i(best_x, world.gen.surface_y(best_x) - 1), best_stand, pid, parents)
 	return true
 
 
@@ -1086,7 +1188,7 @@ func advance_offline(dt: float) -> int:
 				Unit.Task.EQUIP:
 					var p: Project = j[3]
 					p.equip_done += j[1] * step
-					if p.equip_done >= RoomType.equip_work(p.equip_target, p) - 0.001:
+					if p.equip_done >= RoomType.job_work(p) - 0.001:
 						_finish_equip(p)
 				Unit.Task.FARM:
 					var p: Project = j[3]
@@ -1111,7 +1213,7 @@ func _offline_left(key: Variant, job: Array) -> float:
 			return p.build_work() - p.build_done
 		Unit.Task.EQUIP:
 			var p: Project = job[3]
-			return RoomType.equip_work(p.equip_target, p) - p.equip_done
+			return RoomType.job_work(p) - p.equip_done
 		Unit.Task.FARM:
 			return OFFLINE_STEP
 		Unit.Task.HARVEST:
@@ -1140,6 +1242,11 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if p.paused or taken.get(slot, 0) >= p.workers:
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
+						for x in uncleared(p):
+							if not taken.has("h%d" % x):
+								taken["h%d" % x] = true
+								taken[slot] = taken.get(slot, 0) + 1
+								return ["h%d" % x, Unit.Task.HARVEST, p]
 						for c in remaining_dig(p):
 							if taken.has(c):
 								continue
@@ -1227,6 +1334,7 @@ func to_dict() -> Dictionary:
 		"next_project_id": next_project_id,
 		"next_unit_id": next_unit_id,
 		"social_t": _social_t,
+		"home": [home.x, home.y],
 	}
 
 
@@ -1257,3 +1365,5 @@ func load_dict(d: Dictionary) -> void:
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	_social_t = float(d.get("social_t", 0.0))
+	var h: Array = d.get("home", [0, world.gen.surface_y(0)])
+	home = Vector2i(int(h[0]), int(h[1]))
