@@ -67,8 +67,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		STORAGE:
 			return {"wood": 2 * w}
 		FARM:
-			# Грядки из досок и споры грибов (немного еды на посев).
-			return {"wood": 2 * w + 2, "food": 4}
+			# Грядки из досок; грибы заводятся сами.
+			return {"wood": 2 * w + 2}
 		DINING:
 			return {"wood": 2 * w, "stone": 4}
 		PUMP:

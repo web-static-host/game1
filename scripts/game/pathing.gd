@@ -70,9 +70,15 @@ func neighbors(c: Vector2i) -> Array[Vector2i]:
 			var step_up := c + Vector2i(dx, -1)
 			if passable(c + UP * 2) and node(step_up):
 				out.append(step_up)
+			elif passable(c + UP * 2) and passable(c + UP * 3) and node(c + Vector2i(dx, -2)):
+				# Уступ в 2 м — залезают.
+				out.append(c + Vector2i(dx, -2))
 			var step_down := c + Vector2i(dx, 1)
 			if passable(side) and node(step_down):
 				out.append(step_down)
+			elif passable(side) and passable(side + DOWN) and node(c + Vector2i(dx, 2)):
+				# Спрыгивают с уступа в 2 м.
+				out.append(c + Vector2i(dx, 2))
 	var up := c + UP
 	if climbable(c) and node(up):
 		out.append(up)

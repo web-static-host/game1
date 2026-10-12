@@ -42,6 +42,9 @@ func _initialize() -> void:
 		if think >= 5.0:
 			think = 0.0
 			_play()
+			var dbg := OS.get_environment("DEBUG_FROM")
+			if not dbg.is_empty() and t >= float(dbg) * 60.0 and int(t) % 20 == 0:
+				_debug()
 		if t >= next_slice:
 			next_slice += 600.0
 			_slice()
@@ -107,6 +110,23 @@ func _on_log(text: String, kind: String) -> void:
 		last_news = t
 
 
+func _debug() -> void:
+	var farms := colony.rooms_of(RoomType.FARM)
+	print("DBG %s еда %s ягоды %s ферм %d на земле еды %d" % [_time(), colony.inventory.get("food", 0),
+		colony.inventory.get("berries", 0), farms.size(), colony.drop_total("food") + colony.drop_total("berries")])
+	for u in colony.units:
+		var reach := colony.pathing.explore(u.cell())
+		var to_farm = null
+		for f in farms:
+			to_farm = colony._near_rect(f.rect, reach[1])
+		print("   %s %s %s st%d сыт %d бодр %d здор %d проф %d | до фермы %s, узлов %d" % [u.name, u.cell(),
+			Unit.TASK_NAMES[u.task], u.state, roundi(u.satiety), roundi(u.energy), roundi(u.health), u.profession,
+			to_farm, reach[1].size()])
+	for p in colony.projects:
+		if p.phase != Project.Phase.DONE:
+			print("   стройка %s %s %s раб %d/%d" % [p.title(), p.phase_name(), p.blocked, colony.workers_on(p), p.workers])
+
+
 func _slice() -> void:
 	var idle := 0
 	for u in colony.units:
@@ -121,8 +141,8 @@ func _slice() -> void:
 	for p in colony.projects:
 		if p.phase == Project.Phase.DONE:
 			done += 1
-	print("%s | жит %d (дети %d) кроватей %d | построек %d, строится %d | глубина %d м | наука %d/%d | без дела %d | %s" % [
-		_time(), colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size(), colony.beds_total(),
+	print("[%4d с] %s | жит %d (дети %d) кроватей %d | построек %d, строится %d | глубина %d м | наука %d/%d | без дела %d | %s" % [
+		Time.get_ticks_msec() / 1000, _time(), colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size(), colony.beds_total(),
 		done, colony.projects.size() - done, _depth(), colony.research.done.size(), Research.TECHS.size(), idle, ", ".join(inv)])
 
 
@@ -156,12 +176,24 @@ func _play() -> void:
 	_more_storage()
 
 
+## Осторожный игрок: рядом вода — копает дальше, газ или магма — бросает выработку
+## и роет шахту в другом месте.
 func _answer_geologist() -> void:
-	for p in colony.projects:
-		if p.paused and not p.hazard_pending.is_empty():
-			events["геолог: продолжили"] = events.get("геолог: продолжили", 0) + 1
+	for p: Project in colony.projects.duplicate():
+		if not p.paused or p.hazard_pending.is_empty():
+			continue
+		_act("геолог")
+		if p.hazard_pending == "water":
+			events["геолог: вода, копаем дальше"] = events.get("геолог: вода, копаем дальше", 0) + 1
 			colony.set_paused(p, false)
-			_act("геолог")
+			continue
+		events["геолог: %s, обходим" % p.hazard_pending] = events.get("геолог: %s, обходим" % p.hazard_pending, 0) + 1
+		colony.cancel_project(p)
+		_pending_purpose.erase(p.id)
+		if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x:
+			# Новая шахта в стороне.
+			shaft_x += 12 if (shaft_x - colony.home.x) % 24 == 3 else -24
+			shaft_bottom = world.gen.surface_y(shaft_x)
 
 
 ## Построенные комнаты получают задуманное назначение.
