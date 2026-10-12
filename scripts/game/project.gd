@@ -3,7 +3,8 @@ extends RefCounted
 ## Стройка: тоннель или комната. Этап 1 — выкопать твёрдые клетки,
 ## этап 2 — построить (нужны ресурсы). Можно поставить на паузу.
 
-enum Kind { TUNNEL, ROOM }
+## BRIDGE — мостик над водой (переход и рыбалка), PIER — рыболовная пристань.
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -64,7 +65,11 @@ func title() -> String:
 
 
 static func kind_name(k: int) -> String:
-	return "Комната" if k == Kind.ROOM else "Тоннель"
+	return ["Тоннель", "Комната", "Мостик", "Пристань"][k]
+
+
+func is_water_structure() -> bool:
+	return kind == Kind.BRIDGE or kind == Kind.PIER
 
 
 func phase_name() -> String:
@@ -104,6 +109,10 @@ static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 		var out := {"wood": ceili(cells_n / 6.0)}
 		out[mat] = out.get(mat, 0) + r.size.x + r.size.y
 		return out
+	if k == Kind.BRIDGE:
+		return {"wood": 2 * r.size.x}
+	if k == Kind.PIER:
+		return {"wood": 4 * r.size.x, "stone": 4}
 	return {"wood": ceili(cells_n / 4.0)}
 
 
@@ -112,6 +121,10 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 	var cells_n := r.size.x * r.size.y
 	if k == Kind.ROOM:
 		return cells_n * 5.0 * MATERIALS.get(mat, ["", 1.0])[1]
+	if k == Kind.BRIDGE:
+		return r.size.x * 4.0
+	if k == Kind.PIER:
+		return r.size.x * 8.0
 	return cells_n * 2.0
 
 
@@ -130,6 +143,15 @@ func material_name() -> String:
 	return MATERIALS.get(material, ["?"])[0]
 
 
+## Сколько рыбаков одновременно и сколько секунд на улов.
+func fish_slots() -> int:
+	return maxi(1, rect.size.x / (2 if kind == Kind.PIER else 4))
+
+
+func fish_time() -> float:
+	return 15.0 if kind == Kind.PIER else 40.0
+
+
 ## Рекомендуемое число рабочих: примерно один на 6–8 клеток площади.
 static func recommended_workers(k: int, r: Rect2i, max_workers: int) -> int:
 	var per := 8.0 if k == Kind.ROOM else 6.0
@@ -140,6 +162,14 @@ static func recommended_workers(k: int, r: Rect2i, max_workers: int) -> int:
 static func size_error(k: int, r: Rect2i) -> String:
 	var w := r.size.x
 	var h := r.size.y
+	if k == Kind.BRIDGE or k == Kind.PIER:
+		if h != 1:
+			return "Мост и пристань — по одному ряду над водой"
+		if k == Kind.BRIDGE and (w < 2 or w > 40):
+			return "Мостик — от 2 до 40 м"
+		if k == Kind.PIER and (w < 3 or w > 10):
+			return "Пристань — от 3 до 10 м"
+		return ""
 	if k == Kind.ROOM:
 		if w < ROOM_MIN.x or h < ROOM_MIN.y:
 			return "Комната — минимум %d×%d" % [ROOM_MIN.x, ROOM_MIN.y]

@@ -109,6 +109,8 @@ func _draw() -> void:
 		for ly in SIZE:
 			var y := y0 + ly
 			if y < surf:
+				if chunk.mat[ChunkData.idx(lx, ly)] == Mat.WATER:
+					_draw_water(lx, ly, x, y)
 				if not line.is_zero_approx() and y + 1 > minf(line.x, line.z):
 					var sr := Rect2(lx * TILE, ly * TILE, TILE, TILE)
 					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)))
@@ -131,7 +133,8 @@ func _draw() -> void:
 					_half_strips(lx, ly, r, rock_color(m, v), _is_hole(lx - 1, ly), _is_hole(lx + 1, ly),
 						_is_hole(lx, ly - 1), _is_hole(lx, ly + 1))
 				if y == surf:
-					_draw_smooth_grass(lx, ly, line, x)
+					if gen.water_level(x) >= surf:
+						_draw_smooth_grass(lx, ly, line, x)
 				continue
 			if f & ChunkData.F_REVEALED == 0:
 				draw_rect(r, fog_color(depth, v))
@@ -312,13 +315,15 @@ func _draw_feature(f: int, x: int, foot: Vector2) -> void:
 	var marked := world.feature_marks.has(x)
 	var gen := world.gen
 	if f == WorldGen.FEATURE_TREE:
-		var h := gen.tree_height(x) * TILE
+		# Молодое дерево ниже и с маленькой кроной.
+		var g := world.growth(x)
+		var h := gen.tree_height(x) * TILE * (0.25 + 0.75 * g)
 		var lean := (WorldGen.hash01(x, 21, 0) - 0.5) * 8.0
 		draw_colored_polygon(PackedVector2Array([
 			foot + Vector2(-5, 0), foot + Vector2(5, 0),
 			foot + Vector2(3 + lean, -h * 0.75), foot + Vector2(-3 + lean, -h * 0.75)]), TRUNK)
 		var top := foot + Vector2(lean, -h * 0.75)
-		var r := TILE * (0.9 + WorldGen.hash01(x, 22, 0) * 0.5)
+		var r := TILE * (0.9 + WorldGen.hash01(x, 22, 0) * 0.5) * (0.35 + 0.65 * g)
 		for k in 5:
 			var a := k * TAU / 5.0 + WorldGen.hash01(x, 23 + k, 0)
 			draw_circle(top + Vector2(cos(a), sin(a) * 0.7) * r * 0.7, r * 0.75, LEAVES)
@@ -340,7 +345,8 @@ func _draw_feature(f: int, x: int, foot: Vector2) -> void:
 		var bw := TILE * (0.55 + WorldGen.hash01(x, 33, 0) * 0.2)
 		for k in 3:
 			draw_circle(foot + Vector2((k - 1) * bw * 0.55, -bw * 0.55 - (k % 2) * 4.0), bw * 0.55, LEAVES if k != 1 else LEAVES_LIGHT)
-		for k in 5:
+		# Ягоды видно по количеству: съели — куст зелёный, потом отрастают.
+		for k in mini(6, floori(world.berries(x))):
 			var bp := foot + Vector2((WorldGen.hash01(x, 40 + k, 0) - 0.5) * bw * 1.6, -bw * (0.3 + WorldGen.hash01(x, 50 + k, 0) * 0.8))
 			draw_circle(bp, 3.0, Color(0.85, 0.15, 0.25))
 		if marked:
@@ -477,3 +483,20 @@ func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u:
 func _is_hole(lx: int, ly: int) -> bool:
 	var f := _flags_at(lx, ly)
 	return f >= 0 and f & (ChunkData.F_DUG | ChunkData.F_CAVE) != 0 and _is_open(lx, ly)
+
+
+
+const WATER_DEEP := Color(0.16, 0.38, 0.68, 0.92)
+const WATER_TOP := Color(0.36, 0.6, 0.88, 0.95)
+
+
+## Вода озера. Верхний ряд — светлая гладь с бликами.
+func _draw_water(lx: int, ly: int, x: int, y: int) -> void:
+	var r := Rect2(lx * TILE, ly * TILE, TILE, TILE)
+	var top := y == world.gen.water_level(x)
+	draw_rect(r, WATER_DEEP.lerp(Color(0.1, 0.25, 0.5, 0.95), clampf((y - world.gen.water_level(x)) / 20.0, 0.0, 1.0)))
+	if top:
+		draw_rect(Rect2(r.position.x, r.position.y, TILE, 5), WATER_TOP)
+		if WorldGen.hash01(x, 3, 90) < 0.35:
+			var bx := r.position.x + 6 + WorldGen.hash01(x, 4, 90) * 14
+			draw_line(Vector2(bx, r.position.y + 9), Vector2(bx + 8, r.position.y + 9), Color(1, 1, 1, 0.35), 2.0)

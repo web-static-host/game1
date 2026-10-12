@@ -77,7 +77,9 @@ const CRATE := Color(0.62, 0.45, 0.25)
 
 func _draw_done(p: Project) -> void:
 	var r := _rect_px(p.rect)
-	if p.kind == Project.Kind.ROOM:
+	if p.is_water_structure():
+		_draw_deck(p, r, 1.0)
+	elif p.kind == Project.Kind.ROOM:
 		_draw_room_shell(p, r)
 		if p.phase == Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
@@ -226,7 +228,9 @@ func _draw_site(p: Project, font: Font) -> void:
 			draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)
 	else:
 		var t := clampf(p.build_done / p.build_work(), 0.0, 1.0) if p.paid else 0.0
-		if p.kind == Project.Kind.ROOM:
+		if p.is_water_structure():
+			_draw_deck(p, r, 0.3 + 0.7 * t)
+		elif p.kind == Project.Kind.ROOM:
 			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
 			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
 		else:
@@ -355,3 +359,38 @@ func _draw_stockpile(font: Font) -> void:
 			draw_colored_polygon(pts, col)
 			draw_circle(base + Vector2(-rad * 0.3, -rad * 0.5), rad * 0.2, col.lightened(0.25))
 		_label(font, base + Vector2(-8, -30), str(ground), Color(1, 1, 1, 0.9))
+
+
+
+## Мостик: настил над водой, сваи и перила. Пристань: широкий настил и навес на берегу.
+func _draw_deck(p: Project, r: Rect2, alpha: float) -> void:
+	var plank := Color(0.6, 0.43, 0.25, alpha)
+	var dark := Color(0.42, 0.29, 0.16, alpha)
+	var deck_y := r.end.y - (8 if p.kind == Project.Kind.PIER else 6)
+	draw_rect(Rect2(r.position.x, deck_y, r.size.x, r.end.y - deck_y), plank)
+	var x := r.position.x
+	while x < r.end.x:
+		draw_line(Vector2(x, deck_y), Vector2(x, r.end.y), dark, 1.0)
+		x += 8
+	# Сваи уходят в воду.
+	x = r.position.x + 4
+	while x < r.end.x:
+		draw_rect(Rect2(x, r.end.y, 5, TILE * 1.5), dark)
+		x += TILE * (1.5 if p.kind == Project.Kind.PIER else 2.0)
+	if p.kind == Project.Kind.BRIDGE:
+		draw_line(Vector2(r.position.x, deck_y - 16), Vector2(r.end.x, deck_y - 16), plank, 3.0)
+		x = r.position.x + 2
+		while x < r.end.x:
+			draw_line(Vector2(x, deck_y - 16), Vector2(x, deck_y), plank, 2.0)
+			x += TILE
+	else:
+		# Навес рыбаков на береговом конце.
+		var land_left := Mat.is_solid(colony.world.get_mat(p.rect.position.x, p.rect.position.y + 1))
+		var hx := r.position.x if land_left else r.end.x - TILE * 1.6
+		var hw := TILE * 1.6
+		draw_rect(Rect2(hx + 4, deck_y - TILE * 1.3, hw - 8, TILE * 1.3), Color(0.72, 0.56, 0.36, alpha))
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(hx - 4, deck_y - TILE * 1.3), Vector2(hx + hw * 0.5, deck_y - TILE * 2.1),
+			Vector2(hx + hw + 4, deck_y - TILE * 1.3)]), Color(0.55, 0.25, 0.2, alpha))
+		# Сети на шестах.
+		draw_line(Vector2(hx + hw + 10, deck_y), Vector2(hx + hw + 10, deck_y - 30), dark, 2.0)

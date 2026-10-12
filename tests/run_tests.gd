@@ -25,6 +25,8 @@ func _initialize() -> void:
 	test_professions()
 	test_build_rules_v2()
 	test_physics()
+	test_nature()
+	test_lakes_and_fishing()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -195,7 +197,7 @@ func test_pause_and_materials() -> void:
 		if w.feature_at(tx) == WorldGen.FEATURE_TREE:
 			tree = tx
 			break
-	check(colony.toggle_harvest(tree), "дерево отмечено на сбор")
+	check(colony.toggle_harvest(tree).is_empty(), "дерево отмечено на сбор")
 	colony.advance_offline(5000.0)
 	check(w.feature_at(tree) == WorldGen.FEATURE_NONE, "дерево срублено")
 	check(p.phase == Project.Phase.DONE, "после сбора дерева стройка завершена")
@@ -613,6 +615,120 @@ func test_physics() -> void:
 	check(colony3.project_by_id(t.id) == null and not colony3.interior.has(Vector2i(x3, s3 + 2)), "постройки больше нет")
 
 
+func test_nature() -> void:
+	var colony := _new_colony(51)
+	var w := colony.world
+	colony.start_new(0)
+	colony.inventory = {}
+	# Ягоды: сбор забирает ягоды, куст остаётся, ягоды отрастают.
+	var bush := 0
+	for x in range(-150, 150):
+		if w.feature_at(x) == WorldGen.FEATURE_BUSH:
+			bush = x
+			break
+	check(w.berries(bush) == WorldData.BUSH_BERRIES, "у нетронутого куста полный урожай")
+	colony._complete_harvest(bush, null)
+	check(w.feature_at(bush) == WorldGen.FEATURE_BUSH and w.berries(bush) < 1.0, "куст остался без ягод")
+	check(colony.inventory.get("food", 0) == 6, "ягоды на складе")
+	colony.grow_plants(Colony.BERRY_REGEN * 3)
+	check(w.berries(bush) >= 2.9, "ягоды отрастают (%.1f)" % w.berries(bush))
+	# Голодный житель при пустом складе ест ягоды с куста.
+	colony.inventory = {}
+	w.set_berries(bush, 6.0)
+	colony._refresh_bushes()
+	var u := colony.units[0]
+	u.satiety = 10.0
+	var t := 0.0
+	while t < 200.0 and u.satiety < 40.0:
+		colony.update(0.5)
+		t += 0.5
+	check(u.satiety >= 40.0, "голодный житель нашёл куст и поел (%.0f с)" % t)
+	# Деревья: растут медленно, новые появляются рядом со старыми.
+	var trees_before := 0
+	for x in range(colony.home.x - 160, colony.home.x + 160):
+		if w.feature_at(x) == WorldGen.FEATURE_TREE:
+			trees_before += 1
+	for i in 200:
+		colony.grow_plants(Colony.PLANT_TICK * 6)
+	var trees_after := 0
+	var saplings := 0
+	var bad := 0
+	for x in range(colony.home.x - 160, colony.home.x + 160):
+		if w.feature_at(x) == WorldGen.FEATURE_TREE:
+			trees_after += 1
+			if w.plants.has(x):
+				saplings += 1
+				var near := 0
+				for dx in range(-Colony.SPREAD_RADIUS, Colony.SPREAD_RADIUS + 1):
+					if dx != 0 and w.feature_at(x + dx) == WorldGen.FEATURE_TREE:
+						near += 1
+				if near == 0:
+					bad += 1
+	check(trees_after > trees_before, "лес разрастается (%d → %d)" % [trees_before, trees_after])
+	check(bad == 0, "новые деревья появляются только рядом с другими")
+	# Саженец растёт медленно и сначала даёт мало дерева.
+	var sx := 0
+	for x in w.plants:
+		if int(w.plants[x]["t"]) == WorldGen.FEATURE_TREE:
+			sx = x
+	w.plants[sx]["g"] = 0.1
+	check(not colony.toggle_harvest(sx).is_empty(), "молодое дерево рубить нельзя")
+	colony.grow_plants(Colony.TREE_GROW_TIME * 0.5)
+	check(absf(w.growth(sx) - 0.6) < 0.05, "дерево подросло (%.2f)" % w.growth(sx))
+
+
+## Ищет озеро с водой: [озеро, x левого берега, x правого берега].
+func _find_lake(w: WorldData) -> Array:
+	for k in range(-40, 40):
+		var l := w.gen._lake_of_segment(k)
+		if l.is_empty():
+			continue
+		var level: int = l["level"]
+		var xs := []
+		for x in range(int(l["cx"]) - int(l["w"]), int(l["cx"]) + int(l["w"])):
+			if w.gen.surface_y(x) > level:
+				xs.append(x)
+		if xs.size() >= 4 and xs.size() <= 30:
+			return [l, xs[0] - 1, xs[xs.size() - 1] + 1]
+	return []
+
+
+func test_lakes_and_fishing() -> void:
+	var colony := _new_colony(52)
+	var w := colony.world
+	var found := _find_lake(w)
+	check(not found.is_empty(), "в мире есть озёра")
+	if found.is_empty():
+		return
+	var lake: Dictionary = found[0]
+	var level: int = lake["level"]
+	var x0: int = found[1]
+	var x1: int = found[2]
+	check(w.get_mat(x0 + 1, level) == Mat.WATER, "в озере вода")
+	check(w.feature_at(x0 + 1) == WorldGen.FEATURE_NONE, "в воде не растут деревья")
+	check(not colony.pathing.passable(Vector2i(x0 + 1, level)), "по воде не ходят")
+	var row := level - 1
+	var bridge_r := Rect2i(x0, row, x1 - x0 + 1, 1)
+	check(colony.validate(Project.Kind.BRIDGE, bridge_r).is_empty(), "мостик от берега до берега: " + colony.validate(Project.Kind.BRIDGE, bridge_r))
+	check(not colony.validate(Project.Kind.BRIDGE, Rect2i(x0, row - 3, x1 - x0 + 1, 1)).is_empty(), "мост в воздухе нельзя")
+	check(not colony.validate(Project.Kind.BRIDGE, Rect2i(x0, row, 3, 1)).is_empty(), "мост, не дотянутый до берега, нельзя")
+	check(colony.validate(Project.Kind.PIER, Rect2i(x0, row, 3, 1)).is_empty(), "пристань от берега в воду можно")
+	colony.start_new(x0 - 3)
+	colony.inventory = {"wood": 49, "stone": 20, "food": 0}
+	var br := colony.create_project(Project.Kind.BRIDGE, bridge_r)
+	colony.advance_offline(5000.0)
+	check(br.phase == Project.Phase.DONE, "мостик построен")
+	check(colony.pathing.standable(Vector2i(x0 + 2, row)), "по мостику можно ходить над водой")
+	colony.inventory["food"] = 0
+	var fish0 := colony.fish_in(lake)
+	colony.advance_offline(1800.0)
+	check(colony.inventory.get("food", 0) > 0, "с мостика наловили рыбы (%d еды)" % colony.inventory.get("food", 0))
+	check(colony.fish_in(lake) < fish0 + 0.01, "рыбы в озере стало меньше или столько же")
+	colony.fish[int(lake["id"])] = 0.0
+	colony.grow_plants(Colony.FISH_REGEN * 5)
+	check(absf(colony.fish_in(lake) - 5.0) < 0.01, "рыба восстанавливается")
+
+
 func test_save_roundtrip() -> void:
 	var path := "user://test_save.json"
 	var colony := _new_colony(4242)
@@ -640,7 +756,8 @@ func test_save_roundtrip() -> void:
 	check(c2.projects.size() == 2 and c2.projects[1].paused, "стройки и пауза восстановлены")
 	check(c2.interior.has(Vector2i(x, s + 1)), "готовые постройки восстановлены")
 	check(w2.feature_marks.has(x - 3), "отметки сбора восстановлены")
-	check(c2.units[0].satiety == colony.units[0].satiety and c2.units[0].profession == colony.units[0].profession, "потребности и профессии восстановлены")
+	check(absf(c2.units[0].satiety - colony.units[0].satiety) < 0.001 and c2.units[0].profession == colony.units[0].profession,
+		"потребности и профессии восстановлены (%f / %f)" % [c2.units[0].satiety, colony.units[0].satiety])
 	w2.evict_outside(Rect2i(1000, 1000, 1, 1))
 	check(w2.chunks.is_empty() and w2.is_dug(x, s + 1), "выгрузка не теряет раскопки")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

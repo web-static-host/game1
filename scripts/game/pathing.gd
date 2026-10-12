@@ -15,12 +15,15 @@ var world: WorldData
 var interior: Dictionary
 ## Клетки комнат: в комнатах ходят по полу, лестниц там нет.
 var room_cells: Dictionary
+## Настил мостов и пристаней: по нему ходят над водой.
+var deck: Dictionary
 
 
-func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary) -> void:
+func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
 	world = p_world
 	interior = p_interior
 	room_cells = p_rooms
+	deck = p_deck
 
 
 func passable(c: Vector2i) -> bool:
@@ -41,6 +44,8 @@ func solid(c: Vector2i) -> bool:
 func standable(c: Vector2i) -> bool:
 	if not passable(c):
 		return false
+	if deck.has(c):
+		return true
 	var below := c + DOWN
 	if solid(below) or climbable(c) or climbable(below):
 		return true

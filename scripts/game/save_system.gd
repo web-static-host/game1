@@ -26,8 +26,17 @@ static func serialize(world: WorldData, colony: Colony, camera_cell: Vector2i) -
 		"chunks": chunks,
 		"removed_features": world.removed_features.keys(),
 		"feature_marks": world.feature_marks.keys(),
+		"plants": _plants_list(world),
 		"colony": colony.to_dict(),
 	}
+
+
+static func _plants_list(world: WorldData) -> Array:
+	var out := []
+	for x in world.plants:
+		var p: Dictionary = world.plants[x]
+		out.append([x, p["t"], p["g"], p["b"]])
+	return out
 
 
 static func save(world: WorldData, colony: Colony, camera_cell: Vector2i, path := DEFAULT_PATH) -> bool:
@@ -75,4 +84,6 @@ static func apply(data: Dictionary, world: WorldData, colony: Colony) -> void:
 		world.removed_features[int(x)] = true
 	for x in data.get("feature_marks", []):
 		world.feature_marks[int(x)] = true
+	for e in data.get("plants", []):
+		world.plants[int(e[0])] = {"t": int(e[1]), "g": float(e[2]), "b": float(e[3])}
 	colony.load_dict(data.get("colony", {}))

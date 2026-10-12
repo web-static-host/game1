@@ -21,6 +21,10 @@ var dirty := {}
 var removed_features := {}
 ## Объекты, помеченные игроком на сбор: x -> true
 var feature_marks := {}
+## Живые растения с состоянием: x -> {"t": вид, "g": рост 0..1, "b": ягоды}.
+## Сгенерированные изначально растения — взрослые и с полным урожаем, пока их не тронули.
+var plants := {}
+const BUSH_BERRIES := 6.0
 
 
 func _init(p_gen: WorldGen) -> void:
@@ -114,13 +118,55 @@ func _touch(x: int, y: int) -> void:
 
 
 func feature_at(x: int) -> int:
+	if plants.has(x):
+		return int(plants[x]["t"])
 	if removed_features.has(x):
 		return WorldGen.FEATURE_NONE
 	return gen.feature_at(x)
 
 
+## Рост растения 0..1 (взрослое — 1).
+func growth(x: int) -> float:
+	return float(plants[x]["g"]) if plants.has(x) else 1.0
+
+
+## Ягод на кусте сейчас.
+func berries(x: int) -> float:
+	return float(plants[x]["b"]) if plants.has(x) else BUSH_BERRIES
+
+
+func _plant(x: int) -> Dictionary:
+	if not plants.has(x):
+		plants[x] = {"t": feature_at(x), "g": growth(x), "b": berries(x)}
+	return plants[x]
+
+
+func set_berries(x: int, b: float) -> void:
+	var p := _plant(x)
+	var before := floori(float(p["b"]))
+	p["b"] = b
+	if floori(b) != before:
+		_touch_feature(x)
+
+
+func grow(x: int, dg: float) -> void:
+	var p := _plant(x)
+	var before := floori(float(p["g"]) * 10.0)
+	p["g"] = minf(1.0, float(p["g"]) + dg)
+	if floori(float(p["g"]) * 10.0) != before:
+		_touch_feature(x)
+
+
+## Новое растение на свободной траве.
+func sprout(x: int, kind: int) -> void:
+	removed_features.erase(x)
+	plants[x] = {"t": kind, "g": 0.05 if kind == WorldGen.FEATURE_TREE else 1.0, "b": 0.0}
+	_touch_feature(x)
+
+
 func remove_feature(x: int) -> void:
 	removed_features[x] = true
+	plants.erase(x)
 	feature_marks.erase(x)
 	_touch_feature(x)
 

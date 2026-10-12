@@ -180,7 +180,7 @@ func _cycle_speed() -> void:
 
 func _set_mode(m: int) -> void:
 	mode = m
-	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM
+	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE
 	_clear_preview()
 	_select(null, null)
 
@@ -192,9 +192,11 @@ func _on_tap(screen_pos: Vector2) -> void:
 	if mode == Hud.Mode.HARVEST:
 		var x = _feature_near(c)
 		if x == null:
-			hud.log_event("Здесь нечего собирать — нажмите на дерево или валун.", "warning")
+			hud.log_event("Здесь нечего собирать — нажмите на дерево, валун или куст.", "warning")
 		else:
-			colony.toggle_harvest(x)
+			var err := colony.toggle_harvest(x)
+			if not err.is_empty():
+				hud.log_event(err, "warning")
 		return
 	var u := colony.unit_at(world_view.screen_to_world_cells(screen_pos))
 	if u != null:
@@ -328,8 +330,11 @@ func _project_text(p: Project, preview_purpose := -1) -> String:
 	var lines: PackedStringArray = [p.title() + " — " + ("на паузе" if p.paused else p.phase_name())]
 	if p.kind == Project.Kind.ROOM:
 		lines[0] += " · стены: " + p.material_name().to_lower()
-	else:
+	elif p.kind == Project.Kind.TUNNEL:
 		lines[0] += " · потоков: %d" % Colony.tunnel_lanes(p.rect)
+	else:
+		lines.append("Рыбаков: %d из %d · рыбы в озере ~%d (восстанавливается)" % [
+			colony.workers_on(p), p.fish_slots(), int(colony.fish_left(p))])
 	match p.phase:
 		Project.Phase.DIG:
 			lines.append("Этап 1 из 2: копка. Осталось клеток: %d" % colony.remaining_dig(p).size())
@@ -405,8 +410,13 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		hud.hide_info()
 	var r := Rect2i(Vector2i(mini(c.x, _drag_start.x), mini(c.y, _drag_start.y)),
 		(c - _drag_start).abs() + Vector2i.ONE)
-	var kind := Project.Kind.ROOM if mode == Hud.Mode.ROOM else Project.Kind.TUNNEL
+	if mode == Hud.Mode.BRIDGE:
+		# Мост — один ряд на высоте, где начали вести пальцем.
+		r = Rect2i(r.position.x, _drag_start.y, r.size.x, 1)
+	var kind := _mode_kind()
 	var err := colony.validate(kind, r)
+	if kind == Project.Kind.BRIDGE and not err.is_empty() and colony.validate(Project.Kind.PIER, r).is_empty():
+		err = ""
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
@@ -417,8 +427,12 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	var r := world_view.structures.preview
 	if r.size == Vector2i.ZERO:
 		return
-	var kind := Project.Kind.ROOM if mode == Hud.Mode.ROOM else Project.Kind.TUNNEL
+	var kind := _mode_kind()
 	var err := colony.validate(kind, r)
+	if kind == Project.Kind.BRIDGE and not err.is_empty() and colony.validate(Project.Kind.PIER, r).is_empty():
+		# От берега в воду — это пристань.
+		kind = Project.Kind.PIER
+		err = ""
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		_clear_preview()
@@ -430,10 +444,34 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_show_pending()
 
 
+func _mode_kind() -> int:
+	match mode:
+		Hud.Mode.ROOM:
+			return Project.Kind.ROOM
+		Hud.Mode.BRIDGE:
+			return Project.Kind.BRIDGE
+	return Project.Kind.TUNNEL
+
+
 func _show_pending() -> void:
 	var r := _pending
 	var kind := _pending_kind
 	var controls := [_workers_stepper(_pending_workers, func(v: int) -> void: _pending_workers = v)]
+	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
+		var opts := []
+		var kinds := []
+		for k in [Project.Kind.BRIDGE, Project.Kind.PIER]:
+			if colony.validate(k, r).is_empty():
+				opts.append(Project.kind_name(k))
+				kinds.append(k)
+		if kinds.size() > 1:
+			controls.push_front({
+				"label": "Постройка:", "value": kinds.find(kind), "min": 0, "max": kinds.size() - 1,
+				"options": opts,
+				"changed": func(v: int) -> void:
+					_pending_kind = kinds[v]
+					hud.update_info_text(_pending_text()),
+			})
 	if kind == Project.Kind.ROOM:
 		var mats := colony.available_materials()
 		var names: Array = mats.map(func(k: String) -> String: return Project.MATERIALS[k][0])
@@ -468,6 +506,15 @@ func _pending_text() -> String:
 	if kind == Project.Kind.TUNNEL:
 		var lanes := Colony.tunnel_lanes(r)
 		lines.append("Пропускная способность: %d %s" % [lanes, "поток" if lanes == 1 else "потока"])
+	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
+		var tmp := Project.new()
+		tmp.kind = kind
+		tmp.rect = r
+		var lake := world.gen.lake_at(r.get_center().x)
+		lines.append("Рыбаков: до %d, улов каждые %d сек. Рыбы в озере: ~%d" % [
+			tmp.fish_slots(), int(tmp.fish_time()), int(colony.fish_in(lake))])
+		if kind == Project.Kind.BRIDGE:
+			lines.append("По мостику можно перейти на другой берег.")
 	elif colony.available_materials().size() == 1:
 		lines.append("Глина и камень станут доступны, когда вы их добудете.")
 	lines.append("Рекомендуется рабочих: %d" % Project.recommended_workers(kind, r, colony.adults()))
@@ -508,6 +555,18 @@ func _cell_info(c: Vector2i) -> String:
 		lines.append("Высота %s м над уровнем моря · %s" % [Fmt.int_spaced(-c.y), gen.zone_name(c.x, c.y)])
 	else:
 		lines.append("Глубина %s м · %s" % [Fmt.int_spaced(depth), gen.zone_name(c.x, c.y)])
+	if depth < 0 and world.get_mat(c.x, c.y) == Mat.WATER:
+		var lake := gen.lake_at(c.x)
+		lines.append("Озеро шириной ~%d м. Рыбы: ~%d из %d (рыбу не видно)" % [
+			int(lake.get("w", 0)) * 2, int(colony.fish_in(lake)), int(Colony.fish_max(lake))])
+		lines.append("Для рыбалки постройте мостик или пристань (режим «Мост»).")
+	var f := world.feature_at(c.x)
+	if depth < 0 and depth >= -8 and f != WorldGen.FEATURE_NONE:
+		match f:
+			WorldGen.FEATURE_TREE:
+				lines.append("Дерево: рост %d%%, даст дерева: %d" % [roundi(world.growth(c.x) * 100), colony.feature_yield(c.x)[1]])
+			WorldGen.FEATURE_BUSH:
+				lines.append("Куст: ягод %d из %d (отрастают)" % [floori(world.berries(c.x)), int(WorldData.BUSH_BERRIES)])
 	if depth >= 0:
 		if not world.is_revealed(c.x, c.y):
 			lines.append("Неизвестно. Узнаем, когда раскопаем соседнюю клетку.")

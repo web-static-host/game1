@@ -115,7 +115,7 @@ func _draw_unit(u: Unit, foot: Vector2) -> void:
 		hand = head + Vector2(f * (6 + a * 4), 6)
 		draw_circle(hand + Vector2(f * 3, -2), 3.5, Color(0.85, 0.2, 0.25))
 	elif working:
-		var a := -0.6 + sin(u.anim * (7.0 if u.task != Unit.Task.BUILD else 10.0)) * 0.9
+		var a := -0.6 + sin(u.anim * (7.0 if u.task != Unit.Task.BUILD else 10.0)) * (0.15 if u.task == Unit.Task.FISH else 0.9)
 		hand = shoulder + Vector2(f * cos(a), sin(a)) * 14.0
 		_draw_tool(u.task, hand, f, a)
 	elif climbing:
@@ -148,5 +148,10 @@ func _draw_tool(task: int, hand: Vector2, f: float, a: float) -> void:
 			draw_rect(Rect2(tip - Vector2(4, 4), Vector2(8, 8)), TOOL)
 		Unit.Task.FARM:
 			draw_circle(tip, 4, Color(0.4, 0.7, 0.9))
+		Unit.Task.FISH:
+			# Удочка: длинное удилище и леска в воду.
+			var end := hand + Vector2(f * 30, -18)
+			draw_line(hand, end, HANDLE, 2.0)
+			draw_line(end, end + Vector2(f * 4, 40 + sin(hand.x) * 2), Color(0.9, 0.9, 0.9, 0.7), 1.0)
 		Unit.Task.HARVEST:
 			draw_colored_polygon(PackedVector2Array([tip, tip + across * 8, tip + across * 6 - dir * 7]), TOOL)

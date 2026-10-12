@@ -51,6 +51,10 @@ func _process(_delta: float) -> bool:
 		_main._on_paint_end(Vector2.ZERO)
 	if _frame == 390:
 		_shot("confirm")
+		_main._clear_preview()
+		_prepare_lake()
+	if _frame == 430:
+		_shot("lake")
 		return true
 	return false
 
@@ -87,6 +91,48 @@ func _prepare_base() -> void:
 		colony.update(1.0)
 	_main.world_view.focus_cell(Vector2i(x0 + 2, s - 2))
 	_main.camera.zoom = Vector2(1.0, 1.0)
+
+
+## Озеро недалеко: мостик через него и пристань, рыбаки, молодые деревья.
+func _prepare_lake() -> void:
+	var colony: Colony = _main.colony
+	var w: WorldData = _main.world
+	var best := {}
+	for k in range(-6, 6):
+		var l := w.gen._lake_of_segment(k)
+		if l.is_empty() or int(l["w"]) > 14 or int(l["w"]) < 6:
+			continue
+		best = l
+		break
+	if best.is_empty():
+		return
+	var level: int = best["level"]
+	var xs := []
+	for x in range(int(best["cx"]) - int(best["w"]), int(best["cx"]) + int(best["w"])):
+		if w.gen.surface_y(x) > level:
+			xs.append(x)
+	if xs.size() < 3:
+		return
+	var x0: int = xs[0] - 1
+	var x1: int = xs[xs.size() - 1] + 1
+	colony.home = Vector2i(x0 - 6, w.gen.surface_y(x0 - 6))
+	for u in colony.units:
+		u.pos = Vector2(x0 - 4, w.gen.surface_y(x0 - 4) - 1)
+	colony.inventory = {"wood": 49, "stone": 40, "food": 10}
+	var br := colony.create_project(Project.Kind.BRIDGE, Rect2i(x0, level - 1, x1 - x0 + 1, 1))
+	colony.advance_offline(4000.0)
+	if br != null:
+		colony.demolish(br)
+	colony.inventory = {"wood": 49, "stone": 40, "food": 10}
+	colony.create_project(Project.Kind.PIER, Rect2i(x0, level - 1, mini(6, x1 - x0), 1))
+	colony.advance_offline(4000.0)
+	for i in 30:
+		colony.grow_plants(Colony.PLANT_TICK * 10)
+	colony.inventory["food"] = 0
+	for i in 60:
+		colony.update(1.0)
+	_main.world_view.focus_cell(Vector2i((x0 + x1) / 2, level - 3))
+	_main.camera.zoom = Vector2(0.9, 0.9)
 
 
 ## Открывает область (как будто там уже всё разведано) — для просмотра геологии.

@@ -36,6 +36,23 @@ const FARM_SHIFT := 60.0
 # Семьи.
 const SOCIAL_TICK := 20.0
 const PREGNANCY_TIME := 900.0
+# Растения и рыба.
+const PLANT_TICK := 20.0
+const OFFLINE_PLANT_TICK := 120.0
+## Сколько секунд дерево растёт от саженца до взрослого.
+const TREE_GROW_TIME := 5400.0
+## Секунд на одну новую ягоду.
+const BERRY_REGEN := 90.0
+## Шанс за тик появиться саженцу на свободной траве — на каждое дерево рядом.
+const TREE_SPREAD := 0.0015
+const BUSH_SPREAD := 0.0004
+const SPREAD_RADIUS := 5
+## Растения живут и распространяются в этой полосе вокруг базы.
+const PLANT_AREA := 160
+## Секунд на восстановление одной рыбы в озере.
+const FISH_REGEN := 60.0
+## Источник еды для задачи EAT: куст на поверхности.
+const EAT_BUSH := -1
 
 var world: WorldData
 var pathing: Pathing
@@ -65,12 +82,19 @@ var rng := RandomNumberGenerator.new()
 ## Клетка базы на поверхности: возле неё кучи ресурсов и отвал.
 var home := Vector2i.ZERO
 var _social_t := 0.0
+var _plant_t := 0.0
+## Запас рыбы в озёрах: id озера -> количество.
+var fish := {}
+## Настил мостов и пристаней: Vector2i -> id проекта.
+var deck := {}
+## Кусты в полосе вокруг базы (обновляется при росте растений).
+var _bushes: Array[int] = []
 var _full_warned := {}
 
 
 func _init(p_world: WorldData) -> void:
 	world = p_world
-	pathing = Pathing.new(world, interior, room_cells)
+	pathing = Pathing.new(world, interior, room_cells, deck)
 	physics = Physics.new(self)
 	rng.seed = world.gen.world_seed + 12345
 
@@ -80,6 +104,7 @@ func _init(p_world: WorldData) -> void:
 func start_new(home_x: int) -> void:
 	inventory = START_INVENTORY.duplicate()
 	home = Vector2i(home_x, world.gen.surface_y(home_x))
+	_refresh_bushes()
 	var sexes := [Unit.Sex.MALE, Unit.Sex.FEMALE, Unit.Sex.MALE, Unit.Sex.FEMALE]
 	sexes.append(rng.randi_range(0, 1))
 	for i in START_UNITS:
@@ -188,6 +213,8 @@ func validate(kind: int, r: Rect2i) -> String:
 				return "Пересекается с другой стройкой"
 			if world.is_revealed(x, y) and Mat.is_fluid(world.get_mat(x, y)):
 				return "В зоне стройки %s" % Mat.name_of(world.get_mat(x, y)).to_lower()
+	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
+		return _water_structure_error(kind, r)
 	if kind == Project.Kind.TUNNEL:
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
@@ -235,6 +262,28 @@ func support_needed(kind: int, r: Rect2i) -> int:
 		return 0
 	var span: Array = ceiling_span(r)
 	return maxi(0, r.size.x - span[0]) * r.size.y
+
+
+## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
+func _water_structure_error(kind: int, r: Rect2i) -> String:
+	var over_water := 0
+	for x in range(r.position.x, r.end.x):
+		if world.get_mat(x, r.position.y) != Mat.AIR:
+			return "Мост и пристань ставятся на воздух над водой"
+		var below := world.get_mat(x, r.position.y + 1)
+		if below == Mat.WATER:
+			over_water += 1
+		elif not Mat.is_solid(below):
+			return "Под мостом должна быть вода или берег — проведите ряд прямо над водой"
+	if over_water == 0:
+		return "Мост и пристань строятся над водой"
+	var left := Mat.is_solid(world.get_mat(r.position.x, r.position.y + 1))
+	var right := Mat.is_solid(world.get_mat(r.end.x - 1, r.position.y + 1))
+	if kind == Project.Kind.BRIDGE and not (left and right):
+		return "Мост должен опираться на оба берега"
+	if kind == Project.Kind.PIER and not (left or right):
+		return "Пристань должна начинаться на берегу"
+	return ""
 
 
 ## Наибольший пролёт без крепи для породы m на глубине клетки c.
@@ -418,6 +467,7 @@ func demolish(p: Project) -> bool:
 	for c in p.cells():
 		room_cells.erase(c)
 		interior.erase(c)
+		deck.erase(c)
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	for u in units:
 		if u.project_id == p.id:
@@ -530,6 +580,7 @@ func _finish_project(p: Project) -> void:
 	for c in p.cells():
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	_register_deck(p)
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
@@ -537,6 +588,14 @@ func _finish_project(p: Project) -> void:
 		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
 	else:
 		_log("Построено: %s" % p.title(), "good")
+
+
+func _register_deck(p: Project) -> void:
+	if not p.is_water_structure() or p.phase != Project.Phase.DONE:
+		return
+	for c in p.cells():
+		deck[c] = p.id
+		room_cells[c] = p.id
 
 
 func waiting_for_materials() -> bool:
@@ -708,18 +767,54 @@ func food_low() -> bool:
 
 # --- Сбор ресурсов на поверхности -------------------------------------------------
 
-func toggle_harvest(x: int) -> bool:
-	if world.feature_at(x) == WorldGen.FEATURE_NONE:
-		return false
+## Пометить объект на сбор. Пустая строка — успех, иначе причина отказа.
+func toggle_harvest(x: int) -> String:
+	var f := world.feature_at(x)
+	if f == WorldGen.FEATURE_NONE:
+		return "Здесь нечего собирать"
+	if f == WorldGen.FEATURE_TREE and world.growth(x) < 0.5 and not world.feature_marks.has(x):
+		return "Дерево ещё молодое — пусть подрастёт"
 	world.set_feature_mark(x, not world.feature_marks.has(x))
-	return true
+	return ""
+
+
+## Что даёт объект сейчас: [ресурс, количество] — дерево по росту, куст по ягодам.
+func feature_yield(x: int) -> Array:
+	var y: Array = world.gen.feature_yield(x)
+	match world.feature_at(x):
+		WorldGen.FEATURE_TREE:
+			return ["wood", maxi(1, roundi(y[1] * world.growth(x)))]
+		WorldGen.FEATURE_BUSH:
+			return ["food", floori(world.berries(x))]
+		WorldGen.FEATURE_BOULDER:
+			return y
+	return ["", 0]
+
+
+## Объект можно собирать прямо сейчас (у куста должны быть ягоды).
+func harvestable(x: int) -> bool:
+	var f := world.feature_at(x)
+	if f == WorldGen.FEATURE_NONE:
+		return false
+	return f != WorldGen.FEATURE_BUSH or world.berries(x) >= 1.0 or _in_clearing(x)
+
+
+func _in_clearing(x: int) -> bool:
+	for p in projects:
+		if p.phase == Project.Phase.DIG and p.clear_x.has(x):
+			return true
+	return false
 
 
 func _complete_harvest(x: int, u: Unit) -> void:
-	var y: Array = world.gen.feature_yield(x)
+	var y: Array = feature_yield(x)
 	var kind := world.feature_at(x)
 	harvest_progress.erase(x)
-	world.remove_feature(x)
+	if kind == WorldGen.FEATURE_BUSH and not _in_clearing(x):
+		# Куст остаётся — ягоды отрастут. Отметка сбора тоже остаётся.
+		world.set_berries(x, world.berries(x) - y[1])
+	else:
+		world.remove_feature(x)
 	if y[1] > 0:
 		_add(y[0], y[1])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
@@ -760,7 +855,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 	_note_discovery(m, c)
 	# Дерево или валун над выкопанной клеткой падают.
 	if c.y == world.gen.surface_y(c.x) and world.feature_at(c.x) != WorldGen.FEATURE_NONE:
-		var y: Array = world.gen.feature_yield(c.x)
+		var y: Array = feature_yield(c.x)
 		world.remove_feature(c.x)
 		_add(y[0], y[1])
 	var hazards := {}
@@ -871,6 +966,106 @@ func _tick_exposure(dt: float) -> void:
 			physics.check_area(p.cells())
 
 
+# --- Растения и рыба ---------------------------------------------------------------------
+
+func lake_of(p: Project) -> Dictionary:
+	return world.gen.lake_at(p.rect.get_center().x)
+
+
+static func fish_max(lake: Dictionary) -> float:
+	return clampf(float(lake.get("w", 4)) * 1.5, 6.0, 200.0)
+
+
+## Сколько рыбы в озере (непотревоженное озеро — полное).
+func fish_in(lake: Dictionary) -> float:
+	if lake.is_empty():
+		return 0.0
+	return float(fish.get(int(lake["id"]), fish_max(lake)))
+
+
+func fish_left(p: Project) -> float:
+	return fish_in(lake_of(p))
+
+
+func _catch_fish(p: Project, u: Unit) -> void:
+	var lake := lake_of(p)
+	var left := fish_in(lake)
+	if left < 1.0:
+		return
+	fish[int(lake["id"])] = left - 1.0
+	var got := _add("food", 2)
+	if u != null and got > 0 and left - 1.0 < 1.0:
+		_log("Рыба в озере кончилась — подождите, пока подрастёт новая", "warning")
+
+
+## Свободная трава, где может вырасти растение.
+func _grass_free(x: int) -> bool:
+	if absi(x - home.x) <= 8:
+		return false
+	var s := world.gen.surface_y(x)
+	if absi(world.gen.surface_y(x - 1) - s) > 1 or absi(world.gen.surface_y(x + 1) - s) > 1:
+		return false
+	if world.gen.water_level(x) < s or world.is_dug(x, s) or world.get_mat(x, s) != Mat.TOPSOIL:
+		return false
+	return project_at(Vector2i(x, s - 1)) == null and project_at(Vector2i(x, s)) == null
+
+
+func _refresh_bushes() -> void:
+	_bushes.clear()
+	for x in range(home.x - PLANT_AREA, home.x + PLANT_AREA + 1):
+		if world.feature_at(x) == WorldGen.FEATURE_BUSH:
+			_bushes.append(x)
+
+
+func _plant_tick(dt: float) -> void:
+	var tick := OFFLINE_PLANT_TICK if offline else PLANT_TICK
+	_plant_t += dt
+	while _plant_t >= tick:
+		_plant_t -= tick
+		grow_plants(tick)
+
+
+## Рост деревьев, ягоды, новые растения рядом со старыми, восстановление рыбы.
+func grow_plants(t: float) -> void:
+	var k := t / PLANT_TICK
+	var kinds := {}
+	for x in range(home.x - PLANT_AREA - SPREAD_RADIUS, home.x + PLANT_AREA + SPREAD_RADIUS + 1):
+		kinds[x] = world.feature_at(x)
+	_bushes.clear()
+	for x in range(home.x - PLANT_AREA, home.x + PLANT_AREA + 1):
+		var f: int = kinds[x]
+		if f == WorldGen.FEATURE_TREE:
+			if world.growth(x) < 1.0:
+				world.grow(x, t / TREE_GROW_TIME)
+		elif f == WorldGen.FEATURE_BUSH:
+			_bushes.append(x)
+			if world.berries(x) < WorldData.BUSH_BERRIES:
+				world.set_berries(x, minf(WorldData.BUSH_BERRIES, world.berries(x) + t / BERRY_REGEN))
+		elif f == WorldGen.FEATURE_NONE:
+			var trees := 0
+			var bushes := 0
+			for dx in range(-SPREAD_RADIUS, SPREAD_RADIUS + 1):
+				var n: int = kinds.get(x + dx, 0)
+				if n == WorldGen.FEATURE_TREE:
+					trees += 1
+				elif n == WorldGen.FEATURE_BUSH:
+					bushes += 1
+			if trees + bushes == 0:
+				continue
+			var roll := rng.randf()
+			if roll < trees * TREE_SPREAD * k:
+				if _grass_free(x):
+					world.sprout(x, WorldGen.FEATURE_TREE)
+					kinds[x] = WorldGen.FEATURE_TREE
+			elif roll < (trees * TREE_SPREAD + bushes * BUSH_SPREAD) * k:
+				if _grass_free(x):
+					world.sprout(x, WorldGen.FEATURE_BUSH)
+					kinds[x] = WorldGen.FEATURE_BUSH
+	for id in fish.keys():
+		var lake := world.gen._lake_of_segment(int(id))
+		fish[id] = minf(fish_max(lake), float(fish[id]) + t / FISH_REGEN)
+
+
 # --- Жизнь: потребности, взросление, семьи ---------------------------------------------
 
 func _life_tick(dt: float, offline: bool) -> void:
@@ -885,6 +1080,12 @@ func _life_tick(dt: float, offline: bool) -> void:
 			if u.satiety < HUNGRY + 5.0 and inventory.get("food", 0) >= portion:
 				inventory["food"] -= portion
 				u.satiety = minf(100.0, u.satiety + (MEAL_DINING if not rooms_of(RoomType.DINING).is_empty() else MEAL))
+			elif u.satiety < HUNGRY + 5.0:
+				for bx in _bushes:
+					if world.feature_at(bx) == WorldGen.FEATURE_BUSH and world.berries(bx) >= portion:
+						world.set_berries(bx, world.berries(bx) - portion)
+						u.satiety = minf(100.0, u.satiety + MEAL)
+						break
 			u.energy = maxf(u.energy, 60.0)
 		if u.child:
 			u.age += dt
@@ -960,6 +1161,7 @@ func update(dt: float) -> void:
 			if not p.paused:
 				_try_pay(p)
 		_tick_exposure(step)
+		_plant_tick(step)
 		_life_tick(step, false)
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
@@ -1096,9 +1298,20 @@ func _work(u: Unit, dt: float) -> void:
 			if u.work_t >= EAT_TIME:
 				# Растущий ребёнок съедает вдвое больше.
 				var portion := 2 if u.child else 1
-				if inventory.get("food", 0) >= portion:
+				if u.project_id == EAT_BUSH:
+					var b := world.berries(u.target.x)
+					var eaten := minf(b, portion)
+					world.set_berries(u.target.x, b - eaten)
+					u.satiety = minf(100.0, u.satiety + MEAL * eaten / portion)
+				elif inventory.get("food", 0) >= portion:
 					inventory["food"] -= portion
 					u.satiety = minf(100.0, u.satiety + (MEAL_DINING if u.project_id != 0 else MEAL))
+				_drop(u)
+		Unit.Task.FISH:
+			var fp := project_by_id(u.project_id)
+			u.work_t += rate
+			if u.work_t >= fp.fish_time():
+				_catch_fish(fp, u)
 				_drop(u)
 
 
@@ -1122,8 +1335,15 @@ func _task_valid(u: Unit) -> bool:
 				var hp := project_by_id(u.project_id)
 				if hp == null or hp.paused:
 					return false
-			return world.feature_marks.has(u.target.x) and world.feature_at(u.target.x) != WorldGen.FEATURE_NONE
-		Unit.Task.SLEEP, Unit.Task.EAT:
+			return world.feature_marks.has(u.target.x) and harvestable(u.target.x)
+		Unit.Task.EAT:
+			if u.project_id == EAT_BUSH:
+				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
+			return true
+		Unit.Task.FISH:
+			var fp := project_by_id(u.project_id)
+			return fp != null and not fp.paused and fp.phase == Project.Phase.DONE and fish_left(fp) >= 1.0
+		Unit.Task.SLEEP:
 			return true
 	return false
 
@@ -1148,6 +1368,9 @@ func _reserve_key(u: Unit) -> Variant:
 			return u.target
 		Unit.Task.HARVEST:
 			return "h%d" % u.target.x
+		Unit.Task.EAT:
+			if u.project_id == EAT_BUSH:
+				return "e%d" % u.target.x
 	return null
 
 
@@ -1160,14 +1383,14 @@ func _task_order(u: Unit) -> Array[String]:
 		Unit.Prof.BUILDER:
 			order.append("build")
 		Unit.Prof.GATHERER:
-			order.append("harvest")
+			order.append_array(["harvest", "fish"])
 		Unit.Prof.FARMER:
-			order.append("farm")
+			order.append_array(["farm", "fish"])
 	if food_low():
-		order.append("farm")
+		order.append_array(["farm", "fish"])
 	if waiting_for_materials() or food_low():
 		order.append("harvest")
-	order.append_array(["projects", "farm", "harvest"])
+	order.append_array(["projects", "farm", "fish", "harvest"])
 	return order
 
 
@@ -1179,9 +1402,13 @@ func _assign(u: Unit) -> bool:
 	if u.energy < TIRED:
 		_start_sleep(u, parents, dist)
 		return true
-	if u.satiety < HUNGRY and inventory.get("food", 0) > 0:
-		_start_eat(u, parents, dist)
-		return true
+	if u.satiety < HUNGRY:
+		if inventory.get("food", 0) > 0:
+			_start_eat(u, parents, dist)
+			return true
+		# На складе пусто — идёт искать ягоды.
+		if _start_eat_bush(u, parents, dist):
+			return true
 	if u.child:
 		return false
 	for kind in _task_order(u):
@@ -1192,9 +1419,12 @@ func _assign(u: Unit) -> bool:
 			"farm":
 				if _try_farm(u, parents, dist):
 					return true
+			"fish":
+				if _try_fish(u, parents, dist):
+					return true
 			"dig", "build", "projects":
 				for p in projects:
-					if p.paused or workers_on(p) >= p.workers:
+					if p.paused or workers_on(p) >= p.workers or p.phase == Project.Phase.DONE:
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_dig(u, p, parents, dist):
@@ -1249,6 +1479,43 @@ func _start_eat(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
 		_start(u, Unit.Task.EAT, best, best, room_id, parents)
 	else:
 		_start(u, Unit.Task.EAT, u.cell(), u.cell(), 0, parents)
+
+
+func _start_eat_bush(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var best_x = null
+	var best_stand = null
+	var best_d := 1 << 30
+	for x in _bushes:
+		if reserved.has("e%d" % x) or world.feature_at(x) != WorldGen.FEATURE_BUSH or world.berries(x) < 1.0:
+			continue
+		var base := Vector2i(x, world.gen.surface_y(x) - 1)
+		for stand in [base, base + Vector2i(-1, 0), base + Vector2i(1, 0)]:
+			if dist.has(stand) and dist[stand] < best_d:
+				best_d = dist[stand]
+				best_x = x
+				best_stand = stand
+	if best_x == null:
+		return false
+	_start(u, Unit.Task.EAT, Vector2i(best_x, world.gen.surface_y(best_x) - 1), best_stand, EAT_BUSH, parents)
+	return true
+
+
+func _try_fish(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	for p in projects:
+		if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused:
+			continue
+		if workers_on(p) >= p.fish_slots() or fish_left(p) < 1.0:
+			continue
+		var best = null
+		var best_d := 1 << 30
+		for c in p.cells():
+			if world.get_mat(c.x, c.y + 1) == Mat.WATER and dist.has(c) and dist[c] < best_d:
+				best_d = dist[c]
+				best = c
+		if best != null:
+			_start(u, Unit.Task.FISH, best + Vector2i(0, 1), best, p.id, parents)
+			return true
+	return false
 
 
 ## Откуда житель может работать с клеткой c: стоя рядом (ноги или голова у клетки).
@@ -1329,7 +1596,7 @@ func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary, only: Array = 
 	var best_d := 1 << 30
 	var want_food := food_low()
 	for x in (only if pid != 0 else world.feature_marks.keys()):
-		if reserved.has("h%d" % x):
+		if reserved.has("h%d" % x) or not harvestable(x):
 			continue
 		var base := Vector2i(x, world.gen.surface_y(x) - 1)
 		# При нехватке еды кусты с ягодами — в первую очередь.
@@ -1384,6 +1651,7 @@ func advance_offline(dt: float) -> int:
 		step = maxf(step, 0.0)
 		remaining -= step
 		_tick_exposure(step)
+		_plant_tick(step)
 		_life_tick(step, true)
 		for u in units:
 			if u.task != Unit.Task.NONE:
@@ -1412,6 +1680,13 @@ func advance_offline(dt: float) -> int:
 					while p.farm_progress >= RoomType.FARM_CYCLE:
 						p.farm_progress -= RoomType.FARM_CYCLE
 						_add("food", 1)
+				Unit.Task.FISH:
+					# У пристаней прогресс улова хранится в farm_progress.
+					var p: Project = j[3]
+					p.farm_progress += j[1] * step
+					while p.farm_progress >= p.fish_time() and fish_left(p) >= 1.0:
+						p.farm_progress -= p.fish_time()
+						_catch_fish(p, null)
 				Unit.Task.HARVEST:
 					var x: int = int(key.substr(1))
 					harvest_progress[x] = harvest_progress.get(x, 0.0) + j[1] * step
@@ -1431,7 +1706,7 @@ func _offline_left(key: Variant, job: Array) -> float:
 		Unit.Task.EQUIP:
 			var p: Project = job[3]
 			return RoomType.job_work(p) - p.equip_done
-		Unit.Task.FARM:
+		Unit.Task.FARM, Unit.Task.FISH:
 			return OFFLINE_STEP
 		Unit.Task.HARVEST:
 			var x: int = int(key.substr(1))
@@ -1453,6 +1728,13 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if not p.paused and taken.get(slot, 0) < RoomType.farm_slots(p):
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["f%d" % p.id, Unit.Task.FARM, p]
+			"fish":
+				for p in projects:
+					var slot := "w%d" % p.id
+					if p.is_water_structure() and p.phase == Project.Phase.DONE and not p.paused \
+							and taken.get(slot, 0) < p.fish_slots() and fish_left(p) >= 1.0:
+						taken[slot] = taken.get(slot, 0) + 1
+						return ["fish%d" % p.id, Unit.Task.FISH, p]
 			"dig", "build", "projects":
 				for p in projects:
 					var slot := "w%d" % p.id
@@ -1486,7 +1768,7 @@ func _offline_harvest(taken: Dictionary) -> Array:
 	var pick = null
 	for x in world.feature_marks:
 		var key := "h%d" % x
-		if taken.has(key):
+		if taken.has(key) or not harvestable(x):
 			continue
 		if pick == null or (want_food and world.feature_at(x) == WorldGen.FEATURE_BUSH):
 			pick = x
@@ -1552,6 +1834,8 @@ func to_dict() -> Dictionary:
 		"next_unit_id": next_unit_id,
 		"social_t": _social_t,
 		"home": [home.x, home.y],
+		"plant_t": _plant_t,
+		"fish": fish,
 	}
 
 
@@ -1577,10 +1861,16 @@ func load_dict(d: Dictionary) -> void:
 		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			for c in p.cells():
 				interior[c] = p.id
+		_register_deck(p)
 	for ud in d.get("units", []):
 		units.append(Unit.from_dict(ud))
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	_social_t = float(d.get("social_t", 0.0))
+	_plant_t = float(d.get("plant_t", 0.0))
+	var fd: Dictionary = d.get("fish", {})
+	for k in fd:
+		fish[int(k)] = float(fd[k])
 	var h: Array = d.get("home", [0, world.gen.surface_y(0)])
 	home = Vector2i(int(h[0]), int(h[1]))
+	_refresh_bushes()

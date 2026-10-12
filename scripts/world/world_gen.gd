@@ -100,6 +100,8 @@ func feature_at(x: int) -> int:
 	var s := surface_y(x)
 	if absi(surface_y(x - 1) - s) > 1 or absi(surface_y(x + 1) - s) > 1:
 		return FEATURE_NONE
+	if water_level(x) < s:
+		return FEATURE_NONE
 	var h := hash01(x, 7, world_seed + 11)
 	if h < 0.12:
 		return FEATURE_TREE
@@ -122,7 +124,7 @@ func feature_yield(x: int) -> Array:
 		FEATURE_BOULDER:
 			return ["stone", 3 + int(hash01(x, 13, world_seed) * 4.0)]
 		FEATURE_BUSH:
-			return ["food", 3 + int(hash01(x, 14, world_seed) * 3.0)]
+			return ["food", 6]
 	return ["", 0]
 
 
@@ -132,9 +134,70 @@ func tint(x: int, y: int) -> float:
 
 
 ## y первой твёрдой клетки в столбце x.
-func surface_y(x: int) -> int:
+func _base_surface(x: int) -> int:
 	var h := _n_surface.get_noise_1d(x) * 45.0 + _n_hills.get_noise_1d(x) * 5.0
 	return int(round(-h))
+
+
+## y первой твёрдой клетки в столбце x (у озера — его дно).
+func surface_y(x: int) -> int:
+	var b := _base_surface(x)
+	var l := lake_at(x)
+	if l.is_empty():
+		return b
+	var t := float(x - int(l["cx"])) / float(l["w"])
+	return b + int(round(float(l["depth"]) * (1.0 - t * t)))
+
+
+# --- Водоёмы --------------------------------------------------------------------
+
+## Мир разбит на отрезки; в отрезке может быть одно озеро: лужа, пруд или огромное.
+const LAKE_SEGMENT := 400
+## Возле стартовой базы озёр нет, чтобы не отрезать её водой.
+const LAKE_HOME_CLEAR := 60
+var _lakes := {}
+
+
+func _lake_of_segment(k: int) -> Dictionary:
+	if _lakes.has(k):
+		return _lakes[k]
+	var d := {}
+	var s := world_seed + 31
+	if hash01(k, 1, s) < 0.75:
+		var r := hash01(k, 2, s)
+		var w: int
+		var depth: int
+		if r < 0.55:
+			w = 4 + int(hash01(k, 3, s) * 8.0)
+			depth = 2 + int(hash01(k, 4, s) * 3.0)
+		elif r < 0.88:
+			w = 15 + int(hash01(k, 3, s) * 25.0)
+			depth = 4 + int(hash01(k, 4, s) * 6.0)
+		else:
+			w = 60 + int(hash01(k, 3, s) * 90.0)
+			depth = 10 + int(hash01(k, 4, s) * 20.0)
+		var cx := k * LAKE_SEGMENT + int(hash01(k, 5, s) * LAKE_SEGMENT)
+		if absi(cx) - w > LAKE_HOME_CLEAR:
+			var level := maxi(_base_surface(cx - w), _base_surface(cx + w))
+			d = {"id": k, "cx": cx, "w": w, "depth": depth, "level": level}
+	_lakes[k] = d
+	return d
+
+
+## Озеро, которому принадлежит столбец x (или пустой словарь).
+func lake_at(x: int) -> Dictionary:
+	var k := floori(float(x) / LAKE_SEGMENT)
+	for kk in [k, k - 1, k + 1]:
+		var d := _lake_of_segment(kk)
+		if not d.is_empty() and absi(x - int(d["cx"])) < int(d["w"]):
+			return d
+	return {}
+
+
+## y верхней клетки воды в столбце (вода — от неё до дна), иначе очень большое число.
+func water_level(x: int) -> int:
+	var l := lake_at(x)
+	return int(l["level"]) if not l.is_empty() else (1 << 30)
 
 
 ## Сглаженная линия поверхности (для отрисовки): ломаная через центры столбцов.
@@ -161,6 +224,8 @@ func _water_table(x: int, surf: int) -> int:
 ## Материал клетки (без учёта действий игрока).
 func material_at(x: int, y: int) -> int:
 	var surf := surface_y(x)
+	if y < surf:
+		return Mat.WATER if y >= water_level(x) else Mat.AIR
 	return _cell(x, y, surf, _soil_depth(x), sed_base(x), _kimberlite_column(x), _water_table(x, surf))
 
 
@@ -172,6 +237,9 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 	var d := y - surf
 	if d < 0:
 		return Mat.AIR
+	if d < 2 and water_level(x) < surf:
+		# Дно озера — ил: песок и глина.
+		return Mat.SAND if hash01(x, y, world_seed + 8) < 0.5 else Mat.CLAY
 	if d < soil:
 		return Mat.TOPSOIL
 	if d < SUBSOIL_BASE + soil * 2:
@@ -307,7 +375,8 @@ func generate_chunk(cx: int, cy: int) -> ChunkData:
 		var surf := surface_y(x)
 		var surf_l := surface_y(x - 1)
 		var surf_r := surface_y(x + 1)
-		if y0 + SIZE <= surf:
+		var wl := water_level(x)
+		if y0 + SIZE <= surf and y0 + SIZE <= wl:
 			# Весь столбец — открытое небо.
 			for ly in SIZE:
 				flags[ChunkData.idx(lx, ly)] = ChunkData.F_REVEALED
@@ -321,6 +390,8 @@ func generate_chunk(cx: int, cy: int) -> ChunkData:
 			var i := ChunkData.idx(lx, ly)
 			if y < surf:
 				flags[i] = ChunkData.F_REVEALED
+				if y >= wl:
+					mat[i] = Mat.WATER
 				continue
 			var m := _cell(x, y, surf, soil, sed, kimb, wt)
 			mat[i] = m

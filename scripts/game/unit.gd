@@ -4,7 +4,7 @@ extends RefCounted
 
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL }
-enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP }
+enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH }
 enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
@@ -12,7 +12,7 @@ const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий",
 const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Наталья", "Татьяна", "Ирина", "Светлана", "Дарья", "Вера",
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма"}
-const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату"]
+const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит"]
 const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер"]
 ## Сколько секунд длится детство.
 const CHILD_TIME := 1800.0
@@ -84,6 +84,8 @@ static func skill_for(t: int) -> String:
 			return "farm"
 		Task.EQUIP:
 			return "build"
+		Task.FISH:
+			return "gather"
 	return ""
 
 
