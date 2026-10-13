@@ -93,6 +93,23 @@ func _process(_delta: float) -> bool:
 		_main._show_science()
 	if _frame == 490:
 		_shot("science")
+		_main.hud.hide_info()
+		for pr in _main.colony.projects:
+			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.FARM:
+				_main.colony.assign_work(_main.colony.units[0], pr)
+				_main._select(null, pr)
+				break
+	if _frame == 500:
+		_shot("farm_panel")
+		for pr in _main.colony.projects:
+			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.FARM:
+				_main._pick_worker(pr)
+				break
+	if _frame == 510:
+		_shot("pick_worker")
+		_main._pick_partner(_main.colony.units[1])
+	if _frame == 520:
+		_shot("pick_partner")
 		return true
 	return false
 

@@ -169,6 +169,46 @@ static func mutate(g: Dictionary, rng: RandomNumberGenerator, kind := "") -> voi
 	g["mutations"].append(kind)
 
 
+# --- Сохранение ----------------------------------------------------------------------
+
+const INT_GENES := ["shape", "eyes", "fingers", "size", "pattern", "hair_color"]
+
+
+## Геном для JSON: цвета — массивами чисел.
+static func to_save(g: Dictionary) -> Dictionary:
+	var d := g.duplicate(true)
+	var cols: Array = []
+	for c: Color in g["color"]:
+		cols.append([c.r, c.g, c.b])
+	d["color"] = cols
+	return d
+
+
+## Геном из JSON: цвета обратно в Color, числа — целые, недостающие гены — по умолчанию.
+static func from_save(d: Dictionary) -> Dictionary:
+	var g := d.duplicate(true)
+	var cols: Array = []
+	for c in d.get("color", [[1, 0, 0], [1, 0, 0]]):
+		cols.append(Color(float(c[0]), float(c[1]), float(c[2])))
+	g["color"] = cols
+	for k in INT_GENES:
+		var a: Array = d.get(k, [0, 0] if k != "fingers" else [4, 4])
+		g[k] = [int(a[0]), int(a[1])]
+	for k in ["shape_pick", "eyes_pick", "size_pick"]:
+		g[k] = int(d.get(k, 0))
+	for k in DOMINANT + RECESSIVE:
+		var a: Array = d.get(k, [false, false])
+		g[k] = [bool(a[0]), bool(a[1])]
+	g["color_mix"] = float(d.get("color_mix", 0.5))
+	g["female"] = bool(d.get("female", false))
+	g["personality"] = str(d.get("personality", ""))
+	var muts: Array = []
+	for m in d.get("mutations", []):
+		muts.append(str(m))
+	g["mutations"] = muts
+	return g
+
+
 # --- Что видно ----------------------------------------------------------------------
 
 static func color_of(g: Dictionary) -> Color:

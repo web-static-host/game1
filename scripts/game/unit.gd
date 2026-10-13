@@ -28,8 +28,19 @@ var sex := Sex.MALE
 var pos := Vector2.ZERO
 ## Опыт навыков в секундах работы.
 var skills := {"dig": 0.0, "build": 0.0, "gather": 0.0, "farm": 0.0, "science": 0.0}
-## Внешность (детерминирована от id).
+## Внешность (устарело — теперь внешность из генома).
 var look := 0.0
+## Гены (см. Genetics), характеристики и особые умения из них.
+var genome := {}
+var stats := {}
+var abil := {}
+## Родители (имена — на случай, если их уже нет).
+var mother_id := 0
+var father_id := 0
+var mother_name := ""
+var father_name := ""
+## Место работы: id комнаты или пристани (0 — разнорабочий).
+var workplace := 0
 ## Потребности 0..100.
 var energy := 100.0
 var satiety := 100.0
@@ -74,6 +85,25 @@ var retry := 0.0
 var idle_fails := 0
 var facing := 1
 var anim := 0.0
+
+
+func set_genome(g: Dictionary) -> void:
+	genome = g
+	stats = Genetics.stats(g)
+	abil = Genetics.abilities(g)
+	sex = Sex.FEMALE if g.get("female", false) else Sex.MALE
+
+
+## Характеристика (1.0 = 100%).
+func stat(key: String) -> float:
+	return stats.get(key, 1.0)
+
+
+## Умение: множитель (work, dig, build, repair, deep_mining) или флаг (остальные).
+func ability(key: String) -> Variant:
+	if abil.has(key):
+		return abil[key]
+	return 1.0 if key in ["work", "dig", "build", "repair", "deep_mining"] else false
 
 
 func cell() -> Vector2i:
@@ -176,7 +206,9 @@ func to_dict() -> Dictionary:
 		"id": id, "name": name, "sex": sex, "pos": [pos.x, pos.y], "skills": skills, "look": look,
 		"energy": energy, "satiety": satiety, "profession": profession, "child": child, "age": age,
 		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index,
-		"health": health,
+		"health": health, "genome": Genetics.to_save(genome) if not genome.is_empty() else {},
+		"mother_id": mother_id, "father_id": father_id, "mother_name": mother_name, "father_name": father_name,
+		"workplace": workplace,
 	}
 
 
@@ -201,4 +233,12 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.bed_room = int(d.get("bed_room", 0))
 	u.bed_index = int(d.get("bed_index", 0))
 	u.health = float(d.get("health", 100.0))
+	var g: Dictionary = d.get("genome", {})
+	if not g.is_empty():
+		u.set_genome(Genetics.from_save(g))
+	u.mother_id = int(d.get("mother_id", 0))
+	u.father_id = int(d.get("father_id", 0))
+	u.mother_name = str(d.get("mother_name", ""))
+	u.father_name = str(d.get("father_name", ""))
+	u.workplace = int(d.get("workplace", 0))
 	return u

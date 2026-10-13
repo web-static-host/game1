@@ -468,16 +468,17 @@ func affect_unit(u: Unit, dt: float) -> void:
 	var c := u.cell()
 	var head := c + UP
 	if world.get_mat(head.x, head.y) == Mat.WATER:
-		u.health -= 6.0 * dt
+		if u.ability("underwater") != true:
+			u.health -= 6.0 * dt
 		_hurt_check(u, "утонул(а)")
 	var g := maxf(gas_at(c), gas_at(head))
-	if g >= GAS_EXPLOSIVE:
+	if g >= (GAS_ALARM if u.ability("flee_early") == true else GAS_EXPLOSIVE):
 		colony.flee_gas(u)
 	if g >= GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0):
 		u.health -= 3.0 * dt
 		_hurt_check(u, "задохнулся(лась) метаном")
 	var t := temperature(c)
-	var hot := HOT + (15.0 if colony.research.has("cooling") else 0.0)
+	var hot := HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
 	if t > hot:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")

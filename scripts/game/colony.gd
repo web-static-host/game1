@@ -167,6 +167,8 @@ var _full_warned := {}
 var game_time := 0.0
 ## Когда житель последний раз уходил из облака метана: id -> время игры.
 var _fled := {}
+## Знакомства: "id1,id2" -> сколько секунд провели рядом (с поправкой на общительность).
+var acquaint := {}
 ## Когда последний раз сообщали о газовой тревоге на стройке: id -> время игры.
 var _gas_logged := {}
 const GAS_LOG_EVERY := 300.0
@@ -210,31 +212,31 @@ func start_new(home_x: int) -> void:
 		u.satiety = rng.randf_range(80.0, 100.0)
 
 
-func _new_unit(sex: int, pos: Vector2) -> Unit:
+func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 	var u := Unit.new()
 	u.id = next_unit_id
 	next_unit_id += 1
-	u.sex = sex
-	u.name = _free_name(sex)
+	if genome.is_empty():
+		genome = Genetics.founder(rng)
+		genome["female"] = sex == Unit.Sex.FEMALE
+	u.set_genome(genome)
+	u.name = _free_name(u.sex)
 	u.look = rng.randf()
 	u.pos = pos
 	units.append(u)
 	return u
 
 
+## Своё имя из слогов, не занятое другими жителями.
 func _free_name(sex: int) -> String:
-	var names: Array = Unit.MALE_NAMES if sex == Unit.Sex.MALE else Unit.FEMALE_NAMES
 	var used := {}
 	for u in units:
 		used[u.name] = true
-	var free := names.filter(func(n: String) -> bool: return not used.has(n))
-	if not free.is_empty():
-		return free[rng.randi_range(0, free.size() - 1)]
-	var base: String = names[rng.randi_range(0, names.size() - 1)]
-	var k := 2
-	while used.has("%s %d" % [base, k]):
-		k += 1
-	return "%s %d" % [base, k]
+	for i in 50:
+		var n := NameGen.make(rng, sex == Unit.Sex.FEMALE)
+		if not used.has(n):
+			return n
+	return NameGen.make(rng, sex == Unit.Sex.FEMALE) + " %d" % next_unit_id
 
 
 func unit_by_id(uid: int) -> Unit:
@@ -1400,6 +1402,10 @@ func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 
 
 func injure(u: Unit, dmg: float, why: String) -> void:
+	if u.ability("collapse_proof") == true and (why.contains("обвал") or why.contains("обломк") or why.contains("засыпало") or why.contains("обрушен")):
+		_log("%s: %s — панцирь выдержал!" % [u.name, why], "good")
+		return
+	dmg /= maxf(0.3, u.stat("health"))
 	u.health -= dmg
 	if u.health > 0.0:
 		_log("%s: %s, здоровье %d%%" % [u.name, why, roundi(u.health)], "danger")
@@ -1418,6 +1424,10 @@ func _kill(u: Unit, why: String) -> void:
 	for o in units:
 		if o.partner_id == u.id:
 			o.partner_id = 0
+	for k in acquaint.keys():
+		var ids: PackedStringArray = k.split(",")
+		if int(ids[0]) == u.id or int(ids[1]) == u.id:
+			acquaint.erase(k)
 	_log("%s погиб(ла): %s" % [u.name, why], "danger")
 
 
@@ -1570,7 +1580,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			if not units.has(u):
 				continue
 		var asleep := u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK
-		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0))
+		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0) * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
 		if u.satiety <= 0.0:
 			u.health -= dt * 100.0 / STARVE_TIME
@@ -1586,7 +1596,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 		elif u.satiety > 30.0:
 			u.starving_warned = false
 		if u.task != Unit.Task.SLEEP:
-			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt)
+			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt / maxf(0.3, u.stat("stamina")))
 		var heal := (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0) * (2.0 if research.has("medicine") else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
@@ -1615,20 +1625,26 @@ func _life_tick(dt: float, offline: bool) -> void:
 
 
 func _social() -> void:
+	_meet(SOCIAL_TICK)
 	if beds_total() == 0:
 		return
-	# Пары складываются, когда есть где жить.
+	# Пары складываются только у знакомых — кто подолгу бывал рядом, — и когда есть где жить.
 	for f in units:
 		if f.child or f.sex != Unit.Sex.FEMALE or f.partner_id != 0 or f.mood() < 45.0:
 			continue
+		var best: Unit = null
+		var best_v := ACQUAINT_PAIR
 		for m in units:
 			if m.child or m.sex != Unit.Sex.MALE or m.partner_id != 0 or m.mood() < 45.0:
 				continue
-			if rng.randf() < 0.2:
-				f.partner_id = m.id
-				m.partner_id = f.id
-				_log("%s и %s стали парой" % [f.name, m.name], "good")
-			break
+			var v := acquaintance(f, m)
+			if v >= best_v:
+				best_v = v
+				best = m
+		if best != null and rng.randf() < 0.2:
+			f.partner_id = best.id
+			best.partner_id = f.id
+			_log("%s и %s стали парой" % [f.name, best.name], "good")
 	# Дети — только если есть свободная кровать и еда.
 	for f in units:
 		if f.child or f.sex != Unit.Sex.FEMALE or f.pregnancy >= 0.0 or f.partner_id == 0:
@@ -1640,7 +1656,7 @@ func _social() -> void:
 		var free_beds := beds_total() - units.size() - pregnant_count()
 		if free_beds <= 0 or food_value() < MEAL_GOAL * 2.0 or f.satiety < 40.0:
 			continue
-		if rng.randf() < 0.12:
+		if rng.randf() < 0.12 * sqrt(f.stat("fertility") * partner.stat("fertility")):
 			f.pregnancy = 0.0
 			_log("%s и %s ждут ребёнка!" % [f.name, partner.name], "good")
 
@@ -1648,11 +1664,18 @@ func _social() -> void:
 func _birth(mother: Unit) -> void:
 	mother.pregnancy = -1.0
 	var father := unit_by_id(mother.partner_id)
-	var baby := _new_unit(rng.randi_range(0, 1), mother.pos)
+	# Гены: по копии от мамы и от папы, иногда мутация.
+	var genome := Genetics.child(mother.genome, father.genome if father != null else mother.genome, rng)
+	var baby := _new_unit(Unit.Sex.MALE, mother.pos, genome)
 	baby.child = true
 	baby.age = 0.0
 	baby.satiety = 80.0
 	baby.energy = 80.0
+	baby.mother_id = mother.id
+	baby.mother_name = mother.name
+	if father != null:
+		baby.father_id = father.id
+		baby.father_name = father.name
 	# Немного таланта от родителей.
 	for k in baby.skills:
 		var parent_xp: float = mother.skills[k] + (father.skills[k] if father != null else 0.0)
@@ -1660,6 +1683,186 @@ func _birth(mother: Unit) -> void:
 	var who := "дочь" if baby.sex == Unit.Sex.FEMALE else "сын"
 	var parents := mother.name + (" и " + father.name if father != null else "")
 	_log("Родился ребёнок: %s (%s %s)" % [baby.name, who, parents], "good")
+	if Genetics.is_super(genome):
+		_log("Родился СВЕРХЮНИТ: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good")
+	elif Genetics.is_mutant(genome):
+		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info")
+
+
+# --- Места работы: игрок ставит конкретных жителей (как в Fallout Shelter) ---------------
+
+## Куда можно назначить жителя: ферма, лаборатория, печь, кузница, склад, пристань.
+func is_workplace(p: Project) -> bool:
+	if p == null or p.phase != Project.Phase.DONE:
+		return false
+	if p.is_water_structure():
+		return true
+	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.STORAGE]
+
+
+func work_slots(p: Project) -> int:
+	if p.is_water_structure():
+		return p.fish_slots()
+	return RoomType.farm_slots(p)
+
+
+func assigned_to(p: Project) -> Array[Unit]:
+	var out: Array[Unit] = []
+	for u in units:
+		if u.workplace == p.id:
+			out.append(u)
+	return out
+
+
+## Если в комнату назначены жители — работают там только они; иначе — кто свободен.
+func _closed_for(u: Unit, p: Project) -> bool:
+	if u.workplace == p.id:
+		return false
+	for o in units:
+		if o.workplace == p.id:
+			return true
+	return false
+
+
+func assign_work(u: Unit, p: Project) -> String:
+	if u.child:
+		return "Дети не работают"
+	if not is_workplace(p):
+		return "Сюда нельзя назначить"
+	if u.workplace == p.id:
+		return ""
+	if assigned_to(p).size() >= work_slots(p):
+		return "Все места заняты (%d)" % work_slots(p)
+	u.workplace = p.id
+	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
+		_drop(u)
+	_log("%s теперь работает: %s" % [u.name, workplace_name(p)], "info")
+	return ""
+
+
+func unassign_work(u: Unit) -> void:
+	if u.workplace == 0:
+		return
+	u.workplace = 0
+	if u.state == Unit.State.WORK and u.task in [Unit.Task.FARM, Unit.Task.RESEARCH, Unit.Task.CRAFT, Unit.Task.FISH]:
+		_drop(u)
+
+
+func workplace_name(p: Project) -> String:
+	if p == null:
+		return "разнорабочий"
+	if p.is_water_structure():
+		return p.title()
+	return RoomType.NAMES[p.purpose]
+
+
+## Какая характеристика и навык важны на этом месте.
+func work_stat(p: Project) -> String:
+	if p.is_water_structure():
+		return "agility"
+	match p.purpose:
+		RoomType.LAB:
+			return "intellect"
+		RoomType.FORGE, RoomType.STORAGE:
+			return "strength"
+	return "agility"
+
+
+func work_skill(p: Project) -> String:
+	if p.is_water_structure() or p.purpose == RoomType.STORAGE:
+		return "gather"
+	match p.purpose:
+		RoomType.FARM:
+			return "farm"
+		RoomType.LAB:
+			return "science"
+	return "build"
+
+
+## Насколько житель хорош на этом месте (1.0 — обычный).
+func suitability(u: Unit, p: Project) -> float:
+	return soft(u.stat(work_stat(p))) * u.speed(work_skill(p)) * float(u.ability("work"))
+
+
+## Работа на своём месте.
+func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var p := project_by_id(u.workplace)
+	if not is_workplace(p):
+		u.workplace = 0
+		return false
+	if p.paused:
+		return false
+	if p.is_water_structure():
+		return _fish_at(u, p, parents, dist)
+	match p.purpose:
+		RoomType.FARM:
+			return _room_work_at(u, p, Unit.Task.FARM, parents, dist)
+		RoomType.LAB:
+			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
+		RoomType.KILN, RoomType.FORGE:
+			return has_inputs(p) and _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
+		RoomType.STORAGE:
+			for k in storage_deficit(p):
+				if _try_gather(u, k, p, parents, dist):
+					return true
+	return false
+
+
+# --- Знакомства и пары -----------------------------------------------------------------
+
+## Сколько нужно побыть рядом (секунд игры), чтобы стать парой.
+const ACQUAINT_PAIR := 120.0
+const ACQUAINT_NEAR := 5
+
+
+static func _acq_key(a: int, b: int) -> String:
+	return "%d,%d" % [mini(a, b), maxi(a, b)]
+
+
+func acquaintance(a: Unit, b: Unit) -> float:
+	return acquaint.get(_acq_key(a.id, b.id), 0.0)
+
+
+## Знакомство растёт, когда жители рядом: живут, работают, едят вместе.
+## Общительные знакомятся быстрее.
+func _meet(dt: float) -> void:
+	var adults := units.filter(func(u: Unit) -> bool: return not u.child)
+	for i in adults.size():
+		var a: Unit = adults[i]
+		for j in range(i + 1, adults.size()):
+			var b: Unit = adults[j]
+			var d := a.cell() - b.cell()
+			if absi(d.x) <= ACQUAINT_NEAR and absi(d.y) <= 2:
+				var key := _acq_key(a.id, b.id)
+				acquaint[key] = acquaint.get(key, 0.0) + dt * (a.stat("charm") + b.stat("charm")) * 0.5
+
+
+## Лучшие знакомые жителя: [[житель, знакомство]].
+func best_friends(u: Unit, n := 3) -> Array:
+	var out := []
+	for o in units:
+		if o != u:
+			var v := acquaintance(u, o)
+			if v > 0.0:
+				out.append([o, v])
+	out.sort_custom(func(a: Array, b: Array) -> bool: return a[1] > b[1])
+	return out.slice(0, n)
+
+
+## Игрок сватает двоих: если оба взрослые, разного пола и свободны — пара сразу.
+func matchmake(a: Unit, b: Unit) -> String:
+	if a.child or b.child:
+		return "Дети не могут стать парой"
+	if a.sex == b.sex:
+		return "Нужны мужчина и женщина"
+	if a.partner_id != 0 or b.partner_id != 0:
+		return "Кто-то из них уже в паре"
+	a.partner_id = b.id
+	b.partner_id = a.id
+	var key := _acq_key(a.id, b.id)
+	acquaint[key] = maxf(acquaint.get(key, 0.0), ACQUAINT_PAIR)
+	_log("%s и %s сосватаны и стали парой" % [a.name, b.name], "good")
+	return ""
 
 
 # --- Онлайн-симуляция -------------------------------------------------------------
@@ -1892,6 +2095,7 @@ func _move(u: Unit, dt: float) -> void:
 			spd *= 0.8
 		if world.get_mat(u.cell().x, u.cell().y) == Mat.WATER:
 			spd *= 0.5 # плывут
+		spd *= u.stat("speed")
 		var dist := delta.length()
 		if dist <= spd * budget:
 			u.pos = next
@@ -1910,15 +2114,45 @@ func _move(u: Unit, dt: float) -> void:
 				u.facing = 1 if u.target.x > u.cell().x else -1
 
 
+## Смягчённая характеристика: +30% силы — это +18% к скорости работы.
+static func soft(v: float) -> float:
+	return 1.0 + (v - 1.0) * 0.6
+
+
+## Насколько быстро житель делает эту работу — от характеристик, умений и мутаций.
+## Без глаз — всё очень медленно, но руду в тёмной глубине добывает вдвое быстрее.
+func work_factor(u: Unit, task: int, c: Vector2i) -> float:
+	if u.genome.is_empty():
+		return 1.0
+	var work: float = u.ability("work")
+	match task:
+		Unit.Task.DIG:
+			var deep := c.y - world.gen.surface_y(c.x) > 10
+			if deep and Mat.is_ore(world.get_mat(c.x, c.y)):
+				work = maxf(work, 1.0) * u.ability("deep_mining")
+			return soft(u.stat("strength")) * u.ability("dig") * work
+		Unit.Task.BUILD, Unit.Task.EQUIP, Unit.Task.SUPPORT:
+			return soft(u.stat("agility")) * u.ability("build") * work
+		Unit.Task.REPAIR:
+			return soft(u.stat("agility")) * u.ability("repair") * work
+		Unit.Task.HARVEST:
+			return soft(u.stat("strength")) * work
+		Unit.Task.RESEARCH:
+			return soft(u.stat("intellect")) * work
+		Unit.Task.FARM, Unit.Task.CRAFT, Unit.Task.FISH:
+			return soft(u.stat("agility")) * work
+	return work
+
+
 func _work(u: Unit, dt: float) -> void:
 	var skill := Unit.skill_for(u.task)
 	var rate := dt
 	if not skill.is_empty():
 		var before := u.level(skill)
-		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0)
+		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning")
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
-		rate = dt * u.speed(skill) * u.need_factor()
+		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target)
 	match u.task:
 		Unit.Task.DIG:
 			var c := u.target
@@ -2124,6 +2358,8 @@ func _reserve_key(u: Unit) -> Variant:
 ## Порядок занятий жителя: сначала его профессия, затем общая очередь.
 func _task_order(u: Unit) -> Array[String]:
 	var order: Array[String] = []
+	if u.workplace != 0:
+		order.append("workplace")
 	match u.profession:
 		Unit.Prof.ANY:
 			order.append("storage")
@@ -2167,6 +2403,9 @@ func _assign(u: Unit) -> bool:
 		return false
 	for kind in _task_order(u):
 		match kind:
+			"workplace":
+				if _try_workplace(u, parents, dist):
+					return true
 			"harvest":
 				if _try_harvest(u, parents, dist):
 					return true
@@ -2323,23 +2562,29 @@ func shore_spots() -> Array[Vector2i]:
 	return out
 
 
+func _fish_at(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused:
+		return false
+	if workers_on(p) >= p.fish_slots() or fish_left(p) < 1.0:
+		return false
+	var best = null
+	var best_d := 1 << 30
+	for c in p.cells():
+		if world.get_mat(c.x, c.y + 1) == Mat.WATER and dist.has(c) and dist[c] < best_d:
+			best_d = dist[c]
+			best = c
+	if best != null:
+		_start(u, Unit.Task.FISH, best + Vector2i(0, 1), best, p.id, parents)
+		return true
+	return false
+
+
 func _try_fish(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	# Быстрее всего — с пристани, потом с мостика, медленнее всего — с берега.
 	var structures := projects.filter(func(q: Project) -> bool: return q.is_water_structure())
 	structures.sort_custom(func(a: Project, b: Project) -> bool: return a.fish_time() < b.fish_time())
 	for p: Project in structures:
-		if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused:
-			continue
-		if workers_on(p) >= p.fish_slots() or fish_left(p) < 1.0:
-			continue
-		var best = null
-		var best_d := 1 << 30
-		for c in p.cells():
-			if world.get_mat(c.x, c.y + 1) == Mat.WATER and dist.has(c) and dist[c] < best_d:
-				best_d = dist[c]
-				best = c
-		if best != null:
-			_start(u, Unit.Task.FISH, best + Vector2i(0, 1), best, p.id, parents)
+		if not _closed_for(u, p) and _fish_at(u, p, parents, dist):
 			return true
 	for spot in shore_spots():
 		if reserved.has("f%d,%d" % [spot.x, spot.y]) or not dist.has(spot):
@@ -2475,20 +2720,28 @@ func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 ## Работа на месте в комнате: ферма, мастерская, лаборатория.
 func _try_room_work(u: Unit, purpose: int, task: int, parents: Dictionary, dist: Dictionary) -> bool:
 	for p in rooms_of(purpose):
+		if _closed_for(u, p):
+			continue
 		if task == Unit.Task.CRAFT and not has_inputs(p):
 			continue
-		if p.paused or workers_on(p) >= RoomType.farm_slots(p):
-			continue
-		var best = null
-		var best_d := 1 << 30
-		for x in range(RoomType.floor_start(p), p.rect.end.x):
-			var c := Vector2i(x, p.rect.end.y - 1)
-			if dist.has(c) and dist[c] < best_d:
-				best_d = dist[c]
-				best = c
-		if best != null:
-			_start(u, task, best, best, p.id, parents)
+		if _room_work_at(u, p, task, parents, dist):
 			return true
+	return false
+
+
+func _room_work_at(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dictionary) -> bool:
+	if p.paused or workers_on(p) >= RoomType.farm_slots(p):
+		return false
+	var best = null
+	var best_d := 1 << 30
+	for x in range(RoomType.floor_start(p), p.rect.end.x):
+		var c := Vector2i(x, p.rect.end.y - 1)
+		if dist.has(c) and dist[c] < best_d:
+			best_d = dist[c]
+			best = c
+	if best != null:
+		_start(u, task, best, best, p.id, parents)
+		return true
 	return false
 
 
@@ -2864,7 +3117,7 @@ func default_targets() -> Dictionary:
 
 func _try_storage(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	for room in rooms_of(RoomType.STORAGE):
-		if room.paused or room.gatherers <= 0 or gatherers_on(room) >= room.gatherers:
+		if room.paused or room.gatherers <= 0 or gatherers_on(room) >= room.gatherers or _closed_for(u, room):
 			continue
 		for k in storage_deficit(room):
 			if _try_gather(u, k, room, parents, dist):
@@ -3681,6 +3934,7 @@ func to_dict() -> Dictionary:
 		"next_project_id": next_project_id,
 		"next_unit_id": next_unit_id,
 		"social_t": _social_t,
+		"acquaint": acquaint,
 		"home": [home.x, home.y],
 		"plant_t": _plant_t,
 		"explored": [explored_min, explored_max, deepest_y, highest_y],
@@ -3725,10 +3979,17 @@ func load_dict(d: Dictionary) -> void:
 				interior[c] = p.id
 		_register_deck(p)
 	for ud in d.get("units", []):
-		units.append(Unit.from_dict(ud))
+		var u := Unit.from_dict(ud)
+		if u.genome.is_empty():
+			# Старое сохранение: жителям — гены основателей, пол прежний.
+			var g := Genetics.founder(rng)
+			g["female"] = u.sex == Unit.Sex.FEMALE
+			u.set_genome(g)
+		units.append(u)
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	_social_t = float(d.get("social_t", 0.0))
+	acquaint = d.get("acquaint", {}).duplicate()
 	_plant_t = float(d.get("plant_t", 0.0))
 	var ex: Array = d.get("explored", [])
 	var fd: Dictionary = d.get("fish", {})

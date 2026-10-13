@@ -37,6 +37,7 @@ func _initialize() -> void:
 	test_scouting()
 	test_tech_tree()
 	test_genetics()
+	test_residents()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -1284,6 +1285,67 @@ func test_genetics() -> void:
 	var melan := Genetics.founder(rng)
 	Genetics.mutate(melan, rng, "melanist")
 	check(Genetics.has(melan, "melanist") and Genetics.stats(melan)["cold"] > 1.3, "меланист — чёрный, не мёрзнет")
+
+
+## Жители: гены и имена при рождении, сохранение генов, места работы, знакомства, сватовство.
+func test_residents() -> void:
+	var colony := _new_colony(66)
+	colony.start_new(0)
+	var u := colony.units[0]
+	check(not u.genome.is_empty() and not u.stats.is_empty(), "у жителя есть гены и характеристики")
+	var names := {}
+	for o in colony.units:
+		names[o.name] = true
+	check(names.size() == colony.units.size(), "имена разные: %s" % ", ".join(names.keys()))
+	# Сохранение генов.
+	var data := SaveSystem.serialize(colony.world, colony, Vector2i.ZERO)
+	var c2 := Colony.new(WorldData.new(WorldGen.new(66)))
+	SaveSystem.apply(JSON.parse_string(JSON.stringify(data)), c2.world, c2)
+	var u2 := c2.unit_by_id(u.id)
+	check(u2 != null and Genetics.color_of(u2.genome).is_equal_approx(Genetics.color_of(u.genome))
+		and Genetics.shape_of(u2.genome) == Genetics.shape_of(u.genome), "гены сохраняются и загружаются")
+	# Рождение: гены от родителей.
+	var mom: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.FEMALE)[0]
+	var dad: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.MALE)[0]
+	mom.partner_id = dad.id
+	dad.partner_id = mom.id
+	colony._birth(mom)
+	var baby: Unit = colony.units[-1]
+	check(baby.mother_id == mom.id and baby.father_id == dad.id and not baby.genome.is_empty(), "ребёнок знает родителей, гены от них")
+	# Место работы.
+	var farm := Project.new()
+	farm.id = 990
+	farm.kind = Project.Kind.ROOM
+	farm.phase = Project.Phase.DONE
+	farm.purpose = RoomType.FARM
+	farm.rect = Rect2i(5, colony.world.gen.surface_y(5) - 3, 6, 3)
+	colony.projects.append(farm)
+	var worker := colony.units[2]
+	check(colony.assign_work(worker, farm).is_empty() and worker.workplace == farm.id, "житель назначен на ферму")
+	check(colony._closed_for(colony.units[3], farm) and not colony._closed_for(worker, farm), "на ферме работают только назначенные")
+	check(not colony.assign_work(baby, farm).is_empty(), "детей не назначить")
+	colony.unassign_work(worker)
+	check(worker.workplace == 0 and not colony._closed_for(colony.units[3], farm), "снят — ферма снова открыта всем")
+	check(colony.suitability(worker, farm) > 0.0, "подсказка, насколько подходит")
+	colony.projects.erase(farm)
+	# Знакомство: рядом — растёт.
+	var a := colony.units[0]
+	var b := colony.units[1]
+	var far := colony.units[3]
+	colony.acquaint.clear()
+	a.pos = Vector2(0, 0)
+	b.pos = Vector2(2, 0)
+	far.pos = Vector2(40, 0)
+	colony._meet(30.0)
+	check(colony.acquaintance(a, b) > 0.0, "рядом — знакомятся")
+	check(colony.acquaintance(a, far) == 0.0, "далеко — не знакомятся")
+	# Сватовство.
+	for o in colony.units:
+		o.partner_id = 0
+	var f: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.FEMALE and not o.child)[0]
+	var m: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.MALE and not o.child)[0]
+	check(colony.matchmake(f, m).is_empty() and f.partner_id == m.id, "сватовство — пара сразу")
+	check(not colony.matchmake(f, m).is_empty(), "уже в паре — второй раз нельзя")
 
 
 func test_loads() -> void:

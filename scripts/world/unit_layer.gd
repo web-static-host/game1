@@ -1,72 +1,210 @@
 class_name UnitLayer
 extends Node2D
-## Рисует жителей: плоские векторные фигурки с анимацией ходьбы и работы.
+## Рисует жителей — мультяшных существ (CreatureArt) по их генам.
+## Каждого жителя в каждой позе собираем один раз и кэшируем (DrawRecorder), а дальше
+## только двигаем узел: так дёшево даже для десятков жителей на телефоне.
+## Поверх — значки нужд, имя выбранного, инструмент в руке, груз, «z» у спящих.
 
 const TILE := ChunkView.TILE
-const SKIN := [Color(0.96, 0.8, 0.66), Color(0.87, 0.68, 0.5), Color(0.72, 0.53, 0.38)]
-const HAIR := [Color(0.25, 0.17, 0.1), Color(0.55, 0.38, 0.2), Color(0.85, 0.7, 0.4), Color(0.12, 0.1, 0.1)]
-const SHIRT_M := [Color(0.25, 0.45, 0.75), Color(0.3, 0.55, 0.4), Color(0.6, 0.35, 0.25)]
-const SHIRT_F := [Color(0.75, 0.3, 0.45), Color(0.55, 0.35, 0.7), Color(0.85, 0.55, 0.2)]
-const PANTS := Color(0.22, 0.24, 0.3)
+## Ширина туловища взрослого жителя в пикселях.
+const BODY_W := 34.0
 const TOOL := Color(0.45, 0.45, 0.5)
 const HANDLE := Color(0.5, 0.35, 0.2)
+
+## Позы: сдвиг кистей [левая, правая] в долях ширины, шаг ноги, закрыты ли глаза.
+const POSES := {
+	"idle": {},
+	"blink": {"closed": true},
+	"walk0": {"arms": [Vector2(0.0, -0.06), Vector2(0.0, 0.05)], "leg": 1.0},
+	"walk1": {"arms": [Vector2.ZERO, Vector2.ZERO], "leg": 0.0},
+	"walk2": {"arms": [Vector2(0.0, 0.05), Vector2(0.0, -0.06)], "leg": -1.0},
+	"walk3": {"arms": [Vector2.ZERO, Vector2.ZERO], "leg": 0.0},
+	"work0": {"arms": [Vector2.ZERO, Vector2(-0.2, -0.75)]},
+	"work1": {"arms": [Vector2.ZERO, Vector2(0.05, -0.4)]},
+	"work2": {"arms": [Vector2.ZERO, Vector2(0.15, 0.0)]},
+	"work3": {"arms": [Vector2.ZERO, Vector2(0.05, -0.4)]},
+	"climb0": {"arms": [Vector2(-0.25, -0.95), Vector2(-0.25, -0.7)], "leg": 1.0},
+	"climb1": {"arms": [Vector2(-0.25, -0.7), Vector2(-0.25, -0.95)], "leg": -1.0},
+	"carry0": {"arms": [Vector2(-0.35, -0.95), Vector2(-0.35, -0.95)], "leg": 1.0},
+	"carry1": {"arms": [Vector2(-0.35, -0.95), Vector2(-0.35, -0.95)], "leg": 0.0},
+	"carry2": {"arms": [Vector2(-0.35, -0.95), Vector2(-0.35, -0.95)], "leg": -1.0},
+	"carry3": {"arms": [Vector2(-0.35, -0.95), Vector2(-0.35, -0.95)], "leg": 0.0},
+	"eat": {"arms": [Vector2.ZERO, Vector2(-0.4, -0.45)]},
+	"fish": {"arms": [Vector2.ZERO, Vector2(0.25, -0.35)]},
+	"swim": {"arms": [Vector2(0.2, -0.45), Vector2(0.2, -0.45)]},
+	"fall": {"arms": [Vector2(0.1, -0.9), Vector2(0.1, -0.9)]},
+	"sleep": {"closed": true},
+}
 
 var view: WorldView
 var colony: Colony
 var selected_unit := 0
+var _nodes := {}
+var _overlay: Node2D
+
+
+## Узел одного жителя: хранит записанные позы и рисует текущую.
+class CreatureSprite:
+	extends Node2D
+	var looks := {}
+	var pose := ""
+	var cache := {}
+
+	func set_pose(p: String) -> void:
+		if p != pose:
+			pose = p
+			queue_redraw()
+
+	func _draw() -> void:
+		if pose.is_empty():
+			return
+		if not cache.has(pose):
+			var g := looks.duplicate()
+			var key := pose.split("|")[0]
+			g["pose"] = POSES.get(key, {})
+			g["mood"] = -0.6 if pose.ends_with("|sad") else 1.0
+			cache[pose] = CreatureArt.record(BODY_W, g)
+		(cache[pose] as DrawRecorder).replay(self)
+
+
+func _ready() -> void:
+	_overlay = Node2D.new()
+	_overlay.z_index = 1
+	add_child(_overlay)
+	_overlay.draw.connect(_draw_overlay)
 
 
 func _process(_delta: float) -> void:
-	queue_redraw()
+	if colony == null:
+		return
+	var alive := {}
+	for u in colony.units:
+		alive[u.id] = true
+		var node: CreatureSprite = _nodes.get(u.id)
+		if node == null or not is_same(node.looks.get("_gen", null), u.genome):
+			if node != null:
+				node.queue_free()
+			node = CreatureSprite.new()
+			node.looks = Genetics.looks(u.genome) if not u.genome.is_empty() else {}
+			node.looks["_gen"] = u.genome
+			add_child(node)
+			move_child(_overlay, -1)
+			_nodes[u.id] = node
+		_place(u, node)
+	for id in _nodes.keys():
+		if not alive.has(id):
+			_nodes[id].queue_free()
+			_nodes.erase(id)
+	_overlay.queue_redraw()
 
 
-func _draw() -> void:
+## Точка ступней жителя в координатах слоя.
+func foot_of(u: Unit) -> Vector2:
+	var foot := view.cell_to_local(Vector2i.ZERO) + (u.pos + Vector2(0.5, 1.0)) * TILE
+	# На естественном рельефе ноги ставим на сглаженную линию поверхности.
+	var gen := colony.world.gen
+	var cx := roundi(u.pos.x)
+	var below := roundi(u.pos.y) + 1
+	if u.state != Unit.State.FALL and below == gen.surface_y(cx) and not colony.world.is_dug(cx, below) \
+			and not colony.interior.has(Vector2i(cx, below - 1)):
+		foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
+	return foot
+
+
+func _scale(u: Unit) -> float:
+	return lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
+
+
+func _place(u: Unit, node: CreatureSprite) -> void:
+	var foot := foot_of(u)
+	var sc := _scale(u)
+	var pose := _pose(u)
+	var sad := u.satiety < 25.0 or u.energy < 15.0 or u.health < 40.0
+	node.set_pose(pose + ("|sad" if sad else ""))
+	node.rotation = 0.0
+	node.position = foot
+	var bob := 0.0
+	if pose.begins_with("walk") or pose.begins_with("carry"):
+		bob = -absf(sin(u.anim * 9.0)) * 2.0
+	if pose == "sleep":
+		# Лежит на боку, серединой тела — там, где стоял.
+		var h := CreatureArt.height_of(BODY_W, node.looks) * sc
+		node.rotation = -PI * 0.5 * u.facing
+		node.position = foot + Vector2(u.facing * h * 0.5, -BODY_W * 0.3 * sc)
+	node.position.y += bob
+	node.scale = Vector2(sc * u.facing, sc)
+
+
+func _pose(u: Unit) -> String:
+	var frame := int(u.anim * 8.0) % 4
+	match u.state:
+		Unit.State.FALL:
+			return "fall"
+		Unit.State.SWIM:
+			return "swim"
+		Unit.State.MOVE:
+			var climbing := u.path_i < u.path.size() and u.path[u.path_i].x == roundi(u.pos.x) \
+				and absf(u.path[u.path_i].y - u.pos.y) > 0.01
+			if climbing:
+				return "climb%d" % (frame % 2)
+			if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
+				return "carry%d" % frame
+			return "walk%d" % frame
+		Unit.State.WORK:
+			match u.task:
+				Unit.Task.SLEEP:
+					return "sleep"
+				Unit.Task.EAT:
+					return "eat"
+				Unit.Task.FISH:
+					return "fish"
+				Unit.Task.GOTO, Unit.Task.NONE:
+					return "idle"
+				Unit.Task.FARM, Unit.Task.RESEARCH:
+					return "work%d" % (int(u.anim * 4.0) % 4)
+			return "work%d" % frame
+	return "blink" if fmod(u.anim + u.id * 0.37, 4.0) < 0.15 else "idle"
+
+
+func _draw_overlay() -> void:
 	if colony == null:
 		return
 	var font := ThemeDB.fallback_font
 	for u in colony.units:
-		var foot := view.cell_to_local(Vector2i.ZERO) + (u.pos + Vector2(0.5, 1.0)) * TILE
-		# На естественном рельефе ноги ставим на сглаженную линию поверхности.
-		var gen := colony.world.gen
-		var cx := roundi(u.pos.x)
-		var below := roundi(u.pos.y) + 1
-		if u.state != Unit.State.FALL and below == gen.surface_y(cx) and not colony.world.is_dug(cx, below) \
-				and not colony.interior.has(Vector2i(cx, below - 1)):
-			foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
-		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK:
-			_draw_sleeping(u, foot)
-		else:
-			var sc := lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
-			draw_set_transform(foot, 0.0, Vector2(sc, sc))
-			_draw_unit(u, Vector2.ZERO)
-			draw_set_transform(Vector2.ZERO)
-			if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
-				# Груз на плече.
-				ResIcon.draw(self, u.carry_key, foot + Vector2(-u.facing * 6, -50 * sc), 9)
-			_draw_needs(u, foot + Vector2(0, -70 * sc))
+		var node: CreatureSprite = _nodes.get(u.id)
+		if node == null:
+			continue
+		var foot := foot_of(u)
+		var sc := _scale(u)
+		var h := CreatureArt.height_of(BODY_W, node.looks) * sc
+		var pose := node.pose.split("|")[0]
+		if pose == "sleep":
+			var bob := sin(u.anim * 2.0) * 3.0
+			draw_string_on(font, Vector2(foot.x + 14, foot.y - 26 + bob), "z", 16, Color(1, 1, 1, 0.8))
+			draw_string_on(font, Vector2(foot.x + 22, foot.y - 36 + bob), "z", 20, Color(1, 1, 1, 0.6))
+		elif node.pose.begins_with("carry") and u.carry_amount > 0:
+			# Груз над головой в поднятых руках.
+			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, -h - 8 * sc), 10)
+		elif u.state == Unit.State.WORK and u.task != Unit.Task.EAT:
+			var g := node.looks.duplicate()
+			g["pose"] = POSES.get(pose, {})
+			var hand := CreatureArt.hand_pos(BODY_W, g, 1.0) * sc
+			hand.x *= u.facing
+			_draw_tool(u, foot + hand, float(u.facing))
+		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))
 		if u.id == selected_unit:
-			draw_arc(foot + Vector2(0, -26), 34, 0, TAU, 32, Color.WHITE, 2.0)
+			_overlay.draw_arc(foot + Vector2(0, -h * 0.5), maxf(26.0, h * 0.75), 0, TAU, 32, Color.WHITE, 2.0)
 			var w := font.get_string_size(u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
-			var p := foot + Vector2(-w * 0.5, -62)
-			draw_string_outline(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 5, Color(0, 0, 0, 0.85))
-			draw_string(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+			var p := foot + Vector2(-w * 0.5, -h - 26)
+			_overlay.draw_string_outline(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 5, Color(0, 0, 0, 0.85))
+			_overlay.draw_string(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
 
 
-## Спящий: лежит, над ним «z».
-func _draw_sleeping(u: Unit, foot: Vector2) -> void:
-	var k := int(u.look * 1000.0)
-	var shirts: Array = SHIRT_M if u.sex == Unit.Sex.MALE else SHIRT_F
-	var sc := lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
-	var y := foot.y - 22 * sc
-	draw_rect(Rect2(foot.x - 22 * sc, y, 36 * sc, 10 * sc), shirts[(k / 7) % shirts.size()])
-	draw_circle(Vector2(foot.x + 20 * sc, y + 4 * sc), 7 * sc, SKIN[k % SKIN.size()])
-	var font := ThemeDB.fallback_font
-	var bob := sin(u.anim * 2.0) * 3.0
-	draw_string(font, Vector2(foot.x + 18, y - 10 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.8))
-	draw_string(font, Vector2(foot.x + 26, y - 20 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.6))
+func draw_string_on(font: Font, p: Vector2, text: String, size: int, col: Color) -> void:
+	_overlay.draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 
-## Значки нужд над головой: голод (красный кружок) и усталость (синий).
+## Значки нужд над головой: голод (красный), усталость (синий), беременность, ранен.
 func _draw_needs(u: Unit, p: Vector2) -> void:
 	var icons: Array[Color] = []
 	if u.satiety < 25.0:
@@ -79,82 +217,27 @@ func _draw_needs(u: Unit, p: Vector2) -> void:
 		icons.append(Color(1.0, 1.0, 1.0))
 	for i in icons.size():
 		var c := p + Vector2((i - (icons.size() - 1) * 0.5) * 14, 0)
-		draw_circle(c, 6, Color(0, 0, 0, 0.5))
-		draw_circle(c, 4.5, icons[i])
+		_overlay.draw_circle(c, 6, Color(0, 0, 0, 0.5))
+		_overlay.draw_circle(c, 4.5, icons[i])
 
 
-func _draw_unit(u: Unit, foot: Vector2) -> void:
-	var k := int(u.look * 1000.0)
-	var skin: Color = SKIN[k % SKIN.size()]
-	var hair: Color = HAIR[(k / 3) % HAIR.size()]
-	var shirts: Array = SHIRT_M if u.sex == Unit.Sex.MALE else SHIRT_F
-	var shirt: Color = shirts[(k / 7) % shirts.size()]
-	var f := float(u.facing)
-	var walking := u.state == Unit.State.MOVE
-	var working := u.state == Unit.State.WORK
-	var swing := sin(u.anim * 9.0) if walking else 0.0
-	var climbing := walking and u.path_i < u.path.size() and u.path[u.path_i].x == roundi(u.pos.x) \
-		and absf(u.path[u.path_i].y - u.pos.y) > 0.01
-
-	# Ноги
-	var hip := foot + Vector2(0, -22)
-	draw_line(hip, foot + Vector2(-4 + swing * 6, 0), PANTS, 5.0)
-	draw_line(hip, foot + Vector2(4 - swing * 6, 0), PANTS, 5.0)
-	# Корпус
-	var body := PackedVector2Array([
-		hip + Vector2(-7, 2), hip + Vector2(7, 2), hip + Vector2(6, -22), hip + Vector2(-6, -22)])
-	if u.sex == Unit.Sex.FEMALE:
-		body = PackedVector2Array([
-			hip + Vector2(-9, 4), hip + Vector2(9, 4), hip + Vector2(6, -22), hip + Vector2(-6, -22)])
-	draw_colored_polygon(body, shirt)
-	var neck := hip + Vector2(0, -22)
-	var head := neck + Vector2(0, -9)
-	# Руки и инструмент
-	var shoulder := neck + Vector2(f * 3, 3)
-	var hand: Vector2
-	if working and u.task == Unit.Task.EAT:
-		# Подносит еду ко рту.
-		var a := sin(u.anim * 5.0) * 0.5
-		hand = head + Vector2(f * (6 + a * 4), 6)
-		draw_circle(hand + Vector2(f * 3, -2), 3.5, Color(0.85, 0.2, 0.25))
-	elif working:
-		var a := -0.6 + sin(u.anim * (7.0 if u.task != Unit.Task.BUILD else 10.0)) * (0.15 if u.task == Unit.Task.FISH else 0.9)
-		hand = shoulder + Vector2(f * cos(a), sin(a)) * 14.0
-		_draw_tool(u.task, hand, f, a)
-	elif climbing:
-		hand = shoulder + Vector2(f * 4, -12 + swing * 4)
-	else:
-		hand = shoulder + Vector2(-swing * 6 * f, 14)
-	draw_line(shoulder, hand, skin, 4.0)
-	# Голова
-	draw_circle(head, 8.0, skin)
-	if u.sex == Unit.Sex.FEMALE:
-		draw_circle(head + Vector2(-f * 3, -3), 8.0, hair)
-		draw_rect(Rect2(head + Vector2(-f * 8 - 3, -2), Vector2(6, 12)), hair)
-	else:
-		draw_circle(head + Vector2(-f * 2, -4), 6.5, hair)
-	draw_circle(head + Vector2(f * 4, -1), 1.4, Color(0.1, 0.1, 0.1))
-	# Каска у работающих под землёй
-	if working and u.task == Unit.Task.DIG:
-		draw_arc(head + Vector2(0, -2), 9.0, PI, TAU, 10, Color(1.0, 0.78, 0.15), 5.0)
-
-
-func _draw_tool(task: int, hand: Vector2, f: float, a: float) -> void:
+## Инструмент в правой руке: кирка, молоток, лейка, удочка, топор.
+func _draw_tool(u: Unit, hand: Vector2, f: float) -> void:
+	var a := -0.6 + sin(u.anim * 7.0) * 0.9
 	var dir := Vector2(f * cos(a - 1.2), sin(a - 1.2))
-	var tip := hand + dir * 14.0
-	draw_line(hand, tip, HANDLE, 3.0)
+	var tip := hand + dir * 12.0
 	var across := Vector2(-dir.y, dir.x)
-	match task:
+	match u.task:
 		Unit.Task.DIG:
-			draw_line(tip - across * 7, tip + across * 7 + dir * 2, TOOL, 3.0)
-		Unit.Task.BUILD, Unit.Task.EQUIP:
-			draw_rect(Rect2(tip - Vector2(4, 4), Vector2(8, 8)), TOOL)
-		Unit.Task.FARM:
-			draw_circle(tip, 4, Color(0.4, 0.7, 0.9))
-		Unit.Task.FISH:
-			# Удочка: длинное удилище и леска в воду.
-			var end := hand + Vector2(f * 30, -18)
-			draw_line(hand, end, HANDLE, 2.0)
-			draw_line(end, end + Vector2(f * 4, 40 + sin(hand.x) * 2), Color(0.9, 0.9, 0.9, 0.7), 1.0)
+			_overlay.draw_line(hand, tip, HANDLE, 3.0)
+			_overlay.draw_line(tip - across * 6, tip + across * 6 + dir * 2, TOOL, 3.0)
+		Unit.Task.BUILD, Unit.Task.EQUIP, Unit.Task.REPAIR, Unit.Task.SUPPORT:
+			_overlay.draw_line(hand, tip, HANDLE, 3.0)
+			_overlay.draw_rect(Rect2(tip - Vector2(4, 4), Vector2(8, 8)), TOOL)
 		Unit.Task.HARVEST:
-			draw_colored_polygon(PackedVector2Array([tip, tip + across * 8, tip + across * 6 - dir * 7]), TOOL)
+			_overlay.draw_line(hand, tip, HANDLE, 3.0)
+			_overlay.draw_colored_polygon(PackedVector2Array([tip, tip + across * 7, tip + across * 5 - dir * 6]), TOOL)
+		Unit.Task.FISH:
+			var end := hand + Vector2(f * 26, -16)
+			_overlay.draw_line(hand, end, HANDLE, 2.0)
+			_overlay.draw_line(end, end + Vector2(f * 4, 36 + sin(hand.x) * 2), Color(0.9, 0.9, 0.9, 0.7), 1.0)

@@ -11,7 +11,10 @@ extends RefCounted
 ##   super: bool — сверхюнит (цвет лого, сияние); mood: -1..1 — от грусти к радости;
 ##   мутации: glow — светится, gills — жабры, shell — панцирь, long_arms — длинные руки,
 ##   antennae — усики, horn — рог, size: 1 гигант / -1 кроха, albino — альбинос,
-##   pattern: 1 полосы / 2 пятна, melanist — чёрный.
+##   pattern: 1 полосы / 2 пятна, melanist — чёрный;
+##   pose: {"arms": [Vector2 левая, Vector2 правая] — сдвиг кистей в долях ширины,
+##          "leg": -1..1 — какая нога поднята (шаг), "closed": глаза закрыты}.
+## ci — CanvasItem или DrawRecorder (одинаковые методы рисования).
 
 ## TRIANGLE — перевёрнутый: широкий верх, острие внизу.
 enum Shape { TRIANGLE, SQUARE, ROUND }
@@ -23,7 +26,7 @@ const PUPIL := Color(0.13, 0.1, 0.18)
 
 
 ## Рисует жителя: at — точка на земле между ступнями, w — ширина туловища в пикселях.
-static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
+static func draw(ci, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
 	var col: Color = g.get("color", Color(0.9, 0.4, 0.3))
 	var shape: int = g.get("shape", Shape.TRIANGLE)
 	var is_super: bool = g.get("super", false)
@@ -69,14 +72,18 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	var parts: Array[PackedVector2Array] = [body]
 	var hands: Array[PackedVector2Array] = []
 	var fingers: int = g.get("fingers", 4)
-	var sway := sin(t * 2.0) * w * 0.02
+	var pose: Dictionary = g.get("pose", {})
+	var arms: Array = pose.get("arms", [Vector2.ZERO, Vector2.ZERO])
+	var step: float = pose.get("leg", 0.0)
+	var sway := sin(t * 2.0) * w * 0.02 if pose.is_empty() else 0.0
 	for sx in [-1.0, 1.0]:
-		var arm := _arm_parts(shape, w, h, base, top, sx, fingers, sway * sx, g.get("long_arms", false))
+		var off: Vector2 = arms[0 if sx < 0.0 else 1]
+		var arm := _arm_parts(shape, w, h, base, top, sx, fingers, sway * sx, g.get("long_arms", false), Vector2(off.x * sx, off.y) * w)
 		# Ладонь сглаживаем вместе с рукой — запястье без впадины; пальцы — потом.
 		parts.append(arm[0])
 		parts.append(arm[1])
 		hands.append_array(arm.slice(2))
-		parts.append_array(_leg_parts(shape, w, base, at, sx))
+		parts.append_array(_leg_parts(shape, w, base, at, sx, maxf(0.0, step * sx) * w * 0.08))
 	# Сильное сглаживание: плечи, подмышки и бёдра — плавные дуги без ступенек.
 	# Оно же заливает просвет между ногами — его вырезаем аркой.
 	var core := _union(parts)
@@ -139,7 +146,7 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 		_antennae(ci, Vector2(base.x, top), w, col, t)
 
 	var face_y := top + h * (0.36 if shape == Shape.TRIANGLE else 0.45)
-	_face(ci, Vector2(base.x, face_y), w, g.get("eyes", 1), g.get("mood", 1.0), col, t, iris, g.get("female", false))
+	_face(ci, Vector2(base.x, face_y), w, g.get("eyes", 1), g.get("mood", 1.0), col, t, iris, g.get("female", false), pose.get("closed", false))
 	if g.get("glow", false):
 		for i in 6:
 			var a := TAU * i / 6.0 + t * 0.5
@@ -147,6 +154,47 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 
 	if is_super:
 		_sparkles(ci, base + Vector2(0, -h * 0.5), w, t)
+
+
+## Записать жителя в позе: потом быстро повторять (DrawRecorder.replay).
+static func record(w: float, g: Dictionary, t := 1.0) -> DrawRecorder:
+	var rec := DrawRecorder.new()
+	draw(rec, Vector2.ZERO, w, g, t)
+	return rec
+
+
+## Где правая кисть (sx = 1) или левая (sx = -1) относительно ступней — для инструмента в руке.
+static func hand_pos(w: float, g: Dictionary, sx: float) -> Vector2:
+	var shape: int = g.get("shape", Shape.TRIANGLE)
+	match int(g.get("size", 0)):
+		1:
+			w *= 1.25
+		-1:
+			w *= 0.72
+	var leg := w * 0.2
+	var h := w * (0.95 if shape == Shape.TRIANGLE else 0.9)
+	var top := -leg - h
+	var p3: Vector2
+	if shape == Shape.TRIANGLE:
+		p3 = Vector2(sx * w * 0.64, top + h * 0.7)
+	else:
+		p3 = Vector2(sx * (w * (0.4 if shape == Shape.ROUND else 0.35) + w * 0.3), top + h * 0.78)
+	if g.get("long_arms", false):
+		p3 += Vector2(sx * w * 0.08, h * 0.32)
+	var arms: Array = g.get("pose", {}).get("arms", [Vector2.ZERO, Vector2.ZERO])
+	var off: Vector2 = arms[0 if sx < 0.0 else 1]
+	return p3 + Vector2(off.x * sx, off.y) * w
+
+
+## Высота жителя от ступней до макушки.
+static func height_of(w: float, g: Dictionary) -> float:
+	var shape: int = g.get("shape", Shape.TRIANGLE)
+	match int(g.get("size", 0)):
+		1:
+			w *= 1.25
+		-1:
+			w *= 0.72
+	return w * (0.2 + (0.95 if shape == Shape.TRIANGLE else 0.9))
 
 
 # --- Части тела ----------------------------------------------------------------------
@@ -169,7 +217,7 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 
 
 ## Рука идёт от верхнего угла, свисает вдоль бока и кончается кистью с пальцами.
-static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float, sx: float, fingers: int, sway: float, long := false) -> Array[PackedVector2Array]:
+static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float, sx: float, fingers: int, sway: float, long := false, off := Vector2.ZERO) -> Array[PackedVector2Array]:
 	var r0 := w * 0.1
 	var p0: Vector2
 	var p1: Vector2
@@ -189,7 +237,11 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 	if long:
 		# Длинные руки — почти до земли.
 		p3 += Vector2(sx * w * 0.08, h * 0.32)
+	p3 += off
 	var p2 := p3 + Vector2(sx * w * 0.03, -w * 0.26)
+	if p3.y < top + h * 0.2:
+		# Рука поднята: изгиб снизу, кисть над плечом.
+		p2 = p3 + Vector2(sx * w * 0.12, w * 0.22)
 	var pts := _bezier(p0, p1, p2, p3, 16)
 	var out: Array[PackedVector2Array] = [_tube(pts, r0, w * 0.078)]
 	out.append_array(_hand(p3, (p3 - pts[pts.size() - 3]).normalized(), w, fingers, sx))
@@ -225,7 +277,8 @@ static func _crotch(shape: int, w: float, base: Vector2, at: Vector2) -> PackedV
 	return pts
 
 
-static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: float) -> Array[PackedVector2Array]:
+static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: float, lift := 0.0) -> Array[PackedVector2Array]:
+	at = at - Vector2(0, lift)
 	var lx := base.x + sx * w * (0.11 if shape == Shape.TRIANGLE else 0.2)
 	var hip := Vector2(lx, base.y - w * (0.1 if shape == Shape.TRIANGLE else 0.05))
 	var ankle := Vector2(lx + sx * w * 0.02, at.y - w * 0.05)
@@ -263,12 +316,12 @@ static func eye_layout(c: Vector2, w: float, n: int) -> Array:
 	return [spots, er]
 
 
-static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, col: Color, t: float, iris := Color(0.28, 0.2, 0.32), female := false) -> void:
+static func _face(ci, c: Vector2, w: float, eyes: int, mood: float, col: Color, t: float, iris := Color(0.28, 0.2, 0.32), female := false, closed := false) -> void:
 	var layout := eye_layout(c, w, eyes)
 	var spots: Array[Vector2] = layout[0]
 	var er: float = layout[1]
 	var ring := col.darkened(0.55) if col.get_luminance() > 0.2 else Color(0.05, 0.04, 0.06)
-	var blink := fmod(t, 3.7) < 0.12
+	var blink := fmod(t, 3.7) < 0.12 or closed
 	var look := Vector2(sin(t * 0.7) * 0.25, 0.08)
 	for p in spots:
 		ci.draw_circle(p, er + w * 0.016, ring)
@@ -331,7 +384,7 @@ static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, 
 
 ## Волосы: пышная шевелюра своего цвета — объём над макушкой с вихрами, чёлка короче
 ## посередине, по бокам длинные пряди; светлые блики прядей и тень от чёлки на теле.
-static func _hair(ci: CanvasItem, body: PackedVector2Array, top: Vector2, w: float, h: float, col: Color) -> void:
+static func _hair(ci, body: PackedVector2Array, top: Vector2, w: float, h: float, col: Color) -> void:
 	var hw := 0.0
 	for p in body:
 		if p.y < top.y + w * 0.16:
@@ -373,7 +426,7 @@ static func _hair(ci: CanvasItem, body: PackedVector2Array, top: Vector2, w: flo
 
 
 ## Панцирь за спиной: выглядывает над макушкой и по бокам, с пластинами.
-static func _shell(ci: CanvasItem, body: PackedVector2Array, w: float, col: Color) -> void:
+static func _shell(ci, body: PackedVector2Array, w: float, col: Color) -> void:
 	var big := _largest(Geometry2D.offset_polygon(body, w * 0.09, Geometry2D.JOIN_ROUND))
 	if big.is_empty():
 		return
@@ -396,7 +449,7 @@ static func _shell(ci: CanvasItem, body: PackedVector2Array, w: float, col: Colo
 		y += w * 0.1
 
 
-static func _stripes(ci: CanvasItem, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
+static func _stripes(ci, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
 	for i in 4:
 		var y := top + h * (0.18 + i * 0.22)
 		var band := PackedVector2Array()
@@ -408,7 +461,7 @@ static func _stripes(ci: CanvasItem, body: PackedVector2Array, base: Vector2, to
 			ci.draw_colored_polygon(p, Color(col.darkened(0.4), 0.45))
 
 
-static func _spots(ci: CanvasItem, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
+static func _spots(ci, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
 	for k in [Vector3(-0.3, 0.25, 0.06), Vector3(0.28, 0.2, 0.05), Vector3(-0.18, 0.72, 0.07), Vector3(0.2, 0.68, 0.055),
 			Vector3(0.0, 0.88, 0.04), Vector3(-0.38, 0.5, 0.035), Vector3(0.36, 0.48, 0.04)]:
 		for p in Geometry2D.intersect_polygons(body, _circle(Vector2(base.x + k.x * w, top + k.y * h), k.z * w, 16)):
@@ -416,7 +469,7 @@ static func _spots(ci: CanvasItem, body: PackedVector2Array, base: Vector2, top:
 
 
 ## Жабры: три изогнутые щели на каждом боку.
-static func _gills(ci: CanvasItem, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
+static func _gills(ci, body: PackedVector2Array, base: Vector2, top: float, w: float, h: float, col: Color) -> void:
 	for sx in [-1.0, 1.0]:
 		for i in 3:
 			var c := Vector2(base.x + sx * w * 0.24, top + h * (0.52 + i * 0.09))
@@ -430,7 +483,7 @@ static func _gills(ci: CanvasItem, body: PackedVector2Array, base: Vector2, top:
 
 
 ## Рог: изогнутый конус на макушке с кольцами.
-static func _horn(ci: CanvasItem, top: Vector2, w: float) -> void:
+static func _horn(ci, top: Vector2, w: float) -> void:
 	var tip := top + Vector2(w * 0.04, -w * 0.24)
 	var pts := PackedVector2Array([top + Vector2(-w * 0.07, w * 0.04), top + Vector2(-w * 0.04, -w * 0.12), tip,
 		top + Vector2(w * 0.05, -w * 0.1), top + Vector2(w * 0.07, w * 0.04)])
@@ -444,7 +497,7 @@ static func _horn(ci: CanvasItem, top: Vector2, w: float) -> void:
 
 
 ## Усики-антенны с шариками на концах.
-static func _antennae(ci: CanvasItem, top: Vector2, w: float, col: Color, t: float) -> void:
+static func _antennae(ci, top: Vector2, w: float, col: Color, t: float) -> void:
 	for sx in [-1.0, 1.0]:
 		var root := top + Vector2(sx * w * 0.12, w * 0.03)
 		var tip := root + Vector2(sx * w * 0.12 + sin(t * 2.0 + sx) * w * 0.02, -w * 0.26)
@@ -455,7 +508,7 @@ static func _antennae(ci: CanvasItem, top: Vector2, w: float, col: Color, t: flo
 
 
 ## Пушистый край: кружки вдоль контура, цвет — как у тела на этой высоте, чуть темнее.
-static func _fur(ci: CanvasItem, sil: PackedVector2Array, r: float, y0: float, y1: float, col: Color) -> void:
+static func _fur(ci, sil: PackedVector2Array, r: float, y0: float, y1: float, col: Color) -> void:
 	var per := 0.0
 	for i in sil.size():
 		per += sil[i].distance_to(sil[(i + 1) % sil.size()])
@@ -466,7 +519,7 @@ static func _fur(ci: CanvasItem, sil: PackedVector2Array, r: float, y0: float, y
 		ci.draw_circle(p, r * (0.8 + 0.25 * sin(i * 2.3)), col.lightened(0.1).lerp(col.darkened(0.3), k))
 
 
-static func _aura(ci: CanvasItem, c: Vector2, w: float, t: float) -> void:
+static func _aura(ci, c: Vector2, w: float, t: float) -> void:
 	var pulse := 1.0 + sin(t * 3.0) * 0.05
 	for i in 6:
 		ci.draw_circle(c, w * (1.0 - i * 0.09) * pulse, Color(SUPER_A, 0.08))
@@ -478,7 +531,7 @@ static func _aura(ci: CanvasItem, c: Vector2, w: float, t: float) -> void:
 		ci.draw_colored_polygon(PackedVector2Array([p1 - side, p2, p1 + side]), Color(1.0, 0.95, 0.6, 0.16))
 
 
-static func _sparkles(ci: CanvasItem, c: Vector2, w: float, t: float) -> void:
+static func _sparkles(ci, c: Vector2, w: float, t: float) -> void:
 	var spots := [Vector2(-0.7, -0.55), Vector2(0.72, -0.4), Vector2(0.6, 0.45), Vector2(-0.62, 0.35), Vector2(0.05, -0.95)]
 	for i in spots.size():
 		var s := (0.6 + 0.4 * sin(t * 4.0 + i * 1.7)) * w * 0.07
@@ -661,7 +714,7 @@ static func _ellipse_poly(c: Vector2, r: Vector2, rot := 0.0, n := 28) -> Packed
 	return pts
 
 
-static func _ellipse(ci: CanvasItem, c: Vector2, r: Vector2, col: Color) -> void:
+static func _ellipse(ci, c: Vector2, r: Vector2, col: Color) -> void:
 	ci.draw_colored_polygon(_ellipse_poly(c, r), col)
 
 

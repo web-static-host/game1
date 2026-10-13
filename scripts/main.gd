@@ -360,12 +360,73 @@ func _show_unit(u: Unit) -> void:
 	var spec := _unit_spec(u)
 	spec["controls"] = controls
 	if not u.child:
-		spec["actions"] = [["Отправить", func() -> void:
+		var actions := [["Отправить", func() -> void:
 			_send_unit = u.id
 			_set_mode(Hud.Mode.SEND)
 			hud.hide_info()
-			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"]]
+			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"],
+			["Работа", func() -> void: _pick_workplace(u)]]
+		if u.partner_id == 0:
+			actions.append(["Сосватать", func() -> void: _pick_partner(u)])
+		spec["actions"] = actions
 	hud.show_panel(spec)
+
+
+## Выбор места работы для жителя: где есть места и насколько он там хорош.
+func _pick_workplace(u: Unit) -> void:
+	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
+	_info_target = []
+	var items := []
+	if u.workplace != 0:
+		items.append({"name": "Разнорабочий", "info": "делает что нужно: стройки, сбор, переноска",
+			"button": "Снять", "style": "danger", "pick": func() -> void:
+				colony.unassign_work(u)
+				_show_unit(u)})
+	var places := colony.projects.filter(func(p: Project) -> bool: return colony.is_workplace(p))
+	places.sort_custom(func(a: Project, b: Project) -> bool: return colony.suitability(u, a) > colony.suitability(u, b))
+	for p: Project in places:
+		var taken := colony.assigned_to(p).size()
+		var here := u.workplace == p.id
+		items.append({"name": colony.workplace_name(p) + (" — здесь" if here else ""),
+			"info": "мест %d/%d · подходит на %d%% (%s)" % [taken, colony.work_slots(p), roundi(colony.suitability(u, p) * 100),
+				Genetics.STAT_NAMES[colony.work_stat(p)].to_lower()],
+			"button": "Сюда", "pick": func() -> void:
+				var err := colony.assign_work(u, p)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+				_show_unit(u)})
+	hud.show_panel({"title": "Работа: " + u.name, "subtitle": "сейчас: " + colony.workplace_name(colony.project_by_id(u.workplace)),
+		"controls": [{"type": "people", "label": "Куда поставить (лучшие места — сверху):", "items": items,
+			"empty": "Нет комнат для работы: ферма, лаборатория, печь, кузница, склад, пристань."}],
+		"actions": [["Назад", func() -> void: _show_unit(u)]]})
+
+
+## Сватовство: свободные взрослые другого пола, знакомые — сверху.
+func _pick_partner(u: Unit) -> void:
+	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
+	_info_target = []
+	var items := []
+	var cands := colony.units.filter(func(o: Unit) -> bool:
+		return o != u and not o.child and o.sex != u.sex and o.partner_id == 0)
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.acquaintance(u, a) > colony.acquaintance(u, b))
+	for o: Unit in cands:
+		var acq := colony.acquaintance(u, o)
+		var info := "знакомы на %d%%" % roundi(minf(1.0, acq / Colony.ACQUAINT_PAIR) * 100)
+		var mt := Genetics.mutation_text(o.genome)
+		if not mt.is_empty():
+			info += " · " + mt.to_lower()
+		var pers: String = o.genome.get("personality", "")
+		if not pers.is_empty():
+			info += " · " + pers
+		items.append({"looks": Genetics.looks(o.genome), "name": o.name, "info": info, "button": "Сосватать",
+			"pick": func() -> void:
+				var err := colony.matchmake(u, o)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+				_show_unit(u)})
+	hud.show_panel({"title": "Сосватать: " + u.name, "subtitle": "пара появится сразу",
+		"controls": [{"type": "people", "label": "Свободные жители:", "items": items, "empty": "Свободных пар нет."}],
+		"actions": [["Назад", func() -> void: _show_unit(u)]]})
 
 
 static func _need_bar(label: String, v: float) -> Dictionary:
@@ -378,29 +439,76 @@ static func _need_bar(label: String, v: float) -> Dictionary:
 
 
 func _unit_spec(u: Unit) -> Dictionary:
-	var who := "мужчина" if u.sex == Unit.Sex.MALE else "женщина"
+	var g := u.genome
+	var who := "♂ мужчина" if u.sex == Unit.Sex.MALE else "♀ женщина"
 	if u.child:
-		who = "%s, вырастет через %s" % ["малыш" if u.age < Unit.CHILD_TIME * 0.5 else "подросток",
-			Colony.game_span(Unit.CHILD_TIME - u.age)]
+		who = "%s %s, вырастет через %s" % ["♂" if u.sex == Unit.Sex.MALE else "♀",
+			"малыш" if u.age < Unit.CHILD_TIME * 0.5 else "подросток", Colony.game_span(Unit.CHILD_TIME - u.age)]
 	var task: String = Unit.TASK_NAMES[u.task]
 	if u.gather_room != 0:
 		task += " для склада"
-	var rows := [_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())]
+	var rows := []
+	if not g.is_empty():
+		var tags := []
+		var pers: String = g.get("personality", "")
+		if not pers.is_empty():
+			tags.append(["Характер: " + pers, Color.WHITE])
+		if Genetics.is_super(g):
+			tags.append(["СВЕРХЮНИТ — все характеристики ×2", Color(0.3, 0.9, 0.85)])
+		var mt := Genetics.mutation_text(g)
+		if not mt.is_empty():
+			var rarity_cols := [Color(0.6, 0.85, 0.6), Color(0.5, 0.75, 1.0), Color(0.8, 0.6, 1.0), Color(1.0, 0.8, 0.3)]
+			tags.append([mt, rarity_cols[maxi(0, Genetics.rarity(g))]])
+		var ab := Genetics.ability_text(g)
+		if not ab.is_empty():
+			tags.append(["Умеет: " + ab, Hud.MUTED])
+		tags.append(["Место работы: " + colony.workplace_name(colony.project_by_id(u.workplace)), Hud.MUTED])
+		rows.append({"type": "portrait", "looks": Genetics.looks(g), "tags": tags})
+	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
 		rows.append(_need_bar("Здоровье", u.health))
 	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
 		rows.append({"type": "resources", "label": "Несёт", "items": [[u.carry_key, u.carry_amount, -1, true]]})
+	if not u.stats.is_empty():
+		rows.append({"type": "section", "text": "Характеристики (100% — обычный житель)"})
+		var items := []
+		for k in Genetics.STATS:
+			var v: float = u.stats[k]
+			items.append([Genetics.STAT_NAMES[k], v, v >= 1.0 if k != "appetite" else v <= 1.0])
+		rows.append({"type": "stats", "items": items})
 	if not u.child:
 		var skills := []
 		for k in ["dig", "build", "gather", "farm", "science"]:
 			skills.append(["", "%s %d" % [Unit.SKILL_NAMES[k], u.level(k)]])
 		rows.append({"type": "chips", "label": "Навыки", "items": skills})
-	var extra := [["home", "кровать есть" if u.bed_room != 0 else "нет кровати",
-		Color.WHITE if u.bed_room != 0 else Color(1.0, 0.6, 0.5)]]
+	# Семья и знакомые.
+	var family := []
 	if u.partner_id != 0:
 		var partner := colony.unit_by_id(u.partner_id)
 		if partner != null:
-			extra.append(["people", "пара: " + partner.name])
+			family.append(["people", "пара: " + partner.name])
+	if not u.mother_name.is_empty() or not u.father_name.is_empty():
+		var parents: PackedStringArray = []
+		for n in [u.mother_name, u.father_name]:
+			if not n.is_empty():
+				parents.append(n)
+		family.append(["", "родители: " + " и ".join(parents)])
+	var kids: PackedStringArray = []
+	for o in colony.units:
+		if o.mother_id == u.id or o.father_id == u.id:
+			kids.append(o.name)
+	if not kids.is_empty():
+		family.append(["", "дети: " + ", ".join(kids)])
+	if not u.child:
+		var friends: PackedStringArray = []
+		for f in colony.best_friends(u):
+			friends.append("%s %d%%" % [f[0].name, roundi(minf(1.0, f[1] / Colony.ACQUAINT_PAIR) * 100)])
+		if not friends.is_empty():
+			family.append(["", "знакомые: " + ", ".join(friends)])
+	if not family.is_empty():
+		rows.append({"type": "chips", "label": "Семья", "items": family})
+	var extra := [["home", "кровать есть" if u.bed_room != 0 else "нет кровати",
+		Color.WHITE if u.bed_room != 0 else Color(1.0, 0.6, 0.5)]]
 	if u.pregnancy >= 0.0:
 		extra.append(["", "ждёт ребёнка", Color(1.0, 0.7, 0.8)])
 	if u.child:
@@ -468,12 +576,53 @@ func _show_project(p: Project) -> void:
 				_show_project(p)
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
+	if colony.is_workplace(p):
+		controls.push_front(_workers_list(p))
+		actions.push_front(["Назначить", func() -> void: _pick_worker(p), "primary"])
 	_info_target = ["project", p.id, preview["v"]]
 	var spec := _project_spec(p, preview["v"])
 	spec["actions"] = actions
 	spec["controls"] = controls
 	spec["controls_first"] = p.purpose == RoomType.STORAGE and p.phase == Project.Phase.DONE
 	hud.show_panel(spec)
+
+
+## Кто работает в комнате (назначенные игроком).
+func _workers_list(p: Project) -> Dictionary:
+	var items := []
+	for u in colony.assigned_to(p):
+		items.append({"looks": Genetics.looks(u.genome), "name": u.name,
+			"info": "подходит на %d%% · %s" % [roundi(colony.suitability(u, p) * 100), Unit.TASK_NAMES[u.task]],
+			"button": "Снять", "style": "danger", "pick": func() -> void:
+				colony.unassign_work(u)
+				_show_project(p)})
+	return {"type": "people", "label": "Работники %d/%d (назначены — работают только они; никого — любой свободный):" % [
+		items.size(), colony.work_slots(p)], "items": items, "empty": "Никто не назначен."}
+
+
+## Кого поставить в комнату: взрослые, лучшие для этой работы — сверху.
+func _pick_worker(p: Project) -> void:
+	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
+	_info_target = []
+	var items := []
+	var cands := colony.units.filter(func(u: Unit) -> bool: return not u.child and u.workplace != p.id)
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.suitability(a, p) > colony.suitability(b, p))
+	var stat := colony.work_stat(p)
+	for u: Unit in cands:
+		var info := "подходит на %d%% · %s %d%% · навык %d" % [roundi(colony.suitability(u, p) * 100),
+			Genetics.STAT_NAMES[stat].to_lower(), roundi(u.stat(stat) * 100), u.level(colony.work_skill(p))]
+		if u.workplace != 0:
+			info += " · сейчас: " + colony.workplace_name(colony.project_by_id(u.workplace))
+		items.append({"looks": Genetics.looks(u.genome), "name": u.name, "info": info, "button": "Назначить",
+			"pick": func() -> void:
+				var err := colony.assign_work(u, p)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+				_show_project(p)})
+	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
+		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), Genetics.STAT_NAMES[stat].to_lower()],
+		"controls": [{"type": "people", "label": "Лучшие для этой работы — сверху:", "items": items, "empty": "Все взрослые уже здесь."}],
+		"actions": [["Назад", func() -> void: _show_project(p)]]})
 
 
 ## Нормы запаса склада: сколько держать каждого ресурса.

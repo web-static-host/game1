@@ -487,7 +487,7 @@ func _build_panel() -> void:
 
 ## Карточка: {"title", "subtitle", "rows": [...], "controls": [...], "actions": [[текст, Callable, стиль?]],
 ## "controls_first": переключатели над описанием}.
-## Строки rows: {"type": "progress"|"resources"|"chips"|"text"|"warning"|"section", ...}.
+## Строки rows: {"type": "progress"|"resources"|"chips"|"text"|"warning"|"section"|"portrait"|"stats", ...}.
 ## Управление controls: шаговые переключатели, галочки, нормы запаса (см. _build_control).
 func show_panel(spec: Dictionary) -> void:
 	_menu.visible = false
@@ -599,6 +599,44 @@ func _row(row: Dictionary) -> Control:
 			h.add_child(l)
 			h.add_child(BarView.make(row["value"], row.get("color", Color(0.45, 0.85, 0.4)), row.get("text", "")))
 			return h
+		"portrait":
+			# Портрет жителя и плашки рядом (пол, характер, мутации).
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 12)
+			h.add_child(PortraitView.make(row["looks"], 150, 74))
+			var col := VBoxContainer.new()
+			col.add_theme_constant_override("separation", 6)
+			col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			h.add_child(col)
+			for tag in row.get("tags", []):
+				var l := _label(tag[0], 17, tag[1] if tag.size() > 1 else Color.WHITE)
+				l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				l.custom_minimum_size = Vector2(PANEL_WIDTH - 220, 0)
+				col.add_child(l)
+			return h
+		"stats":
+			# Характеристики двумя столбцами: подпись и полоска (100% — середина).
+			var grid := GridContainer.new()
+			grid.columns = 2
+			grid.add_theme_constant_override("h_separation", 14)
+			grid.add_theme_constant_override("v_separation", 4)
+			for item in row["items"]:
+				var cell := HBoxContainer.new()
+				cell.add_theme_constant_override("separation", 6)
+				cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				var l := _label(item[0], 15, MUTED)
+				l.custom_minimum_size = Vector2(118, 0)
+				cell.add_child(l)
+				var v: float = item[1]
+				var good: bool = item[2]
+				var c := Color(0.45, 0.8, 0.4) if good else Color(0.92, 0.45, 0.3)
+				if absf(v - 1.0) < 0.01:
+					c = Color(0.55, 0.6, 0.7)
+				var bar := BarView.make(v / 2.0, c, "%d%%" % roundi(v * 100.0))
+				bar.custom_minimum_size = Vector2(130, 22)
+				cell.add_child(bar)
+				grid.add_child(cell)
+			return grid
 		"resources", "chips":
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 10)
@@ -651,6 +689,8 @@ func _build_control(st: Dictionary) -> void:
 			_build_targets(st)
 		"techs":
 			_build_techs(st)
+		"people":
+			_build_people(st)
 		_:
 			_build_stepper(st)
 
@@ -673,6 +713,41 @@ func _build_checks(st: Dictionary) -> void:
 		var key: String = item[0]
 		b.toggled.connect(func(on: bool) -> void: toggled.call(key, on))
 		flow.add_child(b)
+
+
+## Список жителей с кнопкой: {"type": "people", "label", "empty"?, "items": [{"looks", "name", "info",
+## "button", "pick": Callable, "style"?}]} — назначить на работу, сосватать и т. п.
+func _build_people(st: Dictionary) -> void:
+	_controls.add_child(_label(st["label"], 16, MUTED))
+	if st["items"].is_empty() and st.has("empty"):
+		_controls.add_child(_label(st["empty"], 16, MUTED))
+	for item in st["items"]:
+		var p := PanelContainer.new()
+		p.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.06), 10, 6))
+		_controls.add_child(p)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		p.add_child(row)
+		if item.has("looks"):
+			row.add_child(PortraitView.make(item["looks"], 56, 28))
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_theme_constant_override("separation", 0)
+		row.add_child(col)
+		col.add_child(_label(item["name"], 19, Color.WHITE))
+		var info := _label(item.get("info", ""), 15, MUTED)
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info.custom_minimum_size = Vector2(PANEL_WIDTH - 300, 0)
+		col.add_child(info)
+		var b := Button.new()
+		b.text = item["button"]
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(150, 50)
+		b.add_theme_font_size_override("font_size", 18)
+		if item.get("style", "") == "danger":
+			b.add_theme_stylebox_override("normal", _box(Color(0.45, 0.14, 0.13, 0.95), 14, 10))
+		b.pressed.connect(item["pick"])
+		row.add_child(b)
 
 
 ## Дерево технологий: название, что даёт, цена и кнопка «Изучать».
