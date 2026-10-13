@@ -163,7 +163,10 @@ func _prepare_base() -> void:
 	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 3))
 	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 3), -1, "stone")
 	var store := colony.create_project(R, Rect2i(x0 - 9, s + 6, 8, 3), -1, "clay")
+	for u in colony.units:
+		u.lifespan = 0.0 # для снимков — без старения
 	colony.advance_offline(100000.0)
+	colony.game_time = 0.0
 	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
 	for pr in [[home, RoomType.HOME], [farm, RoomType.FARM], [store, RoomType.STORAGE]]:
 		if pr[0] != null:

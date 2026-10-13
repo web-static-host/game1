@@ -12,12 +12,17 @@ const O2_FRACTION := 0.2095
 const KARMAN_LINE := 100000 # м — условная граница космоса
 
 
+## Сезонные колебания затухают с глубиной: на 4 м — втрое слабее, глубже 15 м их почти нет.
+const SEASON_DEPTH := 4.0
+
+
 ## Температура породы/воздуха, °C. depth > 0 — под землёй, altitude — над уровнем моря.
-static func temperature(y: int, surf: int) -> float:
+## season — отклонение от среднегодовой температуры на поверхности (зима < 0 < лето).
+static func temperature(y: int, surf: int, season := 0.0) -> float:
 	var depth := y - surf
 	if depth >= 0:
-		return SURFACE_TEMP + depth * GEOTHERMAL_GRADIENT
-	return air_temperature(-y)
+		return SURFACE_TEMP + depth * GEOTHERMAL_GRADIENT + season * exp(-depth / SEASON_DEPTH)
+	return air_temperature(-y) + season
 
 
 ## Стандартная атмосфера по высоте над уровнем моря, °C.

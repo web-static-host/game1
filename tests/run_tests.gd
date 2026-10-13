@@ -33,6 +33,7 @@ func _initialize() -> void:
 	test_storage_workers()
 	test_wear_and_repair()
 	test_calendar()
+	test_seasons()
 	test_elements()
 	test_gas_alarm()
 	test_scouting()
@@ -857,6 +858,7 @@ func test_lakes_and_fishing() -> void:
 	check(colony.assign_work(colony.units[0], br).is_empty(), "рыбак назначен на мостик")
 	colony.fish[int(lake["id"])] = Colony.fish_max(lake)
 	var fish0 := colony.fish_in(lake)
+	colony.game_time = 0.0 # весна: озеро не замёрзло
 	colony.advance_offline(1800.0)
 	check(colony.fish_in(lake) < fish0, "с мостика наловили рыбы (в озере %d → %d)" % [int(fish0), int(colony.fish_in(lake))])
 	check(colony.fish_in(lake) < fish0 + 0.01, "рыбы в озере стало меньше или столько же")
@@ -1085,11 +1087,64 @@ func test_wear_and_repair() -> void:
 
 func test_calendar() -> void:
 	var colony := _new_colony(1)
-	check(colony.date_text() == "1 янв · год 1", "календарь начинается с 1 января: " + colony.date_text())
+	check(colony.date_text() == "1 мар · весна · год 1", "игра начинается весной, 1 марта: " + colony.date_text())
 	colony.game_time = Colony.YEAR + Colony.MONTH * 2 + Colony.DAY * 4 + Colony.DAY * 0.5
-	check(colony.date_text() == "5 мар · год 2", "дата по игровым суткам: " + colony.date_text())
+	check(colony.date_text() == "5 мая · весна · год 2", "дата по игровым суткам: " + colony.date_text())
 	check(Colony.DAY_NIGHT or (not colony.is_night() and colony.daylight() == 1.0), "без смены дня и ночи всегда светло")
 	check(absf(Colony.PREGNANCY_TIME - Colony.MONTH) < 0.01, "беременность — месяц")
+
+
+func test_seasons() -> void:
+	var res := _colony_with_room(26, RoomType.FARM)
+	var colony: Colony = res[0]
+	var farm: Project = res[1]
+	var w := colony.world
+	colony.game_time = 0.0
+	check(colony.season() == Colony.Season.SPRING and not colony.is_winter(), "игра начинается весной")
+	check(colony.time_to_winter() > Colony.MONTH * 8.0, "до зимы больше восьми месяцев (%s)" % Colony.game_span(colony.time_to_winter()))
+	var x := farm.rect.position.x - 6
+	var top := Vector2i(x, w.gen.surface_y(x) - 1)
+	var spring_top := colony.elements._temperature(top)
+	# Середина января.
+	colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5
+	colony.elements._temp_memo.clear()
+	check(colony.is_winter(), "январь — зима: " + colony.date_text())
+	var winter_top := colony.elements._temperature(top)
+	var deep := colony.elements._temperature(Vector2i(x, w.gen.surface_y(x) + 12))
+	check(winter_top < 0.0 and winter_top < spring_top, "зимой на поверхности мороз (%.0f °C, весной %.0f °C)" % [winter_top, spring_top])
+	check(deep > 10.0, "на глубине 12 м зимой тепло (%.0f °C)" % deep)
+	check(colony.shore_spots().is_empty(), "зимой с берега не порыбачить — лёд")
+	check(colony.farm_warm(farm), "подземная ферма зимой в тепле (%.0f °C)" % colony.room_temp(farm))
+	var cold_farm := _fake_room(colony, RoomType.FARM, x - 8)
+	check(not colony.farm_warm(cold_farm), "ферма на поверхности зимой замерзает (%.0f °C)" % colony.room_temp(cold_farm))
+	colony.projects.erase(cold_farm)
+	# Ягоды зимой не растут.
+	var bx := -1
+	for b in colony._bushes:
+		bx = b
+		break
+	if bx >= 0:
+		w.set_berries(bx, 0.0)
+		colony.grow_plants(Colony.MONTH)
+		check(w.berries(bx) < 0.01, "зимой ягоды не растут")
+		colony.game_time = 0.0
+		colony.grow_plants(Colony.MONTH)
+		check(w.berries(bx) > 0.5, "весной ягоды снова растут")
+	# Зимой с пристани ловят вдвое дольше, с мостика — никак.
+	var pier := Project.new()
+	pier.kind = Project.Kind.PIER
+	var bridge := Project.new()
+	bridge.kind = Project.Kind.BRIDGE
+	colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5
+	check(colony.fish_time(pier) == pier.fish_time() * 2.0 and colony.can_fish_from(pier), "зимой с пристани ловят вдвое дольше")
+	check(not colony.can_fish_from(bridge), "зимой с мостика не ловят")
+	# Холод: синий терпит больше красного; на морозе здоровье тает.
+	var u: Unit = colony.units[0]
+	u.health = 100.0
+	u.pos = Vector2(top.x, top.y)
+	colony.elements.affect_unit(u, 10.0)
+	check(u.health < 100.0 or u.stat("cold") > 1.3, "на морозе житель мёрзнет (%.1f)" % u.health)
+	check(colony.winter_food_need() > 0.0, "колония знает, сколько еды нужно на зиму")
 
 
 ## Сплошной гранитный блок w×h с левым верхним углом o (для опытов со стихиями).

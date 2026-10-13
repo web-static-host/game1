@@ -86,6 +86,23 @@ const NIGHT_TO := 6.0
 const MONTH := DAY * 30.0
 const YEAR := MONTH * 12.0
 const MONTH_NAMES := ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+## Игра начинается 1 марта — весной, чтобы успеть запастись к зиме.
+const CALENDAR_START := MONTH * 2.0
+enum Season { WINTER, SPRING, SUMMER, AUTUMN }
+const SEASON_NAMES := ["зима", "весна", "лето", "осень"]
+## Температура на поверхности в середине каждого месяца (январь … декабрь), °C; между — плавно.
+const MONTH_TEMPS := [-8.0, -5.0, 8.0, 12.0, 16.0, 20.0, 23.0, 21.0, 15.0, 8.0, 1.0, -5.0]
+## Внутри построенной комнаты теплее: стены держат тепло жителей и очага.
+const ROOM_WARMTH := 12.0
+## Генератор греет всё вокруг себя.
+const GENERATOR_HEAT := 15.0
+const GENERATOR_HEAT_RADIUS := 6
+## Ферма растит грибы только в тепле.
+const FARM_MIN_TEMP := 15.0
+## Ниже этой температуры обычному жителю холодно (синие и пушистые терпят больше).
+const COLD := 0.0
+## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
+const WINTER_FISH_SLOWDOWN := 2.0
 ## Сколько лет служит постройка до полного износа (на поверхности).
 const WEAR_YEARS := {"wood": 20.0, "clay": 40.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
 ## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
@@ -1563,6 +1580,8 @@ func _plant_tick(dt: float) -> void:
 ## Рост деревьев, ягоды, новые растения рядом со старыми, восстановление рыбы.
 func grow_plants(t: float) -> void:
 	var k := t / PLANT_TICK
+	# Зимой ягоды не растут и новые кусты не появляются.
+	var winter := is_winter()
 	var kinds := {}
 	for x in range(home.x - PLANT_AREA - SPREAD_RADIUS, home.x + PLANT_AREA + SPREAD_RADIUS + 1):
 		kinds[x] = world.feature_at(x)
@@ -1574,7 +1593,7 @@ func grow_plants(t: float) -> void:
 				world.grow(x, t / TREE_GROW_TIME)
 		elif f == WorldGen.FEATURE_BUSH:
 			_bushes.append(x)
-			if world.berries(x) < WorldData.BUSH_BERRIES:
+			if world.berries(x) < WorldData.BUSH_BERRIES and not winter:
 				world.set_berries(x, minf(WorldData.BUSH_BERRIES, world.berries(x) + t / BERRY_REGEN))
 		elif f == WorldGen.FEATURE_NONE:
 			var trees := 0
@@ -1595,7 +1614,7 @@ func grow_plants(t: float) -> void:
 				if _grass_free(x):
 					world.sprout(x, WorldGen.FEATURE_TREE)
 					kinds[x] = WorldGen.FEATURE_TREE
-			elif roll < (trees * TREE_SPREAD + bushes * _bush_spread()) * k:
+			elif roll < (trees * TREE_SPREAD + bushes * _bush_spread()) * k and not winter:
 				if _grass_free(x):
 					world.sprout(x, WorldGen.FEATURE_BUSH)
 					kinds[x] = WorldGen.FEATURE_BUSH
@@ -1831,7 +1850,7 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		return _fish_at(u, p, parents, dist)
 	match p.purpose:
 		RoomType.FARM:
-			return _room_work_at(u, p, Unit.Task.FARM, parents, dist)
+			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
 		RoomType.KILN, RoomType.FORGE:
@@ -1921,6 +1940,7 @@ func update(dt: float) -> void:
 		_wear_tick(step)
 		_power_tick(step)
 		_plant_tick(step)
+		_season_tick()
 		_life_tick(step, false)
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
@@ -2287,7 +2307,7 @@ func _work(u: Unit, dt: float) -> void:
 					_catch_from(lake, u)
 			else:
 				var fp := project_by_id(u.project_id)
-				if u.work_t >= fp.fish_time():
+				if u.work_t >= fish_time(fp):
 					_drop(u)
 					_catch_fish(fp, u)
 
@@ -2306,7 +2326,7 @@ func _task_valid(u: Unit) -> bool:
 				Unit.Task.EQUIP:
 					return p.phase == Project.Phase.EQUIP and p.equip_paid
 				Unit.Task.FARM:
-					return p.phase == Project.Phase.DONE and p.purpose == RoomType.FARM
+					return p.phase == Project.Phase.DONE and p.purpose == RoomType.FARM and farm_warm(p)
 		Unit.Task.CRAFT:
 			var cp := project_by_id(u.project_id)
 			return cp != null and not cp.paused and cp.phase == Project.Phase.DONE and RoomType.RECIPES.has(cp.purpose) \
@@ -2578,6 +2598,8 @@ const SHORE_FISH_TIME := 80.0
 
 func shore_spots() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
+	if is_winter():
+		return out # озёра подо льдом
 	var k0 := floori(float(home.x - PLANT_AREA) / world.gen.lake_segment())
 	var k1 := floori(float(home.x + PLANT_AREA) / world.gen.lake_segment())
 	for k in range(k0 - 1, k1 + 2):
@@ -2596,7 +2618,7 @@ func shore_spots() -> Array[Vector2i]:
 
 
 func _fish_at(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
-	if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused:
+	if not p.is_water_structure() or p.phase != Project.Phase.DONE or p.paused or not can_fish_from(p):
 		return false
 	if workers_on(p) >= p.fish_slots() or fish_left(p) < 1.0:
 		return false
@@ -3586,13 +3608,98 @@ func daylight() -> float:
 	return 1.0
 
 
-## Дата и время по игровому календарю: «12 мар · 14:30 · год 1».
+## Дата и время по игровому календарю: «12 мар · весна · 14:30 · год 1».
 func date_text() -> String:
-	var days := int(game_time / DAY)
+	var days := int((game_time + CALENDAR_START) / DAY)
+	var head := "%d %s · %s" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], SEASON_NAMES[season()]]
+	var year := int(game_time / YEAR) + 1
 	if not DAY_NIGHT:
-		return "%d %s · год %d" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], days / 360 + 1]
+		return "%s · год %d" % [head, year]
 	var minutes := int(hour() * 60.0)
-	return "%d %s · %02d:%02d · год %d" % [days % 30 + 1, MONTH_NAMES[(days % 360) / 30], minutes / 60, minutes % 60 / 10 * 10, days / 360 + 1]
+	return "%s · %02d:%02d · год %d" % [head, minutes / 60, minutes % 60 / 10 * 10, year]
+
+
+# --- Времена года ---------------------------------------------------------------------
+
+## Месяц календаря: 0 — январь … 11 — декабрь.
+func month() -> int:
+	return int((game_time + CALENDAR_START) / MONTH) % 12
+
+
+func season() -> int:
+	return [Season.WINTER, Season.WINTER, Season.SPRING, Season.SPRING, Season.SPRING, Season.SUMMER,
+		Season.SUMMER, Season.SUMMER, Season.AUTUMN, Season.AUTUMN, Season.AUTUMN, Season.WINTER][month()]
+
+
+func is_winter() -> bool:
+	return season() == Season.WINTER
+
+
+## Отклонение температуры на поверхности от Env.SURFACE_TEMP: холоднее всего в середине января.
+func season_delta() -> float:
+	var m := fmod(game_time + CALENDAR_START, YEAR) / MONTH - 0.5
+	var i := floori(m)
+	var a: float = MONTH_TEMPS[posmod(i, 12)]
+	var b: float = MONTH_TEMPS[posmod(i + 1, 12)]
+	return lerpf(a, b, m - i) - Env.SURFACE_TEMP
+
+
+var _last_season := -1
+var _last_month := -1
+
+
+## Смена времён года — в журнал, с подсказкой, к чему готовиться.
+func _season_tick() -> void:
+	var m := month()
+	if m == _last_month:
+		return
+	var first := _last_month < 0
+	_last_month = m
+	var sn := season()
+	if sn != _last_season:
+		_last_season = sn
+		if not first:
+			match sn:
+				Season.WINTER:
+					_log("Пришла зима: ягоды не растут, озёра замёрзли — рыба только с пристани, вдвое медленнее. Фермам нужно тепло", "warning")
+				Season.SPRING:
+					_log("Весна: снова растут ягоды, озёра оттаяли", "good")
+				Season.SUMMER:
+					_log("Лето — самое время запасать еду на зиму", "info")
+	if m == 10 and not first and food_value() < winter_food_need():
+		_log("Через месяц зима! Еды на зиму не хватит — запасите её в амбаре и постройте тёплую ферму под землёй", "danger")
+
+
+## Сколько сытости съест колония за зиму (три месяца).
+func winter_food_need() -> float:
+	return units.size() * SATIETY_DECAY * 0.8 * MONTH * 3.0
+
+
+## Сколько осталось до зимы (0 — уже зима).
+func time_to_winter() -> float:
+	if is_winter():
+		return 0.0
+	var f := fmod(game_time + CALENDAR_START, YEAR)
+	return MONTH * 11.0 - f
+
+
+## Температура в комнате (по её середине).
+func room_temp(p: Project) -> float:
+	return elements.temperature(p.rect.get_center())
+
+
+func farm_warm(p: Project) -> bool:
+	return room_temp(p) >= FARM_MIN_TEMP
+
+
+## Время улова с постройки с учётом зимы.
+func fish_time(p: Project) -> float:
+	return p.fish_time() * (WINTER_FISH_SLOWDOWN if is_winter() else 1.0)
+
+
+## Можно ли ловить с этой постройки сейчас: зимой — только с пристани.
+func can_fish_from(p: Project) -> bool:
+	return not is_winter() or p.kind == Project.Kind.PIER
 
 
 ## Длительность в игровых сутках: «3 дн.», «8 ч».
@@ -3636,7 +3743,7 @@ func advance_offline(dt: float) -> int:
 				continue
 			var key = job[0]
 			var skill := Unit.skill_for(job[1])
-			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor()
+			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor() * u.age_factor()
 			if jobs.has(key):
 				jobs[key][1] += rate
 			else:
@@ -3648,10 +3755,12 @@ func advance_offline(dt: float) -> int:
 		step = maxf(step, 0.0)
 		remaining -= step
 		game_time += step
+		elements._temp_memo.clear()
 		_tick_exposure(step)
 		_wear_tick(step)
 		_power_tick(step)
 		_plant_tick(step)
+		_season_tick()
 		_life_tick(step, true)
 		for u in units:
 			if u.task != Unit.Task.NONE:
@@ -3710,8 +3819,8 @@ func advance_offline(dt: float) -> int:
 					else:
 						# У пристаней прогресс улова хранится в farm_progress.
 						p.farm_progress += j[1] * step
-						while p.farm_progress >= p.fish_time() and fish_left(p) >= 1.0:
-							p.farm_progress -= p.fish_time()
+						while p.farm_progress >= fish_time(p) and fish_left(p) >= 1.0 and can_fish_from(p):
+							p.farm_progress -= fish_time(p)
 							_catch_fish(p, null)
 				Unit.Task.HARVEST:
 					var x: int = int(key.substr(1))
@@ -3930,14 +4039,15 @@ func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
 		return []
 	var slot := "w%d" % p.id
 	if p.is_water_structure():
-		if taken.get(slot, 0) < p.fish_slots() and fish_left(p) >= 1.0:
+		if taken.get(slot, 0) < p.fish_slots() and fish_left(p) >= 1.0 and can_fish_from(p):
 			taken[slot] = taken.get(slot, 0) + 1
 			return ["fish%d" % p.id, Unit.Task.FISH, p]
 		return []
 	match p.purpose:
 		RoomType.FARM:
-			taken[slot] = taken.get(slot, 0) + 1
-			return ["f%d" % p.id, Unit.Task.FARM, p]
+			if farm_warm(p):
+				taken[slot] = taken.get(slot, 0) + 1
+				return ["f%d" % p.id, Unit.Task.FARM, p]
 		RoomType.LAB:
 			if not research.current.is_empty():
 				taken[slot] = taken.get(slot, 0) + 1

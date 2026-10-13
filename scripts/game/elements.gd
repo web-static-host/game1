@@ -449,7 +449,20 @@ func temperature(c: Vector2i) -> float:
 
 
 func _temperature(c: Vector2i) -> float:
-	var t := Env.temperature(c.y, world.gen.surface_y(c.x))
+	var t := Env.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
+	# В готовой комнате теплее, у работающего генератора — жарко.
+	var pid: int = colony.interior.get(c, 0)
+	if pid != 0:
+		var room := colony.project_by_id(pid)
+		if room != null and room.phase == Project.Phase.DONE:
+			t += Colony.ROOM_WARMTH
+	for g in colony.rooms_of(RoomType.GENERATOR):
+		if g.paused:
+			continue
+		var gc := g.rect.get_center()
+		var d := maxi(absi(c.x - gc.x), absi(c.y - gc.y))
+		if d <= Colony.GENERATOR_HEAT_RADIUS:
+			t += Colony.GENERATOR_HEAT * (1.0 - float(d) / (Colony.GENERATOR_HEAT_RADIUS + 1))
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):
@@ -483,6 +496,11 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "погиб(ла) от жары")
+	var cold := Colony.COLD - (u.stat("cold") - 1.0) * 30.0
+	if t < cold:
+		u.health -= minf(2.0, (cold - t) / 100.0) * dt
+		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: комната или генератор" % [u.name, roundi(t)], "warning")
+		_hurt_check(u, "замёрз(ла)")
 	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:
 		u.health -= (0.55 - o2) * 10.0 * dt

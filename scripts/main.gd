@@ -599,7 +599,7 @@ func _workers_list(p: Project) -> Dictionary:
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
 				_show_project(p)})
-	return {"type": "people", "label": "Работники %d/%d (назначены — работают только они; никого — любой свободный):" % [
+	return {"type": "people", "label": "Работники %d/%d — работают только назначенные:" % [
 		items.size(), colony.work_slots(p)], "items": items, "empty": "Никто не назначен."}
 
 
@@ -717,6 +717,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		_:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
+			if not colony.can_fish_from(p):
+				rows.append({"type": "text", "text": "Зима: озеро подо льдом — ловить можно только с пристани."})
+			elif colony.is_winter():
+				chips.append(["", "зимой улов вдвое медленнее"])
+	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
+		chips.append(["", "внутри %+d °C" % roundi(colony.room_temp(p))])
 	if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 		rows.append(_progress("Износ", p.wear, "%d%% · ещё ~%s" % [roundi(p.wear * 100.0), _years(colony.years_left(p))],
 			_wear_color(p.wear)))
@@ -747,6 +753,9 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					rows.append({"type": "text", "text": "Добывают до нормы: " + ", ".join(names)})
 			RoomType.FARM:
 				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
+				if not colony.farm_warm(p):
+					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужна ферма глубже под землёй или генератор рядом." \
+						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
 			RoomType.KILN, RoomType.FORGE:
@@ -1193,7 +1202,7 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
-	hud.set_date(colony.date_text())
+	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())])
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
