@@ -143,8 +143,13 @@ func _pose(u: Unit) -> String:
 		Unit.State.SWIM:
 			return "swim"
 		Unit.State.MOVE:
-			var climbing := u.path_i < u.path.size() and u.path[u.path_i].x == roundi(u.pos.x) \
-				and absf(u.path[u.path_i].y - u.pos.y) > 0.01
+			# Лезет — только если участок пути строго вертикальный (лестница, шахта),
+			# а не шаг по склону.
+			var climbing := false
+			if u.path_i < u.path.size():
+				var next: Vector2i = u.path[u.path_i]
+				var prev: Vector2i = u.path[u.path_i - 1] if u.path_i > 0 else Vector2i(roundi(u.pos.x), roundi(u.pos.y))
+				climbing = next.x == prev.x and next.y != prev.y and absf(u.pos.x - next.x) < 0.05
 			if climbing:
 				return "climb%d" % (frame % 2)
 			if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:

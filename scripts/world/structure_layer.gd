@@ -103,6 +103,8 @@ func _draw_done(p: Project) -> void:
 			_dashed_rect(r, PAUSED if p.paused else BUILD_EDGE, 2.5)
 		else:
 			_draw_furniture(p, r, p.purpose, 1.0)
+			if p.purpose == RoomType.NONE and p.phase == Project.Phase.DONE:
+				_draw_question(r)
 	else:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
@@ -176,6 +178,19 @@ func _wall_outside(p: Project, side: int) -> bool:
 	return not colony.world.is_open(x, floor_y) and colony.world.is_open(x, p.rect.position.y)
 
 
+## Комната построена, но не обустроена — большой знак вопроса посередине.
+func _draw_question(r: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	var fs := int(clampf(r.size.y * 0.75, 28.0, 72.0))
+	var c := r.get_center()
+	var pulse := 0.75 + 0.25 * sin(Time.get_ticks_msec() * 0.004)
+	draw_circle(c, fs * 0.55, Color(0.98, 0.72, 0.25, 0.35 * pulse))
+	var w := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var p := c + Vector2(-w * 0.5, fs * 0.36)
+	draw_string_outline(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 8, Color(0.25, 0.15, 0.05, 0.9))
+	draw_string(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.85, 0.3))
+
+
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 	var floor_y := r.end.y - 6
 	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
@@ -188,7 +203,7 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				draw_rect(Rect2(bx + 2, floor_y - 20, bw - 4, 8), Color(BLANKETS[(p.id + i) % BLANKETS.size()], alpha))
 				draw_rect(Rect2(bx + 3, floor_y - 24, 14, 7), Color(0.95, 0.95, 0.92, alpha))
 				draw_rect(Rect2(bx, floor_y - 26, 4, 26), Color(BED_FRAME, alpha))
-		RoomType.STORAGE:
+		RoomType.STORAGE, RoomType.GRANARY:
 			var w := RoomType.usable_width(p)
 			var room_cap := RoomType.CAPACITY_PER_CELL * w
 			# Полка на половине высоты и ящики по видам ресурсов: чем больше, тем больше ящиков.

@@ -2,14 +2,16 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар"]
+## Еда хранится в амбаре, всё остальное — на складе.
+const FOOD_KEYS := ["food", "berries"]
 const HINTS := [
 	"",
 	"кровати: место для сна и для детей",
-	"больше места для ресурсов",
+	"хранит ресурсы (кроме еды — она в амбаре)",
 	"грибные грядки: производство еды",
 	"еда в столовой сытнее и поднимает настроение",
 	"откачивает воду вокруг (16 м)",
@@ -19,6 +21,7 @@ const HINTS := [
 	"плавка: 2 железа + 1 уголь → 1 сталь",
 	"энергия: сжигает метан, уголь или дрова",
 	"собирает метан вокруг (20 м) — топливо для генератора",
+	"хранит еду: рыбу, урожай ферм, ягоды",
 ]
 ## Назначения, которые нужно сначала изучить.
 const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity"}
@@ -85,6 +88,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 6, "copper": 4, "iron": 4}
 		DEGAS:
 			return {"wood": 8, "stone": 8}
+		GRANARY:
+			return {"wood": 2 * w}
 	return {}
 
 
@@ -110,4 +115,13 @@ static func job_work(p: Project) -> float:
 
 
 static func stores(p: Project, key: String) -> bool:
+	if p.purpose == GRANARY:
+		return FOOD_KEYS.has(key)
+	if FOOD_KEYS.has(key):
+		return false
 	return p.store_filter.is_empty() or p.store_filter.has(key)
+
+
+## Склад или амбар.
+static func is_store(t: int) -> bool:
+	return t == STORAGE or t == GRANARY

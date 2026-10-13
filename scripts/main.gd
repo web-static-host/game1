@@ -353,8 +353,8 @@ func _show_unit(u: Unit) -> void:
 	var controls := []
 	if not u.child:
 		controls.append({
-			"label": "Профессия", "value": u.profession, "min": 0, "max": Unit.PROF_NAMES.size() - 1,
-			"options": Unit.PROF_NAMES,
+			"label": "Профессия", "value": mini(u.profession, 2), "min": 0, "max": 2,
+			"options": Unit.PROF_NAMES.slice(0, 3),
 			"changed": func(v: int) -> void: u.profession = v,
 		})
 	var spec := _unit_spec(u)
@@ -553,11 +553,10 @@ func _show_project(p: Project) -> void:
 			_select(null, null), "danger"])
 	var preview := {"v": maxi(p.purpose, 1)}
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
-		if p.purpose == RoomType.STORAGE:
-			controls.append({"label": "Работников склада", "value": p.gatherers, "min": 0, "max": maxi(1, colony.adults()),
-				"changed": func(v: int) -> void: p.gatherers = v})
+		if RoomType.is_store(p.purpose):
 			controls.append(_storage_targets(p))
-			controls.append(_storage_checks(p))
+			if p.purpose == RoomType.STORAGE:
+				controls.append(_storage_checks(p))
 		# Готовая комната: выбор назначения (только изученные).
 		var purposes := []
 		for t in range(1, RoomType.NAMES.size()):
@@ -583,7 +582,7 @@ func _show_project(p: Project) -> void:
 	var spec := _project_spec(p, preview["v"])
 	spec["actions"] = actions
 	spec["controls"] = controls
-	spec["controls_first"] = p.purpose == RoomType.STORAGE and p.phase == Project.Phase.DONE
+	spec["controls_first"] = RoomType.is_store(p.purpose) and p.phase == Project.Phase.DONE
 	hud.show_panel(spec)
 
 
@@ -637,7 +636,7 @@ func _storage_targets(p: Project) -> Dictionary:
 			continue
 		items.append([k, colony.inventory.get(k, 0), int(p.targets.get(k, 0)), colony.capacity(k),
 			Colony.GATHER_SOURCES.has(k)])
-	return {"type": "targets", "label": "Держать в запасе (работники склада добывают до нормы):", "items": items,
+	return {"type": "targets", "label": "Держать в запасе (назначенные работники добывают до нормы):", "items": items,
 		"changed": func(key: String, v: int) -> void: p.targets[key] = v}
 
 
@@ -688,7 +687,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			var left := colony.remaining_dig(p).size()
 			rows.append(_progress("Копка", 1.0 - float(left) / p.area(), "осталось %d клеток" % left))
 			if not p.needs_support.is_empty():
-				rows.append(_progress("Крепь", float(p.supported.size()) / p.needs_support.size(),
+				rows.append(_progress("Укрепление", float(p.supported.size()) / p.needs_support.size(),
 					"%d из %d срезов" % [p.supported.size(), p.needs_support.size()], Color(0.75, 0.55, 0.3)))
 			var clear := colony.uncleared(p).size()
 			if clear > 0:
@@ -734,11 +733,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["home", "кроватей %d, занято %d" % [RoomType.beds(p), used]])
 				var free := colony.beds_total() - colony.units.size() - colony.pregnant_count()
 				chips.append(["people", "мест для детей в колонии: %d" % maxi(0, free)])
-			RoomType.STORAGE:
-				chips.append(["people", "работников %d/%d" % [colony.gatherers_on(p), p.gatherers]])
-				chips.append(["", "+%d места каждому ресурсу" % (RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p))])
+			RoomType.STORAGE, RoomType.GRANARY:
+				chips.append(["people", "работников %d/%d" % [colony.assigned_to(p).size(), colony.work_slots(p)]])
+				chips.append(["", "+%d места каждому %s" % [RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p),
+					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				var lacking := colony.storage_deficit(p)
-				if p.gatherers > 0 and not lacking.is_empty():
+				if not colony.assigned_to(p).is_empty() and not lacking.is_empty():
 					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())
 					rows.append({"type": "text", "text": "Добывают до нормы: " + ", ".join(names)})
 			RoomType.FARM:
@@ -1032,11 +1032,11 @@ func _pending_spec() -> Dictionary:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
 		if sw > 0:
-			rows.append({"type": "resources", "label": "Крепь по ходу", "items": [["wood", have, sw, have >= sw]]})
+			rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
 	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
-		rows.append({"type": "text", "text": "Потолок из «%s» держит без опор %d м — крепь усиленная" % [
+		rows.append({"type": "text", "text": "Потолок из «%s» держит без опор %d м — укрепление усиленное" % [
 			Mat.name_of(span[1]).to_lower(), span[0]]})
 	for lower in colony.ladders_needed(r):
 		rows.append({"type": "resources", "label": "Лестница внизу", "items": _cost_items(RoomType.ladder_cost(lower))})

@@ -206,20 +206,19 @@ func test_pause_and_materials() -> void:
 	colony.set_paused(p, true)
 	check(colony.advance_offline(5000.0) == 0, "на паузе работы не идут")
 	colony.set_paused(p, false)
-	colony.advance_offline(5000.0)
-	check(p.phase == Project.Phase.DIG and p.supported.is_empty(), "без дерева на крепь копка встала")
-	check(p.blocked.begins_with("Не хватает: дерево"), "игрок видит, чего не хватает: " + p.blocked)
-	check(not colony.supply_status(p).is_empty() and not colony.supply_status(p)[0][3], "плашка дерева красная — носить неоткуда")
-	# Ищем дерево и отмечаем его на сбор.
+	# Дерева нет — жители рубят по нужде: сначала отмеченное игроком.
 	var tree := 0
-	for tx in range(-200, 200):
-		if w.feature_at(tx) == WorldGen.FEATURE_TREE:
-			tree = tx
+	for d in range(0, 200):
+		if w.feature_at(colony.home.x + d) == WorldGen.FEATURE_TREE:
+			tree = colony.home.x + d
+			break
+		if w.feature_at(colony.home.x - d) == WorldGen.FEATURE_TREE:
+			tree = colony.home.x - d
 			break
 	check(colony.toggle_harvest(tree).is_empty(), "дерево отмечено на сбор")
 	colony.advance_offline(5000.0)
-	check(w.feature_at(tree) == WorldGen.FEATURE_NONE, "дерево срублено")
-	check(p.phase == Project.Phase.DONE, "после сбора дерева стройка завершена")
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE or colony.inventory.get("wood", 0) > 0, "дерево срублено по нужде стройки")
+	check(p.phase == Project.Phase.DONE, "дерево пошло на укрепление — стройка завершена")
 
 
 func test_units_realtime() -> void:
@@ -252,6 +251,9 @@ func test_units_realtime() -> void:
 		if w.feature_at(tx) == WorldGen.FEATURE_TREE:
 			tree = tx
 			break
+	# Рубят отмеченное и носят на склад только работники склада.
+	var store := _fake_room(colony, RoomType.STORAGE, x - 10)
+	check(colony.assign_work(colony.units[0], store).is_empty(), "житель назначен на склад")
 	colony.toggle_harvest(tree)
 	var wood: int = colony.inventory.get("wood", 0)
 	t = 0.0
@@ -329,6 +331,20 @@ func test_workers_and_ladder() -> void:
 
 
 ## Готовая подземная комната от шахты: возвращает [colony, room].
+## Готовая комната на поверхности без стен — для проверок работы на месте.
+func _fake_room(colony: Colony, purpose: int, x: int, width := 4) -> Project:
+	var p := Project.new()
+	p.id = 900 + purpose
+	p.kind = Project.Kind.ROOM
+	p.phase = Project.Phase.DONE
+	p.purpose = purpose
+	var sy := colony.world.gen.surface_y(x)
+	p.rect = Rect2i(x, sy - 3, width, 3)
+	p.targets = {}
+	colony.projects.append(p)
+	return p
+
+
 func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 	var colony := _new_colony(seed_value)
 	var w := colony.world
@@ -347,6 +363,12 @@ func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 		colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "food": 50}
 		colony.set_purpose(room, purpose)
 		colony.advance_offline(5000.0)
+	# Свободные жители сами еду не добывают — после долгой подготовки накормим и подлечим.
+	colony.inventory["food"] = maxi(50, colony.inventory.get("food", 0))
+	for u in colony.units:
+		u.satiety = 100.0
+		u.energy = 100.0
+		u.health = 100.0
 	return [colony, room]
 
 
@@ -371,7 +393,7 @@ func test_room_purposes() -> void:
 	colony.inventory = {}
 	check(colony.set_purpose(room, RoomType.STORAGE), "назначение выбрано")
 	colony.advance_offline(3000.0)
-	check(room.phase == Project.Phase.EQUIP and room.blocked.begins_with("Не хватает"), "без дерева склад не обустроить")
+	check(room.phase == Project.Phase.EQUIP or room.phase == Project.Phase.DONE, "склад обустраивают (дерево рубят по нужде)")
 	colony.inventory = {"wood": 50, "food": 50}
 	colony.advance_offline(3000.0)
 	check(room.purpose == RoomType.STORAGE and room.phase == Project.Phase.DONE, "склад обустроен")
@@ -384,6 +406,7 @@ func test_room_purposes() -> void:
 	var fc: Colony = farm_res[0]
 	var farm: Project = farm_res[1]
 	check(farm.purpose == RoomType.FARM, "ферма обустроена")
+	check(fc.assign_work(fc.units[0], farm).is_empty(), "фермер назначен")
 	fc.inventory["food"] = 0
 	var food0 := 0
 	fc.advance_offline(1800.0)
@@ -485,11 +508,15 @@ func test_tunnel_throughput() -> void:
 func test_professions() -> void:
 	var colony := _new_colony(27)
 	colony.start_new(0)
+	colony.inventory["food"] = 200
 	var u := colony.units[0]
 	u.profession = Unit.Prof.DIGGER
 	check(colony._task_order(u)[0] == "dig", "копатель сначала копает")
-	u.profession = Unit.Prof.FARMER
-	check(colony._task_order(u)[0] == "farm", "фермер сначала идёт на ферму")
+	u.profession = Unit.Prof.ANY
+	u.workplace = 999
+	check(colony._task_order(u)[0] == "workplace", "назначенный сначала идёт на своё место работы")
+	u.workplace = 0
+	check(not colony._task_order(u).has("farm") and not colony._task_order(u).has("fish"), "свободные сами не фермерствуют и не рыбачат")
 	var kid := colony._new_unit(Unit.Sex.FEMALE, Vector2.ZERO)
 	kid.child = true
 	check(colony.adults() == 5, "дети не считаются рабочими")
@@ -539,6 +566,8 @@ func test_build_rules_v2() -> void:
 	# Ребёнок ест вдвое больше.
 	var kid := colony._new_unit(Unit.Sex.MALE, colony.units[0].pos)
 	kid.child = true
+	for o in colony.units:
+		o.satiety = 100.0
 	kid.satiety = 10.0
 	colony.inventory["food"] = 10
 	for i in 40:
@@ -785,6 +814,7 @@ func test_lakes_and_fishing() -> void:
 	check(br.phase == Project.Phase.DONE, "мостик построен")
 	check(colony.pathing.standable(Vector2i(x0 + 2, row)), "по мостику можно ходить над водой")
 	colony.inventory["food"] = 0
+	check(colony.assign_work(colony.units[0], br).is_empty(), "рыбак назначен на мостик")
 	colony.fish[int(lake["id"])] = Colony.fish_max(lake)
 	var fish0 := colony.fish_in(lake)
 	colony.advance_offline(1800.0)
@@ -935,8 +965,9 @@ func test_storage_workers() -> void:
 	check(room.purpose == RoomType.STORAGE, "склад обустроен")
 	check(not room.targets.is_empty() and room.gatherers > 0, "у склада есть нормы запаса и рабочие")
 	colony.inventory = {}
-	room.targets = {"wood": 15, "stone": 0, "food": 0}
-	room.gatherers = 2
+	room.targets = {"wood": 15, "stone": 0}
+	colony.assign_work(colony.units[0], room)
+	colony.assign_work(colony.units[1], room)
 	var carried := false
 	var t := 0.0
 	while t < 3000.0 and colony.inventory.get("wood", 0) < 15:
@@ -1325,9 +1356,17 @@ func test_residents() -> void:
 	check(colony._closed_for(colony.units[3], farm) and not colony._closed_for(worker, farm), "на ферме работают только назначенные")
 	check(not colony.assign_work(baby, farm).is_empty(), "детей не назначить")
 	colony.unassign_work(worker)
-	check(worker.workplace == 0 and not colony._closed_for(colony.units[3], farm), "снят — ферма снова открыта всем")
+	check(worker.workplace == 0 and colony._closed_for(worker, farm), "снят — на ферме работают только назначенные")
 	check(colony.suitability(worker, farm) > 0.0, "подсказка, насколько подходит")
 	colony.projects.erase(farm)
+	# Склад и амбар: еда — только в амбаре.
+	var st := _fake_room(colony, RoomType.STORAGE, 20)
+	var gr := _fake_room(colony, RoomType.GRANARY, 30)
+	check(RoomType.stores(gr, "food") and RoomType.stores(gr, "berries") and not RoomType.stores(gr, "wood"), "амбар хранит только еду")
+	check(RoomType.stores(st, "wood") and not RoomType.stores(st, "food"), "склад хранит ресурсы, но не еду")
+	check(colony.storage_capacity("food") > 0 and colony.storage_capacity("wood") > 0, "вместимость: еда — амбар, дерево — склад")
+	colony.projects.erase(st)
+	colony.projects.erase(gr)
 	# Знакомство: рядом — растёт.
 	var a := colony.units[0]
 	var b := colony.units[1]
@@ -1436,7 +1475,8 @@ func test_economy() -> void:
 	check(colony.research.start("bricks"), "начали изучать обжиг кирпича")
 	check(not colony.research.available("metallurgy"), "металлургия — только после кирпича")
 	for u in colony.units:
-		u.profession = Unit.Prof.SCIENTIST
+		colony.assign_work(u, lab)
+	check(colony.assigned_to(lab).size() == colony.work_slots(lab), "учёные назначены по числу мест")
 	var t := 0.0
 	while t < 2000.0 and not colony.research.has("bricks"):
 		colony.update(1.0)

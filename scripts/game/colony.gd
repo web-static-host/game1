@@ -202,9 +202,15 @@ func start_new(home_x: int) -> void:
 	_refresh_bushes()
 	var sexes := [Unit.Sex.MALE, Unit.Sex.FEMALE, Unit.Sex.MALE, Unit.Sex.FEMALE]
 	sexes.append(rng.randi_range(0, 1))
+	# Основатели — самые яркие и разные цвета: красный, синий, зелёный, жёлтый, фиолетовый.
+	var hues := [0.0, 0.62, 0.33, 0.15, 0.8, 0.08, 0.5]
 	for i in START_UNITS:
 		var x := home_x - 2 + i
-		var u := _new_unit(sexes[i], Vector2(x, world.gen.surface_y(x) - 1))
+		var g := Genetics.founder(rng)
+		g["female"] = sexes[i] == Unit.Sex.FEMALE
+		var col := Color.from_hsv(hues[i % hues.size()], 1.0, 1.0)
+		g["color"] = [col, col]
+		var u := _new_unit(sexes[i], Vector2(x, world.gen.surface_y(x) - 1), g)
 		# Небольшие врождённые склонности.
 		for k in u.skills:
 			u.skills[k] = rng.randf_range(0.0, 200.0)
@@ -333,7 +339,7 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 		# втрое шире — не удержать ничем.
 		var span := ceiling_span(r)
 		if r.size.x > span[0] * 3:
-			return "Потолок из породы «%s» не удержать даже с крепью: здесь не шире %d м" % [
+			return "Потолок из породы «%s» не удержать даже с укреплением: здесь не шире %d м" % [
 				Mat.name_of(span[1]).to_lower(), span[0] * 3]
 	return ""
 
@@ -1095,10 +1101,10 @@ func _finish_equip(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
-	if p.purpose == RoomType.STORAGE:
+	if RoomType.is_store(p.purpose):
 		_full_warned.clear()
 		if p.targets.is_empty():
-			p.targets = default_targets()
+			p.targets = default_targets(p)
 			p.gatherers = 1
 	if p.purpose != RoomType.NONE:
 		_log("Готово: %s (%s)" % [p.title(), RoomType.HINTS[p.purpose]], "good")
@@ -1119,9 +1125,16 @@ func capacity(key: String) -> int:
 
 
 ## Вместимость складов для ресурса (без кучи на земле).
+## Склады и амбары.
+func store_rooms() -> Array[Project]:
+	var out := rooms_of(RoomType.STORAGE)
+	out.append_array(rooms_of(RoomType.GRANARY))
+	return out
+
+
 func storage_capacity(key: String) -> int:
 	var c := 0
-	for p in rooms_of(RoomType.STORAGE):
+	for p in store_rooms():
 		if RoomType.stores(p, key):
 			c += RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
 	return roundi(c * 1.5) if research.has("shelving") else c
@@ -1378,7 +1391,7 @@ func on_slide(c: Vector2i, moved: int, m: int) -> void:
 
 
 func on_collapse(c: Vector2i, span: int, limit: int, m: int) -> void:
-	_log("ОБВАЛ на глубине %s: потолок из «%s» не выдержал пролёт %d м (держит %d м без крепи)" % [
+	_log("ОБВАЛ на глубине %s: потолок из «%s» не выдержал пролёт %d м (держит %d м без укрепления)" % [
 		_depth_text(c), Mat.name_of(m).to_lower(), span, limit], "danger")
 
 
@@ -1440,7 +1453,7 @@ func _tick_exposure(dt: float) -> void:
 		var before := p.exposed_t
 		p.exposed_t += dt
 		if before < Physics.GRACE * 0.5 and p.exposed_t >= Physics.GRACE * 0.5:
-			_log("%s простаивает без крепи — может обвалиться" % p.title(), "warning")
+			_log("%s простаивает без укрепления — может обвалиться" % p.title(), "warning")
 		if before < Physics.GRACE and p.exposed_t >= Physics.GRACE:
 			physics.check_area(p.cells())
 
@@ -1697,7 +1710,8 @@ func is_workplace(p: Project) -> bool:
 		return false
 	if p.is_water_structure():
 		return true
-	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.STORAGE]
+	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE,
+		RoomType.STORAGE, RoomType.GRANARY]
 
 
 func work_slots(p: Project) -> int:
@@ -1714,14 +1728,9 @@ func assigned_to(p: Project) -> Array[Unit]:
 	return out
 
 
-## Если в комнату назначены жители — работают там только они; иначе — кто свободен.
+## Работают на месте только назначенные игроком.
 func _closed_for(u: Unit, p: Project) -> bool:
-	if u.workplace == p.id:
-		return false
-	for o in units:
-		if o.workplace == p.id:
-			return true
-	return false
+	return u.workplace != p.id
 
 
 func assign_work(u: Unit, p: Project) -> String:
@@ -1769,7 +1778,7 @@ func work_stat(p: Project) -> String:
 
 
 func work_skill(p: Project) -> String:
-	if p.is_water_structure() or p.purpose == RoomType.STORAGE:
+	if p.is_water_structure() or RoomType.is_store(p.purpose):
 		return "gather"
 	match p.purpose:
 		RoomType.FARM:
@@ -1801,10 +1810,15 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
 		RoomType.KILN, RoomType.FORGE:
 			return has_inputs(p) and _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
-		RoomType.STORAGE:
+		RoomType.STORAGE, RoomType.GRANARY:
+			# Работники склада и амбара: рубят отмеченное игроком, добывают до нормы,
+			# относят добытое на хранение.
+			if p.purpose == RoomType.STORAGE and _try_harvest(u, parents, dist):
+				return true
 			for k in storage_deficit(p):
 				if _try_gather(u, k, p, parents, dist):
 					return true
+			return _try_cleanup(u, parents, dist, p)
 	return false
 
 
@@ -2282,7 +2296,7 @@ func _task_valid(u: Unit) -> bool:
 					return false
 			if u.gather_room != 0:
 				var room := project_by_id(u.gather_room)
-				return room != null and room.purpose == RoomType.STORAGE and harvestable(u.target.x)
+				return room != null and RoomType.is_store(room.purpose) and harvestable(u.target.x)
 			return world.feature_marks.has(u.target.x) and harvestable(u.target.x)
 		Unit.Task.HAUL:
 			if u.haul_stage == 0 and u.from_drop and drop_amount(u.haul_src, u.carry_key) <= 0:
@@ -2356,31 +2370,23 @@ func _reserve_key(u: Unit) -> Variant:
 
 
 ## Порядок занятий жителя: сначала его профессия, затем общая очередь.
+## Порядок дел. Назначенный — сначала своё место работы. Остальное — только нужное
+## колонии: стройки (копка, укрепление, стройка, доставка материалов) и сбор по нужде
+## (не хватает материалов на стройку, нечего есть). Сами по себе свободные жители не
+## рубят, не ловят рыбу, не фермерствуют и ничего не носят на хранение.
 func _task_order(u: Unit) -> Array[String]:
 	var order: Array[String] = []
 	if u.workplace != 0:
 		order.append("workplace")
+	if food_critical():
+		order.append("need")
 	match u.profession:
-		Unit.Prof.ANY:
-			order.append("storage")
 		Unit.Prof.DIGGER:
 			order.append("dig")
 		Unit.Prof.BUILDER:
 			order.append("build")
-		Unit.Prof.GATHERER:
-			order.append_array(["storage", "harvest", "fish"])
-		Unit.Prof.FARMER:
-			order.append_array(["farm", "fish"])
-		Unit.Prof.SCIENTIST:
-			order.append("science")
-	# Голод перебивает стройку, только если еды почти нет.
-	if food_critical():
-		order.append_array(["farm", "fish", "need"])
-	# Стройки — раньше сбора: на каждой работает столько, сколько выбрал игрок.
-	order.append_array(["storage", "projects", "cleanup"])
-	if waiting_for_materials():
-		order.append("need")
-	order.append_array(["harvest", "farm", "fish", "craft", "science", "need"])
+	order.append("projects")
+	order.append("need")
 	return order
 
 
@@ -2785,7 +2791,7 @@ func _source_spots(key: String) -> Array[Vector2i]:
 		return out
 	var split := stored_split(key)
 	if split.x > 0:
-		for room in rooms_of(RoomType.STORAGE):
+		for room in store_rooms():
 			if RoomType.stores(room, key):
 				for x in range(RoomType.floor_start(room), room.rect.end.x):
 					out.append(Vector2i(x, room.rect.end.y - 1))
@@ -2914,7 +2920,7 @@ func _haul_source(key: String, dist: Dictionary) -> Array:
 func _store_spot(key: String, dist: Dictionary) -> Variant:
 	var best = null
 	var best_d := 1 << 30
-	for room in rooms_of(RoomType.STORAGE):
+	for room in store_rooms():
 		if not RoomType.stores(room, key):
 			continue
 		for x in range(RoomType.floor_start(room), room.rect.end.x):
@@ -2932,7 +2938,7 @@ func _store_spot(key: String, dist: Dictionary) -> Variant:
 
 
 ## Свободный житель уносит лежащее на земле на склад (если там есть место).
-func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null) -> bool:
 	var best = null
 	var best_c := Vector2i.ZERO
 	var best_k := ""
@@ -2943,6 +2949,9 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		if stand == null or dist[stand] >= best_d:
 			continue
 		for k in drops[c]:
+			# Носят только то, что этот склад (амбар) хранит.
+			if only != null and not RoomType.stores(only, k):
+				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
 			var room: int = capacity(k) - inventory.get(k, 0) - _incoming(k)
 			if avail > 0 and room > 0:
@@ -3108,15 +3117,16 @@ func storage_deficit(p: Project) -> Array[String]:
 
 
 ## Нормы по умолчанию для нового склада.
-func default_targets() -> Dictionary:
+func default_targets(room: Project = null) -> Dictionary:
 	var out := {}
 	for k in DEFAULT_TARGETS:
-		out[k] = mini(DEFAULT_TARGETS[k], capacity(k))
+		if room == null or RoomType.stores(room, k):
+			out[k] = mini(DEFAULT_TARGETS[k], capacity(k))
 	return out
 
 
 func _try_storage(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
-	for room in rooms_of(RoomType.STORAGE):
+	for room in store_rooms():
 		if room.paused or room.gatherers <= 0 or gatherers_on(room) >= room.gatherers or _closed_for(u, room):
 			continue
 		for k in storage_deficit(room):
@@ -3766,6 +3776,16 @@ func _offline_can_haul(p: Project) -> bool:
 ## [ключ цели, вид задачи, проект] или [] если работы нет.
 func _offline_job(u: Unit, taken: Dictionary) -> Array:
 	for kind in _task_order(u):
+		if kind == "workplace":
+			var wp := _offline_workplace(u, taken)
+			if not wp.is_empty():
+				return wp
+			continue
+		if kind == "need":
+			var nd := _offline_need(taken)
+			if not nd.is_empty():
+				return nd
+			continue
 		match kind:
 			"harvest":
 				var h := _offline_harvest(taken)
@@ -3791,7 +3811,7 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["c%d" % p.id, Unit.Task.CRAFT if kind == "craft" else Unit.Task.RESEARCH, p]
 			"storage":
-				for room in rooms_of(RoomType.STORAGE):
+				for room in store_rooms():
 					var gslot := "g%d" % room.id
 					if room.paused or taken.get(gslot, 0) >= room.gatherers:
 						continue
@@ -3855,6 +3875,65 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if _offline_can_haul(p):
 						taken[slot] = taken.get(slot, 0) + 1
 						return ["haul%d:%d" % [p.id, u.id], Unit.Task.HAUL, p]
+	return []
+
+
+## Оффлайн: сбор по нужде — стройке не хватает дерева или камня: сначала отмеченное
+## игроком, потом ближайшее подходящее.
+func _offline_need(taken: Dictionary) -> Array:
+	var keys := {}
+	for p in projects:
+		if p.paused or not p.blocked.begins_with("Не хватает"):
+			continue
+		for k in _needed_now(p):
+			if GATHER_SOURCES.has(k) and GATHER_SOURCES[k] >= 0:
+				keys[k] = true
+	if keys.is_empty():
+		return []
+	var h := _offline_harvest(taken)
+	if not h.is_empty():
+		return h
+	for k in keys:
+		var x = _offline_gather_x(GATHER_SOURCES[k], taken)
+		if x != null:
+			taken["h%d" % x] = true
+			return ["h%d" % x, Unit.Task.HARVEST, null]
+	return []
+
+
+## Оффлайн: работа на своём месте (только назначенные).
+func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
+	var p := project_by_id(u.workplace)
+	if not is_workplace(p) or p.paused:
+		return []
+	var slot := "w%d" % p.id
+	if p.is_water_structure():
+		if taken.get(slot, 0) < p.fish_slots() and fish_left(p) >= 1.0:
+			taken[slot] = taken.get(slot, 0) + 1
+			return ["fish%d" % p.id, Unit.Task.FISH, p]
+		return []
+	match p.purpose:
+		RoomType.FARM:
+			taken[slot] = taken.get(slot, 0) + 1
+			return ["f%d" % p.id, Unit.Task.FARM, p]
+		RoomType.LAB:
+			if not research.current.is_empty():
+				taken[slot] = taken.get(slot, 0) + 1
+				return ["c%d" % p.id, Unit.Task.RESEARCH, p]
+		RoomType.KILN, RoomType.FORGE:
+			if has_inputs(p):
+				taken[slot] = taken.get(slot, 0) + 1
+				return ["c%d" % p.id, Unit.Task.CRAFT, p]
+		RoomType.STORAGE, RoomType.GRANARY:
+			if p.purpose == RoomType.STORAGE:
+				var h := _offline_harvest(taken)
+				if not h.is_empty():
+					return h
+			for k in storage_deficit(p):
+				var x = _offline_gather_x(GATHER_SOURCES[k], taken)
+				if x != null:
+					taken["h%d" % x] = true
+					return ["h%d" % x, Unit.Task.HARVEST, null]
 	return []
 
 
