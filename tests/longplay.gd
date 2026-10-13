@@ -309,6 +309,11 @@ func _answer_geologist() -> void:
 				colony.set_paused(p, false)
 		return
 	for p: Project in colony.projects.duplicate():
+		# Дегазацию в газе копают на свой риск — иначе её не построить.
+		if p.paused and p.hazard_pending == "methane" and _pending_purpose.get(p.id, -1) == RoomType.DEGAS:
+			_act("дегазация на свой риск")
+			colony.set_paused(p, false)
+			continue
 		if not p.paused or p.hazard_pending.is_empty() or p.hazard_pending == "methane":
 			continue
 		_act("геолог")

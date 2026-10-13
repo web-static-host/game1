@@ -1441,13 +1441,17 @@ func test_gas_alarm() -> void:
 	room.id = 950
 	room.kind = Project.Kind.ROOM
 	room.phase = Project.Phase.DONE
-	room.purpose = RoomType.STORAGE
+	room.purpose = RoomType.FARM
 	room.rect = Rect2i(o.x + 2, o.y + 2, 6, 3)
 	colony.projects.append(room)
 	el.gas[o + Vector2i(4, 3)] = 0.3
 	el.gas[o + Vector2i(4, 4)] = 0.3
 	el._gas_alarm()
-	check(room.paused and room.hazard_pending == "methane", "метан у комнаты — работы остановлены")
+	check(not room.paused, "готовая ферма в метане работает: искру даёт только кирка")
+	room.phase = Project.Phase.DIG
+	room.purpose = RoomType.NONE
+	el._gas_alarm()
+	check(room.paused and room.hazard_pending == "methane", "метан у копки — работы остановлены")
 	var u := colony.units[0]
 	u.pos = Vector2(o + Vector2i(4, 4))
 	u.state = Unit.State.IDLE
