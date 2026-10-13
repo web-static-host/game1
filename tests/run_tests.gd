@@ -1269,7 +1269,21 @@ func test_genetics() -> void:
 	check(Genetics.is_mutant(m) and Genetics.mutation_text(m).begins_with("Мутант"), "мутант помечен: " + Genetics.mutation_text(m))
 	var hairy := Genetics.founder(rng)
 	hairy["hair"] = [true, false]
-	check(not Genetics.has_hair(hairy), "волосы видны, только если обе копии их несут")
+	check(not Genetics.has(hairy, "hair"), "волосы видны, только если обе копии их несут")
+	var many := Genetics.founder(rng)
+	many["eyes"] = [3, 3]
+	for i in 3:
+		Genetics.mutate(many, rng, "eyes")
+	check(Genetics.eyes_of(many) >= 3, "глаз может стать больше трёх (%d)" % Genetics.eyes_of(many))
+	var counts := {}
+	for i in 20000:
+		var k := Genetics.roll_mutation(rng)
+		var r: int = Genetics.MUTATIONS[k][0]
+		counts[r] = counts.get(r, 0) + 1
+	check(counts[0] > counts[1] and counts[1] > counts[2] and counts[2] > counts[3], "мутации разной редкости: %s" % counts)
+	var melan := Genetics.founder(rng)
+	Genetics.mutate(melan, rng, "melanist")
+	check(Genetics.has(melan, "melanist") and Genetics.stats(melan)["cold"] > 1.3, "меланист — чёрный, не мёрзнет")
 
 
 func test_loads() -> void:

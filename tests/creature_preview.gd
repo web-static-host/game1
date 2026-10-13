@@ -16,19 +16,18 @@ func _initialize() -> void:
 	root.add_child(_node)
 
 
+const SHEETS := ["creature_mutations_1", "creature_mutations_2", "creature_stats", "creature_family", "creature_colors"]
+
+
 func _process(_delta: float) -> bool:
 	_frame += 1
-	if _frame == 3:
-		_save("creature_traits")
-		_node.sheet = 1
+	if _frame % 3 == 0:
+		var i := _frame / 3 - 1
+		_save(SHEETS[i])
+		if i + 1 >= SHEETS.size():
+			return true
+		_node.sheet = i + 1
 		_node.queue_redraw()
-	if _frame == 6:
-		_save("creature_family")
-		_node.sheet = 2
-		_node.queue_redraw()
-	if _frame == 9:
-		_save("creature_colors")
-		return true
 	return false
 
 

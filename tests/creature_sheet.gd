@@ -15,8 +15,12 @@ func _draw() -> void:
 		PackedColorArray([Color8(120, 200, 255), Color8(120, 200, 255), Color8(190, 235, 255), Color8(190, 235, 255)]))
 	match sheet:
 		0:
-			_sheet_traits(size)
+			_sheet_mutations(size, 0)
 		1:
+			_sheet_mutations(size, 1)
+		2:
+			_sheet_stats(size)
+		3:
 			_sheet_family(size)
 		_:
 			_sheet_colors(size)
@@ -42,65 +46,126 @@ func _card(r: Rect2) -> void:
 	draw_style_box(sb, r)
 
 
-const STAT_COLORS := {"vision": Color8(80, 170, 255), "strength": Color8(240, 90, 70), "agility": Color8(120, 200, 70),
-	"intellect": Color8(170, 110, 240), "heat": Color8(255, 140, 30), "cold": Color8(60, 200, 230)}
-const STAT_SHORT := {"vision": "Зрение", "strength": "Сила", "agility": "Ловк.", "intellect": "Интел.", "heat": "Жара", "cold": "Холод"}
+const RARITY_COLORS := [Color8(110, 160, 110), Color8(70, 140, 235), Color8(165, 90, 230), Color8(230, 165, 20)]
 
 
-func _genome(shape: int, col: Color, eyes := 1, fingers := 4, hair := false, fur := false, muts := [], female := false) -> Dictionary:
-	return {"color": [col, col], "color_mix": 0.5, "shape": [shape, shape], "shape_pick": 0, "eyes": [eyes, eyes],
-		"eyes_pick": 0, "fingers": [fingers, fingers], "hair": [hair, hair], "fur": [fur, fur], "mutations": muts, "female": female}
+## Основатель с заданной формой и цветом, затем — нужная мутация.
+func _mutant(seed: int, shape: int, col: Color, kinds: Array, female := false, eyes := 1) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	var g := Genetics.founder(rng)
+	g["shape"] = [shape, shape]
+	g["color"] = [col, col]
+	g["eyes"] = [eyes, eyes]
+	g["female"] = female
+	g["personality"] = ""
+	for k in kinds:
+		Genetics.mutate(g, rng, k)
+	if kinds.has("eyes"):
+		g["eyes"] = [eyes + 1, eyes + 1] # для показа — глаз стало больше
+	if kinds.has("fingers"):
+		g["fingers"] = [5, 5]
+	if kinds.has("color"):
+		g["color"] = [Color(0.45, 0.32, 0.6), Color(0.45, 0.32, 0.6)]
+	return g
 
 
-## Житель с подписью и полосками характеристик.
-func _stat_unit(cx: float, foot_y: float, w: float, g: Dictionary, caption: String) -> void:
-	CreatureArt.draw(self, Vector2(cx, foot_y), w, Genetics.looks(g), t)
-	_text(Vector2(cx - 110, foot_y + 24), caption, 16, INK, 220)
-	var mt := Genetics.mutation_text(g)
-	if Genetics.is_super(g):
-		mt = "СВЕРХЮНИТ ×2"
-	if Genetics.eyes_of(g) == 0:
-		mt = "Мутант: без глаз · медленный, руда в глубине ×2"
-	if not mt.is_empty():
-		_text(Vector2(cx - 110, foot_y + 42), mt, 13, Color(0.75, 0.2, 0.3), 220)
-	var st := Genetics.stats(g)
-	var y := foot_y + 54
-	for k in Genetics.STATS:
-		var v: float = st[k]
-		_text(Vector2(cx - 98, y + 10), STAT_SHORT[k], 12, Color(0.35, 0.3, 0.4))
-		var bar := Rect2(cx - 50, y + 1, 90, 9)
-		draw_rect(bar, Color(0, 0, 0, 0.08))
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(v / 2.0, 0.0, 1.0), bar.size.y)), STAT_COLORS[k])
-		draw_line(Vector2(bar.position.x + bar.size.x * 0.5, y), Vector2(bar.position.x + bar.size.x * 0.5, y + 11), Color(0, 0, 0, 0.25), 1)
-		_text(Vector2(cx + 44, y + 10), "%d%%" % roundi(v * 100), 12, Color(0.35, 0.3, 0.4))
-		y += 13
-
-
-## Признаки, мутации и характеристики.
-func _sheet_traits(size: Vector2) -> void:
-	_text(Vector2(0, 40), "ПРИЗНАКИ, МУТАЦИИ, ХАРАКТЕРИСТИКИ", 30, Color.WHITE, size.x)
+## Мутации с меткой редкости.
+func _sheet_mutations(size: Vector2, part: int) -> void:
+	var title: String = ["МУТАЦИИ · обычные и необычные", "МУТАЦИИ · редкие и очень редкие"][part]
+	_text(Vector2(0, 40), title, 30, Color.WHITE, size.x)
 	var card := Rect2(16, 56, size.x - 32, size.y - 68)
 	_card(card)
-	var red := Color.from_hsv(0.0, 1.0, 1.0)
-	var blue := Color.from_hsv(0.62, 1.0, 1.0)
-	var yellow := Color.from_hsv(0.15, 1.0, 1.0)
-	var units := [
-		[_genome(S.TRIANGLE, red), "Треугольник, красный ♂"],
-		[_genome(S.SQUARE, blue, 1, 4, false, false, [], true), "Квадрат, синий ♀"],
-		[_genome(S.ROUND, yellow), "Круг, жёлтый ♂"],
-		[_genome(S.ROUND, Color.from_hsv(0.33, 1.0, 1.0), 2, 4, false, false, [], true), "2 глаза ♀"],
-		[_genome(S.SQUARE, Color.from_hsv(0.8, 1.0, 1.0), 3, 4, false, false, ["eyes"]), "3 глаза"],
-		[_genome(S.TRIANGLE, Color.from_hsv(0.92, 1.0, 1.0), 0, 4, false, false, ["eyes"]), "Без глаз"],
-		[_genome(S.TRIANGLE, Color.from_hsv(0.5, 1.0, 1.0), 1, 5, false, false, ["fingers"]), "5 пальцев"],
-		[_genome(S.ROUND, Color.from_hsv(0.08, 1.0, 1.0), 2, 4, true, true, ["hair", "fur"], true), "Шерсть и волосы ♀"],
-		[_genome(S.SQUARE, Color.from_hsv(0.6, 0.9, 1.0), 1, 4, false, true, ["fur"]), "Шерсть, синий"],
-		[_genome(S.TRIANGLE, Color.from_hsv(0.75, 1.0, 1.0), 2, 4, true, false, ["hair"]), "Волосы"],
-	]
-	for i in units.size():
+	var hsv := func(h: float) -> Color: return Color.from_hsv(h, 1.0, 1.0)
+	var items: Array = []
+	if part == 0:
+		items = [
+			[_mutant(1, S.ROUND, hsv.call(0.6), ["color"]), "Новый цвет"],
+			[_mutant(2, S.SQUARE, hsv.call(0.8), ["eyes"], false, 3), ""],
+			[_mutant(3, S.ROUND, hsv.call(0.15), ["eyes"], true, 4), ""],
+			[_mutant(4, S.TRIANGLE, hsv.call(0.5), ["fingers"]), ""],
+			[_mutant(5, S.SQUARE, hsv.call(0.95), ["pattern"]), ""],
+			[_mutant(6, S.ROUND, hsv.call(0.3), ["pattern"]), ""],
+			[_mutant(7, S.TRIANGLE, hsv.call(0.75), ["hair"], true), ""],
+			[_mutant(8, S.SQUARE, hsv.call(0.07), ["fur"]), ""],
+			[_mutant(9, S.TRIANGLE, hsv.call(0.33), ["long_arms"]), ""],
+			[_mutant(10, S.ROUND, hsv.call(0.9), [], true, 2), "Жительница ♀ (ресницы)"],
+		]
+	else:
+		items = [
+			[_mutant(11, S.ROUND, hsv.call(0.12), ["antennae"]), ""],
+			[_mutant(12, S.SQUARE, hsv.call(0.0), ["horn"]), ""],
+			[_mutant(13, S.TRIANGLE, hsv.call(0.55), ["gills"]), ""],
+			[_mutant(14, S.SQUARE, hsv.call(0.65), ["giant"]), ""],
+			[_mutant(15, S.TRIANGLE, hsv.call(0.92), ["tiny"], true), ""],
+			[_mutant(16, S.ROUND, hsv.call(0.18), ["glow"]), ""],
+			[_mutant(17, S.ROUND, hsv.call(0.38), ["shell"]), ""],
+			[_mutant(18, S.TRIANGLE, hsv.call(0.0), ["albino"], true), ""],
+			[_mutant(19, S.SQUARE, hsv.call(0.0), ["melanist"]), ""],
+			[_mutant(20, S.TRIANGLE, hsv.call(0.97), ["blind"]), ""],
+		]
+	for i in items.size():
 		var col := i % 5
 		var row := i / 5
 		var cx := card.position.x + card.size.x * (col + 0.5) / 5.0
-		_stat_unit(cx, card.position.y + 180 + row * 330, 82, units[i][0], units[i][1])
+		var foot := card.position.y + 245 + row * 315
+		var g: Dictionary = items[i][0]
+		CreatureArt.draw(self, Vector2(cx, foot), 86, Genetics.looks(g), t)
+		var caption: String = items[i][1]
+		var r := Genetics.rarity(g)
+		if caption.is_empty():
+			caption = Genetics.mutation_text(g).trim_prefix("Мутант: ").split(" (")[0]
+			caption = caption.substr(0, 1).to_upper() + caption.substr(1)
+		_text(Vector2(cx - 120, foot + 30), caption, 18, INK, 240)
+		if r >= 0:
+			var tag: String = Genetics.RARITY_NAMES[r]
+			var tw := tag.length() * 8.0 + 20.0
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = RARITY_COLORS[r]
+			sb.set_corner_radius_all(10)
+			draw_style_box(sb, Rect2(cx - tw * 0.5, foot + 40, tw, 22))
+			_text(Vector2(cx - 120, foot + 57), tag, 14, Color(1, 1, 1), 240)
+		var ab := Genetics.ability_text(g)
+		if not ab.is_empty():
+			_text(Vector2(cx - 120, foot + 82), ab, 12, Color(0.4, 0.35, 0.45), 240)
+
+
+## Характеристики четырёх жителей: 14 полосок, характер и особенности.
+func _sheet_stats(size: Vector2) -> void:
+	_text(Vector2(0, 40), "ХАРАКТЕРИСТИКИ И ХАРАКТЕР", 30, Color.WHITE, size.x)
+	var card := Rect2(16, 56, size.x - 32, size.y - 68)
+	_card(card)
+	var units := [
+		[_mutant(31, S.TRIANGLE, Color.from_hsv(0.0, 1, 1), []), "трудоголик"],
+		[_mutant(32, S.SQUARE, Color.from_hsv(0.66, 1, 1), ["fur"], true), "смельчак"],
+		[_mutant(33, S.ROUND, Color.from_hsv(0.15, 1, 1), [], true, 2), "весельчак"],
+		[_mutant(34, S.SQUARE, Color.from_hsv(0.33, 1, 1), ["giant"]), "обжора"],
+	]
+	for i in units.size():
+		var g: Dictionary = units[i][0]
+		g["personality"] = units[i][1]
+		var cx := card.position.x + card.size.x * (i + 0.5) / units.size()
+		CreatureArt.draw(self, Vector2(cx, card.position.y + 190), 80, Genetics.looks(g), t)
+		var who := "♀" if g["female"] else "♂"
+		_text(Vector2(cx - 150, card.position.y + 218), "%s · %s" % [who, g["personality"]], 18, INK, 300)
+		var mt := Genetics.mutation_text(g)
+		if not mt.is_empty():
+			_text(Vector2(cx - 150, card.position.y + 238), mt, 13, Color(0.75, 0.2, 0.3), 300)
+		var st := Genetics.stats(g)
+		for j in Genetics.STATS.size():
+			var k: String = Genetics.STATS[j]
+			var y := card.position.y + 262 + j * 22
+			var v: float = st[k]
+			_text(Vector2(cx - 140, y + 12), Genetics.STAT_NAMES[k], 13, Color(0.35, 0.3, 0.4))
+			var bar := Rect2(cx - 30, y + 3, 110, 10)
+			draw_rect(bar, Color(0, 0, 0, 0.08))
+			var good := v >= 1.0 if k != "appetite" else v <= 1.0
+			var fill := Color8(110, 200, 90) if good else Color8(240, 120, 80)
+			if absf(v - 1.0) < 0.01:
+				fill = Color8(150, 160, 180)
+			draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(v / 2.0, 0.0, 1.0), bar.size.y)), fill)
+			draw_line(Vector2(bar.position.x + bar.size.x * 0.5, y + 1), Vector2(bar.position.x + bar.size.x * 0.5, y + 15), Color(0, 0, 0, 0.25), 1)
+			_text(Vector2(cx + 86, y + 12), "%d%%" % roundi(v * 100), 13, Color(0.35, 0.3, 0.4))
 
 
 ## Семья по настоящей генетике: 4 основателя → 2 родителя → 6 детей.
