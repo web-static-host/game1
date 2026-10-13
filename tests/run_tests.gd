@@ -558,7 +558,7 @@ func test_professions() -> void:
 	u.profession = Unit.Prof.HAULER
 	check(colony._task_order(u)[0] == "haul", "подсобный сначала носит")
 	u.profession = Unit.Prof.ANY
-	check(colony._task_order(u) == ["projects", "haul", "need"], "свободный: стройка, потом переноска")
+	check(colony._task_order(u) == ["projects", "need", "haul"], "свободный: стройка (и добыча для неё), потом переноска")
 	u.profession = Unit.Prof.ANY
 	u.workplace = 999
 	check(colony._task_order(u)[0] == "workplace", "назначенный сначала идёт на своё место работы")
@@ -647,6 +647,15 @@ func test_roles() -> void:
 	hauler2.recheck_t = 0.0
 	colony._construction_recheck(hauler2, 0.1)
 	check(hauler2.task == Unit.Task.HAUL and hauler2.to_store, "подсобный продолжает носить")
+	# Наука: только назначенные, скорость — прямо от интеллекта.
+	var smart: Unit = colony.units[0]
+	smart.stats["intellect"] = 2.0
+	var plain: Unit = colony.units[1]
+	plain.stats["intellect"] = 1.0
+	var k := colony.work_factor(smart, Unit.Task.RESEARCH, Vector2i.ZERO) / colony.work_factor(plain, Unit.Task.RESEARCH, Vector2i.ZERO)
+	check(absf(k - 2.0 * float(smart.ability("work")) / float(plain.ability("work"))) < 0.01,
+		"вдвое умнее — изучает вдвое быстрее (%.2f)" % k)
+	check(not colony._task_order(plain).has("science"), "свободные сами не исследуют")
 
 
 func test_build_rules_v2() -> void:

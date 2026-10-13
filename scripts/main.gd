@@ -761,6 +761,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["people", "мастеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 			RoomType.LAB:
 				chips.append(["people", "учёных %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
+				var minds := 0.0
+				for w in colony.assigned_to(p):
+					minds += w.stat("intellect") * w.speed("science")
+				chips.append(["", "скорость науки %d%% (интеллект учёных)" % roundi(minds * 100.0)])
+				if colony.assigned_to(p).is_empty():
+					rows.append({"type": "warning", "text": "Нет учёных — назначьте жителя («Назначить»): исследуют только назначенные, быстрее — умные."})
 				var cur := colony.research.current
 				if cur.is_empty():
 					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
@@ -942,7 +948,7 @@ func _science_spec() -> Dictionary:
 	var r := colony.research
 	var rows := []
 	if r.current.is_empty():
-		rows.append({"type": "text", "text": "Выберите, что изучать. Очки дают учёные в лаборатории (назначение комнаты)."})
+		rows.append({"type": "text", "text": "Выберите, что изучать. Изучают только назначенные в лабораторию учёные; чем выше интеллект — тем быстрее."})
 	else:
 		rows.append(_progress(Research.tech_name(r.current), r.progress / r.cost(r.current),
 			"%d / %d" % [int(r.progress), int(r.cost(r.current))], Color(0.45, 0.7, 1.0)))

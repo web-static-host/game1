@@ -163,10 +163,12 @@ func _on_log(text: String, kind: String) -> void:
 			["лава течёт", "прорыв лавы"], ["сочится", "водоносный пласт"], ["Геолог", "предупреждение геолога"],
 			["истощ", "истощение от голода"], ["перегружена", "перегрузка"], ["износ 70", "износ 70%"],
 			["Склад полон", "склад полон"], ["Не хватает", "нехватка материалов"], ["Новая находка", "новая находка"],
-			["Изучено", "исследование"], ["на разведку", "разведка за сырьём"], ["Метан в выработке", "газовая тревога"], ["Родился", "рождение"], ["стали парой", "пара"]]:
+			["Изучено", "исследование"], ["на разведку", "разведка за сырьём"], ["Метан в выработке", "газовая тревога"], ["Родился", "рождение"], ["стали парой", "пара"],
+			["от старости", "смерть от старости"], ["мёрзнет", "мороз"], ["Через месяц зима", "мало еды к зиме"],
+			["состарил", "старость"]]:
 		if text.contains(pair[0]):
 			events[pair[1]] = events.get(pair[1], 0) + 1
-	if text.contains("погиб"):
+	if text.contains("погиб") or text.contains("от старости"):
 		deaths.append("%s  %s" % [_time(), text])
 	if text.contains("Родился"):
 		births += 1
@@ -218,6 +220,15 @@ func _slice() -> void:
 		if p.phase == Project.Phase.DONE:
 			done += 1
 	inv.append("на полу еды %d" % (colony.drop_total("food") + colony.drop_total("berries")))
+	var sci := 0
+	for lab in colony.rooms_of(RoomType.LAB):
+		sci += colony.assigned_to(lab).size()
+	inv.append("учёных %d, изучают «%s» %.0f" % [sci, colony.research.current, colony.research.progress])
+	var roles := {}
+	for u in colony.units:
+		var r := colony.role_name(u)
+		roles[r] = roles.get(r, 0) + 1
+	inv.append(str(roles))
 	print("[%4d с] %s | жит %d (дети %d) кроватей %d | построек %d, строится %d | глубина %d м | наука %d/%d | без дела %d | %s" % [
 		Time.get_ticks_msec() / 1000, _time(), colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size(), colony.beds_total(),
 		done, colony.projects.size() - done, _depth(), colony.research.done.size(), Research.TECHS.size(), idle, ", ".join(inv)])
@@ -374,21 +385,21 @@ func _professions() -> void:
 			have += 1
 			_act("роль")
 	# Места работы: еда — в первую очередь.
-	var order := [RoomType.FARM, RoomType.GRANARY, RoomType.STORAGE, RoomType.LAB, RoomType.KILN, RoomType.FORGE]
+	var order := [RoomType.FARM, RoomType.LAB, RoomType.GRANARY, RoomType.STORAGE, RoomType.KILN, RoomType.FORGE]
 	var places: Array[Project] = []
 	for t in order:
 		places.append_array(colony.rooms_of(t))
 	for p in colony.projects:
 		if p.is_water_structure() and p.phase == Project.Phase.DONE:
 			places.insert(0, p)
-	var keep_free := 2 if adults.size() < 10 else adults.size() / 4
+	var keep_free := 1 if adults.size() < 10 else adults.size() / 4
 	for p in places:
 		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
 		if p.purpose == RoomType.STORAGE and adults.size() < 7:
 			slots = 0
 		if p.purpose == RoomType.FARM:
-			slots = mini(slots, 2)
+			slots = mini(slots, 1 if adults.size() < 7 else 2)
 		if p.purpose == RoomType.LAB and adults.size() < 8:
 			slots = 1
 		while colony.assigned_to(p).size() < slots and free.size() > keep_free:
@@ -528,5 +539,5 @@ func _more_storage() -> void:
 	for k in ["wood", "stone", "food"]:
 		if colony.inventory.get(k, 0) >= colony.capacity(k) - 5:
 			_milestone("full", "Склад впервые забит (%s)" % k)
-			_surface_room(RoomType.STORAGE)
+			_surface_room(RoomType.GRANARY if k == "food" else RoomType.STORAGE)
 			return

@@ -2255,7 +2255,8 @@ func work_factor(u: Unit, task: int, c: Vector2i) -> float:
 		Unit.Task.HARVEST:
 			return soft(u.stat("strength")) * work
 		Unit.Task.RESEARCH:
-			return soft(u.stat("intellect")) * work
+			# Наука — прямо от интеллекта: вдвое умнее — вдвое быстрее.
+			return u.stat("intellect") * work
 		Unit.Task.FARM, Unit.Task.CRAFT, Unit.Task.FISH:
 			return soft(u.stat("agility")) * work
 	return work
@@ -2479,12 +2480,13 @@ func _reserve_key(u: Unit) -> Variant:
 ## (не хватает материалов на стройку, нечего есть). Сами по себе свободные жители не
 ## рубят, не ловят рыбу, не фермерствуют и ничего не носят на хранение.
 func _task_order(u: Unit) -> Array[String]:
+	# need — добыть то, чего не хватает стройке: это тоже стройка, она важнее переноски.
 	if u.workplace != 0:
-		return ["workplace", "projects", "haul", "need"]
+		return ["workplace", "projects", "need", "haul"]
 	if u.profession == Unit.Prof.HAULER:
 		return ["haul", "projects", "need"]
 	# Строители и свободные: сначала стройка, потом переноска.
-	return ["projects", "haul", "need"]
+	return ["projects", "need", "haul"]
 
 
 ## Ищет занятие для жителя. true — назначено.
@@ -3955,7 +3957,8 @@ func advance_offline(dt: float) -> int:
 				continue
 			var key = job[0]
 			var skill := Unit.skill_for(job[1])
-			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor() * u.age_factor()
+			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor() * u.age_factor() \
+				* work_factor(u, job[1], Vector2i.ZERO)
 			if jobs.has(key):
 				jobs[key][1] += rate
 			else:
