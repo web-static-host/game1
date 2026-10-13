@@ -52,13 +52,22 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 		parts.append(arm[0])
 		hands.append_array(arm.slice(1))
 		parts.append_array(_leg_parts(shape, w, base, at, sx))
+	# Сильное сглаживание: плечи, подмышки и бёдра — плавные дуги без ступенек.
+	# Оно же заливает просвет между ногами — его вырезаем аркой.
 	var core := _union(parts)
-	var smooth_core := _smooth(core, w * 0.045)
+	var open := _open(core, w * 0.03)
+	if _drawable(open):
+		core = open
+	var smooth_core := _smooth(core, w * 0.1)
 	if _drawable(smooth_core):
 		core = smooth_core
+		var gap := _crotch(shape, w, base, at)
+		var cut := _largest(Geometry2D.clip_polygons(core, gap))
+		if _drawable(cut):
+			core = cut
 	hands.push_front(core)
 	var sil := _union(hands)
-	var smooth_sil := _smooth(sil, w * 0.012)
+	var smooth_sil := _smooth(sil, w * 0.01)
 	if _drawable(smooth_sil):
 		sil = smooth_sil
 
@@ -72,10 +81,10 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	# Тень по нижним краям и светлый кант по верхним — вместо обводки.
 	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(-w * 0.012, -w * 0.035))):
 		if _drawable(p):
-			ci.draw_colored_polygon(p, Color(dark.darkened(0.25), 0.4))
+			ci.draw_colored_polygon(p, Color(dark.darkened(0.2), 0.3))
 	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(w * 0.01, w * 0.02))):
 		if _drawable(p):
-			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.45))
+			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.3))
 
 	if g.get("hair", false):
 		_hair(ci, Vector2(base.x, top), w, g.get("hair_color", col.darkened(0.4)))
@@ -106,41 +115,52 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 
 ## Рука идёт от верхнего угла, свисает вдоль бока и кончается кистью с пальцами.
 static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float, sx: float, fingers: int, sway: float) -> Array[PackedVector2Array]:
-	var shoulder_x := w * (0.38 if shape == Shape.TRIANGLE else 0.36)
-	var p0 := Vector2(base.x + sx * shoulder_x, top + w * 0.12)
-	var p1 := p0 + Vector2(sx * w * 0.24, 0.0)
+	# Верх руки идёт ровно по верхней линии туловища — плечо без бугорка.
+	var r0 := w * 0.1
+	var shoulder_x := w * (0.3 if shape == Shape.TRIANGLE else 0.28)
+	var p0 := Vector2(base.x + sx * shoulder_x, top + r0)
+	var p1 := p0 + Vector2(sx * w * 0.3, 0.0)
 	var p3 := Vector2(base.x + sx * w * 0.64 + sway, top + h * 0.7)
 	var p2 := p3 + Vector2(sx * w * 0.03, -w * 0.26)
 	var pts := _bezier(p0, p1, p2, p3, 16)
-	var out: Array[PackedVector2Array] = [_tube(pts, w * 0.1, w * 0.078)]
+	var out: Array[PackedVector2Array] = [_tube(pts, r0, w * 0.078)]
 	out.append_array(_hand(p3, (p3 - pts[pts.size() - 3]).normalized(), w, fingers, sx))
 	return out
 
 
 ## Кисть: ладонь, растопыренные пальцы разной длины с загибом и большой палец.
 static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, sx: float) -> Array[PackedVector2Array]:
-	var palm := c + dir * w * 0.04
-	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.08, 24)]
+	var palm := c + dir * w * 0.03
+	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.068, 24)]
 	# Всего пальцев fingers: при трёх и больше один из них — большой.
 	var fan := fingers - 1 if fingers >= 3 else fingers
-	var spread := clampf(0.6 * (fan - 1), 0.0, 2.6)
+	var step := 0.5 if fan <= 3 else 1.5 / (fan - 1)
 	var base_a := dir.angle()
 	for i in fan:
-		var k := 0.0 if fan == 1 else float(i) / (fan - 1) - 0.5
-		var a := base_a + k * spread
-		# Пухлые пальцы: средние длиннее, кончики толще и чуть загнуты.
-		var length := w * (0.17 - absf(k) * 0.05)
-		var root := palm + Vector2.from_angle(a) * w * 0.06
-		var mid := root + Vector2.from_angle(a) * length * 0.55
-		var tip := mid + Vector2.from_angle(a - sx * 0.3) * length * 0.45
-		out.append(_tube(PackedVector2Array([root, mid, tip]), w * 0.025, w * 0.035))
-	# Большой палец — в сторону туловища.
+		var k := float(i) - (fan - 1) * 0.5
+		var a := base_a + k * step
+		# Прямые пальцы ровным веером от середины ладони; средний чуть длиннее.
+		var length := w * (0.2 - absf(k) * step * 0.04)
+		out.append(_tube(PackedVector2Array([palm, palm + Vector2.from_angle(a) * length]), w * 0.03, w * 0.028))
+	# Большой палец — короче, в сторону туловища.
 	if fingers >= 3:
-		var ta := base_a + sx * (spread * 0.5 + 0.75)
-		var root := palm + Vector2.from_angle(ta) * w * 0.06
-		var tip := root + Vector2.from_angle(ta - sx * 0.5) * w * 0.08
-		out.append(_tube(PackedVector2Array([root, tip]), w * 0.028, w * 0.035))
+		var ta := base_a + sx * ((fan - 1) * 0.5 * step + 0.75)
+		out.append(_tube(PackedVector2Array([palm, palm + Vector2.from_angle(ta) * w * 0.15]), w * 0.032, w * 0.03))
 	return out
+
+
+## Просвет между ногами: арка от паха до земли.
+static func _crotch(shape: int, w: float, base: Vector2, at: Vector2) -> PackedVector2Array:
+	var top_half := w * 0.045
+	var bottom_half := w * (0.075 if shape == Shape.TRIANGLE else 0.16)
+	var cy := base.y - w * (0.07 if shape == Shape.TRIANGLE else -0.03) + top_half
+	var pts := PackedVector2Array()
+	for i in 13:
+		var a := PI + PI * i / 12.0
+		pts.append(Vector2(base.x + cos(a) * top_half, cy + sin(a) * top_half))
+	pts.append(Vector2(base.x + bottom_half, at.y + w * 0.05))
+	pts.append(Vector2(base.x - bottom_half, at.y + w * 0.05))
+	return pts
 
 
 static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: float) -> Array[PackedVector2Array]:
@@ -315,6 +335,15 @@ static func _smooth(poly: PackedVector2Array, r: float) -> PackedVector2Array:
 	if grown.is_empty():
 		return poly
 	var back := _largest(Geometry2D.offset_polygon(grown, -r, Geometry2D.JOIN_ROUND))
+	return back if not back.is_empty() else poly
+
+
+## «Открытие»: сжать и раздуть обратно — срезает мелкие выпуклые бугорки.
+static func _open(poly: PackedVector2Array, r: float) -> PackedVector2Array:
+	var shrunk := _largest(Geometry2D.offset_polygon(poly, -r, Geometry2D.JOIN_ROUND))
+	if shrunk.is_empty():
+		return poly
+	var back := _largest(Geometry2D.offset_polygon(shrunk, r, Geometry2D.JOIN_ROUND))
 	return back if not back.is_empty() else poly
 
 
