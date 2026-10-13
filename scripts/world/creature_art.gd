@@ -49,8 +49,10 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	var sway := sin(t * 2.0) * w * 0.02
 	for sx in [-1.0, 1.0]:
 		var arm := _arm_parts(shape, w, h, base, top, sx, fingers, sway * sx)
+		# Ладонь сглаживаем вместе с рукой — запястье без впадины; пальцы — потом.
 		parts.append(arm[0])
-		hands.append_array(arm.slice(1))
+		parts.append(arm[1])
+		hands.append_array(arm.slice(2))
 		parts.append_array(_leg_parts(shape, w, base, at, sx))
 	# Сильное сглаживание: плечи, подмышки и бёдра — плавные дуги без ступенек.
 	# Оно же заливает просвет между ногами — его вырезаем аркой.
@@ -106,7 +108,7 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 			var tri := PackedVector2Array([Vector2(-w * 0.58, -h), Vector2(w * 0.58, -h), Vector2(0, w * 0.04)])
 			return _rounded(tri, w * 0.15)
 		Shape.SQUARE:
-			return _rounded(_rect(Vector2(-w * 0.4, -h), Vector2(w * 0.8, h)), w * 0.17)
+			return _rounded(_rect(Vector2(-w * 0.35, -h), Vector2(w * 0.7, h)), w * 0.16)
 		_:
 			# Круг: сверху — плоская грань со скруглёнными углами, снизу — полукруг.
 			var r := w * 0.4
@@ -126,7 +128,7 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 	match shape:
 		Shape.ROUND, Shape.SQUARE:
 			# Верх руки — продолжение верхней грани.
-			var half := w * 0.4
+			var half := w * (0.4 if shape == Shape.ROUND else 0.35)
 			p0 = Vector2(base.x + sx * (half - w * 0.18), top + r0)
 			p1 = p0 + Vector2(sx * w * 0.36, 0.0)
 			p3 = Vector2(base.x + sx * (half + w * 0.3) + sway, top + h * 0.78)
@@ -145,7 +147,7 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 ## Кисть: ладонь, растопыренные пальцы разной длины с загибом и большой палец.
 static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, _sx: float) -> Array[PackedVector2Array]:
 	var palm := c + dir * w * 0.03
-	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.062, 24)]
+	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.08, 24)]
 	# Одинаковые прямые пальцы ровным веером, без большого.
 	var step := 0.5 if fingers <= 4 else 1.6 / (fingers - 1)
 	var base_a := dir.angle()
