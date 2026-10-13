@@ -109,7 +109,7 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 			return _rounded(_rect(Vector2(-w * 0.4, -h), Vector2(w * 0.8, h)), w * 0.17)
 		_:
 			# Круг: сверху — плоская грань со скруглёнными углами, снизу — полукруг.
-			var r := w * 0.45
+			var r := w * 0.4
 			var pts := PackedVector2Array([Vector2(-r, -h), Vector2(r, -h)])
 			for i in 33:
 				var a := PI * i / 32.0
@@ -126,7 +126,7 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 	match shape:
 		Shape.ROUND, Shape.SQUARE:
 			# Верх руки — продолжение верхней грани.
-			var half := w * (0.45 if shape == Shape.ROUND else 0.4)
+			var half := w * 0.4
 			p0 = Vector2(base.x + sx * (half - w * 0.18), top + r0)
 			p1 = p0 + Vector2(sx * w * 0.36, 0.0)
 			p3 = Vector2(base.x + sx * (half + w * 0.3) + sway, top + h * 0.78)
