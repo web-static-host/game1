@@ -5,7 +5,9 @@ extends RefCounted
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL, SWIM }
 enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH, GOTO }
-enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST }
+## Роль жителя без места работы: свободный, строитель или подсобный рабочий
+## (остальные значения — из старых сохранений).
+enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST, HAULER }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
 	"Тимофей", "Глеб", "Лев", "Матвей", "Фёдор", "Роман", "Кирилл", "Олег", "Степан", "Юрий"]
@@ -13,7 +15,7 @@ const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Н
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
 const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит укрепление", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку"]
-const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный"]
+const PROF_NAMES := ["Свободный", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный", "Подсобный рабочий"]
 ## Сколько секунд длится детство: полгода игры.
 const CHILD_TIME := 3600.0
 ## Обычная жизнь — 3,5 года игры (год — 2 часа), у каждого своя (долголетие, случай).
@@ -91,6 +93,8 @@ var path_i := 0
 var retry := 0.0
 ## Сколько раз подряд не нашёл себе дела — ищет реже (до 5 с).
 var idle_fails := 0
+## Свободный носильщик время от времени проверяет, не освободилось ли место на стройке.
+var recheck_t := 0.0
 var facing := 1
 var anim := 0.0
 
@@ -251,6 +255,11 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.energy = float(d.get("energy", 100.0))
 	u.satiety = float(d.get("satiety", 100.0))
 	u.profession = int(d.get("profession", Prof.ANY))
+	# Старые профессии: копатель стал строителем, остальные — свободными.
+	if u.profession == Prof.DIGGER:
+		u.profession = Prof.BUILDER
+	elif u.profession != Prof.BUILDER and u.profession != Prof.HAULER:
+		u.profession = Prof.ANY
 	u.child = bool(d.get("child", false))
 	u.age = float(d.get("age", 0.0))
 	u.partner_id = int(d.get("partner_id", 0))

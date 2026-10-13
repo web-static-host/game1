@@ -11,6 +11,7 @@ signal home_pressed
 ## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
 signal speed_selected(index: int)
 signal science_pressed
+signal people_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
 
@@ -262,6 +263,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_child(fill)
+	var people := IconButton.make("people", "Жители")
+	people.pressed.connect(func() -> void: people_pressed.emit())
+	bar.add_child(people)
 	var science := IconButton.make("flask", "Наука")
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
@@ -716,7 +720,7 @@ func _build_checks(st: Dictionary) -> void:
 
 
 ## Список жителей с кнопкой: {"type": "people", "label", "empty"?, "items": [{"looks", "name", "info",
-## "button", "pick": Callable, "style"?}]} — назначить на работу, сосватать и т. п.
+## "button"?, "pick": Callable, "style"?}]} — назначить на работу и т. п.
 func _build_people(st: Dictionary) -> void:
 	_controls.add_child(_label(st["label"], 16, MUTED))
 	if st["items"].is_empty() and st.has("empty"):
@@ -739,6 +743,8 @@ func _build_people(st: Dictionary) -> void:
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.custom_minimum_size = Vector2(PANEL_WIDTH - 300, 0)
 		col.add_child(info)
+		if not item.has("button"):
+			continue
 		var b := Button.new()
 		b.text = item["button"]
 		b.focus_mode = Control.FOCUS_NONE

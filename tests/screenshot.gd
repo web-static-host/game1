@@ -107,9 +107,9 @@ func _process(_delta: float) -> bool:
 				break
 	if _frame == 510:
 		_shot("pick_worker")
-		_main._pick_partner(_main.colony.units[1])
+		_main._show_people()
 	if _frame == 520:
-		_shot("pick_partner")
+		_shot("people")
 		return true
 	return false
 

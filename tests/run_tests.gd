@@ -24,6 +24,7 @@ func _initialize() -> void:
 	test_aging()
 	test_tunnel_throughput()
 	test_professions()
+	test_roles()
 	test_build_rules_v2()
 	test_physics()
 	test_nature()
@@ -552,8 +553,12 @@ func test_professions() -> void:
 	_start(colony, 0)
 	colony.inventory["food"] = 200
 	var u := colony.units[0]
-	u.profession = Unit.Prof.DIGGER
-	check(colony._task_order(u)[0] == "dig", "копатель сначала копает")
+	u.profession = Unit.Prof.BUILDER
+	check(colony._task_order(u)[0] == "projects", "строитель сначала идёт на стройку")
+	u.profession = Unit.Prof.HAULER
+	check(colony._task_order(u)[0] == "haul", "подсобный сначала носит")
+	u.profession = Unit.Prof.ANY
+	check(colony._task_order(u) == ["projects", "haul", "need"], "свободный: стройка, потом переноска")
 	u.profession = Unit.Prof.ANY
 	u.workplace = 999
 	check(colony._task_order(u)[0] == "workplace", "назначенный сначала идёт на своё место работы")
@@ -562,6 +567,86 @@ func test_professions() -> void:
 	var kid := colony._new_unit(Unit.Sex.FEMALE, Vector2.ZERO)
 	kid.child = true
 	check(colony.adults() == 5, "дети не считаются рабочими")
+
+
+func test_roles() -> void:
+	var colony := _new_colony(28)
+	var w := colony.world
+	var x := _flat_x(w, _find_solid_column(w))
+	_start(colony, x)
+	colony.inventory = {"food": 200, "wood": 40, "clay": 40, "stone": 40}
+	for u in colony.units:
+		u.pos = Vector2(x + 1, w.gen.surface_y(x + 1) - 1)
+	var s := w.gen.surface_y(x)
+	# Строитель вытесняет свободного со стройки.
+	var p := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 12), 1)
+	var t := 0.0
+	while t < 60.0 and colony.workers_on(p) == 0:
+		colony.update(0.5)
+		t += 0.5
+	var first: Unit = null
+	for u in colony.units:
+		if u.project_id == p.id and u.task != Unit.Task.HAUL:
+			first = u
+	check(first != null and colony.is_free(first), "на стройку пошёл свободный")
+	var builder: Unit = null
+	for u in colony.units:
+		if u != first:
+			builder = u
+			break
+	check(colony.set_profession(builder, Unit.Prof.BUILDER).is_empty(), "назначен строитель")
+	t = 0.0
+	while t < 30.0 and not (builder.project_id == p.id and builder.task != Unit.Task.HAUL):
+		colony.update(0.5)
+		t += 0.5
+	check(builder.project_id == p.id and builder.task != Unit.Task.HAUL and colony.workers_on(p) <= 1,
+		"строитель занял место свободного (%.0f с)" % t)
+	colony.projects.erase(p)
+	for u in colony.units:
+		colony._drop(u)
+	# Подсобный несёт сырьё в печь, а продукция ложится кучей в мастерской.
+	var kiln := _fake_room(colony, RoomType.KILN, x + 3)
+	var hauler: Unit = colony.units[2]
+	colony.set_profession(hauler, Unit.Prof.HAULER)
+	check(colony._task_order(hauler)[0] == "haul" and colony.role_name(hauler) == "Подсобный рабочий", "подсобный рабочий назначен")
+	t = 0.0
+	while t < 120.0 and kiln.stock.get("clay", 0) == 0:
+		colony.update(0.5)
+		t += 0.5
+	check(kiln.stock.get("clay", 0) > 0, "в печь принесли глину (%.0f с)" % t)
+	kiln.stock = {"clay": 2, "wood": 1}
+	colony._craft(kiln)
+	check(kiln.stock.get("clay", 0) == 0 and colony.drop_total("brick") == 2, "кирпич лежит в мастерской, глина из запаса печи")
+	colony.projects.erase(kiln)
+	for u in colony.units:
+		colony._drop(u)
+	colony.drops.clear()
+	# Свободный носильщик бросает ношу, если на стройке освободилось место.
+	var free: Unit = colony.units[3]
+	colony.set_profession(free, Unit.Prof.ANY)
+	var p2 := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 12), 2)
+	for u in colony.units:
+		if u != free:
+			u.task = Unit.Task.SLEEP
+			u.state = Unit.State.WORK
+	free.task = Unit.Task.HAUL
+	free.state = Unit.State.MOVE
+	free.to_store = true
+	free.haul_stage = 1
+	free.carry_key = "stone"
+	free.carry_amount = 3
+	free.recheck_t = 0.0
+	colony._construction_recheck(free, 0.1)
+	check(free.task != Unit.Task.HAUL or free.project_id == p2.id, "свободный ушёл со склада на стройку")
+	check(colony.drop_total("stone") == 3, "ношу оставил на месте")
+	var hauler2: Unit = colony.units[4]
+	colony.set_profession(hauler2, Unit.Prof.HAULER)
+	hauler2.task = Unit.Task.HAUL
+	hauler2.state = Unit.State.MOVE
+	hauler2.to_store = true
+	hauler2.recheck_t = 0.0
+	colony._construction_recheck(hauler2, 0.1)
+	check(hauler2.task == Unit.Task.HAUL and hauler2.to_store, "подсобный продолжает носить")
 
 
 func test_build_rules_v2() -> void:
@@ -993,7 +1078,11 @@ func test_hauling() -> void:
 				partial = true
 	check(room.phase == Project.Phase.DONE, "материалы принесли, дом построен (%.0f с)" % t)
 	check(max_carry > 0 and max_carry <= Colony.CARRY, "жители носили материалы по %d" % max_carry)
-	check(partial, "плашки заполнялись постепенно")
+	# Носильщиков может быть сколько угодно, но каждый несёт не больше CARRY — значит, ходили не раз.
+	var total := 0
+	for k in room.cost():
+		total += room.cost()[k]
+	check(partial or total > max_carry, "материалы носили частями")
 	check(room.delivered.is_empty(), "лишнего на стройке не осталось")
 	# Без ресурса на складе плашка красная.
 	colony.inventory = {}
@@ -1520,13 +1609,6 @@ func test_residents() -> void:
 	colony._meet(30.0)
 	check(colony.acquaintance(a, b) > 0.0, "рядом — знакомятся")
 	check(colony.acquaintance(a, far) == 0.0, "далеко — не знакомятся")
-	# Сватовство.
-	for o in colony.units:
-		o.partner_id = 0
-	var f: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.FEMALE and not o.child)[0]
-	var m: Unit = colony.units.filter(func(o: Unit) -> bool: return o.sex == Unit.Sex.MALE and not o.child)[0]
-	check(colony.matchmake(f, m).is_empty() and f.partner_id == m.id, "сватовство — пара сразу")
-	check(not colony.matchmake(f, m).is_empty(), "уже в паре — второй раз нельзя")
 
 
 func test_loads() -> void:

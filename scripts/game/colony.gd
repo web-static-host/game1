@@ -525,9 +525,10 @@ func _floor_below_surface(r: Rect2i) -> bool:
 
 
 func workers_on(p: Project) -> int:
+	# Носильщики — не рабочие стройки или мастерской: материалы и сырьё носят сверх мест.
 	var n := 0
 	for u in units:
-		if u.project_id == p.id and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
+		if u.project_id == p.id and u.task not in [Unit.Task.SLEEP, Unit.Task.EAT, Unit.Task.HAUL]:
 			n += 1
 	return n
 
@@ -1788,10 +1789,39 @@ func assign_work(u: Unit, p: Project) -> String:
 	if assigned_to(p).size() >= work_slots(p):
 		return "Все места заняты (%d)" % work_slots(p)
 	u.workplace = p.id
+	u.profession = Unit.Prof.ANY
 	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 		_drop(u)
 	_log("%s теперь работает: %s" % [u.name, workplace_name(p)], "info")
 	return ""
+
+
+## Роль жителя без места работы: свободный, строитель или подсобный рабочий.
+func set_profession(u: Unit, prof: int) -> String:
+	if u.child:
+		return "Дети не работают"
+	if u.profession == prof and u.workplace == 0:
+		return ""
+	unassign_work(u)
+	u.profession = prof
+	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
+		_drop(u)
+	if prof != Unit.Prof.ANY:
+		_log("%s теперь %s" % [u.name, Unit.PROF_NAMES[prof].to_lower()], "info")
+	return ""
+
+
+## Кто чем занят: свободный, строитель, подсобный или место работы.
+func role_name(u: Unit) -> String:
+	if u.child:
+		return "ребёнок"
+	if u.workplace != 0:
+		return workplace_name(project_by_id(u.workplace))
+	return Unit.PROF_NAMES[u.profession]
+
+
+func is_free(u: Unit) -> bool:
+	return not u.child and u.workplace == 0 and u.profession == Unit.Prof.ANY
 
 
 func unassign_work(u: Unit) -> void:
@@ -1908,22 +1938,6 @@ func best_friends(u: Unit, n := 3) -> Array:
 	return out.slice(0, n)
 
 
-## Игрок сватает двоих: если оба взрослые, разного пола и свободны — пара сразу.
-func matchmake(a: Unit, b: Unit) -> String:
-	if a.child or b.child:
-		return "Дети не могут стать парой"
-	if a.sex == b.sex:
-		return "Нужны мужчина и женщина"
-	if a.partner_id != 0 or b.partner_id != 0:
-		return "Кто-то из них уже в паре"
-	a.partner_id = b.id
-	b.partner_id = a.id
-	var key := _acq_key(a.id, b.id)
-	acquaint[key] = maxf(acquaint.get(key, 0.0), ACQUAINT_PAIR)
-	_log("%s и %s сосватаны и стали парой" % [a.name, b.name], "good")
-	return ""
-
-
 # --- Онлайн-симуляция -------------------------------------------------------------
 
 func update(dt: float) -> void:
@@ -1979,6 +1993,7 @@ func is_explored(x: int) -> bool:
 
 func _update_unit(u: Unit, dt: float) -> void:
 	u.anim += dt
+	_construction_recheck(u, dt)
 	if u.state != Unit.State.SWIM and _head_in_water(u):
 		_drop(u)
 		_start_swim(u)
@@ -2314,7 +2329,7 @@ func _work(u: Unit, dt: float) -> void:
 			p.farm_progress += rate * farm_bonus()
 			while p.farm_progress >= RoomType.FARM_CYCLE:
 				p.farm_progress -= RoomType.FARM_CYCLE
-				_add("food", 1)
+				_produce(p, "food", 1)
 			u.work_t += dt
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
@@ -2395,7 +2410,8 @@ func _task_valid(u: Unit) -> bool:
 			if tp == null or tp.paused:
 				return false
 			if u.haul_stage == 0:
-				return (u.from_drop or inventory.get(u.carry_key, 0) > 0) and not required(tp).is_empty()
+				var wanted := _is_supply(tp) or not required(tp).is_empty()
+				return (u.from_drop or inventory.get(u.carry_key, 0) > 0) and wanted
 			return true
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
@@ -2463,17 +2479,12 @@ func _reserve_key(u: Unit) -> Variant:
 ## (не хватает материалов на стройку, нечего есть). Сами по себе свободные жители не
 ## рубят, не ловят рыбу, не фермерствуют и ничего не носят на хранение.
 func _task_order(u: Unit) -> Array[String]:
-	var order: Array[String] = []
 	if u.workplace != 0:
-		order.append("workplace")
-	match u.profession:
-		Unit.Prof.DIGGER:
-			order.append("dig")
-		Unit.Prof.BUILDER:
-			order.append("build")
-	order.append("projects")
-	order.append("need")
-	return order
+		return ["workplace", "projects", "haul", "need"]
+	if u.profession == Unit.Prof.HAULER:
+		return ["haul", "projects", "need"]
+	# Строители и свободные: сначала стройка, потом переноска.
+	return ["projects", "haul", "need"]
 
 
 ## Ищет занятие для жителя. true — назначено.
@@ -2526,30 +2537,39 @@ func _assign(u: Unit) -> bool:
 			"need":
 				if _try_need(u, parents, dist):
 					return true
-			"dig", "build", "projects":
-				for p in projects:
-					if p.paused or workers_on(p) >= p.workers:
-						continue
-					if p.phase == Project.Phase.DONE and not p.repairing:
-						continue
-					if kind != "build" and p.phase == Project.Phase.DIG:
-						if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
-								or _try_dig(u, p, parents, dist):
-							return true
-					if kind == "dig":
-						continue
-					var task := Unit.Task.NONE
-					match p.phase:
-						Project.Phase.BUILD:
-							task = Unit.Task.BUILD if p.paid else Unit.Task.NONE
-						Project.Phase.EQUIP:
-							task = Unit.Task.EQUIP if p.equip_paid else Unit.Task.NONE
-						Project.Phase.DONE:
-							task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
-					if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
-						return true
-					if _try_haul(u, p, parents, dist):
-						return true
+			"haul":
+				if _try_logistics(u, parents, dist):
+					return true
+			"projects":
+				if _try_projects(u, parents, dist):
+					return true
+	return false
+
+
+## Стройки: копка, расчистка, укрепление, стройка, обустройство, ремонт, доставка материалов.
+## Назначенный строитель, если места заняты свободными, занимает место одного из них.
+func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		if workers_on(p) >= p.workers and not (u.profession == Unit.Prof.BUILDER and _bump_free_worker(p)):
+			continue
+		if p.phase == Project.Phase.DIG:
+			if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
+					or _try_dig(u, p, parents, dist):
+				return true
+		var task := Unit.Task.NONE
+		match p.phase:
+			Project.Phase.BUILD:
+				task = Unit.Task.BUILD if p.paid else Unit.Task.NONE
+			Project.Phase.EQUIP:
+				task = Unit.Task.EQUIP if p.equip_paid else Unit.Task.NONE
+			Project.Phase.DONE:
+				task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
+		if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
+			return true
+		if _try_haul(u, p, parents, dist):
+			return true
 	return false
 
 
@@ -3115,6 +3135,132 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bo
 	return false
 
 
+# --- Подсобные рабочие: переноска -------------------------------------------------------
+
+## Сколько циклов сырья держат в мастерской про запас.
+const SUPPLY_CYCLES := 2
+## Как часто свободный носильщик проверяет, не нужен ли он на стройке.
+const RECHECK_TIME := 3.0
+
+
+## Несут ли в эту постройку сырьё (готовая мастерская), а не материалы на стройку.
+func _is_supply(p: Project) -> bool:
+	return p.phase == Project.Phase.DONE and not p.repairing and RoomType.RECIPES.has(p.purpose)
+
+
+## Переноска: материалы на стройки, сырьё в мастерские, продукция и добыча — на склад и в амбар.
+func _try_logistics(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		if _try_haul(u, p, parents, dist):
+			return true
+	for p in projects:
+		if _is_supply(p) and not p.paused and _try_supply(u, p, parents, dist):
+			return true
+	# Без склада и амбара добытое не копят — носить некуда.
+	for room in store_rooms():
+		if not room.paused and _try_cleanup(u, parents, dist, room):
+			return true
+	return false
+
+
+## Сколько ресурса key уже несут в постройку p.
+func _incoming_to(p: Project, key: String) -> int:
+	var n := 0
+	for o in units:
+		if o.task == Unit.Task.HAUL and o.project_id == p.id and o.carry_key == key:
+			n += o.carry_amount
+	return n
+
+
+## Подсобный несёт сырьё в мастерскую (запас на пару циклов).
+func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	if _near_rect(p.rect, dist) == null:
+		return false
+	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	for k in need:
+		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
+		if want <= 0:
+			continue
+		var src := _haul_source(k, dist)
+		if src[0] == null:
+			continue
+		u.carry_key = k
+		u.carry_amount = mini(carry_cap(), mini(want, src[2]))
+		u.haul_stage = 0
+		u.from_drop = src[1] != null
+		u.haul_src = src[1] if src[1] != null else Vector2i.ZERO
+		u.to_store = false
+		_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
+		return true
+	return false
+
+
+## Строитель пришёл, а все места на стройке заняты свободными — один из них уступает.
+func _bump_free_worker(p: Project) -> bool:
+	for o in units:
+		if o.project_id == p.id and is_free(o) and o.task not in [Unit.Task.SLEEP, Unit.Task.EAT, Unit.Task.HAUL]:
+			_drop(o)
+			return true
+	return false
+
+
+## Есть ли стройка со свободным местом.
+func _construction_open() -> bool:
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		if workers_on(p) < p.workers:
+			return true
+	return false
+
+
+## Свободный носит на склад или в мастерскую, а на стройке освободилось место — идёт туда:
+## стройка важнее. Груз оставляет там, где стоял.
+func _construction_recheck(u: Unit, dt: float) -> void:
+	u.recheck_t -= dt
+	if u.recheck_t > 0.0:
+		return
+	u.recheck_t = RECHECK_TIME
+	if not is_free(u) or u.task != Unit.Task.HAUL or u.state != Unit.State.MOVE:
+		return
+	var cur := project_by_id(u.project_id)
+	if cur != null and not _is_supply(cur):
+		return # и так несёт на стройку
+	if not _construction_open():
+		return
+	var saved := [u.task, u.target, u.project_id, u.path, u.path_i, u.state, u.carry_key, u.carry_amount,
+		u.haul_stage, u.from_drop, u.haul_src, u.to_store, u.gather_room, u.work_t]
+	var cell := u.cell()
+	u.carry_amount = 0
+	u.haul_stage = 0
+	u.from_drop = false
+	u.to_store = false
+	u.gather_room = 0
+	var reach := pathing.explore(cell)
+	var old_task := u.task
+	u.task = Unit.Task.NONE
+	if _try_projects(u, reach[0], reach[1]):
+		if saved[8] == 1 and saved[7] > 0:
+			drop_item(cell, saved[6], saved[7])
+		return
+	u.task = old_task
+	u.target = saved[1]
+	u.project_id = saved[2]
+	u.path = saved[3]
+	u.path_i = saved[4]
+	u.state = saved[5]
+	u.carry_key = saved[6]
+	u.carry_amount = saved[7]
+	u.haul_stage = saved[8]
+	u.from_drop = saved[9]
+	u.haul_src = saved[10]
+	u.to_store = saved[11]
+	u.gather_room = saved[12]
+	u.work_t = saved[13]
+
+
 ## Житель у склада или кучи: берёт ресурс и несёт к стройке или на склад.
 func _haul_pickup(u: Unit) -> void:
 	var p := project_by_id(u.project_id)
@@ -3155,6 +3301,9 @@ func _haul_deliver(u: Unit) -> void:
 	if to_storage or p == null:
 		# Не влезло на склад — остаётся лежать здесь.
 		drop_item(spot, k, n - _add(k, n))
+		return
+	if _is_supply(p):
+		p.stock[k] = p.stock.get(k, 0) + n
 		return
 	p.delivered[k] = p.delivered.get(k, 0) + n
 	_try_pay(p)
@@ -3519,12 +3668,17 @@ func _room_supported(q: Project) -> bool:
 # --- Экономика: мастерские, наука, энергия --------------------------------------------
 
 ## Хватает ли сырья на цикл мастерской.
+## Сколько сырья k есть у мастерской: принесённое; без игрока жители берут и со склада.
+func _input_have(p: Project, k: String) -> int:
+	return p.stock.get(k, 0) + (inventory.get(k, 0) if offline else 0)
+
+
 func has_inputs(p: Project) -> bool:
 	if not RoomType.RECIPES.has(p.purpose):
 		return false
 	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
 	for k in need:
-		if inventory.get(k, 0) < need[k]:
+		if _input_have(p, k) < need[k]:
 			return false
 	return true
 
@@ -3536,9 +3690,18 @@ func missing_inputs(p: Project) -> Dictionary:
 		return out
 	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
 	for k in need:
-		if inventory.get(k, 0) < need[k]:
+		if _input_have(p, k) < need[k]:
 			out[k] = need[k]
 	return out
+
+
+## Готовая продукция: при игроке — кучей на полу мастерской (её уносят подсобные),
+## без игрока — сразу на склад.
+func _produce(p: Project, k: String, n: int) -> void:
+	if offline:
+		_add(k, n)
+	else:
+		drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
 
 
 func _craft(p: Project) -> void:
@@ -3546,9 +3709,11 @@ func _craft(p: Project) -> void:
 		return
 	var recipe: Array = RoomType.RECIPES[p.purpose]
 	for k in recipe[0]:
-		inventory[k] -= recipe[0][k]
+		var from_stock := mini(p.stock.get(k, 0), recipe[0][k])
+		p.stock[k] = p.stock.get(k, 0) - from_stock
+		inventory[k] = inventory.get(k, 0) - (recipe[0][k] - from_stock)
 	for k in recipe[1]:
-		_add(k, recipe[1][k])
+		_produce(p, k, recipe[1][k])
 
 
 func _research(work: float) -> void:

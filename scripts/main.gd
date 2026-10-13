@@ -112,6 +112,7 @@ func _build_scene() -> void:
 		hud.log_event("Игра сохранена", "good"))
 	hud.new_game_confirmed.connect(_new_game)
 	hud.science_pressed.connect(_show_science)
+	hud.people_pressed.connect(_show_people)
 	hud.room_options_changed.connect(_on_room_options)
 
 
@@ -350,25 +351,15 @@ func _select(u: Unit, p: Project) -> void:
 
 
 func _show_unit(u: Unit) -> void:
-	var controls := []
-	if not u.child:
-		controls.append({
-			"label": "Профессия", "value": mini(u.profession, 2), "min": 0, "max": 2,
-			"options": Unit.PROF_NAMES.slice(0, 3),
-			"changed": func(v: int) -> void: u.profession = v,
-		})
 	var spec := _unit_spec(u)
-	spec["controls"] = controls
 	if not u.child:
-		var actions := [["Отправить", func() -> void:
+		spec["actions"] = [["Отправить", func() -> void:
 			_send_unit = u.id
 			_set_mode(Hud.Mode.SEND)
 			hud.hide_info()
 			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"],
-			["Работа", func() -> void: _pick_workplace(u)]]
-		if u.partner_id == 0:
-			actions.append(["Сосватать", func() -> void: _pick_partner(u)])
-		spec["actions"] = actions
+			["Работа", func() -> void: _pick_workplace(u)],
+			["Жители", _show_people]]
 	hud.show_panel(spec)
 
 
@@ -377,10 +368,14 @@ func _pick_workplace(u: Unit) -> void:
 	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
 	_info_target = []
 	var items := []
-	if u.workplace != 0:
-		items.append({"name": "Разнорабочий", "info": "делает что нужно: стройки, сбор, переноска",
-			"button": "Снять", "style": "danger", "pick": func() -> void:
-				colony.unassign_work(u)
+	for role in [[Unit.Prof.BUILDER, "в первую очередь идёт на стройки: копает, строит, обустраивает, чинит"],
+			[Unit.Prof.HAULER, "в первую очередь носит: материалы на стройки, сырьё в мастерские, добычу и продукцию на склад"],
+			[Unit.Prof.ANY, "стройка, если есть место, иначе переноска"]]:
+		var prof: int = role[0]
+		var here := u.workplace == 0 and u.profession == prof
+		items.append({"name": Unit.PROF_NAMES[prof] + (" — сейчас" if here else ""), "info": role[1],
+			"button": "Выбрать", "pick": func() -> void:
+				colony.set_profession(u, prof)
 				_show_unit(u)})
 	var places := colony.projects.filter(func(p: Project) -> bool: return colony.is_workplace(p))
 	places.sort_custom(func(a: Project, b: Project) -> bool: return colony.suitability(u, a) > colony.suitability(u, b))
@@ -395,37 +390,9 @@ func _pick_workplace(u: Unit) -> void:
 				if not err.is_empty():
 					hud.log_event(err, "warning")
 				_show_unit(u)})
-	hud.show_panel({"title": "Работа: " + u.name, "subtitle": "сейчас: " + colony.workplace_name(colony.project_by_id(u.workplace)),
+	hud.show_panel({"title": "Работа: " + u.name, "subtitle": "сейчас: " + colony.role_name(u).to_lower(),
 		"controls": [{"type": "people", "label": "Куда поставить (лучшие места — сверху):", "items": items,
 			"empty": "Нет комнат для работы: ферма, лаборатория, печь, кузница, склад, пристань."}],
-		"actions": [["Назад", func() -> void: _show_unit(u)]]})
-
-
-## Сватовство: свободные взрослые другого пола, знакомые — сверху.
-func _pick_partner(u: Unit) -> void:
-	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
-	_info_target = []
-	var items := []
-	var cands := colony.units.filter(func(o: Unit) -> bool:
-		return o != u and not o.child and o.sex != u.sex and o.partner_id == 0)
-	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.acquaintance(u, a) > colony.acquaintance(u, b))
-	for o: Unit in cands:
-		var acq := colony.acquaintance(u, o)
-		var info := "знакомы на %d%%" % roundi(minf(1.0, acq / Colony.ACQUAINT_PAIR) * 100)
-		var mt := Genetics.mutation_text(o.genome)
-		if not mt.is_empty():
-			info += " · " + mt.to_lower()
-		var pers: String = o.genome.get("personality", "")
-		if not pers.is_empty():
-			info += " · " + pers
-		items.append({"looks": Genetics.looks(o.genome), "name": o.name, "info": info, "button": "Сосватать",
-			"pick": func() -> void:
-				var err := colony.matchmake(u, o)
-				if not err.is_empty():
-					hud.log_event(err, "warning")
-				_show_unit(u)})
-	hud.show_panel({"title": "Сосватать: " + u.name, "subtitle": "пара появится сразу",
-		"controls": [{"type": "people", "label": "Свободные жители:", "items": items, "empty": "Свободных пар нет."}],
 		"actions": [["Назад", func() -> void: _show_unit(u)]]})
 
 
@@ -466,7 +433,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		var ab := Genetics.ability_text(g)
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
-		tags.append(["Место работы: " + colony.workplace_name(colony.project_by_id(u.workplace)), Hud.MUTED])
+		tags.append(["Занятие: " + colony.role_name(u).to_lower(), Hud.MUTED])
 		rows.append({"type": "portrait", "looks": Genetics.looks(g), "tags": tags})
 	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
@@ -728,6 +695,22 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["", "зимой улов вдвое медленнее"])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		chips.append(["", "внутри %+d °C" % roundi(colony.room_temp(p))])
+		# Продукция и урожай лежат на полу, пока подсобные не унесут их на склад или в амбар.
+		var lying := {}
+		for c: Vector2i in colony.drops:
+			if p.rect.has_point(c):
+				for k in colony.drops[c]:
+					lying[k] = lying.get(k, 0) + int(colony.drops[c][k])
+		if not lying.is_empty():
+			var items := []
+			for k in lying:
+				items.append([k, lying[k], -1, true])
+			rows.append({"type": "resources", "label": "Лежит на полу", "items": items})
+		if not p.stock.is_empty() and RoomType.RECIPES.has(p.purpose):
+			var st := []
+			for k in p.stock:
+				st.append([k, p.stock[k], -1, true])
+			rows.append({"type": "resources", "label": "Сырьё в мастерской", "items": st})
 	if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 		rows.append(_progress("Износ", p.wear, "%d%% · ещё ~%s" % [roundi(p.wear * 100.0), _years(colony.years_left(p))],
 			_wear_color(p.wear)))
@@ -839,6 +822,90 @@ func _cost_items(cost: Dictionary) -> Array:
 	return out
 
 
+# --- Жители: кто чем занят, строители и подсобные -----------------------------------------
+
+## Что житель делает прямо сейчас.
+func _doing(u: Unit) -> String:
+	var t: String = Unit.TASK_NAMES[u.task]
+	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
+		t += " (%s)" % Mat.resource_name(u.carry_key).to_lower()
+	return t
+
+
+func _people_spec() -> Dictionary:
+	var counts := {}
+	var adults := 0
+	for u in colony.units:
+		if u.child:
+			continue
+		adults += 1
+		var d: String = Unit.TASK_NAMES[u.task]
+		counts[d] = counts.get(d, 0) + 1
+	var chips := []
+	for d in counts:
+		chips.append(["", "%s: %d" % [d, counts[d]]])
+	return {"title": "Жители", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
+		"rows": [{"type": "chips", "label": "Сейчас", "items": chips},
+			{"type": "text", "text": "На стройку первыми идут строители, потом свободные. Носят первыми подсобные, потом свободные — но свободный бросит ношу, если на стройке есть место."}]}
+
+
+func _show_people() -> void:
+	_select(null, null)
+	hud.close_overlays()
+	_info_target = ["people"]
+	var spec := _people_spec()
+	var groups := [["Строители", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.BUILDER],
+		["Подсобные рабочие", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.HAULER],
+		["На местах работы", func(u: Unit) -> bool: return not u.child and u.workplace != 0],
+		["Свободные", func(u: Unit) -> bool: return colony.is_free(u)],
+		["Дети", func(u: Unit) -> bool: return u.child]]
+	var controls := []
+	for g in groups:
+		var members := colony.units.filter(g[1])
+		var items := []
+		for u: Unit in members:
+			var item := {"looks": Genetics.looks(u.genome), "name": u.name, "info": _doing(u),
+				"button": "Карточка", "pick": func() -> void: _select(u, null)}
+			if u.workplace != 0:
+				item["info"] = colony.role_name(u) + " · " + _doing(u)
+			elif not u.child and not colony.is_free(u):
+				item["button"] = "Снять"
+				item["style"] = "danger"
+				item["pick"] = func() -> void:
+					colony.set_profession(u, Unit.Prof.ANY)
+					_show_people()
+			items.append(item)
+		if g[0] != "Дети" or not items.is_empty():
+			controls.append({"type": "people", "label": "%s — %d" % [g[0], items.size()], "items": items, "empty": "Никого."})
+	spec["controls"] = controls
+	spec["actions"] = [["+ Строитель", func() -> void: _pick_role(Unit.Prof.BUILDER), "primary"],
+		["+ Подсобный", func() -> void: _pick_role(Unit.Prof.HAULER), "primary"]]
+	hud.show_panel(spec)
+
+
+## Кого назначить строителем или подсобным: сначала свободные, лучшие — сверху.
+func _pick_role(prof: int) -> void:
+	_info_target = []
+	var stat := "agility" if prof == Unit.Prof.BUILDER else "strength"
+	var skill := "build" if prof == Unit.Prof.BUILDER else "gather"
+	var cands := colony.units.filter(func(o: Unit) -> bool:
+		return not o.child and not (o.workplace == 0 and o.profession == prof))
+	var score := func(o: Unit) -> float:
+		return Colony.soft(o.stat(stat)) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
+	var items := []
+	for o: Unit in cands:
+		items.append({"looks": Genetics.looks(o.genome), "name": o.name,
+			"info": "%s · %s %d%% · навык %d" % [colony.role_name(o).to_lower(), Genetics.STAT_NAMES[stat].to_lower(),
+				roundi(o.stat(stat) * 100), o.level(skill)],
+			"button": "Назначить", "pick": func() -> void:
+				colony.set_profession(o, prof)
+				_show_people()})
+	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",
+		"controls": [{"type": "people", "label": "Кого назначить:", "items": items, "empty": "Некого назначить."}],
+		"actions": [["Назад", _show_people]]})
+
+
 ## Наука: текущее исследование и дерево технологий.
 func _show_science() -> void:
 	_select(null, null)
@@ -898,6 +965,8 @@ func _refresh_info() -> void:
 			hud.refresh_panel(_unit_spec(u))
 	elif _info_target[0] == "science":
 		hud.refresh_panel(_science_spec())
+	elif _info_target[0] == "people":
+		hud.refresh_panel(_people_spec())
 	elif _info_target[0] == "project":
 		var p := colony.project_by_id(_info_target[1])
 		if p == null:

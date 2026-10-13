@@ -70,6 +70,8 @@ var support_paid := false
 var support_progress := 0.0
 ## Материалы, уже принесённые на стройку: ключ -> количество.
 var delivered := {}
+## Сырьё, которое подсобные рабочие уже принесли в мастерскую.
+var stock := {}
 ## Износ готовой постройки 0..1 (1 — разрушается) и уровень последнего предупреждения.
 var wear := 0.0
 var wear_warned := 0
@@ -290,6 +292,7 @@ func to_dict() -> Dictionary:
 		"support_paid": support_paid,
 		"support_progress": support_progress,
 		"delivered": delivered,
+		"stock": stock,
 		"wear": wear,
 		"wear_warned": wear_warned,
 		"repairing": repairing,
@@ -341,6 +344,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_paid = bool(d.get("support_paid", false))
 	p.support_progress = float(d.get("support_progress", 0.0))
 	p.delivered = _int_dict(d.get("delivered", {}))
+	p.stock = _int_dict(d.get("stock", {}))
 	p.wear = float(d.get("wear", 0.0))
 	p.wear_warned = int(d.get("wear_warned", 0))
 	p.repairing = bool(d.get("repairing", false))
