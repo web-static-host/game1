@@ -19,11 +19,11 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	_frame += 1
 	if _frame == 3:
-		_save("creatures_looks")
+		_save("creature_hero")
 		_node.sheet = 1
 		_node.queue_redraw()
 	if _frame == 6:
-		_save("creatures_family")
+		_save("creature_colors")
 		return true
 	return false
 
