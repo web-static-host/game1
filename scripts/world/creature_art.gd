@@ -106,13 +106,15 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 			var tri := PackedVector2Array([Vector2(-w * 0.58, -h), Vector2(w * 0.58, -h), Vector2(0, w * 0.04)])
 			return _rounded(tri, w * 0.15)
 		Shape.SQUARE:
-			return _rounded(_rect(Vector2(-w * 0.5, -h), Vector2(w, h)), w * 0.2)
+			return _rounded(_rect(Vector2(-w * 0.4, -h), Vector2(w * 0.8, h)), w * 0.17)
 		_:
-			var pts := PackedVector2Array()
-			for i in 48:
-				var a := TAU * i / 48.0
-				pts.append(Vector2(cos(a) * w * 0.5, -h * 0.5 + sin(a) * h * 0.5))
-			return pts
+			# Круг: сверху — плоская грань со скруглёнными углами, снизу — полукруг.
+			var r := w * 0.45
+			var pts := PackedVector2Array([Vector2(-r, -h), Vector2(r, -h)])
+			for i in 33:
+				var a := PI * i / 32.0
+				pts.append(Vector2(cos(a) * r, -r + sin(a) * r))
+			return _rounded(pts, w * 0.17)
 
 
 ## Рука идёт от верхнего угла, свисает вдоль бока и кончается кистью с пальцами.
@@ -122,21 +124,12 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 	var p1: Vector2
 	var p3: Vector2
 	match shape:
-		Shape.ROUND:
-			# От верхней части круга по касательной — плечо продолжает контур.
-			var c := Vector2(base.x, base.y - h * 0.5)
-			var a := -PI * 0.5 + sx * 0.85
-			var a2 := a + sx * 0.45
-			var inset := Vector2(w * 0.5 - r0 * 0.9, h * 0.5 - r0 * 0.9)
-			# Рука сначала идёт по дуге круга, потом отходит вниз — плечи остаются круглыми.
-			p0 = c + Vector2(cos(a) * inset.x, sin(a) * inset.y)
-			p1 = c + Vector2(cos(a2) * inset.x, sin(a2) * inset.y)
-			p3 = Vector2(base.x + sx * w * 0.8 + sway, top + h * 0.78)
-		Shape.SQUARE:
+		Shape.ROUND, Shape.SQUARE:
 			# Верх руки — продолжение верхней грани.
-			p0 = Vector2(base.x + sx * w * 0.3, top + r0)
+			var half := w * (0.45 if shape == Shape.ROUND else 0.4)
+			p0 = Vector2(base.x + sx * (half - w * 0.18), top + r0)
 			p1 = p0 + Vector2(sx * w * 0.36, 0.0)
-			p3 = Vector2(base.x + sx * w * 0.8 + sway, top + h * 0.78)
+			p3 = Vector2(base.x + sx * (half + w * 0.3) + sway, top + h * 0.78)
 		_:
 			# Верх руки идёт ровно по верхней линии туловища — плечо без бугорка.
 			p0 = Vector2(base.x + sx * w * 0.3, top + r0)
