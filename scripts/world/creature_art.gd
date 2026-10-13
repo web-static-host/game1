@@ -41,13 +41,26 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 		_aura(ci, base + Vector2(0, -h * 0.5), w, t)
 
 	# Силуэт: туловище + руки от самого верха + ноги — одной заливкой.
+	# Сначала туловище, руки и ноги сливаем и сглаживаем стыки (подмышки, пах) —
+	# контур идёт одной плавной линией, без порожков. Потом добавляем кисти.
 	var parts: Array[PackedVector2Array] = [body]
-	var fingers: int = g.get("fingers", 3)
+	var hands: Array[PackedVector2Array] = []
+	var fingers: int = g.get("fingers", 4)
 	var sway := sin(t * 2.0) * w * 0.02
 	for sx in [-1.0, 1.0]:
-		parts.append_array(_arm_parts(shape, w, h, base, top, sx, fingers, sway * sx))
+		var arm := _arm_parts(shape, w, h, base, top, sx, fingers, sway * sx)
+		parts.append(arm[0])
+		hands.append_array(arm.slice(1))
 		parts.append_array(_leg_parts(shape, w, base, at, sx))
-	var sil := _union(parts)
+	var core := _union(parts)
+	var smooth_core := _smooth(core, w * 0.045)
+	if _drawable(smooth_core):
+		core = smooth_core
+	hands.push_front(core)
+	var sil := _union(hands)
+	var smooth_sil := _smooth(sil, w * 0.012)
+	if _drawable(smooth_sil):
+		sil = smooth_sil
 
 	if g.get("fur", false):
 		var fur := _fur(sil, w * 0.045)
@@ -58,10 +71,11 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	ci.draw_polygon(sil, _vgrad(sil, top, at.y, light, dark))
 	# Тень по нижним краям и светлый кант по верхним — вместо обводки.
 	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(-w * 0.012, -w * 0.035))):
-		ci.draw_colored_polygon(p, Color(dark.darkened(0.25), 0.4))
+		if _drawable(p):
+			ci.draw_colored_polygon(p, Color(dark.darkened(0.25), 0.4))
 	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(w * 0.01, w * 0.02))):
-		ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.45))
-	_highlight(ci, body, Vector2(base.x - w * 0.22, top + h * 0.16), w)
+		if _drawable(p):
+			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.45))
 
 	if g.get("hair", false):
 		_hair(ci, Vector2(base.x, top), w, g.get("hair_color", col.darkened(0.4)))
@@ -107,23 +121,25 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, sx: float) -> Array[PackedVector2Array]:
 	var palm := c + dir * w * 0.04
 	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.08, 24)]
-	var spread := clampf(0.6 * (fingers - 1), 0.0, 2.6)
+	# Всего пальцев fingers: при трёх и больше один из них — большой.
+	var fan := fingers - 1 if fingers >= 3 else fingers
+	var spread := clampf(0.6 * (fan - 1), 0.0, 2.6)
 	var base_a := dir.angle()
-	for i in fingers:
-		var k := 0.0 if fingers == 1 else float(i) / (fingers - 1) - 0.5
+	for i in fan:
+		var k := 0.0 if fan == 1 else float(i) / (fan - 1) - 0.5
 		var a := base_a + k * spread
 		# Пухлые пальцы: средние длиннее, кончики толще и чуть загнуты.
 		var length := w * (0.17 - absf(k) * 0.05)
 		var root := palm + Vector2.from_angle(a) * w * 0.06
 		var mid := root + Vector2.from_angle(a) * length * 0.55
 		var tip := mid + Vector2.from_angle(a - sx * 0.3) * length * 0.45
-		out.append(_tube(PackedVector2Array([root, mid, tip]), w * 0.032, w * 0.046))
+		out.append(_tube(PackedVector2Array([root, mid, tip]), w * 0.025, w * 0.035))
 	# Большой палец — в сторону туловища.
-	if fingers >= 2:
+	if fingers >= 3:
 		var ta := base_a + sx * (spread * 0.5 + 0.75)
 		var root := palm + Vector2.from_angle(ta) * w * 0.06
 		var tip := root + Vector2.from_angle(ta - sx * 0.5) * w * 0.08
-		out.append(_tube(PackedVector2Array([root, tip]), w * 0.036, w * 0.046))
+		out.append(_tube(PackedVector2Array([root, tip]), w * 0.028, w * 0.035))
 	return out
 
 
@@ -136,7 +152,7 @@ static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: flo
 
 
 static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, col: Color, t: float) -> void:
-	var sizes: Array[float] = [0.0, 0.15, 0.115, 0.095]
+	var sizes: Array[float] = [0.0, 0.12, 0.095, 0.08]
 	var er: float = w * sizes[clampi(eyes, 0, 3)]
 	var spots: Array[Vector2] = []
 	match eyes:
@@ -167,16 +183,16 @@ static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, 
 		ci.draw_circle(pc + Vector2(-er * 0.2, -er * 0.22), er * 0.17, Color.WHITE)
 		ci.draw_circle(pc + Vector2(er * 0.17, er * 0.18), er * 0.07, Color(1, 1, 1, 0.8))
 	if eyes > 0:
-		var tilt := -mood * w * 0.025
+		var tilt := -mood * w * 0.02
 		for p in spots:
 			if eyes == 3 and p.y < c.y:
 				continue
 			var bw := er * 0.85
 			var by := p.y - er * 1.4
-			ci.draw_line(Vector2(p.x - bw, by + tilt), Vector2(p.x + bw, by - tilt), col.darkened(0.5), w * 0.034, true)
+			ci.draw_line(Vector2(p.x - bw, by + tilt), Vector2(p.x + bw, by - tilt), col.darkened(0.5), w * 0.028, true)
 	# Рот.
-	var my := c.y + (er if eyes > 0 else 0.0) + w * 0.075
-	var mw := w * (0.12 if eyes > 0 else 0.17)
+	var my := c.y + (er if eyes > 0 else 0.0) + w * 0.06
+	var mw := w * (0.095 if eyes > 0 else 0.14)
 	var smile := clampf(mood, -1.0, 1.0)
 	var mouth := PackedVector2Array()
 	for i in 17:
@@ -190,7 +206,7 @@ static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, 
 	if smile > 0.0:
 		ci.draw_colored_polygon(_rect(Vector2(c.x - mw * 0.42, my), Vector2(mw * 0.34, mw * 0.24)), Color.WHITE)
 	for sx in [-1.0, 1.0]:
-		_ellipse(ci, Vector2(c.x + sx * w * 0.24, my - w * 0.005), Vector2(w * 0.055, w * 0.03), Color(1.0, 0.4, 0.5, 0.3))
+		_ellipse(ci, Vector2(c.x + sx * w * 0.2, my - w * 0.005), Vector2(w * 0.045, w * 0.025), Color(1.0, 0.4, 0.5, 0.3))
 
 
 static func _hair(ci: CanvasItem, top: Vector2, w: float, col: Color) -> void:
@@ -245,12 +261,6 @@ static func _sparkles(ci: CanvasItem, c: Vector2, w: float, t: float) -> void:
 		ci.draw_colored_polygon(pts, Color(1.0, 0.97, 0.75))
 
 
-static func _highlight(ci: CanvasItem, body: PackedVector2Array, c: Vector2, w: float) -> void:
-	for p in Geometry2D.intersect_polygons(body, _ellipse_poly(c, Vector2(w * 0.14, w * 0.065), -0.35)):
-		ci.draw_colored_polygon(p, Color(1, 1, 1, 0.42))
-	ci.draw_circle(c + Vector2(w * 0.17, -w * 0.03), w * 0.025, Color(1, 1, 1, 0.5))
-
-
 # --- Цвет ---------------------------------------------------------------------------
 
 ## Смешивание цветов «как у живых»: по кругу оттенков (OKHSL), а не в RGB —
@@ -296,6 +306,34 @@ static func _union(parts: Array[PackedVector2Array]) -> PackedVector2Array:
 				best = m
 		acc = best
 	return acc
+
+
+## Сглаживание вогнутых углов (морфологическое «закрытие»): раздуть и сжать обратно.
+## Стыки рук и ног с туловищем становятся плавными, выпуклые края не меняются.
+static func _smooth(poly: PackedVector2Array, r: float) -> PackedVector2Array:
+	var grown := _largest(Geometry2D.offset_polygon(poly, r, Geometry2D.JOIN_ROUND))
+	if grown.is_empty():
+		return poly
+	var back := _largest(Geometry2D.offset_polygon(grown, -r, Geometry2D.JOIN_ROUND))
+	return back if not back.is_empty() else poly
+
+
+## Можно ли залить многоугольник (не вырожден после сглаживания).
+static func _drawable(p: PackedVector2Array) -> bool:
+	return p.size() >= 3 and not Geometry2D.triangulate_polygon(p).is_empty()
+
+
+static func _largest(polys: Array) -> PackedVector2Array:
+	var best := PackedVector2Array()
+	var best_area := -1.0
+	for p: PackedVector2Array in polys:
+		if Geometry2D.is_polygon_clockwise(p):
+			continue
+		var a := _area(p)
+		if a > best_area:
+			best_area = a
+			best = p
+	return best
 
 
 static func _area(p: PackedVector2Array) -> float:

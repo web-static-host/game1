@@ -39,26 +39,13 @@ func _card(r: Rect2) -> void:
 	draw_style_box(sb, r)
 
 
-## Один житель крупно: треугольник, один глаз; рядом — он же в других цветах и с разными пальцами.
+## Один житель крупно: синий треугольник, один глаз, четыре пальца.
 func _sheet_hero(size: Vector2) -> void:
 	_text(Vector2(0, 50), "ЖИТЕЛЬ · прорисовка", 38, Color.WHITE, size.x)
-	var big := Rect2(24, 76, size.x * 0.5, size.y - 92)
-	_card(big)
-	var hero := {"shape": S.TRIANGLE, "color": Color8(255, 96, 70), "eyes": 1, "fingers": 4, "mood": 1.0}
-	CreatureArt.draw(self, Vector2(big.get_center().x, big.end.y - 60), 270, hero, t)
-	var right := Rect2(big.end.x + 20, 76, size.x - big.end.x - 44, size.y - 92)
-	_card(right)
-	var cw := right.size.x / 3.0
-	var row1 := [[Color8(70, 130, 255), 4, "синий"], [Color8(120, 210, 60), 4, "зелёный"], [Color8(255, 200, 40), 4, "жёлтый"]]
-	var row2 := [[Color8(190, 90, 230), 2, "2 пальца"], [Color8(60, 190, 160), 3, "3 пальца"], [Color8(255, 130, 190), 6, "6 пальцев"]]
-	for r in 2:
-		var row: Array = [row1, row2][r]
-		var fy := right.position.y + right.size.y * (0.43 + r * 0.46)
-		for i in 3:
-			var it: Array = row[i]
-			var cx := right.position.x + cw * (i + 0.5)
-			CreatureArt.draw(self, Vector2(cx, fy), 92, {"shape": S.TRIANGLE, "color": it[0], "eyes": 1, "fingers": it[1], "mood": 0.8}, t + i)
-			_text(Vector2(cx - 80, fy + 28), it[2], 18, INK, 160)
+	var card := Rect2(size.x * 0.2, 76, size.x * 0.6, size.y - 92)
+	_card(card)
+	var hero := {"shape": S.TRIANGLE, "color": Color8(70, 130, 255), "eyes": 1, "fingers": 4, "mood": 1.0}
+	CreatureArt.draw(self, Vector2(card.get_center().x, card.end.y - 70), 300, hero, t)
 
 
 ## Смешивание цвета у детей: было (RGB) и стало (по кругу оттенков).
