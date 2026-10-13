@@ -129,23 +129,15 @@ static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float
 
 
 ## Кисть: ладонь, растопыренные пальцы разной длины с загибом и большой палец.
-static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, sx: float) -> Array[PackedVector2Array]:
+static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, _sx: float) -> Array[PackedVector2Array]:
 	var palm := c + dir * w * 0.03
-	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.068, 24)]
-	# Всего пальцев fingers: при трёх и больше один из них — большой.
-	var fan := fingers - 1 if fingers >= 3 else fingers
-	var step := 0.5 if fan <= 3 else 1.5 / (fan - 1)
+	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.062, 24)]
+	# Одинаковые прямые пальцы ровным веером, без большого.
+	var step := 0.5 if fingers <= 4 else 1.6 / (fingers - 1)
 	var base_a := dir.angle()
-	for i in fan:
-		var k := float(i) - (fan - 1) * 0.5
-		var a := base_a + k * step
-		# Прямые пальцы ровным веером от середины ладони; средний чуть длиннее.
-		var length := w * (0.2 - absf(k) * step * 0.04)
-		out.append(_tube(PackedVector2Array([palm, palm + Vector2.from_angle(a) * length]), w * 0.03, w * 0.028))
-	# Большой палец — короче, в сторону туловища.
-	if fingers >= 3:
-		var ta := base_a + sx * ((fan - 1) * 0.5 * step + 0.75)
-		out.append(_tube(PackedVector2Array([palm, palm + Vector2.from_angle(ta) * w * 0.15]), w * 0.032, w * 0.03))
+	for i in fingers:
+		var a := base_a + (float(i) - (fingers - 1) * 0.5) * step
+		out.append(_tube(PackedVector2Array([palm, palm + Vector2.from_angle(a) * w * 0.21]), w * 0.026, w * 0.025))
 	return out
 
 
