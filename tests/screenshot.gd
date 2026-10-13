@@ -23,8 +23,13 @@ func _process(_delta: float) -> bool:
 	_frame += 1
 	if _frame == 5:
 		_prepare_base()
-	if _frame == 300:
+	if _frame == 290:
 		_shot("colony")
+		# Зима: середина января — снег и бледное небо.
+		_main.colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5
+	if _frame == 300:
+		_shot("winter")
+		_main.colony.game_time = 0.0
 		_main.hud._build_btn.button_pressed = true
 		for pr in _main.colony.projects:
 			if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.STORAGE:

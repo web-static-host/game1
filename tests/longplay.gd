@@ -194,6 +194,13 @@ func _debug() -> void:
 			to_farm, reach[1].size(), xs.min(), xs.max()])
 	for p in colony.projects:
 		print("   стройка %s %s %s %s раб %d/%d" % [p.title(), p.rect, p.phase_name(), p.blocked, colony.workers_on(p), p.workers])
+		if p.phase == Project.Phase.DIG:
+			print("      копать %d, расчистка %s, укрепл: нужно %s оплачено %s срез %d, доступ %s" % [colony.diggable_now(p).size(), colony.uncleared(p),
+				p.needs_support, p.support_paid, p.support_slice, colony.has_access(p.rect)])
+			print("      принесено %s, осталось %s, нужно сейчас %s, req %s" % [p.delivered, colony.remaining(p), colony._needed_now(p), colony.required(p)])
+	for u in colony.units:
+		if u.task == Unit.Task.HAUL:
+			print("   несёт %s: %s %d этап %d в %d склад %s src %s" % [u.name, u.carry_key, u.carry_amount, u.haul_stage, u.project_id, u.to_store, u.haul_src])
 
 
 func _slice() -> void:
@@ -210,6 +217,7 @@ func _slice() -> void:
 	for p in colony.projects:
 		if p.phase == Project.Phase.DONE:
 			done += 1
+	inv.append("на полу еды %d" % (colony.drop_total("food") + colony.drop_total("berries")))
 	print("[%4d с] %s | жит %d (дети %d) кроватей %d | построек %d, строится %d | глубина %d м | наука %d/%d | без дела %d | %s" % [
 		Time.get_ticks_msec() / 1000, _time(), colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size(), colony.beds_total(),
 		done, colony.projects.size() - done, _depth(), colony.research.done.size(), Research.TECHS.size(), idle, ", ".join(inv)])
@@ -238,7 +246,9 @@ func _play() -> void:
 		return
 	if _need_home():
 		return
-	if colony.rooms_of(RoomType.STORAGE).is_empty() and _surface_room(RoomType.STORAGE):
+	if not _has_room(RoomType.STORAGE) and _surface_room(RoomType.STORAGE):
+		return
+	if not _has_room(RoomType.GRANARY) and _surface_room(RoomType.GRANARY):
 		return
 	if _shaft():
 		return
@@ -313,7 +323,8 @@ func _finish_purposes() -> void:
 				_act("назначение")
 				var names := {RoomType.HOME: "дом", RoomType.STORAGE: "склад", RoomType.FARM: "ферма",
 					RoomType.LAB: "лаборатория", RoomType.DINING: "столовая", RoomType.KILN: "печь",
-					RoomType.GENERATOR: "генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация"}
+					RoomType.GENERATOR: "генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация",
+					RoomType.GRANARY: "амбар"}
 				_milestone("purpose%d" % _pending_purpose[p.id], "Первая комната: %s" % names.get(_pending_purpose[p.id], "?"))
 			_pending_purpose.erase(p.id)
 
@@ -348,19 +359,43 @@ func _science() -> void:
 			return
 
 
+## Как играл бы человек: на каждое место работы — по жителю (лучшему из свободных),
+## один-два строителя и подсобных; остальные — свободные.
 func _professions() -> void:
-	var farms := colony.rooms_of(RoomType.FARM).size()
-	var labs := colony.rooms_of(RoomType.LAB).size()
-	var want := {Unit.Prof.FARMER: farms, Unit.Prof.SCIENTIST: labs * 2 if colony.units.size() >= 10 else labs}
-	for prof in want:
-		var have := colony.units.filter(func(u: Unit) -> bool: return u.profession == prof).size()
-		for u in colony.units:
-			if have >= want[prof]:
+	var adults := colony.units.filter(func(u: Unit) -> bool: return not u.child)
+	var free := adults.filter(func(u: Unit) -> bool: return colony.is_free(u))
+	# Роли — в первую очередь, иначе все уйдут на места работы.
+	var want_roles := {Unit.Prof.BUILDER: maxi(1, adults.size() / 5),
+		Unit.Prof.HAULER: (adults.size() / 6) if not colony.store_rooms().is_empty() else 0}
+	for prof in want_roles:
+		var have := adults.filter(func(u: Unit) -> bool: return u.workplace == 0 and u.profession == prof).size()
+		while have < want_roles[prof] and free.size() > 1:
+			colony.set_profession(free.pop_back(), prof)
+			have += 1
+			_act("роль")
+	# Места работы: еда — в первую очередь.
+	var order := [RoomType.FARM, RoomType.GRANARY, RoomType.STORAGE, RoomType.LAB, RoomType.KILN, RoomType.FORGE]
+	var places: Array[Project] = []
+	for t in order:
+		places.append_array(colony.rooms_of(t))
+	for p in colony.projects:
+		if p.is_water_structure() and p.phase == Project.Phase.DONE:
+			places.insert(0, p)
+	var keep_free := 2 if adults.size() < 10 else adults.size() / 4
+	for p in places:
+		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
+		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
+		if p.purpose == RoomType.STORAGE and adults.size() < 7:
+			slots = 0
+		if p.purpose == RoomType.FARM:
+			slots = mini(slots, 2)
+		if p.purpose == RoomType.LAB and adults.size() < 8:
+			slots = 1
+		while colony.assigned_to(p).size() < slots and free.size() > keep_free:
+			free.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.suitability(a, p) < colony.suitability(b, p))
+			if not colony.assign_work(free.pop_back(), p).is_empty():
 				break
-			if not u.child and u.profession == Unit.Prof.ANY:
-				u.profession = prof
-				have += 1
-				_act("профессия")
+			_act("назначение")
 
 
 func _best_material() -> String:
@@ -371,19 +406,29 @@ func _best_material() -> String:
 	return "wood"
 
 
+## Есть ли (или строится) комната с таким назначением.
+func _has_room(t: int) -> bool:
+	if _pending_purpose.values().has(t):
+		return true
+	for p in colony.projects:
+		if p.kind == Project.Kind.ROOM and p.purpose == t:
+			return true
+	return false
+
+
 func _need_home() -> bool:
-	if colony.beds_total() >= colony.units.size() + 1:
+	if colony.beds_total() >= colony.units.size() + 1 or _pending_purpose.values().has(RoomType.HOME):
 		return false
+	for p in colony.projects:
+		if p.purpose == RoomType.HOME and p.phase != Project.Phase.DONE:
+			return false
 	return _surface_room(RoomType.HOME)
 
 
 ## Комната 6×3 на земле у базы (ищем ровное место всё дальше).
 func _surface_room(purpose: int) -> bool:
 	var mat := _best_material()
-	var cost := Project.cost_for(Project.Kind.ROOM, Rect2i(0, 0, 6, 3), mat)
-	for k in cost:
-		if colony.inventory.get(k, 0) + colony.drop_total(k) < cost[k]:
-			return false
+	# Материалы не нужны заранее: заложенная стройка сама позовёт жителей добыть недостающее.
 	for d in range(0, 60):
 		for sx in [colony.home.x - 8 - d, colony.home.x + 6 + d]:
 			if absi(sx - shaft_x) < 8 and sx <= shaft_x + 7:
@@ -403,8 +448,6 @@ func _surface_room(purpose: int) -> bool:
 ## Шахта вниз по 10 м и комната сбоку на каждом уровне: ферма, лаборатория, столовая, мастерские.
 func _shaft() -> bool:
 	var s := world.gen.surface_y(shaft_x)
-	if colony.inventory.get("wood", 0) < 15:
-		return false
 	var want := _next_underground()
 	if want < 0 and shaft_bottom - s > 200:
 		return false
@@ -469,7 +512,7 @@ func _pier() -> bool:
 		if p.is_water_structure():
 			return false
 	var lake := world.gen.lake_at(55)
-	if lake.is_empty() or colony.inventory.get("wood", 0) < 25 or colony.inventory.get("stone", 0) < 4:
+	if lake.is_empty() or colony.units.size() < 6:
 		return false
 	var span := world.gen.lake_water_span(lake)
 	var r: Rect2i = colony.water_rects(span.x, span.x + 5)["pier"]

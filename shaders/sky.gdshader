@@ -5,6 +5,8 @@ uniform float alt_top = 100.0;
 uniform float alt_bottom = 0.0;
 // 1 — день, 0 — ночь.
 uniform float daylight = 1.0;
+// Зимой небо у земли бледное, серо-голубое.
+uniform float winter = 0.0;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
@@ -12,7 +14,7 @@ float hash(vec2 p) {
 
 void fragment() {
 	float alt = mix(alt_top, alt_bottom, UV.y);
-	vec3 low = vec3(0.58, 0.78, 0.96);
+	vec3 low = mix(vec3(0.58, 0.78, 0.96), vec3(0.78, 0.84, 0.9), winter);
 	vec3 mid = vec3(0.2, 0.38, 0.78);
 	vec3 high = vec3(0.04, 0.07, 0.2);
 	vec3 space = vec3(0.0, 0.0, 0.02);

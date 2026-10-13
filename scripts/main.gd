@@ -1300,5 +1300,7 @@ func _update_sky() -> void:
 	m.set_shader_parameter("alt_bottom", -bottom_y)
 	var light := colony.daylight()
 	m.set_shader_parameter("daylight", light)
+	m.set_shader_parameter("winter", 1.0 if colony.is_winter() else 0.0)
+	world_view.set_snow(colony.is_winter())
 	# Ночью мир чуть темнее.
 	_night.color = Color(0.62, 0.66, 0.85).lerp(Color.WHITE, light)

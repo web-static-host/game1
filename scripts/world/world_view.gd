@@ -143,6 +143,15 @@ func _update_chunks() -> void:
 		world.evict_outside(rect.grow(8))
 
 
+## Снег на траве: перерисовать все видимые куски при смене сезона.
+func set_snow(on: bool) -> void:
+	if ChunkView.snow == on:
+		return
+	ChunkView.snow = on
+	for key in _views:
+		_views[key].queue_redraw()
+
+
 func _redraw_dirty() -> void:
 	if world.dirty.is_empty():
 		return

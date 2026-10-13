@@ -15,6 +15,10 @@ const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0,
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.36, 0.62, 0.27)
 const GRASS_DARK := Color(0.27, 0.5, 0.22)
+const SNOW := Color(0.93, 0.96, 1.0)
+const SNOW_DARK := Color(0.8, 0.86, 0.95)
+## Зимой трава под снегом (меняет WorldView.set_snow).
+static var snow := false
 ## Неразведанная земля — приглушённый землистый тон (не чернота), чтобы переход
 ## к разведанной породе был мягким, а не «свечением».
 const FOG_TOP := Color(0.33, 0.27, 0.22)
@@ -268,10 +272,16 @@ func _draw_ore(r: Rect2, m: int, x: int, y: int, open_sides: Array = []) -> void
 		draw_circle(p - Vector2(1, 1), 1.0 + hr, Color(col.lightened(0.4), col.a))
 
 
+static func _grass() -> Color:
+	return SNOW if snow else GRASS
+
+
 func _draw_grass(r: Rect2, x: int, mask: int) -> void:
 	var left := r.position.x + (ROUND * 0.6 if mask & 1 else 0.0)
 	var right := r.end.x - (ROUND * 0.6 if mask & 2 else 0.0)
-	draw_rect(Rect2(left, r.position.y, right - left, 6), GRASS)
+	draw_rect(Rect2(left, r.position.y, right - left, 6), _grass())
+	if snow:
+		return
 	for k in 4:
 		var bx := left + (right - left) * (k + 0.5) / 4.0
 		var hgt := 4.0 + WorldGen.hash01(x, k, 400) * 6.0
@@ -432,7 +442,9 @@ func _draw_smooth_grass(lx: int, ly: int, line: Vector3, x: int) -> void:
 	var ys := [l.x, l.y, l.z]
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(xs[0], ys[0]), Vector2(xs[1], ys[1]), Vector2(xs[2], ys[2]),
-		Vector2(xs[2], ys[2] + 6), Vector2(xs[1], ys[1] + 6), Vector2(xs[0], ys[0] + 6)]), GRASS)
+		Vector2(xs[2], ys[2] + 6), Vector2(xs[1], ys[1] + 6), Vector2(xs[0], ys[0] + 6)]), _grass())
+	if snow:
+		return
 	for k in 4:
 		var t := (k + 0.5) / 4.0
 		var bx: float = lerpf(xs[0], xs[2], t)
