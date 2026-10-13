@@ -21,6 +21,7 @@ func _initialize() -> void:
 	test_room_purposes()
 	test_needs_realtime()
 	test_family()
+	test_aging()
 	test_tunnel_throughput()
 	test_professions()
 	test_build_rules_v2()
@@ -175,7 +176,7 @@ func test_project_rules() -> void:
 func test_offline_build() -> void:
 	var colony := _new_colony(99)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	check(colony.inventory.is_empty(), "на старте склад пуст")
 	colony.inventory = {"wood": 20, "stone": 15}
 	var x := _find_solid_column(w)
@@ -198,7 +199,7 @@ func test_offline_build() -> void:
 func test_pause_and_materials() -> void:
 	var colony := _new_colony(7)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
@@ -225,7 +226,7 @@ func test_units_realtime() -> void:
 	var colony := _new_colony(31)
 	var w := colony.world
 	var x := _find_solid_column(w, 0)
-	colony.start_new(x)
+	_start(colony, x)
 	colony.inventory = {"wood": 20, "stone": 15}
 	var s := w.gen.surface_y(x)
 	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 5))
@@ -276,7 +277,7 @@ func test_room_from_surface_realtime() -> void:
 	for seed_value in [1, 2, 4]:
 		var colony := _new_colony(seed_value * 1000 + 6)
 		var w := colony.world
-		colony.start_new(0)
+		_start(colony, 0)
 		colony.inventory = {"wood": 40, "stone": 30}
 		var s := w.gen.surface_y(4)
 		var room := colony.create_project(Project.Kind.ROOM, Rect2i(3, s, 6, 3))
@@ -302,7 +303,7 @@ func test_workers_and_ladder() -> void:
 	var colony := _new_colony(77)
 	var w := colony.world
 	var x := _find_solid_column(w)
-	colony.start_new(x)
+	_start(colony, x)
 	colony.inventory = {"wood": 50, "stone": 50}
 	var s := w.gen.surface_y(x)
 	check(Project.recommended_workers(Project.Kind.TUNNEL, Rect2i(0, 0, 1, 6), 5) == 1, "на шахту 1×6 рекомендуется 1 рабочий")
@@ -345,11 +346,19 @@ func _fake_room(colony: Colony, purpose: int, x: int, width := 4) -> Project:
 	return p
 
 
+## Новая колония для теста: старение выключено, чтобы долгие прогоны не упирались в срок жизни
+## (его проверяет test_aging).
+func _start(colony: Colony, x: int) -> void:
+	colony.start_new(x)
+	for u in colony.units:
+		u.lifespan = 0.0
+
+
 func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 	var colony := _new_colony(seed_value)
 	var w := colony.world
 	var x := _find_solid_column(w)
-	colony.start_new(x)
+	_start(colony, x)
 	colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "clay": 55}
 	var s := w.gen.surface_y(x)
 	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
@@ -483,6 +492,37 @@ func test_family() -> void:
 	check(not kid.child, "ребёнок вырос")
 
 
+func test_aging() -> void:
+	var colony := _new_colony(31)
+	var x := _find_solid_column(colony.world)
+	colony.start_new(x)
+	var u: Unit = colony.units[0]
+	check(u.lifespan > Unit.LIFESPAN * 0.5, "у жителя есть срок жизни (%.0f с)" % u.lifespan)
+	check(not u.is_elder() and u.age >= Unit.CHILD_TIME, "основатели — взрослые, не старики")
+	u.age = u.lifespan * Unit.ELDER_AT - 0.1
+	colony.update(0.5)
+	check(u.is_elder() and u.age_factor() < 1.0, "житель состарился и работает медленнее")
+	var mother: Unit = null
+	var father: Unit = null
+	for o in colony.units:
+		if o.sex == Unit.Sex.FEMALE and mother == null:
+			mother = o
+		elif o.sex == Unit.Sex.MALE and o != u and father == null:
+			father = o
+	mother.partner_id = father.id
+	father.generation = 3
+	colony._birth(mother)
+	var baby: Unit = colony.units[colony.units.size() - 1]
+	check(baby.child and baby.generation == 4, "ребёнок — следующее поколение (%d)" % baby.generation)
+	var n := colony.units.size()
+	var log: Array[String] = []
+	colony.event_logged.connect(func(text: String, _kind: String) -> void: log.append(text))
+	u.age = u.lifespan - 0.1
+	colony.update(0.5)
+	check(colony.units.size() == n - 1 and not colony.units.has(u), "старик умер от старости")
+	check(log.any(func(t: String) -> bool: return "от старости" in t), "в журнале — смерть от старости")
+
+
 func test_tunnel_throughput() -> void:
 	check(Colony.tunnel_lanes(Rect2i(0, 0, 1, 10)) == 1, "шахта шириной 1 — один поток")
 	check(Colony.tunnel_lanes(Rect2i(0, 0, 3, 10)) == 3, "шахта шириной 3 — три потока")
@@ -491,7 +531,7 @@ func test_tunnel_throughput() -> void:
 	var colony := _new_colony(26)
 	var w := colony.world
 	var x := _find_solid_column(w)
-	colony.start_new(x)
+	_start(colony, x)
 	var s := w.gen.surface_y(x)
 	var narrow := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 8))
 	var wide := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 2, s, 3, 8))
@@ -507,7 +547,7 @@ func test_tunnel_throughput() -> void:
 
 func test_professions() -> void:
 	var colony := _new_colony(27)
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory["food"] = 200
 	var u := colony.units[0]
 	u.profession = Unit.Prof.DIGGER
@@ -525,7 +565,7 @@ func test_professions() -> void:
 func test_build_rules_v2() -> void:
 	var colony := _new_colony(31)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {"wood": 30, "stone": 30}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
@@ -629,7 +669,7 @@ func test_physics() -> void:
 		w.set_dug(x, f.y)
 	check(not colony.physics.check_span(Vector2i(f.x + 1, f.y)), "4 м в граните держатся без крепи")
 	# Обломки ранят жителя.
-	colony.start_new(0)
+	_start(colony, 0)
 	var u := colony.units[0]
 	var g := c + Vector2i(-3, -4)
 	w.set_material(g.x, g.y - 1, Mat.GRAVEL)
@@ -661,7 +701,7 @@ func test_physics() -> void:
 	var colony3 := _new_colony(43)
 	var w3 := colony3.world
 	var x3 := _find_solid_column(w3)
-	colony3.start_new(x3)
+	_start(colony3, x3)
 	colony3.inventory = {"wood": 40, "stone": 40}
 	var s3 := w3.gen.surface_y(x3)
 	var t := colony3.create_project(Project.Kind.ROOM, Rect2i(x3, s3 - 3, 4, 3))
@@ -677,7 +717,7 @@ func test_slices() -> void:
 	var colony := _new_colony(61)
 	var w := colony.world
 	var x := _find_solid_column(w)
-	colony.start_new(x)
+	_start(colony, x)
 	colony.inventory = {"wood": 40}
 	var s := w.gen.surface_y(x)
 	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 4))
@@ -706,7 +746,7 @@ func test_slices() -> void:
 func test_nature() -> void:
 	var colony := _new_colony(51)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {}
 	# Ягоды: сбор забирает ягоды, куст остаётся, ягоды отрастают.
 	var bush := 0
@@ -807,7 +847,7 @@ func test_lakes_and_fishing() -> void:
 	check(not colony.validate(Project.Kind.BRIDGE, Rect2i(x0, row - 3, x1 - x0 + 1, 1)).is_empty(), "мост в воздухе нельзя")
 	check(not colony.validate(Project.Kind.BRIDGE, Rect2i(x0, row, 3, 1)).is_empty(), "мост, не дотянутый до берега, нельзя")
 	check(colony.validate(Project.Kind.PIER, Rect2i(x0, row, 3, 1)).is_empty(), "пристань от берега в воду можно")
-	colony.start_new(x0 - 3)
+	_start(colony, x0 - 3)
 	colony.inventory = {"wood": 49, "stone": 20, "food": 0}
 	var br := colony.create_project(Project.Kind.BRIDGE, bridge_r)
 	colony.advance_offline(5000.0)
@@ -832,17 +872,24 @@ func test_lakes_and_fishing() -> void:
 	check(b.size.x >= x1 - x0 - 1, "мостик дотягивается до берегов (%d)" % b.size.x)
 	# Рыбалка с берега — без построек.
 	var c2 := _new_colony(52)
-	c2.start_new(x0 - 3)
+	_start(c2, x0 - 3)
 	c2.inventory = {"food": 0}
 	c2.fish.erase(int(lake["id"]))
 	check(not c2.shore_spots().is_empty(), "есть места для рыбалки с берега")
-	for u in c2.units:
-		u.profession = Unit.Prof.GATHERER
 	var tt := 0.0
-	while tt < 600.0 and c2.inventory.get("food", 0) == 0:
+	var fish_full := c2.fish_in(lake)
+	for i in 300:
+		c2.update(1.0)
+	check(c2.fish_in(lake) >= fish_full - 0.01 and c2.inventory.get("food", 0) == 0, "сытые свободные жители рыбу сами не ловят")
+	for u in c2.units:
+		u.satiety = 10.0
+	for bx in c2._bushes:
+		c2.world.set_berries(bx, 0.0)
+	while tt < 600.0 and c2.fish_in(lake) >= fish_full - 0.01:
 		c2.update(1.0)
 		tt += 1.0
-	check(c2.inventory.get("food", 0) > 0, "с берега поймали рыбу (%.0f с)" % tt)
+	check(c2.fish_in(lake) < fish_full, "голодные поймали рыбу с берега (%.0f с)" % tt)
+	check(c2.inventory.get("food", 0) == 0, "улов съели сразу, а не понесли впрок")
 	# Разведка: жители открывают карту, где ходят.
 	var ex := c2.explored_max
 	c2.units[0].pos = Vector2(ex + 30, c2.units[0].pos.y)
@@ -854,7 +901,7 @@ func test_save_roundtrip() -> void:
 	var path := "user://test_save.json"
 	var colony := _new_colony(4242)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {"wood": 20, "stone": 15}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
@@ -919,7 +966,7 @@ func _flat_x(w: WorldData, x0: int) -> int:
 func test_hauling() -> void:
 	var colony := _new_colony(41)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {"wood": 30, "stone": 20}
 	var gx := _flat_x(w, 8)
 	# Один рабочий — носит по очереди, плашка растёт постепенно.
@@ -990,7 +1037,7 @@ func test_storage_workers() -> void:
 func test_wear_and_repair() -> void:
 	var colony := _new_colony(52)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	colony.inventory = {"wood": 80, "stone": 40}
 	var logs := []
 	colony.event_logged.connect(func(text: String, _k: String) -> void: logs.append(text))
@@ -1069,7 +1116,7 @@ func _count(w: WorldData, r: Rect2i, m: int) -> int:
 func test_elements() -> void:
 	var colony := _new_colony(61)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	var el := colony.elements
 	var o := Vector2i(300, w.gen.surface_y(300) + 40)
 	_granite_box(w, o, Vector2i(30, 20))
@@ -1168,7 +1215,7 @@ func test_elements() -> void:
 	var gc := _new_colony(62)
 	var gw := gc.world
 	var gx := _find_solid_column(gw)
-	gc.start_new(gx)
+	_start(gc, gx)
 	gc.inventory = {"wood": 40}
 	var gs := gw.gen.surface_y(gx)
 	gw.set_fluid(gx, gs + 6, Mat.WATER)
@@ -1188,7 +1235,7 @@ func test_elements() -> void:
 func test_gas_alarm() -> void:
 	var colony := _new_colony(63)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	var el := colony.elements
 	var o := Vector2i(300, w.gen.surface_y(300) + 40)
 	_granite_box(w, o, Vector2i(40, 12))
@@ -1231,7 +1278,7 @@ func test_gas_alarm() -> void:
 ## Рядом нечего рубить — житель идёт к краю разведанного, карта раскрывается дальше.
 func test_scouting() -> void:
 	var colony := _new_colony(64)
-	colony.start_new(0)
+	_start(colony, 0)
 	var u := colony.units[0]
 	var reach := colony.pathing.explore(u.cell())
 	var before := colony.explored_max - colony.explored_min
@@ -1251,7 +1298,7 @@ func test_tech_tree() -> void:
 		for need in Research.TECHS[id][3]:
 			check(Research.TECHS.has(need), "%s требует существующую %s" % [id, need])
 	var colony := _new_colony(65)
-	colony.start_new(0)
+	_start(colony, 0)
 	var cap := colony.storage_capacity("wood")
 	var dig := colony.dig_bonus()
 	r = colony.research
@@ -1321,7 +1368,7 @@ func test_genetics() -> void:
 ## Жители: гены и имена при рождении, сохранение генов, места работы, знакомства, сватовство.
 func test_residents() -> void:
 	var colony := _new_colony(66)
-	colony.start_new(0)
+	_start(colony, 0)
 	var u := colony.units[0]
 	check(not u.genome.is_empty() and not u.stats.is_empty(), "у жителя есть гены и характеристики")
 	var names := {}
@@ -1390,7 +1437,7 @@ func test_residents() -> void:
 func test_loads() -> void:
 	var colony := _new_colony(71)
 	var w := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	var gx := _flat_x(w, 10)
 	var s := w.gen.surface_y(gx)
 	colony.inventory = {"wood": 50, "stone": 50}
@@ -1436,7 +1483,7 @@ func test_loads() -> void:
 		check(not colony.projects.has(lower), "перегруженный этаж рухнул")
 	# Землетрясение изнашивает постройки.
 	var c2 := _new_colony(72)
-	c2.start_new(0)
+	_start(c2, 0)
 	c2.inventory = {"wood": 50}
 	var gx2 := _flat_x(c2.world, 10)
 	var hut := c2.create_project(Project.Kind.ROOM, Rect2i(gx2, c2.world.gen.surface_y(gx2) - 3, 4, 3))
@@ -1541,7 +1588,7 @@ func test_drops_and_scouting() -> void:
 	var colony := _new_colony(91)
 	var w := colony.world
 	var x := _find_solid_column(w)
-	colony.start_new(x)
+	_start(colony, x)
 	colony.inventory = {"wood": 30}
 	var s := w.gen.surface_y(x)
 	var shaft := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 8))
@@ -1572,8 +1619,10 @@ func test_drops_and_scouting() -> void:
 		colony.update(0.5)
 		t += 0.5
 	check(hut != null and hut.phase == Project.Phase.DONE, "дом построен из дерева, лежавшего на земле (%.0f с)" % t)
-	# Разведка: житель идёт в указанную точку.
+	# Разведка: житель идёт в указанную точку (сытый — голодный сначала пошёл бы за едой).
 	var u := colony.units[0]
+	u.satiety = 100.0
+	u.energy = 100.0
 	var target := Vector2i(u.cell().x + 25, w.gen.surface_y(u.cell().x + 25) - 1)
 	var to = colony.send_unit(u, target)
 	check(to != null and u.task == Unit.Task.GOTO, "житель отправлен на разведку")
@@ -1585,7 +1634,7 @@ func test_drops_and_scouting() -> void:
 
 func test_food_balance() -> void:
 	var colony := _new_colony(95)
-	colony.start_new(0)
+	_start(colony, 0)
 	var u := colony.units[0]
 	# Ягоды — перекус, рыба и грибы — еда, в столовой сытнее.
 	colony.inventory = {"berries": 10}
@@ -1613,7 +1662,7 @@ func test_food_balance() -> void:
 func test_build_priority() -> void:
 	var colony := _new_colony(4242)
 	var world := colony.world
-	colony.start_new(0)
+	_start(colony, 0)
 	# Как у игрока: много отмеченного на сбор и мало еды — стройка всё равно идёт.
 	for d in range(1, 60):
 		for x in [d, -d]:

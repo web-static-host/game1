@@ -14,8 +14,12 @@ const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Н
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
 const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит укрепление", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку"]
 const PROF_NAMES := ["Разнорабочий", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный"]
-## Сколько секунд длится детство.
-const CHILD_TIME := 1800.0
+## Сколько секунд длится детство: полгода игры.
+const CHILD_TIME := 3600.0
+## Обычная жизнь — 3,5 года игры (год — 2 часа), у каждого своя (долголетие, случай).
+const LIFESPAN := 3.5 * 7200.0
+## С какой доли жизни житель — пожилой: работает и ходит медленнее, детей нет.
+const ELDER_AT := 0.8
 
 
 ## Рост ребёнка 0..1 (для размера фигуры).
@@ -47,9 +51,13 @@ var satiety := 100.0
 ## Здоровье 0..100: травмы от обвалов, восстанавливается отдыхом.
 var health := 100.0
 var profession := Prof.ANY
-## Возраст в секундах игры (для детей), дети не работают.
+## Возраст в секундах игры; дети не работают.
 var child := false
 var age := 0.0
+## Сколько проживёт (секунд игры).
+var lifespan := 0.0
+## Поколение: основатели — 1, их дети — 2…
+var generation := 1
 var partner_id := 0
 ## Срок беременности в секундах (-1 — не беременна).
 var pregnancy := -1.0
@@ -92,6 +100,23 @@ func set_genome(g: Dictionary) -> void:
 	stats = Genetics.stats(g)
 	abil = Genetics.abilities(g)
 	sex = Sex.FEMALE if g.get("female", false) else Sex.MALE
+
+
+func is_elder() -> bool:
+	return not child and lifespan > 0.0 and age >= lifespan * ELDER_AT
+
+
+## Множитель от возраста: пожилые работают и ходят медленнее.
+func age_factor() -> float:
+	return 0.75 if is_elder() else 1.0
+
+
+## Возраст словами: «2 г. 3 мес.».
+func age_text() -> String:
+	var months := int(age / (CHILD_TIME / 6.0))
+	if months < 12:
+		return "%d мес." % months
+	return "%d г. %d мес." % [months / 12, months % 12]
 
 
 ## Характеристика (1.0 = 100%).
@@ -208,7 +233,7 @@ func to_dict() -> Dictionary:
 		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index,
 		"health": health, "genome": Genetics.to_save(genome) if not genome.is_empty() else {},
 		"mother_id": mother_id, "father_id": father_id, "mother_name": mother_name, "father_name": father_name,
-		"workplace": workplace,
+		"workplace": workplace, "lifespan": lifespan, "generation": generation,
 	}
 
 
@@ -241,4 +266,9 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.mother_name = str(d.get("mother_name", ""))
 	u.father_name = str(d.get("father_name", ""))
 	u.workplace = int(d.get("workplace", 0))
+	u.lifespan = float(d.get("lifespan", 0.0))
+	u.generation = int(d.get("generation", 1))
+	# Старое сохранение: взрослым — возраст молодого взрослого.
+	if not u.child and u.age < CHILD_TIME:
+		u.age = CHILD_TIME + 3600.0
 	return u

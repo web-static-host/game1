@@ -450,6 +450,10 @@ func _unit_spec(u: Unit) -> Dictionary:
 	var rows := []
 	if not g.is_empty():
 		var tags := []
+		var age_line := "Возраст: %s · %d-е поколение" % [u.age_text(), u.generation]
+		tags.append([age_line, Color.WHITE])
+		if u.is_elder():
+			tags.append(["Пожилой — работает и ходит медленнее, детей не будет", Color(1.0, 0.75, 0.5)])
 		var pers: String = g.get("personality", "")
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])

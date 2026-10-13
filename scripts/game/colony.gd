@@ -211,6 +211,7 @@ func start_new(home_x: int) -> void:
 		var col := Color.from_hsv(hues[i % hues.size()], 1.0, 1.0)
 		g["color"] = [col, col]
 		var u := _new_unit(sexes[i], Vector2(x, world.gen.surface_y(x) - 1), g)
+		u.age = Unit.CHILD_TIME + rng.randf_range(0.1, 0.8) * YEAR
 		# Небольшие врождённые склонности.
 		for k in u.skills:
 			u.skills[k] = rng.randf_range(0.0, 200.0)
@@ -226,6 +227,7 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 		genome = Genetics.founder(rng)
 		genome["female"] = sex == Unit.Sex.FEMALE
 	u.set_genome(genome)
+	u.lifespan = Unit.LIFESPAN * u.stat("longevity") * rng.randf_range(0.85, 1.15)
 	u.name = _free_name(u.sex)
 	u.look = rng.randf()
 	u.pos = pos
@@ -1431,7 +1433,13 @@ func injure(u: Unit, dmg: float, why: String) -> void:
 	_kill(u, why)
 
 
-func _kill(u: Unit, why: String) -> void:
+## Смерть от старости — тихо, без «погиб».
+func _die_of_age(u: Unit) -> void:
+	_kill(u, "", false)
+	_log("%s %s от старости в %s, поколение %d" % [u.name, "умерла" if u.sex == Unit.Sex.FEMALE else "умер", u.age_text(), u.generation], "info")
+
+
+func _kill(u: Unit, why: String, report := true) -> void:
 	_drop(u)
 	units.erase(u)
 	for o in units:
@@ -1441,6 +1449,8 @@ func _kill(u: Unit, why: String) -> void:
 		var ids: PackedStringArray = k.split(",")
 		if int(ids[0]) == u.id or int(ids[1]) == u.id:
 			acquaint.erase(k)
+	if not report:
+		return
 	_log("%s погиб(ла): %s" % [u.name, why], "danger")
 
 
@@ -1488,7 +1498,17 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 	if left < 1.0:
 		return
 	fish[int(lake["id"])] = left - 1.0
-	if u != null:
+	if u != null and u.workplace == 0:
+		# Свободный житель ловил от голода — съедает улов на месте, остаток оставляет на берегу.
+		var catch := {"food": 2}
+		_eat_from(u, func(key: String, n: int) -> int:
+			var t := mini(n, int(catch.get(key, 0)))
+			if t > 0:
+				catch[key] -= t
+			return t)
+		if catch["food"] > 0:
+			drop_item(u.cell(), "food", catch["food"])
+	elif u != null:
 		drop_item(u.cell(), "food", 2)
 		if not offline:
 			_pick_up(u, _landing(u.cell()), "food")
@@ -1622,11 +1642,16 @@ func _life_tick(dt: float, offline: bool) -> void:
 						_eat_from(u, func(key: String, n: int) -> int: return _take_bush(bx, key, n))
 						break
 			u.energy = maxf(u.energy, 60.0)
-		if u.child:
-			u.age += dt
-			if u.age >= Unit.CHILD_TIME:
-				u.child = false
-				_log("%s %s — теперь может работать" % [u.name, "выросла" if u.sex == Unit.Sex.FEMALE else "вырос"], "good")
+		var was_elder := u.is_elder()
+		u.age += dt
+		if u.child and u.age >= Unit.CHILD_TIME:
+			u.child = false
+			_log("%s %s — теперь может работать" % [u.name, "выросла" if u.sex == Unit.Sex.FEMALE else "вырос"], "good")
+		if not was_elder and u.is_elder():
+			_log("%s %s — работает медленнее" % [u.name, "состарилась" if u.sex == Unit.Sex.FEMALE else "состарился"], "info")
+		if u.lifespan > 0.0 and u.age >= u.lifespan:
+			_die_of_age(u)
+			continue
 		if u.pregnancy >= 0.0:
 			u.pregnancy += dt
 			if u.pregnancy >= PREGNANCY_TIME:
@@ -1660,7 +1685,7 @@ func _social() -> void:
 			_log("%s и %s стали парой" % [f.name, best.name], "good")
 	# Дети — только если есть свободная кровать и еда.
 	for f in units:
-		if f.child or f.sex != Unit.Sex.FEMALE or f.pregnancy >= 0.0 or f.partner_id == 0:
+		if f.child or f.is_elder() or f.sex != Unit.Sex.FEMALE or f.pregnancy >= 0.0 or f.partner_id == 0:
 			continue
 		var partner := unit_by_id(f.partner_id)
 		if partner == null:
@@ -1686,6 +1711,7 @@ func _birth(mother: Unit) -> void:
 	baby.energy = 80.0
 	baby.mother_id = mother.id
 	baby.mother_name = mother.name
+	baby.generation = maxi(mother.generation, father.generation if father != null else 0) + 1
 	if father != null:
 		baby.father_id = father.id
 		baby.father_name = father.name
@@ -2109,7 +2135,7 @@ func _move(u: Unit, dt: float) -> void:
 			spd *= 0.8
 		if world.get_mat(u.cell().x, u.cell().y) == Mat.WATER:
 			spd *= 0.5 # плывут
-		spd *= u.stat("speed")
+		spd *= u.stat("speed") * (0.8 if u.is_elder() else 1.0)
 		var dist := delta.length()
 		if dist <= spd * budget:
 			u.pos = next
@@ -2166,7 +2192,7 @@ func _work(u: Unit, dt: float) -> void:
 		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning")
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
-		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target)
+		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor()
 	match u.task:
 		Unit.Task.DIG:
 			var c := u.target
@@ -2378,8 +2404,6 @@ func _task_order(u: Unit) -> Array[String]:
 	var order: Array[String] = []
 	if u.workplace != 0:
 		order.append("workplace")
-	if food_critical():
-		order.append("need")
 	match u.profession:
 		Unit.Prof.DIGGER:
 			order.append("dig")
@@ -2404,6 +2428,9 @@ func _assign(u: Unit) -> bool:
 			return true
 		# На складе пусто — ест то, что лежит на земле, или идёт искать ягоды.
 		if _start_eat_drop(u, parents, dist) or _start_eat_bush(u, parents, dist):
+			return true
+		# Ягод нет — ловит рыбу себе и сразу съедает (впрок без указания не добывает).
+		if not u.child and _try_fish(u, parents, dist):
 			return true
 	if u.child:
 		return false
@@ -3210,11 +3237,6 @@ func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		for k in _needed_now(p):
 			if GATHER_SOURCES.has(k):
 				keys[k] = true
-	if not has_food() and drop_total("food") + drop_total("berries") == 0:
-		# Есть совсем нечего: рыбачат, а нет рыбы — собирают ягоды.
-		if _try_fish(u, parents, dist):
-			return true
-		keys["berries"] = true
 	for k in keys:
 		var kind: int = GATHER_SOURCES[k]
 		if kind < 0:
