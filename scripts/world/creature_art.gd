@@ -305,7 +305,10 @@ static func mix(a: Color, b: Color, k: float) -> Color:
 	var h := fposmod(ha + dh * k, 1.0)
 	var s := maxf(lerpf(a.ok_hsl_s, b.ok_hsl_s, k), maxf(a.ok_hsl_s, b.ok_hsl_s) * 0.92)
 	var l := lerpf(a.ok_hsl_l, b.ok_hsl_l, k)
-	return Color.from_ok_hsl(h, s, l)
+	var c := Color.from_ok_hsl(h, s, l)
+	# Насыщенность и яркость не ниже, чем у родителей: у ярких родителей — яркие дети,
+	# без пастели и «горчицы».
+	return Color.from_hsv(c.h, maxf(c.s, lerpf(a.s, b.s, k)), maxf(c.v, lerpf(a.v, b.v, k)))
 
 
 ## Насколько цвет близок к градиенту лого (0 — точно на нём).

@@ -36,6 +36,7 @@ func _initialize() -> void:
 	test_gas_alarm()
 	test_scouting()
 	test_tech_tree()
+	test_genetics()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -1235,6 +1236,40 @@ func test_tech_tree() -> void:
 	check(colony.carry_cap() == 8 and colony.build_bonus() == 1.5 and colony.automation_bonus() == 1.5, "тачки, плотники, автоматика")
 	check(colony.farm_bonus() >= 1.25, "агрономия прибавила урожай")
 	check(cap == 0 or colony.storage_capacity("wood") > cap, "стеллажи расширили склады")
+
+
+## Генетика: яркие основатели, наследование копий, мутации ~1/10, сверхюнит по цвету лого.
+func test_genetics() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var bright := true
+	for i in 50:
+		var c := Genetics.color_of(Genetics.founder(rng))
+		bright = bright and c.v >= 0.99 and c.s >= 0.84
+	check(bright, "основатели — максимально яркие цвета")
+	var mom := Genetics.founder(rng)
+	var dad := Genetics.founder(rng)
+	var mutants := 0
+	var from_parents := true
+	for i in 2000:
+		var k := Genetics.child(mom, dad, rng)
+		if Genetics.is_mutant(k):
+			mutants += 1
+		elif not (k["shape"][0] == mom["shape"][0] and k["shape"][1] == dad["shape"][0]):
+			from_parents = false
+	check(from_parents, "копии генов — по одной от каждого родителя")
+	check(mutants > 140 and mutants < 260, "мутации примерно в 1 из 10 рождений (%d из 2000)" % mutants)
+	var kid := Genetics.child(mom, dad, rng)
+	check(Genetics.color_of(kid).v >= 0.95, "дети ярких родителей — яркие")
+	var logo := Genetics.founder(rng)
+	logo["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_B]
+	check(Genetics.is_super(logo) and Genetics.stats(logo)["vision"] >= 2.0, "цвет лого — сверхюнит, характеристики ×2")
+	var m := Genetics.founder(rng)
+	Genetics.mutate(m, rng, "eyes")
+	check(Genetics.is_mutant(m) and Genetics.mutation_text(m).begins_with("Мутант"), "мутант помечен: " + Genetics.mutation_text(m))
+	var hairy := Genetics.founder(rng)
+	hairy["hair"] = [true, false]
+	check(not Genetics.has_hair(hairy), "волосы видны, только если обе копии их несут")
 
 
 func test_loads() -> void:
