@@ -2,10 +2,10 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг"]
 ## Еда хранится в амбаре, всё остальное — на складе.
 const FOOD_KEYS := ["food", "berries"]
 const HINTS := [
@@ -22,6 +22,7 @@ const HINTS := [
 	"энергия: сжигает метан, уголь или дрова",
 	"собирает метан вокруг (20 м) — топливо для генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
+	"отопление: жжёт дрова со склада и греет всё вокруг (6 м)",
 ]
 ## Назначения, которые нужно сначала изучить.
 const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity"}
@@ -35,6 +36,8 @@ const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
 const POWER_MAKE := 20
 ## На сколько секунд хватает 1 метана, 1 угля или 2 дров.
 const FUEL_TIME := 40.0
+## Очаг: на сколько секунд хватает 1 дерева (≈ 15 дров за игровой месяц).
+const HEARTH_FUEL_TIME := 40.0
 ## Пока складов нет, ресурсы лежат кучами на земле у базы — немного.
 const BASE_CAPACITY := 50
 ## Прибавка вместимости за клетку ширины склада (для разрешённых в нём ресурсов).
@@ -90,6 +93,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"wood": 8, "stone": 8}
 		GRANARY:
 			return {"wood": 2 * w}
+		HEARTH:
+			return {"stone": 10, "clay": 4}
 	return {}
 
 

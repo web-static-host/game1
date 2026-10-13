@@ -92,11 +92,12 @@ enum Season { WINTER, SPRING, SUMMER, AUTUMN }
 const SEASON_NAMES := ["зима", "весна", "лето", "осень"]
 ## Температура на поверхности в середине каждого месяца (январь … декабрь), °C; между — плавно.
 const MONTH_TEMPS := [-8.0, -5.0, 8.0, 12.0, 16.0, 20.0, 23.0, 21.0, 15.0, 8.0, 1.0, -5.0]
-## Внутри построенной комнаты теплее: стены держат тепло жителей и очага.
-const ROOM_WARMTH := 12.0
-## Генератор греет всё вокруг себя.
-const GENERATOR_HEAT := 15.0
-const GENERATOR_HEAT_RADIUS := 6
+## Тепло даёт только огонь: очаг и работающий генератор греют всё вокруг себя.
+## Без отопления в комнате так же холодно, как в земле вокруг.
+const HEAT := 18.0
+const HEAT_RADIUS := 6
+## Очаг горит, пока у него холоднее этого.
+const HEARTH_ON_BELOW := 18.0
 ## Ферма растит грибы только в тепле.
 const FARM_MIN_TEMP := 15.0
 ## Ниже этой температуры обычному жителю холодно (синие и пушистые терпят больше).
@@ -1594,7 +1595,10 @@ func grow_plants(t: float) -> void:
 				world.grow(x, t / TREE_GROW_TIME)
 		elif f == WorldGen.FEATURE_BUSH:
 			_bushes.append(x)
-			if world.berries(x) < WorldData.BUSH_BERRIES and not winter:
+			if winter and world.berries(x) > 0.0:
+				# Зимой ягоды осыпаются и мёрзнут: за пару недель на кустах пусто.
+				world.set_berries(x, maxf(0.0, world.berries(x) - t * WorldData.BUSH_BERRIES / (MONTH * 0.5)))
+			elif world.berries(x) < WorldData.BUSH_BERRIES and not winter:
 				world.set_berries(x, minf(WorldData.BUSH_BERRIES, world.berries(x) + t / BERRY_REGEN))
 		elif f == WorldGen.FEATURE_NONE:
 			var trees := 0
@@ -3724,8 +3728,7 @@ func _research(work: float) -> void:
 	if finished.is_empty():
 		return
 	_log("Изучено: %s. %s" % [Research.tech_name(finished), Research.TECHS[finished][1]], "good")
-	if research.current.is_empty():
-		_log("Все доступные исследования завершены", "info")
+	_log("Учёные ждут: выберите следующее исследование («Наука»)", "info")
 
 
 ## Есть ли энергия (изучено электричество и работает генератор).
@@ -3758,10 +3761,38 @@ func carry_cap() -> int:
 
 
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
+## Очаги: жгут дрова, пока вокруг холодно; без дров гаснут.
+func _hearth_tick(dt: float) -> void:
+	for p in rooms_of(RoomType.HEARTH):
+		var was := p.burning
+		p.burning = false
+		if p.paused:
+			continue
+		# Холодно ли без огня (своё тепло не считаем).
+		var c := p.rect.get_center()
+		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
+		if not cold:
+			continue
+		if p.farm_progress <= 0.0 and inventory.get("wood", 0) >= 1:
+			inventory["wood"] -= 1
+			p.farm_progress += RoomType.HEARTH_FUEL_TIME
+		if p.farm_progress > 0.0:
+			p.farm_progress -= dt
+			p.burning = true
+			if p.blocked.begins_with("Нет дров"):
+				p.blocked = ""
+		elif p.blocked.is_empty():
+			p.blocked = "Нет дров — очаг погас"
+			_log("%s: %s" % [p.title(), p.blocked], "warning")
+		if was != p.burning:
+			elements._temp_memo.clear()
+
+
 func _power_tick(dt: float) -> void:
 	power_made = 0
 	power_used = 0
 	for p in rooms_of(RoomType.GENERATOR):
+		p.burning = false
 		if p.paused:
 			continue
 		if p.farm_progress <= 0.0:
@@ -3776,12 +3807,14 @@ func _power_tick(dt: float) -> void:
 				p.farm_progress += RoomType.FUEL_TIME
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
+			p.burning = true
 			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0))
 			if p.blocked.begins_with("Нет топлива"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
 			p.blocked = "Нет топлива: нужен метан, уголь или дрова"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
+	_hearth_tick(dt)
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
 			continue
@@ -3875,13 +3908,13 @@ func _season_tick() -> void:
 		if not first:
 			match sn:
 				Season.WINTER:
-					_log("Пришла зима: ягоды не растут, озёра замёрзли — рыба только с пристани, вдвое медленнее. Фермам нужно тепло", "warning")
+					_log("Пришла зима: ягоды не растут, озёра замёрзли — рыба только с пристани, вдвое медленнее. Фермам и жителям нужно тепло — очаг", "warning")
 				Season.SPRING:
 					_log("Весна: снова растут ягоды, озёра оттаяли", "good")
 				Season.SUMMER:
 					_log("Лето — самое время запасать еду на зиму", "info")
 	if m == 10 and not first and food_value() < winter_food_need():
-		_log("Через месяц зима! Еды на зиму не хватит — запасите её в амбаре и постройте тёплую ферму под землёй", "danger")
+		_log("Через месяц зима! Еды на зиму не хватит — запасите её в амбаре, поставьте очаг у фермы", "danger")
 
 
 ## Сколько сытости съест колония за зиму (три месяца).

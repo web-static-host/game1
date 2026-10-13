@@ -245,6 +245,9 @@ func _busy() -> int:
 
 
 func _play() -> void:
+	# IDLE=1 — игрок ничего не делает (проверка, что без игрока колония не выживает).
+	if not OS.get_environment("IDLE").is_empty():
+		return
 	_answer_geologist()
 	_finish_purposes()
 	_repairs()
@@ -260,6 +263,8 @@ func _play() -> void:
 	if not _has_room(RoomType.STORAGE) and _surface_room(RoomType.STORAGE):
 		return
 	if not _has_room(RoomType.GRANARY) and _surface_room(RoomType.GRANARY):
+		return
+	if _heat_farms():
 		return
 	if _shaft():
 		return
@@ -340,7 +345,7 @@ func _finish_purposes() -> void:
 				var names := {RoomType.HOME: "дом", RoomType.STORAGE: "склад", RoomType.FARM: "ферма",
 					RoomType.LAB: "лаборатория", RoomType.DINING: "столовая", RoomType.KILN: "печь",
 					RoomType.GENERATOR: "генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация",
-					RoomType.GRANARY: "амбар"}
+					RoomType.GRANARY: "амбар", RoomType.HEARTH: "очаг"}
 				_milestone("purpose%d" % _pending_purpose[p.id], "Первая комната: %s" % names.get(_pending_purpose[p.id], "?"))
 			_pending_purpose.erase(p.id)
 
@@ -420,6 +425,29 @@ func _best_material() -> String:
 		if mats.has(m) and colony.inventory.get(m, 0) >= 12:
 			return m
 	return "wood"
+
+
+## Холодной ферме — очаг вплотную (малая комната 3×3 сбоку на том же уровне).
+func _heat_farms() -> bool:
+	for farm in colony.rooms_of(RoomType.FARM):
+		if colony.farm_warm(farm):
+			continue
+		var has_hearth := false
+		for p in colony.projects:
+			var hearth: bool = p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH
+			if hearth and absi(p.rect.get_center().x - farm.rect.get_center().x) <= 6 and absi(p.rect.get_center().y - farm.rect.get_center().y) <= 3:
+				has_hearth = true
+		if has_hearth:
+			continue
+		for rx in [farm.rect.end.x, farm.rect.position.x - 3]:
+			var r := Rect2i(rx, farm.rect.position.y, 3, 3)
+			if colony.validate(Project.Kind.ROOM, r, "wood").is_empty():
+				var p := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
+				if p != null:
+					_pending_purpose[p.id] = RoomType.HEARTH
+					_act("очаг")
+					return true
+	return false
 
 
 ## Есть ли (или строится) комната с таким назначением.

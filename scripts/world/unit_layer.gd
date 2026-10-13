@@ -111,6 +111,19 @@ func foot_of(u: Unit) -> Vector2:
 	return foot
 
 
+## Кровать, в которой спит житель (как её рисует StructureLayer), или пустой прямоугольник.
+func bed_rect(u: Unit) -> Rect2:
+	if u.task != Unit.Task.SLEEP or u.state != Unit.State.WORK or u.project_id == 0 or u.bed_index < 1:
+		return Rect2()
+	var room := colony.project_by_id(u.project_id)
+	if room == null or room.purpose != RoomType.HOME:
+		return Rect2()
+	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(room), 0)).x
+	var floor_y := view.cell_to_local(Vector2i(0, room.rect.end.y)).y - 6
+	var bx := x0 + (u.bed_index - 1) * TILE * 2 + 4
+	return Rect2(bx, floor_y - 26, TILE * 2 - 8, 26)
+
+
 func _scale(u: Unit) -> float:
 	return lerpf(0.5, 0.9, u.growth()) if u.child else 1.0
 
@@ -127,7 +140,13 @@ func _place(u: Unit, node: CreatureSprite) -> void:
 	if pose.begins_with("walk") or pose.begins_with("carry"):
 		bob = -absf(sin(u.anim * 9.0)) * 2.0
 	if pose == "sleep":
-		# Лежит на боку, серединой тела — там, где стоял.
+		var bed := bed_rect(u)
+		if bed.size.x > 0.0:
+			# В кровати: у подушки, укрыт одеялом по пояс (одеяло — в оверлее).
+			node.position = Vector2(bed.position.x + 22, bed.end.y - 7)
+			node.scale = Vector2(sc * 0.9, sc * 0.9)
+			return
+		# На полу — лежит на боку, серединой тела там, где стоял.
 		var h := CreatureArt.height_of(BODY_W, node.looks) * sc
 		node.rotation = -PI * 0.5 * u.facing
 		node.position = foot + Vector2(u.facing * h * 0.5, -BODY_W * 0.3 * sc)
@@ -185,8 +204,22 @@ func _draw_overlay() -> void:
 		var pose := node.pose.split("|")[0]
 		if pose == "sleep":
 			var bob := sin(u.anim * 2.0) * 3.0
-			draw_string_on(font, Vector2(foot.x + 14, foot.y - 26 + bob), "z", 16, Color(1, 1, 1, 0.8))
-			draw_string_on(font, Vector2(foot.x + 22, foot.y - 36 + bob), "z", 20, Color(1, 1, 1, 0.6))
+			var bed := bed_rect(u)
+			var zp := foot
+			if bed.size.x > 0.0:
+				# Одеяло поверх: видно голову и плечи.
+				var room := colony.project_by_id(u.project_id)
+				var col: Color = StructureLayer.BLANKETS[(room.id + u.bed_index - 1) % StructureLayer.BLANKETS.size()]
+				var sb := StyleBoxFlat.new()
+				sb.bg_color = col
+				sb.set_corner_radius_all(7)
+				sb.border_color = col.darkened(0.25)
+				sb.set_border_width_all(1)
+				_overlay.draw_style_box(sb, Rect2(bed.position.x + 8, bed.position.y + 9, bed.size.x - 8, 15))
+				_overlay.draw_line(Vector2(bed.position.x + 13, bed.position.y + 13), Vector2(bed.end.x - 5, bed.position.y + 13), Color(1, 1, 1, 0.35), 2.0)
+				zp = Vector2(bed.position.x + 30, bed.position.y + 6)
+			_overlay.draw_string(font, Vector2(zp.x + 14, zp.y - 26 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.8))
+			_overlay.draw_string(font, Vector2(zp.x + 22, zp.y - 36 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.6))
 		elif node.pose.begins_with("carry") and u.carry_amount > 0:
 			# Груз над головой в поднятых руках.
 			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, -h - 8 * sc), 10)

@@ -5,7 +5,7 @@ extends Node2D
 const AUTOSAVE_SEC := 30.0
 ## Сколько времени отсутствия засчитывается (стимул заходить регулярно).
 const OFFLINE_CAP_SEC := 3.0 * 3600.0
-const SPEEDS := [1.0, 10.0, 20.0]
+const SPEEDS := [1.0, 2.0, 10.0, 20.0]
 const STATUS_INTERVAL := 0.2
 
 var world: WorldData
@@ -744,7 +744,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			RoomType.FARM:
 				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 				if not colony.farm_warm(p):
-					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужна ферма глубже под землёй или генератор рядом." \
+					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужен очаг рядом (греет 6 м) или генератор." \
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
@@ -778,7 +778,11 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
-				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан)." % int(RoomType.FUEL_TIME)})
+				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан). Работая, греет всё вокруг (6 м)." % int(RoomType.FUEL_TIME)})
+			RoomType.HEARTH:
+				chips.append(["", "горит" if p.burning else "не горит"])
+				rows.append({"type": "text", "text": "Жжёт 1 дерево со склада за %d с, пока вокруг холоднее %d °C. Греет всё в 6 м: жилые, ферму." \
+					% [int(RoomType.HEARTH_FUEL_TIME), int(Colony.HEARTH_ON_BELOW)]})
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])

@@ -336,6 +336,19 @@ func test_workers_and_ladder() -> void:
 
 ## Готовая подземная комната от шахты: возвращает [colony, room].
 ## Готовая комната на поверхности без стен — для проверок работы на месте.
+## Очаг вплотную к комнате room (для опытов с теплом).
+func _hearth(colony: Colony, room: Project) -> Project:
+	var p := Project.new()
+	p.id = 990
+	p.kind = Project.Kind.ROOM
+	p.phase = Project.Phase.DONE
+	p.purpose = RoomType.HEARTH
+	p.rect = Rect2i(room.rect.end.x, room.rect.position.y, 3, 3)
+	p.targets = {}
+	colony.projects.append(p)
+	return p
+
+
 func _fake_room(colony: Colony, purpose: int, x: int, width := 4) -> Project:
 	var p := Project.new()
 	p.id = 900 + purpose
@@ -421,8 +434,13 @@ func test_room_purposes() -> void:
 	check(fc.assign_work(fc.units[0], farm).is_empty(), "фермер назначен")
 	fc.inventory["food"] = 0
 	var food0 := 0
+	fc.advance_offline(600.0)
+	check(fc.inventory.get("food", 0) == 0 and not fc.farm_warm(farm), "под землёй без огня ферма мёрзнет (%.0f °C)" % fc.room_temp(farm))
+	_hearth(fc, farm)
+	fc.inventory["wood"] = 50
 	fc.advance_offline(1800.0)
-	check(fc.inventory.get("food", 0) > food0, "ферма производит еду (%d → %d)" % [food0, fc.inventory.get("food", 0)])
+	check(fc.inventory.get("food", 0) > food0, "с очагом ферма производит еду (%d → %d)" % [food0, fc.inventory.get("food", 0)])
+	check(fc.inventory.get("wood", 0) < 50, "очаг жжёт дрова")
 
 	var home_res := _colony_with_room(23, RoomType.HOME)
 	var hc: Colony = home_res[0]
@@ -1029,7 +1047,7 @@ func test_save_roundtrip() -> void:
 
 
 func test_environment() -> void:
-	check(absf(Env.temperature(1000, 0) - 40.0) < 0.01, "1 км вглубь ≈ 40 °C")
+	check(absf(Env.temperature(1000, 0) - 34.0) < 0.01, "1 км вглубь ≈ 34 °C (9 °C у поверхности + 25 °C/км)")
 	check(Env.temperature(-11000, 0) < -55.0, "11 км вверх ≈ -56 °C")
 	var o2 := Env.oxygen_ratio(-8000, 0)
 	check(o2 > 0.3 and o2 < 0.45, "на 8 км кислорода ~38%% (%.2f)" % o2)
@@ -1211,9 +1229,16 @@ func test_seasons() -> void:
 	var winter_top := colony.elements._temperature(top)
 	var deep := colony.elements._temperature(Vector2i(x, w.gen.surface_y(x) + 12))
 	check(winter_top < 0.0 and winter_top < spring_top, "зимой на поверхности мороз (%.0f °C, весной %.0f °C)" % [winter_top, spring_top])
-	check(deep > 10.0, "на глубине 12 м зимой тепло (%.0f °C)" % deep)
+	check(deep > winter_top and deep > 0.0 and deep < 15.0, "на глубине 12 м зимой прохладно, но не мороз (%.0f °C)" % deep)
 	check(colony.shore_spots().is_empty(), "зимой с берега не порыбачить — лёд")
-	check(colony.farm_warm(farm), "подземная ферма зимой в тепле (%.0f °C)" % colony.room_temp(farm))
+	check(not colony.farm_warm(farm), "подземная ферма зимой без огня холодная (%.0f °C)" % colony.room_temp(farm))
+	var hearth := _hearth(colony, farm)
+	colony.inventory["wood"] = 20
+	colony._hearth_tick(1.0)
+	colony.elements._temp_memo.clear()
+	check(hearth.burning and colony.farm_warm(farm), "очаг рядом — ферме тепло (%.0f °C)" % colony.room_temp(farm))
+	colony.projects.erase(hearth)
+	colony.elements._temp_memo.clear()
 	var cold_farm := _fake_room(colony, RoomType.FARM, x - 8)
 	check(not colony.farm_warm(cold_farm), "ферма на поверхности зимой замерзает (%.0f °C)" % colony.room_temp(cold_farm))
 	colony.projects.erase(cold_farm)

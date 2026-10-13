@@ -24,7 +24,8 @@ const TECHS := {
 	"automation": ["Автоматика", "Лаборатории и мастерские работают в полтора раза быстрее", 320.0, ["steam", "education"]],
 }
 ## Очков за секунду работы учёного (с навыком 1).
-const POINTS_PER_SEC := 0.1
+## Очков в секунду от одного обычного учёного: на первые технологии — около двух игровых месяцев.
+const POINTS_PER_SEC := 0.03
 
 var done: Array[String] = []
 var current := ""
@@ -71,13 +72,9 @@ func add(points: float) -> String:
 		return ""
 	var finished := current
 	done.append(finished)
+	# Следующую выбирает игрок — сама наука дальше не идёт.
 	current = ""
 	progress = 0.0
-	# Следующая доступная — сама, чтобы учёные не простаивали.
-	for id in TECHS:
-		if available(id):
-			current = id
-			break
 	return finished
 
 

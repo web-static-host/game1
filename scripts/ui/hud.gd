@@ -31,7 +31,7 @@ const TOOL_HINTS := {
 	Mode.BRIDGE: "Проведите пальцем над озером",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
-const SPEED_NAMES := ["×1", "×10", "×20"]
+const SPEED_NAMES := ["×1", "×2", "×10", "×20"]
 ## Отступы от краёв экрана (скруглённые углы, вырезы камеры).
 const SIDE := 34.0
 const EDGE_TOP := 14.0
@@ -301,15 +301,32 @@ func _build_bottom(box: VBoxContainer) -> void:
 	bar.add_child(science)
 	var home := IconButton.make("home", "К базе")
 	bar.add_child(home)
-	# Скорость — отдельными кнопками.
+	# Скорость — переключатель в одной панели.
+	var seg := PanelContainer.new()
+	seg.add_theme_stylebox_override("panel", _box(TOP_BG, 18, 6))
+	seg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.add_child(seg)
+	var seg_row := HBoxContainer.new()
+	seg_row.add_theme_constant_override("separation", 4)
+	seg.add_child(seg_row)
 	var speeds := ButtonGroup.new()
+	var flat := _box(Color(0, 0, 0, 0), 14, 6)
 	for i in SPEED_NAMES.size():
-		var b := IconButton.make("speed", SPEED_NAMES[i], 76, 80)
+		var b := Button.new()
+		b.text = SPEED_NAMES[i]
+		b.custom_minimum_size = Vector2(64, 62)
+		b.focus_mode = Control.FOCUS_NONE
 		b.toggle_mode = true
 		b.button_group = speeds
 		b.button_pressed = i == 0
+		b.add_theme_font_override("font", Fonts.black())
+		b.add_theme_font_size_override("font_size", 22)
+		for st in ["normal", "hover", "disabled"]:
+			b.add_theme_stylebox_override(st, flat)
+		for st in ["pressed", "hover_pressed"]:
+			b.add_theme_stylebox_override(st, btn_box(ACCENT, true))
 		b.pressed.connect(func() -> void: speed_selected.emit(i))
-		bar.add_child(b)
+		seg_row.add_child(b)
 	var menu := IconButton.make("menu", "Меню")
 	bar.add_child(menu)
 	home.pressed.connect(func() -> void: home_pressed.emit())

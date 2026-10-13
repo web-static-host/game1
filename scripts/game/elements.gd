@@ -452,19 +452,15 @@ func temperature(c: Vector2i) -> float:
 
 func _temperature(c: Vector2i) -> float:
 	var t := Env.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
-	# В готовой комнате теплее, у работающего генератора — жарко.
-	var pid: int = colony.interior.get(c, 0)
-	if pid != 0:
-		var room := colony.project_by_id(pid)
-		if room != null and room.phase == Project.Phase.DONE:
-			t += Colony.ROOM_WARMTH
-	for g in colony.rooms_of(RoomType.GENERATOR):
-		if g.paused:
+	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг.
+	for p in colony.projects:
+		if not p.burning or p.phase != Project.Phase.DONE:
 			continue
-		var gc := g.rect.get_center()
+		var gc := p.rect.get_center()
 		var d := maxi(absi(c.x - gc.x), absi(c.y - gc.y))
-		if d <= Colony.GENERATOR_HEAT_RADIUS:
-			t += Colony.GENERATOR_HEAT * (1.0 - float(d) / (Colony.GENERATOR_HEAT_RADIUS + 1))
+		if d <= Colony.HEAT_RADIUS:
+			# Рядом (3 м) — полное тепло, дальше плавно слабеет.
+			t += Colony.HEAT * clampf(float(Colony.HEAT_RADIUS + 1 - d) / (Colony.HEAT_RADIUS - 2), 0.0, 1.0)
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):
@@ -500,8 +496,9 @@ func affect_unit(u: Unit, dt: float) -> void:
 		_hurt_check(u, "погиб(ла) от жары")
 	var cold := Colony.cold_limit(u)
 	if t < cold:
-		u.health -= minf(2.0, (cold - t) / 100.0) * dt
-		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: комната или генератор" % [u.name, roundi(t)], "warning")
+		# −8 °C без тепла: около 0,2 здоровья в секунду — сон в холодном доме не спасает.
+		u.health -= minf(2.0, (cold - t) / 40.0) * dt
+		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "замёрз(ла)")
 	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:

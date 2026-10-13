@@ -4,7 +4,8 @@ extends RefCounted
 ## Опирается на реальные значения: геотермический градиент ~25 °C/км,
 ## стандартная атмосфера (ISA), барометрическая формула.
 
-const SURFACE_TEMP := 15.0
+## Среднегодовая температура у поверхности: такой же она держится и в неглубокой земле.
+const SURFACE_TEMP := 9.0
 const GEOTHERMAL_GRADIENT := 0.025 # °C на метр
 const SEA_PRESSURE := 101.325 # кПа
 const SCALE_HEIGHT := 8434.0 # м

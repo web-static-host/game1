@@ -68,7 +68,8 @@ static func fog_color(depth: int, v: float) -> Color:
 	var c := FOG_TOP.lerp(FOG_DEEP, clampf(depth / 1500.0, 0.0, 1.0))
 	if depth > 3000:
 		c = c.lerp(FOG_HOT, clampf((depth - 3000) / 30000.0, 0.0, 0.8))
-	return c.lightened((v - 0.5) * 0.08) if v >= 0.5 else c.darkened((0.5 - v) * 0.08)
+	# Почти однотонно: заметные оттенки по клеткам дают «квадраты».
+	return c.lightened((v - 0.5) * 0.02) if v >= 0.5 else c.darkened((0.5 - v) * 0.02)
 
 
 static func rock_color(m: int, v: float) -> Color:
@@ -141,8 +142,12 @@ func _draw() -> void:
 				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
 					draw_colored_polygon(poly, soil)
 				if f & ChunkData.F_REVEALED:
+					# Вскрытая порода — тоже только ниже линии земли, иначе торчат углы.
+					var clip := clip_below(lx * TILE, ly * TILE, TILE, _line_px(ly, line))
+					if clip.is_empty():
+						clip = PackedVector2Array([Vector2.ZERO]) # клетка целиком над землёй — каймы нет
 					_half_strips(lx, ly, r, rock_color(m, v), _is_hole(lx - 1, ly), _is_hole(lx + 1, ly),
-						_is_hole(lx, ly - 1), _is_hole(lx, ly + 1))
+						_is_hole(lx, ly - 1), _is_hole(lx, ly + 1), clip)
 				if y == surf:
 					if gen.water_level(x) >= surf:
 						_draw_smooth_grass(lx, ly, line, x)
@@ -645,18 +650,18 @@ static func _rect_poly(r: Rect2) -> PackedVector2Array:
 
 
 ## Полоса породы в полблока у открытых сторон, дальше — неразведанная земля.
-func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool) -> void:
+func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool, clip := PackedVector2Array()) -> void:
 	var f := FADE * TILE
 	var p := r.position
 	var e := r.end
 	if l:
-		draw_rect(Rect2(p.x, p.y, f, TILE), base)
+		_strip(Rect2(p.x, p.y, f, TILE), base, clip)
 	if rt:
-		draw_rect(Rect2(e.x - f, p.y, f, TILE), base)
+		_strip(Rect2(e.x - f, p.y, f, TILE), base, clip)
 	if u:
-		draw_rect(Rect2(p.x, p.y, TILE, f), base)
+		_strip(Rect2(p.x, p.y, TILE, f), base, clip)
 	if d:
-		draw_rect(Rect2(p.x, e.y - f, TILE, f), base)
+		_strip(Rect2(p.x, e.y - f, TILE, f), base, clip)
 	# Камешки во вскрытой кайме.
 	var x := chunk.cx * SIZE + lx
 	var y := chunk.cy * SIZE + ly
@@ -672,7 +677,7 @@ func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u:
 			q = p + Vector2(6 + hx * (TILE - 12), f * 0.5)
 		elif d:
 			q = Vector2(p.x + 6 + hx * (TILE - 12), e.y - f * 0.5)
-		if q.x < 0:
+		if q.x < 0 or (not clip.is_empty() and (clip.size() < 3 or not Geometry2D.is_point_in_polygon(q, clip))):
 			continue
 		var rad := 2.5 + WorldGen.hash01(x, y, 620 + k) * 3.0
 		draw_circle(q + Vector2(0, 1.5), rad, base.darkened(0.3))
@@ -684,7 +689,18 @@ func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u:
 		if side_x or side_y or not _is_open(lx + c.x, ly + c.y):
 			continue
 		var corner := Vector2(p.x if c.x < 0 else e.x - f, p.y if c.y < 0 else e.y - f)
-		draw_rect(Rect2(corner, Vector2(f, f)), base)
+		_strip(Rect2(corner, Vector2(f, f)), base, clip)
+
+
+## Полоса каймы; если задан clip — только её часть внутри него (под линией земли).
+func _strip(r: Rect2, col: Color, clip: PackedVector2Array) -> void:
+	if clip.is_empty():
+		draw_rect(r, col)
+		return
+	if clip.size() < 3:
+		return
+	for poly in Geometry2D.intersect_polygons(_rect_poly(r), clip):
+		draw_colored_polygon(poly, col)
 
 
 ## Выработка или пещера (не небо).

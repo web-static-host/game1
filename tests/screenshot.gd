@@ -177,15 +177,20 @@ func _prepare_base() -> void:
 	for u in colony.units:
 		u.lifespan = 0.0 # для снимков — без старения
 	colony.advance_offline(100000.0)
+	_feed(colony)
 	colony.game_time = 0.0
 	for u in colony.units:
 		u.health = 100.0
 		u.satiety = 90.0
+	colony.event_logged.connect(func(t: String, _k: String) -> void:
+		if "погиб" in t or "умер" in t:
+			print("  СМЕРТЬ: ", t))
 	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
 	for pr in [[home, RoomType.HOME], [farm, RoomType.FARM], [store, RoomType.STORAGE]]:
 		if pr[0] != null:
 			colony.set_purpose(pr[0], pr[1])
 	colony.advance_offline(5000.0)
+	_feed(colony)
 	colony.inventory["food"] = 40
 	colony.units[0].energy = 5.0
 	# Новая стройка в процессе — чтобы видеть жителей за работой.
@@ -235,11 +240,13 @@ func _prepare_lake() -> void:
 	colony.inventory = {"wood": 49, "stone": 40, "food": 10}
 	var br := colony.create_project(Project.Kind.BRIDGE, Rect2i(x0, level - 1, x1 - x0 + 1, 1))
 	colony.advance_offline(4000.0)
+	_feed(colony)
 	if br != null:
 		colony.demolish(br)
 	colony.inventory = {"wood": 49, "stone": 40, "food": 10}
 	colony.create_project(Project.Kind.PIER, Rect2i(x0, level - 1, mini(6, x1 - x0), 1))
 	colony.advance_offline(4000.0)
+	_feed(colony)
 	for i in 30:
 		colony.grow_plants(Colony.PLANT_TICK * 10)
 	colony.inventory["food"] = 0
@@ -262,3 +269,11 @@ func _shot(name: String) -> void:
 	var path := _out.path_join(name + ".png")
 	img.save_png(path)
 	print("скриншот: ", path)
+
+
+## Для снимков — сытые и здоровые жители (холодная ферма зимой еды не даёт).
+func _feed(colony: Colony) -> void:
+	colony.inventory["food"] = maxi(200, colony.inventory.get("food", 0))
+	for u in colony.units:
+		u.satiety = 90.0
+		u.health = 100.0

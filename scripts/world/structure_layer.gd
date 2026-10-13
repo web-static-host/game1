@@ -325,6 +325,27 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				var dir := Vector2(cos(a + k * TAU / 3.0), sin(a + k * TAU / 3.0))
 				draw_line(Vector2(cx, cy), Vector2(cx, cy) + dir * 17, Color(0.85, 0.88, 0.92, alpha), 5.0)
 			draw_circle(Vector2(cx, cy), 4, Color(0.2, 0.2, 0.22, alpha))
+		RoomType.HEARTH:
+			# Каменный очаг; горит — огонь и тёплый свет вокруг.
+			var cx := x0 + RoomType.usable_width(p) * TILE * 0.5
+			var base := Rect2(cx - 26, floor_y - 34, 52, 34)
+			_rbox(base, 6, Color(0.62, 0.6, 0.66, alpha), Color(0.4, 0.38, 0.44, alpha), 2)
+			_rbox(Rect2(cx - 16, floor_y - 22, 32, 22), 8, Color(0.16, 0.1, 0.1, alpha))
+			_rbox(Rect2(cx - 30, floor_y - 40, 60, 8), 3, Color(0.52, 0.5, 0.56, alpha))
+			if p.burning and alpha >= 1.0:
+				var tt := Time.get_ticks_msec() / 1000.0
+				_glow(Vector2(cx, floor_y - 12), r.size.y * 1.4, Color(1.0, 0.6, 0.25, 0.25))
+				for k in 3:
+					var fx := cx + (k - 1) * 8.0
+					var fh := 12.0 + 5.0 * sin(tt * 7.0 + k * 2.0)
+					draw_colored_polygon(PackedVector2Array([Vector2(fx - 6, floor_y - 2), Vector2(fx + 6, floor_y - 2), Vector2(fx + sin(tt * 5.0 + k) * 2.0, floor_y - 2 - fh)]),
+						Color(1.0, 0.5, 0.15))
+					draw_colored_polygon(PackedVector2Array([Vector2(fx - 3, floor_y - 2), Vector2(fx + 3, floor_y - 2), Vector2(fx, floor_y - 2 - fh * 0.6)]),
+						Color(1.0, 0.85, 0.35))
+			# Поленница.
+			for k in 3:
+				draw_circle(Vector2(cx + 40 + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 4.5, Color(0.66, 0.44, 0.25, alpha))
+				draw_circle(Vector2(cx + 40 + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 2.0, Color(0.9, 0.75, 0.5, alpha))
 		RoomType.DINING:
 			var w := RoomType.usable_width(p)
 			var tx := x0 + 8
