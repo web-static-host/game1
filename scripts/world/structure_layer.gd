@@ -10,9 +10,10 @@ const PAUSED := Color(0.65, 0.65, 0.7, 0.9)
 const BLOCKED := Color(1.0, 0.35, 0.3, 0.95)
 const ROOM_WALL := Color(0.86, 0.79, 0.68)
 const ROOM_FRAME := Color(0.48, 0.47, 0.5)
-const ROOM_FLOOR := Color(0.38, 0.27, 0.18)
+const ROOM_FLOOR := Color(0.55, 0.36, 0.22)
 const LAMP := Color(1.0, 0.9, 0.55)
-const BEAM := Color(0.55, 0.38, 0.2)
+const BEAM := Color(0.66, 0.44, 0.25)
+const BEAM_DARK := Color(0.45, 0.29, 0.16)
 const BAR_BG := Color(0, 0, 0, 0.6)
 const BAR := Color(0.45, 0.9, 0.4)
 
@@ -69,18 +70,18 @@ func _draw() -> void:
 
 ## Цвета по материалу стен: [задняя стена, рама, линии кладки].
 const WALLS := {
-	"wood": [Color(0.86, 0.73, 0.55), Color(0.52, 0.36, 0.2), Color(0.74, 0.6, 0.42)],
-	"clay": [Color(0.88, 0.76, 0.64), Color(0.66, 0.45, 0.32), Color(0.8, 0.66, 0.54)],
-	"stone": [Color(0.74, 0.74, 0.76), Color(0.45, 0.45, 0.5), Color(0.62, 0.62, 0.66)],
-	"brick": [Color(0.78, 0.45, 0.36), Color(0.5, 0.25, 0.2), Color(0.88, 0.8, 0.74)],
-	"metal": [Color(0.66, 0.7, 0.75), Color(0.36, 0.4, 0.46), Color(0.5, 0.55, 0.6)],
+	"wood": [Color(0.8, 0.56, 0.35), Color(0.48, 0.31, 0.19), Color(0.74, 0.51, 0.31)],
+	"clay": [Color(0.9, 0.68, 0.5), Color(0.62, 0.4, 0.27), Color(0.84, 0.6, 0.43)],
+	"stone": [Color(0.7, 0.73, 0.8), Color(0.42, 0.45, 0.55), Color(0.6, 0.63, 0.71)],
+	"brick": [Color(0.84, 0.43, 0.32), Color(0.5, 0.24, 0.18), Color(0.95, 0.84, 0.74)],
+	"metal": [Color(0.64, 0.7, 0.78), Color(0.34, 0.39, 0.47), Color(0.52, 0.58, 0.66)],
 }
-const BED_FRAME := Color(0.45, 0.3, 0.18)
-const BLANKETS := [Color(0.35, 0.5, 0.8), Color(0.75, 0.35, 0.4), Color(0.4, 0.65, 0.45), Color(0.8, 0.65, 0.3)]
-const SOIL := Color(0.3, 0.2, 0.13)
-const MUSHROOM := Color(0.92, 0.88, 0.8)
-const MUSHROOM_CAP := Color(0.75, 0.42, 0.3)
-const CRATE := Color(0.62, 0.45, 0.25)
+const BED_FRAME := Color(0.56, 0.36, 0.22)
+const BLANKETS := [Color(0.31, 0.6, 0.95), Color(0.94, 0.4, 0.55), Color(0.38, 0.78, 0.45), Color(0.98, 0.72, 0.25)]
+const SOIL := Color(0.38, 0.25, 0.17)
+const MUSHROOM := Color(0.98, 0.95, 0.88)
+const MUSHROOM_CAPS := [Color(1.0, 0.47, 0.35), Color(1.0, 0.78, 0.3), Color(0.6, 0.45, 1.0)]
+const CRATE := Color(0.8, 0.58, 0.34)
 
 
 func _draw_done(p: Project) -> void:
@@ -121,14 +122,19 @@ func _draw_done(p: Project) -> void:
 
 func _draw_room_shell(p: Project, r: Rect2) -> void:
 	var c: Array = WALLS.get(p.material, WALLS["wood"])
-	draw_rect(r, c[0])
+	var wall: Color = c[0]
+	draw_rect(r, wall)
 	match p.material:
 		"wood":
-			# Доски.
-			var y := r.position.y + 10
-			while y < r.end.y - 6:
-				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
-				y += 10
+			# Доски — полосы чуть разного тона.
+			var y := r.position.y
+			var i := 0
+			while y < r.end.y:
+				var h := minf(12.0, r.end.y - y)
+				draw_rect(Rect2(r.position.x, y, r.size.x, h), wall if i % 2 == 0 else c[2])
+				draw_line(Vector2(r.position.x, y + h - 1), Vector2(r.end.x, y + h - 1), Color(c[1], 0.35), 1.0)
+				y += 12
+				i += 1
 		"metal":
 			# Стальные панели с заклёпками.
 			var x := r.position.x + 5
@@ -138,37 +144,82 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 				draw_circle(Vector2(x + 5, r.end.y - 14), 1.8, c[1])
 				x += 24
 		"stone", "brick":
-			# Кладка блоками со смещением (кирпич — мельче).
+			# Кладка блоками со смещением, у каждого блока светлый верх.
 			var bh := 10.0 if p.material == "brick" else 16.0
 			var bw := 24.0 if p.material == "brick" else 40.0
 			var row := 0
 			var y := r.position.y + 5
 			while y < r.end.y - 6:
-				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), c[2], 1.5)
-				var x := r.position.x + 5 + (bw * 0.5 if row % 2 else 0.0)
+				var h := minf(bh, r.end.y - 6 - y)
+				var x := r.position.x + 5 - (bw * 0.5 if row % 2 else 0.0)
 				while x < r.end.x - 5:
-					draw_line(Vector2(x, y), Vector2(x, minf(y + bh, r.end.y - 6)), c[2], 1.5)
+					var bx := maxf(x, r.position.x + 5)
+					var bwid := minf(x + bw, r.end.x - 5) - bx
+					if bwid > 2:
+						var tone := WorldGen.hash01(int(x), int(y), p.id) * 0.08
+						draw_rect(Rect2(bx + 1, y + 1, bwid - 2, h - 2), wall.lightened(tone) if p.material == "stone" else wall.darkened(tone))
+						draw_line(Vector2(bx + 2, y + 2), Vector2(bx + bwid - 3, y + 2), Color(1, 1, 1, 0.22), 1.5)
 					x += bw
 				y += bh
 				row += 1
+			# Швы.
+			y = r.position.y + 5
+			while y < r.end.y - 6:
+				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), Color(c[2], 0.8), 1.5)
+				y += bh
 		_:
 			# Глиняная штукатурка: мягкие пятна.
 			for k in int(r.size.x / 18.0):
 				var px := r.position.x + 10 + k * 18 + WorldGen.hash01(p.id, k, 61) * 8.0
 				var py := r.position.y + 12 + WorldGen.hash01(p.id, k, 62) * (r.size.y - 30)
 				draw_circle(Vector2(px, py), 4 + WorldGen.hash01(p.id, k, 63) * 4, c[2])
-	draw_rect(Rect2(r.position.x, r.end.y - 6, r.size.x, 6), ROOM_FLOOR)
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 5), c[1])
-	draw_rect(Rect2(r.position.x, r.position.y, 5, r.size.y), c[1])
-	draw_rect(Rect2(r.end.x - 5, r.position.y, 5, r.size.y), c[1])
+	# Тень под потолком.
+	draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), Vector2(r.end.x, r.position.y + 16), Vector2(r.position.x, r.position.y + 16)]),
+		PackedColorArray([Color(0, 0, 0, 0.3), Color(0, 0, 0, 0.3), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
+	# Пол — доски с бликом.
+	draw_rect(Rect2(r.position.x, r.end.y - 7, r.size.x, 7), ROOM_FLOOR)
+	draw_line(Vector2(r.position.x, r.end.y - 6), Vector2(r.end.x, r.end.y - 6), ROOM_FLOOR.lightened(0.25), 1.5)
+	# Рама тоном стены, со скруглёнными углами.
+	var frame := StyleBoxFlat.new()
+	frame.draw_center = false
+	frame.border_color = c[1]
+	frame.set_border_width_all(5)
+	frame.set_corner_radius_all(6)
+	draw_style_box(frame, r)
 	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
 	if p.ladder or _wall_outside(p, -1):
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
 	if _wall_outside(p, 1):
 		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-	var lamp := Vector2(r.get_center().x, r.position.y + 9)
-	draw_circle(lamp, 14, Color(LAMP, 0.18))
-	draw_circle(lamp, 5, LAMP)
+	# Лампа горит, только когда есть электричество.
+	if colony.powered() and colony.is_underground(p):
+		var lamp := Vector2(r.get_center().x, r.position.y + 10)
+		_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
+		draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
+		draw_circle(lamp + Vector2(0, 4), 5, LAMP)
+		draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+
+
+## Мягкое световое пятно: веер треугольников от яркого центра к прозрачному краю.
+func _glow(c: Vector2, rad: float, col: Color) -> void:
+	var edge := Color(col, 0.0)
+	var n := 24
+	for i in n:
+		var a0 := TAU * i / n
+		var a1 := TAU * (i + 1) / n
+		draw_polygon(PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * rad, c + Vector2(cos(a1), sin(a1)) * rad]),
+			PackedColorArray([col, edge, edge]))
+
+
+## Прямоугольник со скруглением (мебель, плашки).
+func _rbox(r: Rect2, rad: int, col: Color, border := Color(0, 0, 0, 0), bw := 0) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = col
+	sb.set_corner_radius_all(rad)
+	if bw > 0:
+		sb.border_color = border
+		sb.set_border_width_all(bw)
+	draw_style_box(sb, r)
 
 
 ## Снаружи у стены комнаты (side −1 — слева, 1 — справа) на уровне пола не выйти.
@@ -199,10 +250,12 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 			for i in RoomType.beds(p):
 				var bx := x0 + i * TILE * 2 + 4
 				var bw := TILE * 2 - 8
-				draw_rect(Rect2(bx, floor_y - 14, bw, 14), Color(BED_FRAME, alpha))
-				draw_rect(Rect2(bx + 2, floor_y - 20, bw - 4, 8), Color(BLANKETS[(p.id + i) % BLANKETS.size()], alpha))
-				draw_rect(Rect2(bx + 3, floor_y - 24, 14, 7), Color(0.95, 0.95, 0.92, alpha))
-				draw_rect(Rect2(bx, floor_y - 26, 4, 26), Color(BED_FRAME, alpha))
+				var blanket: Color = BLANKETS[(p.id + i) % BLANKETS.size()]
+				_rbox(Rect2(bx, floor_y - 12, bw, 12), 3, Color(BED_FRAME, alpha))
+				_rbox(Rect2(bx, floor_y - 26, 5, 26), 2, Color(BED_FRAME.darkened(0.15), alpha))
+				_rbox(Rect2(bx + 6, floor_y - 22, 15, 9), 4, Color(0.98, 0.97, 0.94, alpha))
+				_rbox(Rect2(bx + 18, floor_y - 21, bw - 18, 12), 6, Color(blanket, alpha), Color(blanket.darkened(0.25), alpha), 1)
+				draw_line(Vector2(bx + 23, floor_y - 18), Vector2(bx + bw - 5, floor_y - 18), Color(1, 1, 1, 0.35 * alpha), 2.0)
 		RoomType.STORAGE, RoomType.GRANARY:
 			var w := RoomType.usable_width(p)
 			var room_cap := RoomType.CAPACITY_PER_CELL * w
@@ -226,19 +279,32 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 					var lvl := (slot / slots) % 2
 					var bx := x0 + 6 + (slot % slots) * TILE * 0.5
 					var by := floor_y - 16 - lvl * 40
-					draw_rect(Rect2(bx, by, 14, 16), Color(CRATE, alpha))
-					draw_rect(Rect2(bx + 3, by + 3, 8, 6), Color(res_color(k), alpha))
-					draw_rect(Rect2(bx, by, 14, 16), Color(CRATE.darkened(0.35), alpha), false, 1.0)
+					_rbox(Rect2(bx, by, 14, 16), 3, Color(CRATE, alpha), Color(CRATE.darkened(0.35), alpha), 1)
+					draw_line(Vector2(bx + 2, by + 2), Vector2(bx + 12, by + 14), Color(CRATE.darkened(0.2), alpha), 1.5)
+					_rbox(Rect2(bx + 3, by + 3, 8, 6), 2, Color(res_color(k), alpha))
 					slot += 1
 		RoomType.FARM:
 			var w := RoomType.usable_width(p)
-			draw_rect(Rect2(x0 + 2, floor_y - 8, w * TILE - 4, 8), Color(SOIL, alpha))
+			_rbox(Rect2(x0 + 2, floor_y - 9, w * TILE - 4, 9), 4, Color(SOIL, alpha), Color(SOIL.darkened(0.3), alpha), 1)
 			var grow := clampf(p.farm_progress / RoomType.FARM_CYCLE, 0.0, 1.0)
+			var warm := colony.farm_warm(p)
 			for i in w * 2:
 				var mx := x0 + 8 + i * TILE * 0.5
 				var h := 6.0 + 10.0 * fmod(grow + WorldGen.hash01(p.id, i, 70), 1.0)
-				draw_line(Vector2(mx, floor_y - 8), Vector2(mx, floor_y - 8 - h), Color(MUSHROOM, alpha), 3.0)
-				draw_circle(Vector2(mx, floor_y - 8 - h), 4.0 + h * 0.15, Color(MUSHROOM_CAP, alpha))
+				var cap: Color = MUSHROOM_CAPS[(p.id + i) % MUSHROOM_CAPS.size()]
+				if not warm:
+					cap = cap.lerp(Color(0.6, 0.62, 0.7), 0.6) # в холоде грибы блёклые
+				var top := Vector2(mx, floor_y - 9 - h)
+				draw_line(Vector2(mx, floor_y - 9), top, Color(MUSHROOM, alpha), 3.0)
+				var rad := 4.0 + h * 0.18
+				if warm:
+					draw_circle(top, rad * 1.9, Color(cap, 0.12 * alpha))
+				var dome := PackedVector2Array()
+				for j in 9:
+					var a := PI + PI * j / 8.0
+					dome.append(top + Vector2(cos(a) * rad, sin(a) * rad * 0.85 + 1.5))
+				draw_colored_polygon(dome, Color(cap, alpha))
+				draw_circle(top + Vector2(-rad * 0.35, -rad * 0.3), rad * 0.22, Color(1, 1, 1, 0.75 * alpha))
 		RoomType.PUMP:
 			# Насос и труба вверх через потолок.
 			var px := x0 + TILE * 1.2
@@ -278,11 +344,14 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 	if p.rect.size.y > p.rect.size.x:
 		_ladder(r.get_center().x, r.position.y, r.end.y, alpha)
 	else:
+		var dark := Color(BEAM_DARK, alpha)
 		var x := r.position.x + TILE * 0.5
 		while x < r.end.x:
-			draw_line(Vector2(x - 8, r.end.y), Vector2(x - 8, r.position.y + 3), col, 4.0)
-			draw_line(Vector2(x + 8, r.end.y), Vector2(x + 8, r.position.y + 3), col, 4.0)
-			draw_line(Vector2(x - 12, r.position.y + 3), Vector2(x + 12, r.position.y + 3), col, 5.0)
+			for sx in [-8.0, 8.0]:
+				draw_line(Vector2(x + sx + 1.5, r.end.y), Vector2(x + sx + 1.5, r.position.y + 3), dark, 4.5)
+				draw_line(Vector2(x + sx, r.end.y), Vector2(x + sx, r.position.y + 3), col, 4.5)
+			draw_line(Vector2(x - 13, r.position.y + 5), Vector2(x + 13, r.position.y + 5), dark, 6.0)
+			draw_line(Vector2(x - 13, r.position.y + 3), Vector2(x + 13, r.position.y + 3), col, 6.0)
 			x += TILE * 3.0
 
 
@@ -358,12 +427,15 @@ func _label(font: Font, p: Vector2, text: String, col: Color) -> void:
 
 func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 	var col := Color(BEAM, alpha)
-	draw_line(Vector2(cx - 7, top), Vector2(cx - 7, bottom), col, 3.0)
-	draw_line(Vector2(cx + 7, top), Vector2(cx + 7, bottom), col, 3.0)
+	var dark := Color(BEAM_DARK, alpha)
 	var y := top + 8
 	while y < bottom:
-		draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 2.5)
+		draw_line(Vector2(cx - 7, y + 1.5), Vector2(cx + 7, y + 1.5), dark, 3.0)
+		draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 3.0)
 		y += 10
+	for sx in [-8.0, 8.0]:
+		draw_line(Vector2(cx + sx + 1, top), Vector2(cx + sx + 1, bottom), dark, 3.5)
+		draw_line(Vector2(cx + sx, top), Vector2(cx + sx, bottom), col, 3.5)
 
 
 const RES_COLORS := {
@@ -398,15 +470,12 @@ func _draw_supply(p: Project, font: Font) -> void:
 	for i in items.size():
 		var e: Array = items[i]
 		var box := Rect2(x, y, widths[i], 28)
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = Color(0.08, 0.09, 0.12, 0.85) if e[3] else Color(0.72, 0.15, 0.13, 0.92)
-		sb.set_corner_radius_all(9)
-		sb.border_color = Color(1, 1, 1, 0.15) if e[3] else Color(1.0, 0.5, 0.45)
-		sb.set_border_width_all(1)
-		draw_style_box(sb, box)
+		var bg := Color(0.17, 0.13, 0.16, 0.9) if e[3] else Color(0.86, 0.3, 0.25, 0.95)
+		_rbox(Rect2(box.position + Vector2(0, 3), box.size), 14, bg.darkened(0.4))
+		_rbox(box, 14, bg, bg.lightened(0.15), 1)
 		ResIcon.draw(self, e[0], Vector2(x + 16, y + 14), 10)
 		var tp := Vector2(x + 30, y + 21)
-		draw_string(font, tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+		draw_string(Fonts.black(), tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
 		x += widths[i] + 6.0
 
 

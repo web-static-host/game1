@@ -39,7 +39,7 @@ const EDGE_BOTTOM := 12.0
 const LOG_LINES := 4
 const PANEL_WIDTH := 620
 ## Высота верхней строки и нижнего меню (карточка помещается между ними).
-const TOP_H := 70.0
+const TOP_H := 86.0
 const BAR_H := 102.0
 const KIND_COLORS := {
 	"info": Color(0.85, 0.88, 0.95),
@@ -47,9 +47,14 @@ const KIND_COLORS := {
 	"warning": Color(1.0, 0.8, 0.35),
 	"danger": Color(1.0, 0.4, 0.35),
 }
-const ACCENT := Color(0.98, 0.72, 0.25)
-const MUTED := Color(0.7, 0.74, 0.82)
-const RED := Color(0.86, 0.26, 0.24)
+const ACCENT := Color(0.96, 0.65, 0.16)
+const MUTED := Color(0.78, 0.72, 0.68)
+const RED := Color(0.89, 0.36, 0.29)
+## Оформление: тёплые тёмные панели, кнопки с «бортиком» снизу (тон того же цвета).
+const PANEL_BG := Color(0.17, 0.13, 0.16, 0.93)
+const TOP_BG := Color(0.17, 0.13, 0.16, 0.8)
+const BTN := Color(0.36, 0.41, 0.52)
+const GREEN := Color(0.3, 0.72, 0.38)
 
 var _status: Label
 var _date: Label
@@ -117,23 +122,27 @@ func _ready() -> void:
 
 func _make_theme() -> Theme:
 	var t := Theme.new()
+	t.default_font = Fonts.bold()
 	t.default_font_size = 20
-	t.set_stylebox("panel", "PanelContainer", _box(Color(0.07, 0.08, 0.11, 0.9), 16, 14))
+	t.set_stylebox("panel", "PanelContainer", _box(PANEL_BG, 18, 14))
 	for state in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
-		var sb := _box(Color(0.17, 0.19, 0.25, 0.94), 14, 10)
+		var sb := btn_box(BTN)
 		match state:
 			"hover":
-				sb.bg_color = Color(0.22, 0.25, 0.33, 0.96)
+				sb = btn_box(BTN.lightened(0.1))
 			"pressed", "hover_pressed":
-				sb.bg_color = ACCENT
+				sb = btn_box(ACCENT, true)
 			"disabled":
-				sb.bg_color = Color(0.14, 0.15, 0.19, 0.8)
+				sb = btn_box(Color(BTN.darkened(0.3), 0.8))
 			"focus":
 				sb.draw_center = false
+				sb.set_border_width_all(0)
 		t.set_stylebox(state, "Button", sb)
-	t.set_color("font_pressed_color", "Button", Color(0.1, 0.08, 0.05))
-	t.set_color("font_hover_pressed_color", "Button", Color(0.1, 0.08, 0.05))
-	t.set_color("font_disabled_color", "Button", Color(1, 1, 1, 0.35))
+	t.set_color("font_color", "Button", Color.WHITE)
+	t.set_color("font_hover_color", "Button", Color.WHITE)
+	t.set_color("font_pressed_color", "Button", Color.WHITE)
+	t.set_color("font_hover_pressed_color", "Button", Color.WHITE)
+	t.set_color("font_disabled_color", "Button", Color(1, 1, 1, 0.4))
 	return t
 
 
@@ -142,6 +151,17 @@ static func _box(col: Color, radius: int, pad: float) -> StyleBoxFlat:
 	sb.bg_color = col
 	sb.set_corner_radius_all(radius)
 	sb.set_content_margin_all(pad)
+	return sb
+
+
+## Кнопка: заливка, снизу — бортик темнее (объём), края тоном того же цвета.
+## pressed — бортик тоньше, будто кнопку вдавили.
+static func btn_box(col: Color, pressed := false) -> StyleBoxFlat:
+	var sb := _box(col, 16, 10)
+	sb.border_color = col.darkened(0.32)
+	sb.set_border_width_all(2)
+	sb.border_width_bottom = 3 if pressed else 6
+	sb.content_margin_bottom = 12
 	return sb
 
 
@@ -162,7 +182,7 @@ func _build_top(column: VBoxContainer) -> void:
 	column.add_child(row)
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", _box(Color(0.06, 0.07, 0.1, 0.7), 12, 6))
+	panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
 	row.add_child(panel)
 	_res_box = HBoxContainer.new()
 	_res_box.add_theme_constant_override("separation", 14)
@@ -172,13 +192,19 @@ func _build_top(column: VBoxContainer) -> void:
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(fill)
+	var date_panel := PanelContainer.new()
+	date_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	date_panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
+	date_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(date_panel)
 	var right := VBoxContainer.new()
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right.add_theme_constant_override("separation", 0)
-	row.add_child(right)
-	_date = _outlined("", 19, Color(1, 1, 1, 0.9))
-	_status = _outlined("", 17, Color(1, 1, 1, 0.75))
-	var version := _outlined("v" + str(ProjectSettings.get_setting("application/config/version", "dev")), 14, Color(1, 1, 1, 0.5))
+	date_panel.add_child(right)
+	_date = _label("", 19, Color.WHITE)
+	_date.add_theme_font_override("font", Fonts.black())
+	_status = _label("", 16, MUTED)
+	var version := _label("v" + str(ProjectSettings.get_setting("application/config/version", "dev")), 13, Color(1, 1, 1, 0.4))
 	for l in [_date, _status, version]:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		right.add_child(l)
@@ -257,6 +283,10 @@ func _build_bottom(box: VBoxContainer) -> void:
 		_build_row.add_child(b)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
+	# Главная кнопка — оранжевая.
+	_build_btn.add_theme_stylebox_override("normal", btn_box(ACCENT))
+	_build_btn.add_theme_stylebox_override("hover", btn_box(ACCENT.lightened(0.08)))
+	_build_btn.add_theme_stylebox_override("pressed", btn_box(ACCENT.darkened(0.18), true))
 	_build_btn.toggled.connect(_on_build_toggled)
 	bar.add_child(_build_btn)
 	var fill := Control.new()
@@ -396,7 +426,7 @@ func _build_hint() -> void:
 	box.visible = false
 	add_child(box)
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _box(Color(0.06, 0.07, 0.1, 0.85), 12, 10))
+	panel.add_theme_stylebox_override("panel", _box(PANEL_BG, 16, 10))
 	box.add_child(panel)
 	_hint = _label("", 19, Color.WHITE)
 	panel.add_child(_hint)
@@ -464,6 +494,7 @@ func _build_panel() -> void:
 	titles.add_theme_constant_override("separation", 0)
 	head.add_child(titles)
 	_title = _label("", 26, Color.WHITE)
+	_title.add_theme_font_override("font", Fonts.black())
 	_subtitle = _label("", 18, ACCENT)
 	_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	titles.add_child(_title)
@@ -521,9 +552,9 @@ func show_panel(spec: Dictionary) -> void:
 		b.focus_mode = Control.FOCUS_NONE
 		var style: String = a[2] if a.size() > 2 else ""
 		if style == "danger":
-			b.add_theme_stylebox_override("normal", _box(Color(0.45, 0.14, 0.13, 0.95), 14, 10))
+			b.add_theme_stylebox_override("normal", btn_box(RED))
 		elif style == "primary":
-			b.add_theme_stylebox_override("normal", _box(Color(0.75, 0.52, 0.12, 0.95), 14, 10))
+			b.add_theme_stylebox_override("normal", btn_box(ACCENT))
 		var cb: Callable = a[1]
 		b.pressed.connect(cb)
 		_actions.add_child(b)
@@ -751,7 +782,7 @@ func _build_people(st: Dictionary) -> void:
 		b.custom_minimum_size = Vector2(150, 50)
 		b.add_theme_font_size_override("font_size", 18)
 		if item.get("style", "") == "danger":
-			b.add_theme_stylebox_override("normal", _box(Color(0.45, 0.14, 0.13, 0.95), 14, 10))
+			b.add_theme_stylebox_override("normal", btn_box(RED))
 		b.pressed.connect(item["pick"])
 		row.add_child(b)
 
@@ -894,6 +925,7 @@ func _build_dialog() -> void:
 	v.add_theme_constant_override("separation", 14)
 	_dialog.add_child(v)
 	_dialog_title = _label("", 28, Color.WHITE)
+	_dialog_title.add_theme_font_override("font", Fonts.black())
 	_dialog_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_dialog_title)
 	_dialog_text = _label("", 20, Color(0.9, 0.92, 0.96))
@@ -958,7 +990,7 @@ func _build_new_game(center: CenterContainer) -> void:
 	v.add_child(row)
 	var start := _menu_button(row, "Начать")
 	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	start.add_theme_stylebox_override("normal", _box(Color(0.75, 0.52, 0.12, 0.95), 14, 10))
+	start.add_theme_stylebox_override("normal", btn_box(ACCENT))
 	var cancel := _menu_button(row, "Отмена")
 	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	start.pressed.connect(func() -> void:
@@ -983,9 +1015,19 @@ func show_message(title: String, text: String) -> void:
 
 
 func log_event(text: String, kind: String = "info") -> void:
-	var l := _outlined(text, 19, KIND_COLORS.get(kind, Color.WHITE))
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_constant_override("outline_size", 6)
+	# Строка журнала на полупрозрачной подложке — читается и на небе, и на земле.
+	var l := PanelContainer.new()
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var sb := _box(Color(TOP_BG, 0.62), 10, 4)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	l.add_theme_stylebox_override("panel", sb)
+	var t := _label(text, 18, KIND_COLORS.get(kind, Color.WHITE))
+	if Fonts.bold().get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x > PANEL_WIDTH - 24:
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		t.custom_minimum_size = Vector2(PANEL_WIDTH - 24, 0)
+	l.add_child(t)
 	_log.add_child(l)
 	while _log.get_child_count() > LOG_LINES:
 		var old := _log.get_child(0)

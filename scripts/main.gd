@@ -39,6 +39,8 @@ var _send_unit := 0
 
 
 func _ready() -> void:
+	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
+	ThemeDB.fallback_font = Fonts.bold()
 	var data := SaveSystem.load_data()
 	var seed_value := int(data["seed"]) if data.has("seed") else _new_seed()
 	# Старые сохранения (без версии генерации) — на первой версии, чтобы мир не изменился.
@@ -1307,6 +1309,9 @@ func _update_sky() -> void:
 	var light := colony.daylight()
 	m.set_shader_parameter("daylight", light)
 	m.set_shader_parameter("winter", 1.0 if colony.is_winter() else 0.0)
-	world_view.set_snow(colony.is_winter())
+	m.set_shader_parameter("cam_x", world_view.origin.x + camera.position.x / ChunkView.TILE)
+	m.set_shader_parameter("view_w", get_viewport_rect().size.x / camera.zoom.x / ChunkView.TILE)
+	m.set_shader_parameter("ground_alt", -float(colony.home.y))
+	world_view.set_season(colony.is_winter(), colony.calendar_month())
 	# Ночью мир чуть темнее.
 	_night.color = Color(0.62, 0.66, 0.85).lerp(Color.WHITE, light)

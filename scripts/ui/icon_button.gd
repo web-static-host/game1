@@ -7,7 +7,7 @@ var caption := ""
 ## Значок ресурса вместо глифа (кнопки материалов).
 var res_key := ""
 const ICON_COLOR := Color(0.92, 0.94, 0.98)
-const ICON_PRESSED := Color(0.12, 0.09, 0.05)
+const ICON_PRESSED := Color(1, 1, 1)
 
 
 static func make(p_glyph: String, p_caption: String, w := 96.0, h := 80.0) -> IconButton:

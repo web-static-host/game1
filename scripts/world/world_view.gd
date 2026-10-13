@@ -17,6 +17,8 @@ var camera: Camera2D
 var structures: StructureLayer
 var units_layer: UnitLayer
 var fog: FogLayer
+var light: LightLayer
+var fx: SeasonFx
 ## Клетка мира, находящаяся в локальной точке (0, 0).
 var origin := Vector2i.ZERO
 var _views := {}
@@ -36,6 +38,16 @@ func setup(p_world: WorldData, p_colony: Colony, p_camera: Camera2D) -> void:
 	units_layer.colony = colony
 	units_layer.z_index = 10
 	add_child(units_layer)
+	fx = SeasonFx.new()
+	fx.view = self
+	fx.colony = colony
+	fx.z_index = 12
+	add_child(fx)
+	light = LightLayer.new()
+	light.view = self
+	light.colony = colony
+	light.z_index = 15
+	add_child(light)
 	fog = FogLayer.new()
 	fog.view = self
 	fog.colony = colony
@@ -143,11 +155,14 @@ func _update_chunks() -> void:
 		world.evict_outside(rect.grow(8))
 
 
-## Снег на траве: перерисовать все видимые куски при смене сезона.
-func set_snow(on: bool) -> void:
-	if ChunkView.snow == on:
+## Время года: снег и листва. Куски перерисовываются, когда листва заметно сменилась
+## (шаг — четверть месяца).
+func set_season(winter: bool, month: float) -> void:
+	var m := snappedf(month, 0.25)
+	if ChunkView.snow == winter and is_equal_approx(ChunkView.season_m, m):
 		return
-	ChunkView.snow = on
+	ChunkView.snow = winter
+	ChunkView.season_m = m
 	for key in _views:
 		_views[key].queue_redraw()
 

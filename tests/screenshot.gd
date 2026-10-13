@@ -23,6 +23,12 @@ func _process(_delta: float) -> bool:
 	_frame += 1
 	if _frame == 5:
 		_prepare_base()
+	if _frame == 270:
+		# Лето: середина июля — листва.
+		_main.colony.game_time = Colony.MONTH * 4.5
+	if _frame == 280:
+		_shot("summer")
+		_main.colony.game_time = Colony.MONTH * 7.5
 	if _frame == 290:
 		_shot("colony")
 		# Зима: середина января — снег и бледное небо.
@@ -172,6 +178,9 @@ func _prepare_base() -> void:
 		u.lifespan = 0.0 # для снимков — без старения
 	colony.advance_offline(100000.0)
 	colony.game_time = 0.0
+	for u in colony.units:
+		u.health = 100.0
+		u.satiety = 90.0
 	colony.inventory = {"wood": 300, "stone": 300, "clay": 100, "soil": 100, "food": 40}
 	for pr in [[home, RoomType.HOME], [farm, RoomType.FARM], [store, RoomType.STORAGE]]:
 		if pr[0] != null:

@@ -3830,6 +3830,11 @@ func date_text() -> String:
 
 # --- Времена года ---------------------------------------------------------------------
 
+## Месяцы от 1 января, дробно (0..12): для плавной смены листвы.
+func calendar_month() -> float:
+	return fmod(game_time + CALENDAR_START, YEAR) / MONTH
+
+
 ## Месяц календаря: 0 — январь … 11 — декабрь.
 func month() -> int:
 	return int((game_time + CALENDAR_START) / MONTH) % 12
