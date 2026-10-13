@@ -79,10 +79,10 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	var dark := col.darkened(0.2)
 	ci.draw_polygon(sil, _vgrad(sil, top, at.y, light, dark))
 	# Тень по нижним краям и светлый кант по верхним — вместо обводки.
-	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(-w * 0.012, -w * 0.035))):
+	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(0, -w * 0.035))):
 		if _drawable(p):
 			ci.draw_colored_polygon(p, Color(dark.darkened(0.2), 0.3))
-	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(w * 0.01, w * 0.02))):
+	for p in Geometry2D.clip_polygons(sil, _shift(sil, Vector2(0, w * 0.02))):
 		if _drawable(p):
 			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.3))
 
@@ -159,7 +159,7 @@ static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: flo
 	var lx := base.x + sx * w * (0.11 if shape == Shape.TRIANGLE else 0.2)
 	var hip := Vector2(lx, base.y - w * (0.1 if shape == Shape.TRIANGLE else 0.05))
 	var ankle := Vector2(lx + sx * w * 0.02, at.y - w * 0.05)
-	var foot := _rounded(_rect(Vector2(ankle.x - w * 0.07 + sx * w * 0.04, at.y - w * 0.085), Vector2(w * 0.17, w * 0.085)), w * 0.04)
+	var foot := _rounded(_rect(Vector2(ankle.x - w * 0.085 + sx * w * 0.04, at.y - w * 0.085), Vector2(w * 0.17, w * 0.085)), w * 0.04)
 	return [_tube(PackedVector2Array([hip, ankle]), w * 0.065, w * 0.055), foot]
 
 
