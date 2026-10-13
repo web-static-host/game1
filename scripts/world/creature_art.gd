@@ -58,7 +58,9 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 	var open := _open(core, w * 0.03)
 	if _drawable(open):
 		core = open
-	var smooth_core := _smooth(core, w * 0.1)
+	# Треугольнику — сильное сглаживание; у широких круга и квадрата руки ближе к бокам,
+	# сильное слепило бы их с туловищем.
+	var smooth_core := _smooth(core, w * (0.1 if shape == Shape.TRIANGLE else 0.05))
 	if _drawable(smooth_core):
 		core = smooth_core
 		var gap := _crotch(shape, w, base, at)
@@ -115,12 +117,31 @@ static func _body(shape: int, w: float, h: float) -> PackedVector2Array:
 
 ## Рука идёт от верхнего угла, свисает вдоль бока и кончается кистью с пальцами.
 static func _arm_parts(shape: int, w: float, h: float, base: Vector2, top: float, sx: float, fingers: int, sway: float) -> Array[PackedVector2Array]:
-	# Верх руки идёт ровно по верхней линии туловища — плечо без бугорка.
 	var r0 := w * 0.1
-	var shoulder_x := w * (0.3 if shape == Shape.TRIANGLE else 0.28)
-	var p0 := Vector2(base.x + sx * shoulder_x, top + r0)
-	var p1 := p0 + Vector2(sx * w * 0.3, 0.0)
-	var p3 := Vector2(base.x + sx * w * 0.64 + sway, top + h * 0.7)
+	var p0: Vector2
+	var p1: Vector2
+	var p3: Vector2
+	match shape:
+		Shape.ROUND:
+			# От верхней части круга по касательной — плечо продолжает контур.
+			var c := Vector2(base.x, base.y - h * 0.5)
+			var a := -PI * 0.5 + sx * 0.85
+			var a2 := a + sx * 0.45
+			var inset := Vector2(w * 0.5 - r0 * 0.9, h * 0.5 - r0 * 0.9)
+			# Рука сначала идёт по дуге круга, потом отходит вниз — плечи остаются круглыми.
+			p0 = c + Vector2(cos(a) * inset.x, sin(a) * inset.y)
+			p1 = c + Vector2(cos(a2) * inset.x, sin(a2) * inset.y)
+			p3 = Vector2(base.x + sx * w * 0.8 + sway, top + h * 0.78)
+		Shape.SQUARE:
+			# Верх руки — продолжение верхней грани.
+			p0 = Vector2(base.x + sx * w * 0.3, top + r0)
+			p1 = p0 + Vector2(sx * w * 0.36, 0.0)
+			p3 = Vector2(base.x + sx * w * 0.8 + sway, top + h * 0.78)
+		_:
+			# Верх руки идёт ровно по верхней линии туловища — плечо без бугорка.
+			p0 = Vector2(base.x + sx * w * 0.3, top + r0)
+			p1 = p0 + Vector2(sx * w * 0.3, 0.0)
+			p3 = Vector2(base.x + sx * w * 0.64 + sway, top + h * 0.7)
 	var p2 := p3 + Vector2(sx * w * 0.03, -w * 0.26)
 	var pts := _bezier(p0, p1, p2, p3, 16)
 	var out: Array[PackedVector2Array] = [_tube(pts, r0, w * 0.078)]

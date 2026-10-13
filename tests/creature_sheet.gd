@@ -39,13 +39,20 @@ func _card(r: Rect2) -> void:
 	draw_style_box(sb, r)
 
 
-## Один житель крупно: синий треугольник, один глаз, четыре пальца.
+## Три формы в одном стиле: треугольник (утверждён), круг, квадрат.
 func _sheet_hero(size: Vector2) -> void:
-	_text(Vector2(0, 50), "ЖИТЕЛЬ · прорисовка", 38, Color.WHITE, size.x)
-	var card := Rect2(size.x * 0.2, 76, size.x * 0.6, size.y - 92)
+	_text(Vector2(0, 50), "ЖИТЕЛИ · три формы", 38, Color.WHITE, size.x)
+	var card := Rect2(24, 76, size.x - 48, size.y - 92)
 	_card(card)
-	var hero := {"shape": S.TRIANGLE, "color": Color8(70, 130, 255), "eyes": 1, "fingers": 4, "mood": 1.0}
-	CreatureArt.draw(self, Vector2(card.get_center().x, card.end.y - 70), 300, hero, t)
+	var units := [
+		[{"shape": S.TRIANGLE, "color": Color8(70, 130, 255), "eyes": 1, "fingers": 4, "mood": 1.0}, "Треугольник"],
+		[{"shape": S.ROUND, "color": Color8(255, 150, 40), "eyes": 1, "fingers": 4, "mood": 1.0}, "Круг"],
+		[{"shape": S.SQUARE, "color": Color8(80, 200, 90), "eyes": 1, "fingers": 4, "mood": 1.0}, "Квадрат"],
+	]
+	for i in units.size():
+		var cx := card.position.x + card.size.x * (i + 0.5) / units.size()
+		CreatureArt.draw(self, Vector2(cx, card.end.y - 80), 190, units[i][0], t)
+		_text(Vector2(cx - 120, card.end.y - 30), units[i][1], 24, INK, 240)
 
 
 ## Смешивание цвета у детей: было (RGB) и стало (по кругу оттенков).
