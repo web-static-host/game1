@@ -47,9 +47,9 @@ const STAT_COLORS := {"vision": Color8(80, 170, 255), "strength": Color8(240, 90
 const STAT_SHORT := {"vision": "Зрение", "strength": "Сила", "agility": "Ловк.", "intellect": "Интел.", "heat": "Жара", "cold": "Холод"}
 
 
-func _genome(shape: int, col: Color, eyes := 1, fingers := 4, hair := false, fur := false, muts := []) -> Dictionary:
+func _genome(shape: int, col: Color, eyes := 1, fingers := 4, hair := false, fur := false, muts := [], female := false) -> Dictionary:
 	return {"color": [col, col], "color_mix": 0.5, "shape": [shape, shape], "shape_pick": 0, "eyes": [eyes, eyes],
-		"eyes_pick": 0, "fingers": [fingers, fingers], "hair": [hair, hair], "fur": [fur, fur], "mutations": muts}
+		"eyes_pick": 0, "fingers": [fingers, fingers], "hair": [hair, hair], "fur": [fur, fur], "mutations": muts, "female": female}
 
 
 ## Житель с подписью и полосками характеристик.
@@ -59,6 +59,8 @@ func _stat_unit(cx: float, foot_y: float, w: float, g: Dictionary, caption: Stri
 	var mt := Genetics.mutation_text(g)
 	if Genetics.is_super(g):
 		mt = "СВЕРХЮНИТ ×2"
+	if Genetics.eyes_of(g) == 0:
+		mt = "Мутант: без глаз · медленный, руда в глубине ×2"
 	if not mt.is_empty():
 		_text(Vector2(cx - 110, foot_y + 42), mt, 13, Color(0.75, 0.2, 0.3), 220)
 	var st := Genetics.stats(g)
@@ -83,14 +85,14 @@ func _sheet_traits(size: Vector2) -> void:
 	var blue := Color.from_hsv(0.62, 1.0, 1.0)
 	var yellow := Color.from_hsv(0.15, 1.0, 1.0)
 	var units := [
-		[_genome(S.TRIANGLE, red), "Треугольник, красный"],
-		[_genome(S.SQUARE, blue), "Квадрат, синий"],
-		[_genome(S.ROUND, yellow), "Круг, жёлтый"],
-		[_genome(S.ROUND, Color.from_hsv(0.33, 1.0, 1.0), 2), "2 глаза"],
+		[_genome(S.TRIANGLE, red), "Треугольник, красный ♂"],
+		[_genome(S.SQUARE, blue, 1, 4, false, false, [], true), "Квадрат, синий ♀"],
+		[_genome(S.ROUND, yellow), "Круг, жёлтый ♂"],
+		[_genome(S.ROUND, Color.from_hsv(0.33, 1.0, 1.0), 2, 4, false, false, [], true), "2 глаза ♀"],
 		[_genome(S.SQUARE, Color.from_hsv(0.8, 1.0, 1.0), 3, 4, false, false, ["eyes"]), "3 глаза"],
 		[_genome(S.TRIANGLE, Color.from_hsv(0.92, 1.0, 1.0), 0, 4, false, false, ["eyes"]), "Без глаз"],
-		[_genome(S.TRIANGLE, Color.from_hsv(0.5, 1.0, 1.0), 1, 6, false, false, ["fingers"]), "6 пальцев"],
-		[_genome(S.SQUARE, Color.from_hsv(0.08, 1.0, 1.0), 1, 2, false, false, ["fingers"]), "2 пальца"],
+		[_genome(S.TRIANGLE, Color.from_hsv(0.5, 1.0, 1.0), 1, 5, false, false, ["fingers"]), "5 пальцев"],
+		[_genome(S.ROUND, Color.from_hsv(0.08, 1.0, 1.0), 2, 4, true, true, ["hair", "fur"], true), "Шерсть и волосы ♀"],
 		[_genome(S.SQUARE, Color.from_hsv(0.6, 0.9, 1.0), 1, 4, false, true, ["fur"]), "Шерсть, синий"],
 		[_genome(S.TRIANGLE, Color.from_hsv(0.75, 1.0, 1.0), 2, 4, true, false, ["hair"]), "Волосы"],
 	]

@@ -76,8 +76,8 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 		sil = smooth_sil
 
 	if g.get("fur", false):
-		var fur := _fur(sil, w * 0.045)
-		ci.draw_colored_polygon(fur, col.darkened(0.25))
+		# Пушистый край: кружки по контуру туловища, рук и ног — мягкое «облачко».
+		_fur(ci, core, w * 0.04, top, at.y, col)
 
 	var light := col.lightened(0.2)
 	var dark := col.darkened(0.2)
@@ -90,11 +90,18 @@ static func draw(ci: CanvasItem, at: Vector2, w: float, g: Dictionary, t := 0.0)
 		if _drawable(p):
 			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.3))
 
+	if g.get("fur", false):
+		# Несколько прядок на теле — фактура шерсти.
+		for k in [Vector2(-0.22, 0.6), Vector2(0.24, 0.55), Vector2(-0.1, 0.8), Vector2(0.14, 0.82), Vector2(0.3, 0.3), Vector2(-0.3, 0.32)]:
+			var pc := Vector2(base.x + k.x * w, top + k.y * h)
+			if Geometry2D.is_point_in_polygon(pc, body):
+				var tuft := PackedVector2Array([pc + Vector2(-w * 0.03, -w * 0.02), pc + Vector2(0, w * 0.025), pc + Vector2(w * 0.03, -w * 0.02)])
+				ci.draw_polyline(tuft, col.darkened(0.22), w * 0.014, true)
 	if g.get("hair", false):
-		_hair(ci, Vector2(base.x, top), w, g.get("hair_color", col.darkened(0.4)))
+		_hair(ci, body, Vector2(base.x, top), w, h, g.get("hair_color", col.darkened(0.4)))
 
 	var face_y := top + h * (0.36 if shape == Shape.TRIANGLE else 0.45)
-	_face(ci, Vector2(base.x, face_y), w, g.get("eyes", 1), g.get("mood", 1.0), col, t)
+	_face(ci, Vector2(base.x, face_y), w, g.get("eyes", 1), g.get("mood", 1.0), col, t, g.get("female", false))
 
 	if is_super:
 		_sparkles(ci, base + Vector2(0, -h * 0.5), w, t)
@@ -149,7 +156,8 @@ static func _hand(c: Vector2, dir: Vector2, w: float, fingers: int, _sx: float) 
 	var palm := c + dir * w * 0.03
 	var out: Array[PackedVector2Array] = [_circle(palm, w * 0.08, 24)]
 	# Одинаковые прямые пальцы ровным веером, без большого.
-	var step := 0.5 if fingers <= 4 else 1.6 / (fingers - 1)
+	# До пяти пальцев — тот же шаг веера, что у четырёх: каждый палец отдельно.
+	var step := 0.5 if fingers <= 5 else 2.0 / (fingers - 1)
 	var base_a := dir.angle()
 	for i in fingers:
 		var a := base_a + (float(i) - (fingers - 1) * 0.5) * step
@@ -179,7 +187,7 @@ static func _leg_parts(shape: int, w: float, base: Vector2, at: Vector2, sx: flo
 	return [_tube(PackedVector2Array([hip, ankle]), w * 0.065, w * 0.055), foot]
 
 
-static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, col: Color, t: float) -> void:
+static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, col: Color, t: float, female := false) -> void:
 	var sizes: Array[float] = [0.0, 0.12, 0.095, 0.08]
 	var er: float = w * sizes[clampi(eyes, 0, 3)]
 	var spots: Array[Vector2] = []
@@ -210,11 +218,15 @@ static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, 
 		ci.draw_circle(pc, er * 0.38, PUPIL)
 		ci.draw_circle(pc + Vector2(-er * 0.2, -er * 0.22), er * 0.17, Color.WHITE)
 		ci.draw_circle(pc + Vector2(er * 0.17, er * 0.18), er * 0.07, Color(1, 1, 1, 0.8))
+		if female:
+			# Ресницы — у жительниц.
+			for k: float in [-1.05, -0.6, 0.6, 1.05]:
+				var a := -PI * 0.5 + k
+				var from := p + Vector2.from_angle(a) * (er + w * 0.01)
+				ci.draw_line(from, from + Vector2.from_angle(a + k * 0.35) * w * 0.06, ring, w * 0.02, true)
 	if eyes > 0:
 		var tilt := -mood * w * 0.02
 		for p in spots:
-			if eyes == 3 and p.y < c.y:
-				continue
 			var bw := er * 0.85
 			var by := p.y - er * 1.4
 			ci.draw_line(Vector2(p.x - bw, by + tilt), Vector2(p.x + bw, by - tilt), col.darkened(0.5), w * 0.028, true)
@@ -237,33 +249,40 @@ static func _face(ci: CanvasItem, c: Vector2, w: float, eyes: int, mood: float, 
 		_ellipse(ci, Vector2(c.x + sx * w * 0.2, my - w * 0.005), Vector2(w * 0.045, w * 0.025), Color(1.0, 0.4, 0.5, 0.3))
 
 
-static func _hair(ci: CanvasItem, top: Vector2, w: float, col: Color) -> void:
-	var polys: Array[PackedVector2Array] = []
-	for i in 5:
-		var k := (i - 2) / 2.0
-		var bx := top.x + k * w * 0.12
-		var root_y := top.y + w * 0.06
-		var tip := Vector2(top.x + k * w * 0.26, top.y - w * (0.2 - absf(k) * 0.06))
-		var mid := Vector2(bx + k * w * 0.03, top.y - w * 0.09)
-		polys.append(_tube(PackedVector2Array([Vector2(bx, root_y), mid, tip]), w * 0.05, w * 0.012))
-	var shape := _union(polys)
-	ci.draw_polygon(shape, _vgrad(shape, top.y - w * 0.2, top.y + w * 0.06, col.lightened(0.3), col))
+## Волосы: шапочка с чёлкой по верху туловища и завиток-хохолок.
+static func _hair(ci: CanvasItem, body: PackedVector2Array, top: Vector2, w: float, h: float, col: Color) -> void:
+	# Чёлка: нижний край — волны.
+	var band := PackedVector2Array([Vector2(top.x - w, top.y - w * 0.2), Vector2(top.x + w, top.y - w * 0.2)])
+	var waves := 7
+	for i in range(waves * 4, -1, -1):
+		var x := top.x - w * 0.7 + w * 1.4 * i / (waves * 4)
+		var y := top.y + w * 0.11 + absf(sin(PI * i / 4.0)) * w * 0.05
+		band.append(Vector2(x, y))
+	var cap := Geometry2D.intersect_polygons(body, band)
+	# Хохолок: три пряди веером.
+	var tufts: Array[PackedVector2Array] = []
+	for k: float in [-0.45, 0.0, 0.45]:
+		tufts.append(_ellipse_poly(top + Vector2(k * w * 0.12, -w * 0.035) + Vector2.from_angle(-PI * 0.5 + k) * w * 0.035,
+			Vector2(w * 0.032, w * 0.075), k, 20))
+	for p in cap:
+		ci.draw_polygon(p, _vgrad(p, top.y, top.y + w * 0.16, col.lightened(0.25), col))
+		# Блик на волосах.
+		for hl in Geometry2D.intersect_polygons(p, _ellipse_poly(top + Vector2(-w * 0.18, w * 0.05), Vector2(w * 0.12, w * 0.02), -0.15)):
+			ci.draw_colored_polygon(hl, Color(1, 1, 1, 0.35))
+	for tf in tufts:
+		ci.draw_polygon(tf, _vgrad(tf, top.y - w * 0.15, top.y + w * 0.02, col.lightened(0.3), col))
 
 
-## Лохматый край: зубцы по контуру силуэта.
-static func _fur(sil: PackedVector2Array, len: float) -> PackedVector2Array:
-	var big: PackedVector2Array = Geometry2D.offset_polygon(sil, len * 0.5, Geometry2D.JOIN_ROUND)[0]
+## Пушистый край: кружки вдоль контура, цвет — как у тела на этой высоте, чуть темнее.
+static func _fur(ci: CanvasItem, sil: PackedVector2Array, r: float, y0: float, y1: float, col: Color) -> void:
 	var per := 0.0
-	for i in big.size():
-		per += big[i].distance_to(big[(i + 1) % big.size()])
-	var n := int(per / (len * 1.3))
-	var out := PackedVector2Array()
+	for i in sil.size():
+		per += sil[i].distance_to(sil[(i + 1) % sil.size()])
+	var n := int(per / (r * 1.1))
 	for i in n:
-		var p := _along(big, per * i / n)
-		var q := _along(big, per * i / n + 1.0)
-		var normal := (q - p).normalized().orthogonal()
-		out.append(p - normal * (len if i % 2 == 0 else -len * 0.3))
-	return out
+		var p := _along(sil, per * i / n)
+		var k := clampf((p.y - y0) / maxf(1.0, y1 - y0), 0.0, 1.0)
+		ci.draw_circle(p, r * (0.8 + 0.25 * sin(i * 2.3)), col.lightened(0.1).lerp(col.darkened(0.3), k))
 
 
 static func _aura(ci: CanvasItem, c: Vector2, w: float, t: float) -> void:

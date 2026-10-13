@@ -10,6 +10,7 @@ extends RefCounted
 ##   - пальцы — среднее двух копий;
 ##   - волосы и шерсть — только если обе копии их несут (иначе житель — скрытый носитель).
 ## Мутация — примерно в 1 рождении из 10: меняется один признак, мутация наследуется.
+## Пол — мужской или женский, поровну.
 ## Сверхюнит — цвет рядом с градиентом лого: все характеристики 200%.
 
 const MUTATION_CHANCE := 0.1
@@ -44,6 +45,7 @@ static func founder(rng: RandomNumberGenerator) -> Dictionary:
 		"eyes": [eyes, eyes], "eyes_pick": 0,
 		"fingers": [4, 4],
 		"hair": [false, false], "fur": [false, false],
+		"female": rng.randf() < 0.5,
 		"mutations": [],
 	}
 
@@ -59,6 +61,7 @@ static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGener
 	g["color_mix"] = clampf(0.5 + (rng.randf() - rng.randf()) * 0.7, 0.15, 0.85)
 	g["shape_pick"] = rng.randi() % 2
 	g["eyes_pick"] = rng.randi() % 2
+	g["female"] = rng.randf() < 0.5
 	if rng.randf() < MUTATION_CHANCE:
 		mutate(g, rng)
 	return g
@@ -79,8 +82,7 @@ static func mutate(g: Dictionary, rng: RandomNumberGenerator, kind := "") -> voi
 			var e: int = [0, 2, 2, 3][rng.randi() % 4]
 			g["eyes"][g["eyes_pick"]] = e
 		"fingers":
-			var f: int = [2, 3, 5, 6][rng.randi() % 4]
-			g["fingers"] = [f, f]
+			g["fingers"] = [5, 5]
 		"hair":
 			g["hair"] = [true, true]
 		"fur":
@@ -130,7 +132,7 @@ static func looks(g: Dictionary) -> Dictionary:
 	var col := color_of(g)
 	return {"color": col, "shape": shape_of(g), "eyes": eyes_of(g), "fingers": fingers_of(g),
 		"hair": has_hair(g), "fur": has_fur(g), "super": is_super(g),
-		"hair_color": col.darkened(0.35)}
+		"hair_color": col.darkened(0.35), "female": g.get("female", false)}
 
 
 # --- Характеристики (1.0 = 100%) ---------------------------------------------------
@@ -140,7 +142,7 @@ static func looks(g: Dictionary) -> Dictionary:
 static func stats(g: Dictionary) -> Dictionary:
 	var s := {"vision": 1.0, "strength": 1.0, "agility": 1.0, "intellect": 1.0, "heat": 1.0, "cold": 1.0}
 	var eyes := eyes_of(g)
-	s["vision"] = [0.3, 1.0, 1.3, 1.6][clampi(eyes, 0, 3)]
+	s["vision"] = [0.0, 1.0, 1.3, 1.6][clampi(eyes, 0, 3)]
 	s["intellect"] += 0.1 * maxi(0, eyes - 1)
 	match shape_of(g):
 		CreatureArt.Shape.TRIANGLE:
@@ -167,6 +169,20 @@ static func stats(g: Dictionary) -> Dictionary:
 	return s
 
 
+## Особенности, которые меняют скорость работы и ходьбы.
+## Без глаз: всё делает и ходит оооочень медленно, но в тёмных глубинах добывает руду лучше всех.
+static func abilities(g: Dictionary) -> Dictionary:
+	var a := {"work": 1.0, "walk": 1.0, "deep_mining": 1.0}
+	if eyes_of(g) == 0:
+		a["work"] = 0.3
+		a["walk"] = 0.35
+		a["deep_mining"] = 2.0
+	if is_super(g):
+		for k in a:
+			a[k] *= 2.0
+	return a
+
+
 static func _hue_dist(a: float, b: float) -> float:
 	var d := absf(a - b)
 	return minf(d, 1.0 - d)
@@ -180,7 +196,7 @@ static func mutation_text(g: Dictionary) -> String:
 	for m in g["mutations"]:
 		match m:
 			"eyes":
-				parts.append("%d %s" % [eyes_of(g), ["глаз", "глаз", "глаза", "глаза"][clampi(eyes_of(g), 0, 3)]])
+				parts.append("без глаз" if eyes_of(g) == 0 else "%d %s" % [eyes_of(g), ["глаз", "глаз", "глаза", "глаза"][clampi(eyes_of(g), 0, 3)]])
 			"fingers":
 				parts.append("%d пальцев" % fingers_of(g) if fingers_of(g) >= 5 else "%d пальца" % fingers_of(g))
 			_:
