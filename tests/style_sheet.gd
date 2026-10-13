@@ -5,7 +5,13 @@ extends Node2D
 var sheet := 0
 var winter := false
 
-const INK := Color8(27, 31, 58)          # тёмно-синяя обводка интерфейса
+const INK := Color8(58, 44, 38)          # тёмно-коричневый текст (как «чернила»)
+const MUTED := Color8(140, 118, 100)
+const PAPER := Color8(255, 248, 236)     # панели — светлая «глина/бумага»
+const PAPER_EDGE := Color8(218, 196, 166)
+const HUD_BG := Color8(44, 34, 40, 205)  # тёмная подложка над миром
+const FOG_TOP := Color8(110, 86, 70)     # неразведанная земля: порода не видна
+const FOG_DEEP := Color8(78, 66, 72)
 const SKY_TOP := Color8(52, 156, 240)
 const SKY_LOW := Color8(178, 228, 255)
 const GRASS := Color8(118, 214, 66)
@@ -39,11 +45,9 @@ func _draw() -> void:
 		0:
 			winter = false
 			_scene(size)
-		1:
+		_:
 			winter = true
 			_scene(size)
-		_:
-			_ui_sheet(size)
 
 
 # --- Мир ------------------------------------------------------------------------------------
@@ -61,7 +65,6 @@ func _scene(size: Vector2) -> void:
 	_sky(size)
 	_hills(size)
 	_ground(size)
-	_ores()
 	_pond()
 	_underground(size)
 	_trees()
@@ -112,33 +115,25 @@ func _hills(size: Vector2) -> void:
 
 
 func _ground(size: Vector2) -> void:
-	# Слои снизу вверх: каждый — от своей волнистой кромки вниз до низа экрана.
-	for i in LAYERS.size():
-		var pts := PackedVector2Array()
-		var x := -20.0
-		while x <= size.x + 20:
-			pts.append(Vector2(x, _sy(x) if i == 0 else _layer_y(i - 1, x)))
-			x += 10
-		pts.append(Vector2(size.x + 20, size.y + 20))
-		pts.append(Vector2(-20, size.y + 20))
-		draw_colored_polygon(pts, LAYERS[i][1])
-		# Тёмная кромка по границе слоя.
-		if i > 0:
-			var edge := PackedVector2Array()
-			x = -20.0
-			while x <= size.x + 20:
-				edge.append(Vector2(x, _layer_y(i - 1, x)))
-				x += 10
-			draw_polyline(edge, LAYERS[i][3], 5.0, true)
-			_edge_highlight(edge, LAYERS[i][2])
-		# Камешки в толще слоя.
-		var top := 340.0 if i == 0 else float(LAYERS[i - 1][0])
-		var bottom := minf(float(LAYERS[i][0]), size.y)
-		for n in int((bottom - top) * size.x / 9000.0):
-			var p := Vector2(_rng.randf_range(0, size.x), _rng.randf_range(top + 20, bottom - 10))
-			if p.y < _sy(p.x) + 22:
-				continue
-			_pebble(p, _rng.randf_range(5, 13), LAYERS[i][3], LAYERS[i][2])
+	# Неразведанная земля — однотонная, темнее с глубиной: что внутри, не видно, пока не вскопают.
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	var x := -20.0
+	while x <= size.x + 20:
+		pts.append(Vector2(x, _sy(x)))
+		cols.append(FOG_TOP)
+		x += 10
+	pts.append(Vector2(size.x + 20, size.y + 20))
+	cols.append(FOG_DEEP)
+	pts.append(Vector2(-20, size.y + 20))
+	cols.append(FOG_DEEP)
+	draw_polygon(pts, cols)
+	# Лёгкая фактура без намёка на породу.
+	for n in 120:
+		var p := Vector2(_rng.randf_range(0, size.x), _rng.randf_range(360, size.y))
+		if p.y < _sy(p.x) + 26:
+			continue
+		_ellipse(p, Vector2(_rng.randf_range(10, 26), _rng.randf_range(3, 6)), Color(0, 0, 0, 0.06))
 	# Трава (или снег) — толстая шапка с бликом и фестонами.
 	var cap := PackedVector2Array()
 	var lip := PackedVector2Array()
@@ -189,22 +184,6 @@ func _pebble(c: Vector2, r: float, dark: Color, light: Color) -> void:
 	draw_circle(c + Vector2(-r * 0.3, -r * 0.3), r * 0.3, Color(1, 1, 1, 0.25))
 
 
-func _ores() -> void:
-	# Уголь, железо, медь, кристалл — кучками в толще.
-	var kinds := [[Vector2(300, 620), Color8(44, 44, 54), Color8(110, 110, 128)], [Vector2(1500, 640), Color8(190, 104, 70), Color8(242, 170, 128)],
-		[Vector2(1720, 720), Color8(66, 178, 146), Color8(150, 240, 210)], [Vector2(1800, 500), Color8(44, 44, 54), Color8(110, 110, 128)],
-		[Vector2(420, 740), Color8(150, 92, 230), Color8(214, 176, 255)]]
-	for k in kinds:
-		for n in 6:
-			var c: Vector2 = k[0] + Vector2(_rng.randf_range(-40, 40), _rng.randf_range(-22, 22))
-			var r := _rng.randf_range(8, 15)
-			var pts := _gem(c, r)
-			draw_colored_polygon(_shift(pts, Vector2(0, 3)), Color(0, 0, 0, 0.3))
-			draw_colored_polygon(pts, k[1])
-			draw_colored_polygon(PackedVector2Array([pts[0], pts[1], c]), k[2])
-			draw_circle(c + Vector2(-r * 0.25, -r * 0.35), r * 0.18, Color(1, 1, 1, 0.7))
-
-
 func _pond() -> void:
 	# Пруд слева с пристанью.
 	var x0 := 40.0
@@ -251,6 +230,12 @@ func _underground(size: Vector2) -> void:
 	# Полости: задняя стенка, внутренняя тень сверху, кромка породы вокруг.
 	for r in [shaft, home, tunnel, farm, lab]:
 		_cavity(r)
+	# Находка у забоя: уголь в вскрытой кайме.
+	for n in 5:
+		var c := Vector2(548 + _rng.randf_range(-6, 6), 470 + n * 14 + _rng.randf_range(-3, 3))
+		var pts := _gem(c, _rng.randf_range(6, 9))
+		draw_colored_polygon(pts, Color8(44, 44, 54))
+		draw_colored_polygon(PackedVector2Array([pts[0], pts[1], c]), Color8(110, 110, 128))
 	# Шахта: лестница и деревянная крепь.
 	_ladder(Rect2(shaft.position.x + 6, shaft.position.y - 10, 32, shaft.size.y))
 	# Тоннель влево: крепь — деревянные рамы.
@@ -284,15 +269,30 @@ func _darkness() -> void:
 		PackedColorArray([dark, a, a, dark]))
 	# Блеск глаз копателя в темноте.
 	draw_circle(Vector2(660, 497), 3, Color(1, 1, 0.8, 0.9))
-	_chip(Vector2(590, 420), "темно ×0,7", Color8(255, 196, 80))
-	if winter:
-		# Зима: генератор не построен — в жилой полумрак.
-		var home := Rect2(944, 420, 300, 120)
-		_rrect(home, 10, Color(0.03, 0.02, 0.1, 0.45), Color(0, 0, 0, 0), 0)
-		_chip(Vector2(1110, 380), "холодно +4 °C", Color8(140, 200, 255))
+
+
+## Слой породы на глубине y (что увидят вокруг выработки).
+func _layer_at(x: float, y: float) -> int:
+	for i in LAYERS.size():
+		if y < _layer_y(i, x):
+			return i
+	return LAYERS.size() - 1
 
 
 func _cavity(r: Rect2) -> void:
+	# Кайма вскрытой породы (полблока) — её настоящий цвет и камешки.
+	var rim := r.grow(20)
+	var steps := 4
+	for i in steps:
+		var band := Rect2(rim.position.x, rim.position.y + rim.size.y * i / steps, rim.size.x, rim.size.y / steps + 1)
+		var li := _layer_at(band.get_center().x, band.get_center().y)
+		_rect_clip(band, rim, 22, LAYERS[li][1])
+	for n in int(rim.size.x * rim.size.y / 900.0):
+		var p := Vector2(_rng.randf_range(rim.position.x + 6, rim.end.x - 6), _rng.randf_range(rim.position.y + 6, rim.end.y - 6))
+		if r.grow(4).has_point(p):
+			continue
+		var li := _layer_at(p.x, p.y)
+		_pebble(p, _rng.randf_range(3, 7), LAYERS[li][3], LAYERS[li][2])
 	_rrect(r.grow(7), 14, Color8(70, 46, 38), Color(0, 0, 0, 0), 0)
 	_grad_rect_r(r, BACK.lightened(0.08), BACK.darkened(0.25), 10)
 	# Внутренняя тень сверху.
@@ -461,28 +461,26 @@ func _boulder(at: Vector2) -> void:
 
 
 func _surface_buildings() -> void:
-	# Склад на поверхности: каменный, с ящиками.
+	# Склад на поверхности — комната 6×3 из камня, как в игре; внутри ящики.
 	var x := 1060.0
 	var g := _sy(x + 120) - 2
 	var r := Rect2(x, g - 120, 240, 120)
-	_rrect(r.grow(6), 12, Color8(92, 98, 124), Color(0, 0, 0, 0), 0)
+	_rrect(r.grow(8), 12, Color8(150, 158, 182), Color8(92, 98, 124), 3)
+	for i in 6:
+		for j in 2:
+			var bx := r.position.x - 8 + i * 43 + (20 if j == 1 else 0)
+			if bx > r.end.x - 30:
+				continue
+			_rrect(Rect2(bx, r.position.y - 8 + j * 4, 40, 4), 2, Color(1, 1, 1, 0.25), Color(0, 0, 0, 0), 0)
 	_grad_rect_r(r, Color8(84, 64, 56), Color8(60, 42, 38), 8)
 	for i in 3:
 		var cr := Rect2(r.position.x + 20 + i * 52, r.end.y - 44 - (14 if i == 1 else 0), 44, 40)
 		_rrect(cr, 4, Color8(206, 150, 88), Color8(130, 84, 50), 3)
 		draw_line(cr.position + Vector2(4, 4), cr.end - Vector2(4, 4), Color8(150, 98, 58), 3.0)
-	# Мешки с едой (амбар рядом).
 	for i in 2:
 		_ellipse(Vector2(r.end.x - 46 + i * 22, r.end.y - 18), Vector2(14, 16), Color8(230, 206, 150))
-	# Крыша.
-	var roof := PackedVector2Array([r.position + Vector2(-22, 2), Vector2(r.get_center().x, r.position.y - 46), Vector2(r.end.x + 22, r.position.y + 2)])
-	draw_colored_polygon(_shift(roof, Vector2(0, 6)), Color8(140, 40, 40))
-	draw_colored_polygon(roof, Color8(222, 72, 62) if not winter else SNOW)
-	if not winter:
-		draw_line(roof[0] + Vector2(16, -6), roof[1] + Vector2(0, 10), Color(1, 1, 1, 0.35), 4.0)
-	# Табличка.
-	_rrect(Rect2(r.get_center().x - 42, r.position.y - 30, 84, 26), 8, Color8(255, 226, 120), INK, 3)
-	_otext(Vector2(r.get_center().x - 42, r.position.y - 11), "СКЛАД", 15, INK, Color(0, 0, 0, 0), 0, 84)
+	if winter:
+		_rrect(Rect2(r.position.x - 10, r.position.y - 16, r.size.x + 20, 12), 6, SNOW, Color(0, 0, 0, 0), 0)
 
 
 func _creatures() -> void:
@@ -531,22 +529,12 @@ func _creatures() -> void:
 	draw_line(rod, rod + Vector2(90, -70), Color8(140, 94, 58), 4.0)
 	draw_line(rod + Vector2(90, -70), rod + Vector2(110, 60), Color(1, 1, 1, 0.8), 1.5)
 	# Спящий: «Zzz».
-	_otext(Vector2(1226, 486), "z", 20, Color.WHITE, INK, 5)
-	_otext(Vector2(1240, 466), "Z", 26, Color.WHITE, INK, 5)
+	_stext(Vector2(1226, 486), "z", 20, Color.WHITE)
+	_stext(Vector2(1240, 466), "Z", 26, Color.WHITE)
 	# Выбранный житель: кольцо и плашка с именем.
 	var sel := Vector2(1420, _sy(1420))
 	_ellipse_line(sel + Vector2(0, 2), Vector2(34, 10), Color8(255, 220, 60), 4.0)
 	_name_tag(sel + Vector2(0, -78), "Бубо", "строитель")
-
-
-func _name_tag(at: Vector2, name: String, role: String) -> void:
-	var w := 120.0
-	var r := Rect2(at - Vector2(w / 2, 26), Vector2(w, 44))
-	_bubble(r, Color.WHITE, INK)
-	_otext(r.position + Vector2(0, 21), name, 18, INK, Color(0, 0, 0, 0), 0, w)
-	_otext(r.position + Vector2(0, 38), role, 12, Color8(90, 100, 140), Color(0, 0, 0, 0), 0, w)
-	draw_colored_polygon(PackedVector2Array([at + Vector2(-9, 17), at + Vector2(9, 17), at + Vector2(0, 28)]), INK)
-	draw_colored_polygon(PackedVector2Array([at + Vector2(-6, 15), at + Vector2(6, 15), at + Vector2(0, 23)]), Color.WHITE)
 
 
 func _snowfall(size: Vector2) -> void:
@@ -558,274 +546,101 @@ func _snowfall(size: Vector2) -> void:
 
 
 # --- Интерфейс поверх мира ---------------------------------------------------------------
+# Свой стиль: тёплые панели, обводка тоном того же цвета, мягкая тень снизу, без глянца.
 
 func _hud(size: Vector2) -> void:
-	# Ресурсы.
+	# Ресурсы — одна полоса.
 	var items := [["people", "5"], ["food", "48" if not winter else "12"], ["berries", "16" if not winter else "0"], ["wood", "37"], ["stone", "22"]]
-	var x := 28.0
+	var bar := Rect2(24, 20, 30 + items.size() * 104, 58)
+	_soft_panel(bar, HUD_BG, Color(0, 0, 0, 0.25))
+	var x := bar.position.x + 18
 	for it in items:
-		x += _res_pill(Vector2(x, 26), it[0], it[1], winter and it[0] == "food") + 14
+		_icon(Vector2(x + 16, bar.get_center().y), it[0], 14)
+		_stext(Vector2(x + 38, bar.position.y + 39), it[1], 24, Color.WHITE)
+		x += 104
 	# Дата и сезон.
-	var badge := Rect2(size.x - 330, 22, 300, 56)
-	_panel_dark(badge)
-	_icon(Vector2(badge.position.x + 30, badge.get_center().y), "snow" if winter else "sun", 20)
-	_otext(Vector2(badge.position.x + 58, badge.position.y + 26), "16 янв · зима" if winter else "12 мая · весна", 20, Color.WHITE, INK, 6)
-	_otext(Vector2(badge.position.x + 58, badge.position.y + 48), "−8 °C · год 1" if winter else "+16 °C · год 1", 15, Color8(190, 220, 255), INK, 5)
-	# Предупреждение зимой.
+	var badge := Rect2(size.x - 300, 20, 276, 58)
+	_soft_panel(badge, HUD_BG, Color(0, 0, 0, 0.25))
+	_icon(Vector2(badge.position.x + 30, badge.get_center().y), "snow" if winter else "sun", 15)
+	_stext(Vector2(badge.position.x + 56, badge.position.y + 27), "16 янв · зима" if winter else "12 мая · весна", 20, Color.WHITE)
+	_stext(Vector2(badge.position.x + 56, badge.position.y + 49), "−8 °C · год 1" if winter else "+16 °C · год 1", 15, Color8(230, 214, 196))
+	# Журнал событий — строки под ресурсами, как в игре.
+	var lines := [["Новая находка: каменный уголь на глубине 9 м!", Color8(150, 236, 120)], ["Бубо: навык «Стройка» вырос до 3", Color.WHITE]]
 	if winter:
-		var warn := Rect2(28, 96, 560, 50)
-		_rrect(warn.grow(3), 16, INK, Color(0, 0, 0, 0), 0)
-		_rrect(warn, 14, Color8(255, 196, 64), Color(0, 0, 0, 0), 0)
-		_icon(Vector2(warn.position.x + 28, warn.get_center().y), "warn", 16)
-		_otext(Vector2(warn.position.x + 52, warn.position.y + 32), "Еды на 4 дня! Нужна тёплая ферма", 19, INK, Color(0, 0, 0, 0), 0)
+		lines = [["Пришла зима: ягоды не растут, озёра замёрзли", Color8(255, 206, 110)], ["Хяклил мёрзнет (−8 °C) — нужно тепло", Color8(255, 206, 110)]]
+	var ly := 108.0
+	for l in lines:
+		var w := _font.get_string_size(l[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+		_rrect(Rect2(20, ly - 22, w + 22, 30), 10, Color(HUD_BG, 0.6), Color(0, 0, 0, 0), 0)
+		_stext(Vector2(31, ly), l[0], 19, l[1])
+		ly += 36
 	# Нижнее меню.
-	var y := size.y - 108
-	_button(Rect2(28, y, 150, 90), "Стройка", "hammer", "yellow")
-	var right := [["Жители", "people", "blue"], ["Наука", "flask", "blue"], ["К базе", "home", "blue"]]
-	var bx := size.x - 28 - 4 * 120 - 3 * 12 - 250
+	var y := size.y - 104
+	_button(Rect2(24, y, 150, 84), "Стройка", "hammer", "amber")
+	var right := [["Жители", "people"], ["Наука", "flask"], ["К базе", "home"]]
+	var bx := size.x - 24 - 3 * 124 - 250 - 100 - 24
 	for b in right:
-		_button(Rect2(bx, y, 120, 90), b[0], b[1], b[2])
-		bx += 132
-	# Скорость — переключатель.
-	var seg := Rect2(bx, y + 8, 236, 74)
-	_rrect(Rect2(seg.position + Vector2(0, 6), seg.size), 20, INK, Color(0, 0, 0, 0), 0)
-	_rrect(seg, 20, Color8(48, 62, 110), INK, 4)
+		_button(Rect2(bx, y, 116, 84), b[0], b[1], "slate")
+		bx += 124
+	# Скорость — сегменты в одной панели.
+	var seg := Rect2(bx, y + 6, 242, 72)
+	_soft_panel(seg, HUD_BG, Color(0, 0, 0, 0.25))
 	for i in 3:
-		var cell := Rect2(seg.position + Vector2(6 + i * 76, 6), Vector2(72, 56))
+		var cell := Rect2(seg.position + Vector2(6 + i * 77, 6), Vector2(73, 60))
 		if i == 0:
-			_rrect(Rect2(cell.position + Vector2(0, 4), cell.size), 14, Color8(196, 120, 20), Color(0, 0, 0, 0), 0)
-			_grad_rect_r(cell, Color8(255, 220, 80), Color8(255, 170, 40), 14)
-		_otext(Vector2(cell.position.x, cell.position.y + 37), ["×1", "×10", "×20"][i], 22, Color.WHITE, INK, 6, cell.size.x)
-	bx += 248
-	_button(Rect2(bx, y, 100, 90), "", "menu", "blue")
+			_soft_panel(cell, Color8(245, 170, 50), Color8(190, 118, 20))
+		_stext(Vector2(cell.position.x, cell.position.y + 39), ["×1", "×10", "×20"][i], 22, Color.WHITE, cell.size.x)
+	bx += 250
+	_button(Rect2(bx, y, 92, 84), "", "menu", "slate")
 
 
-func _res_pill(at: Vector2, icon: String, value: String, alarm := false) -> float:
-	var w := 70.0 + value.length() * 14.0
-	var r := Rect2(at + Vector2(18, 6), Vector2(w, 42))
-	_rrect(Rect2(r.position + Vector2(0, 4), r.size), 21, Color(0, 0, 0, 0.35), Color(0, 0, 0, 0), 0)
-	_rrect(r, 21, Color8(30, 36, 70, 225) if not alarm else Color8(170, 40, 50, 235), INK, 3)
-	_otext(Vector2(r.position.x + 40, r.position.y + 31), value, 24, Color.WHITE, INK, 6)
-	# Значок в кружке, вылезает за край.
-	var c := at + Vector2(22, 27)
-	draw_circle(c + Vector2(0, 3), 25, INK)
-	draw_circle(c, 25, INK)
-	draw_circle(c, 21, Color8(255, 255, 255))
-	draw_circle(c, 21, Color8(232, 240, 255))
-	_icon(c, icon, 15)
-	return w + 18
+func _soft_panel(r: Rect2, fill: Color, shade: Color) -> void:
+	_rrect(Rect2(r.position + Vector2(0, 4), r.size), 18, shade, Color(0, 0, 0, 0), 0)
+	_rrect(r, 18, fill, Color(0, 0, 0, 0), 0)
 
 
 func _button(r: Rect2, label: String, icon: String, style: String) -> void:
-	var top := Color8(86, 170, 255)
-	var bottom := Color8(42, 110, 230)
-	var lip := Color8(26, 70, 160)
-	if style == "yellow":
-		top = Color8(255, 222, 80)
-		bottom = Color8(255, 168, 30)
-		lip = Color8(196, 110, 10)
+	var col := Color8(92, 104, 132)       # «сланец» — обычные разделы
+	if style == "amber":
+		col = Color8(245, 165, 40)
 	elif style == "green":
-		top = Color8(140, 236, 90)
-		bottom = Color8(60, 190, 60)
-		lip = Color8(30, 130, 40)
+		col = Color8(76, 184, 96)
 	elif style == "red":
-		top = Color8(255, 110, 100)
-		bottom = Color8(226, 54, 60)
-		lip = Color8(150, 30, 40)
-	_rrect(Rect2(r.position + Vector2(0, 8), r.size), 20, INK, Color(0, 0, 0, 0), 0)
-	_rrect(Rect2(r.position + Vector2(0, 5), r.size), 20, lip, INK, 4)
-	_grad_rect_r(r, top, bottom, 20)
-	_rrect_line(r, 20, INK, 4)
-	# Блик сверху.
-	_rrect(Rect2(r.position + Vector2(10, 6), Vector2(r.size.x - 20, r.size.y * 0.28)), 12, Color(1, 1, 1, 0.28), Color(0, 0, 0, 0), 0)
+		col = Color8(226, 91, 75)
+	var shade := col.darkened(0.3)
+	_rrect(Rect2(r.position + Vector2(0, 6), r.size), 18, Color(shade, 0.9), Color(0, 0, 0, 0), 0)
+	_rrect(r, 18, col, shade, 2.5)
 	if label.is_empty():
-		_icon(r.get_center(), icon, 24, true)
+		_icon(r.get_center(), icon, 18, true)
 	else:
-		_icon(r.get_center() + Vector2(0, -12), icon, 20, true)
-		_otext(Vector2(r.position.x, r.end.y - 14), label, 17, Color.WHITE, INK, 6, r.size.x)
+		_icon(r.get_center() + Vector2(0, -12), icon, 15, true)
+		_stext(Vector2(r.position.x, r.end.y - 14), label, 16, Color.WHITE, r.size.x)
 
 
+## Плашка нехватки над стройкой: значок, «есть/надо»; красная — взять негде.
 func _pill(at: Vector2, text: String, icon: String, col: Color) -> void:
-	var r := Rect2(at, Vector2(86, 34))
-	_rrect(Rect2(r.position + Vector2(0, 4), r.size), 17, INK, Color(0, 0, 0, 0), 0)
-	_rrect(r, 17, col, INK, 3)
-	draw_circle(r.position + Vector2(18, 17), 13, Color.WHITE)
-	_icon(r.position + Vector2(18, 17), icon, 10)
-	_otext(Vector2(r.position.x + 34, r.position.y + 25), text, 18, Color.WHITE, INK, 5)
+	var r := Rect2(at, Vector2(86, 32))
+	_rrect(Rect2(r.position + Vector2(0, 3), r.size), 16, col.darkened(0.35), Color(0, 0, 0, 0), 0)
+	_rrect(r, 16, col, col.darkened(0.3), 2)
+	_icon(r.position + Vector2(18, 16), icon, 9)
+	_stext(Vector2(r.position.x + 34, r.position.y + 23), text, 17, Color.WHITE)
 
 
-func _panel_dark(r: Rect2) -> void:
-	_rrect(Rect2(r.position + Vector2(0, 4), r.size), 18, Color(0, 0, 0, 0.35), Color(0, 0, 0, 0), 0)
-	_rrect(r, 18, Color8(30, 36, 70, 225), INK, 3)
+func _name_tag(at: Vector2, name: String, role: String) -> void:
+	var w := 112.0
+	var r := Rect2(at - Vector2(w / 2, 26), Vector2(w, 44))
+	_rrect(Rect2(r.position + Vector2(0, 3), r.size), 14, Color(0, 0, 0, 0.2), Color(0, 0, 0, 0), 0)
+	_rrect(r, 14, PAPER, PAPER_EDGE, 2)
+	_otext(r.position + Vector2(0, 21), name, 17, INK, Color(0, 0, 0, 0), 0, w)
+	_otext(r.position + Vector2(0, 37), role, 12, MUTED, Color(0, 0, 0, 0), 0, w)
+	draw_colored_polygon(PackedVector2Array([at + Vector2(-7, 17), at + Vector2(7, 17), at + Vector2(0, 26)]), PAPER)
 
 
-# --- Лист интерфейса ---------------------------------------------------------------------
-
-func _ui_sheet(size: Vector2) -> void:
-	_grad_rect(Rect2(Vector2.ZERO, size), Color8(62, 120, 210), Color8(34, 64, 140))
-	# Узор фона — ромбы, как в меню Clash Royale.
-	for yy in range(0, int(size.y), 60):
-		for xx in range(0, int(size.x), 60):
-			if (xx / 60 + yy / 60) % 2 == 0:
-				draw_colored_polygon(PackedVector2Array([Vector2(xx + 30, yy), Vector2(xx + 60, yy + 30), Vector2(xx + 30, yy + 60), Vector2(xx, yy + 30)]),
-					Color(1, 1, 1, 0.04))
-	_otext(Vector2(40, 64), "Интерфейс", 40, Color.WHITE, INK, 9)
-	_unit_card(Rect2(40, 100, 620, 760))
-	_room_card(Rect2(700, 100, 600, 520))
-	_people_card(Rect2(1340, 100, 620, 520))
-	# Кнопки.
-	var bx := 700.0
-	for b in [["Назначить", "people", "yellow"], ["Ремонт", "hammer", "green"], ["Снести", "close", "red"], ["Наука", "flask", "blue"]]:
-		_button(Rect2(bx, 680, 170, 90), b[0], b[1], b[2])
-		bx += 190
-	var px := 1480.0
-	for it in [["food", "48"], ["wood", "37"]]:
-		px += _res_pill(Vector2(px, 690), it[0], it[1]) + 14
-	_pill(Vector2(1500, 770), "3/6", "wood", Color8(214, 64, 52))
-	_pill(Vector2(1610, 770), "8/8", "stone", Color8(62, 150, 70))
-
-
-func _card_frame(r: Rect2, title: String, subtitle: String, header_col: Color) -> float:
-	_rrect(Rect2(r.position + Vector2(0, 10), r.size), 26, Color(0, 0, 0, 0.3), Color(0, 0, 0, 0), 0)
-	_rrect(r, 26, INK, Color(0, 0, 0, 0), 0)
-	var inner := r.grow(-5)
-	_grad_rect_r(inner, Color8(238, 243, 252), Color8(214, 224, 242), 22)
-	var head := Rect2(inner.position, Vector2(inner.size.x, 86))
-	_grad_rect_r(head, header_col.lightened(0.15), header_col, 22)
-	_rect(Rect2(head.position.x, head.end.y - 22, head.size.x, 22), header_col)
-	_rect(Rect2(head.position.x, head.end.y, head.size.x, 4), INK)
-	_otext(head.position + Vector2(24, 42), title, 32, Color.WHITE, INK, 8)
-	_otext(head.position + Vector2(24, 72), subtitle, 18, Color8(255, 226, 120), INK, 6)
-	# Крестик.
-	var x := Rect2(head.end.x - 66, head.position.y + 14, 52, 52)
-	_rrect(Rect2(x.position + Vector2(0, 4), x.size), 14, Color8(150, 30, 40), INK, 3)
-	_grad_rect_r(x, Color8(255, 110, 100), Color8(226, 54, 60), 14)
-	_rrect_line(x, 14, INK, 3)
-	_icon(x.get_center(), "close", 14, true)
-	return head.end.y + 14
-
-
-func _unit_card(r: Rect2) -> void:
-	var y := _card_frame(r, "Бубо", "♂ строитель · копает", Color8(52, 110, 220))
-	# Портрет.
-	var pr := Rect2(r.position.x + 24, y, 200, 200)
-	_rrect(Rect2(pr.position + Vector2(0, 5), pr.size), 22, INK, Color(0, 0, 0, 0), 0)
-	_grad_rect_r(pr, Color8(150, 220, 255), Color8(90, 170, 240), 22)
-	_rrect_line(pr, 22, INK, 4)
-	var g := {"color": Color8(40, 200, 90), "shape": 1, "eyes": 2, "fingers": 4, "size": 0, "pattern": 0, "female": false,
-		"hair_color": Color8(60, 40, 30), "pose": UnitLayer.POSES["work1"]}
-	for k in Genetics.DOMINANT + Genetics.RECESSIVE:
-		g[k] = false
-	CreatureArt.draw(self, pr.position + Vector2(100, 176), 104.0, g, 0.5)
-	# Метки.
-	var tx := pr.end.x + 20
-	var tags := [["Возраст: 1 г. 4 мес. · 2-е поколение", INK], ["Характер: трудоголик", INK], ["МУТАНТ: 2 глаза", Color8(60, 130, 230)], ["Занятие: строитель", Color8(90, 100, 140)]]
-	var ty := y + 26
-	for tg in tags:
-		_otext(Vector2(tx, ty), tg[0], 18, tg[1], Color(0, 0, 0, 0), 0)
-		ty += 34
-	_chip(Vector2(tx, ty - 6), "мёрзнет", Color8(120, 190, 255))
-	_chip(Vector2(tx + 110, ty - 6), "в темноте ×0,7", Color8(255, 196, 80))
-	y = pr.end.y + 24
-	# Потребности.
-	for b in [["Сытость", 0.32, Color8(255, 168, 40)], ["Бодрость", 0.78, Color8(90, 210, 70)], ["Здоровье", 1.0, Color8(90, 210, 70)]]:
-		_bar(Rect2(r.position.x + 24, y, r.size.x - 48, 38), b[0], b[1], b[2])
-		y += 50
-	# Характеристики сеткой.
-	_otext(Vector2(r.position.x + 24, y + 20), "Характеристики", 20, INK, Color(0, 0, 0, 0), 0)
-	y += 34
-	var stats := [["Сила", 1.2], ["Ловкость", 0.9], ["Интеллект", 1.4], ["Зрение", 1.5], ["Холод", 1.6], ["Жара", 0.8]]
-	for i in stats.size():
-		var cx := r.position.x + 24 + (i % 2) * ((r.size.x - 48) / 2 + 6)
-		var cy := y + (i / 2) * 44
-		var v: float = stats[i][1]
-		_bar(Rect2(cx, cy, (r.size.x - 48) / 2 - 6, 34), stats[i][0], v / 2.0, Color8(90, 210, 70) if v >= 1.0 else Color8(255, 120, 90), "%d%%" % roundi(v * 100))
-	y += 3 * 44 + 10
-	var by := r.end.y - 104
-	_button(Rect2(r.position.x + 24, by, 180, 80), "Отправить", "home", "yellow")
-	_button(Rect2(r.position.x + 220, by, 180, 80), "Работа", "hammer", "blue")
-	_button(Rect2(r.position.x + 416, by, 180, 80), "Жители", "people", "blue")
-
-
-func _room_card(r: Rect2) -> void:
-	var y := _card_frame(r, "Ферма 6×3", "готово · тепло", Color8(60, 160, 90))
-	var x := r.position.x + 24
-	_bar(Rect2(x, y, r.size.x - 48, 38), "Износ", 0.16, Color8(90, 210, 70), "16% · ещё 84 года")
-	y += 50
-	_bar(Rect2(x, y, r.size.x - 48, 38), "Урожай", 0.6, Color8(255, 196, 64), "60%")
-	y += 56
-	var cx := x
-	for c in [["фермеров 2/3", Color8(120, 190, 255)], ["внутри +18 °C", Color8(255, 168, 120)], ["лежит: 6", Color8(150, 230, 120)]]:
-		cx += _chip(Vector2(cx, y), c[0], c[1]) + 10
-	y += 54
-	_otext(Vector2(x, y + 18), "Работники", 20, INK, Color(0, 0, 0, 0), 0)
-	y += 30
-	for p in [["Мила", "подходит на 140%", Color8(170, 70, 230)], ["Зуро", "подходит на 96%", Color8(255, 210, 40)]]:
-		_person_row(Rect2(x, y, r.size.x - 48, 70), p[0], p[1], p[2], "Снять", "red")
-		y += 80
-
-
-func _people_card(r: Rect2) -> void:
-	var y := _card_frame(r, "Жители", "взрослых 8 · детей 2", Color8(52, 110, 220))
-	var x := r.position.x + 24
-	var cx := x
-	for c in [["строят 3", Color8(255, 196, 64)], ["носят 2", Color8(120, 190, 255)], ["спят 1", Color8(200, 200, 230)]]:
-		cx += _chip(Vector2(cx, y), c[0], c[1]) + 10
-	y += 54
-	_otext(Vector2(x, y + 18), "Строители — 2", 20, INK, Color(0, 0, 0, 0), 0)
-	y += 30
-	_person_row(Rect2(x, y, r.size.x - 48, 70), "Бубо", "копает", Color8(40, 200, 90), "Снять", "red")
-	y += 80
-	_otext(Vector2(x, y + 18), "Подсобные рабочие — 1", 20, INK, Color(0, 0, 0, 0), 0)
-	y += 30
-	_person_row(Rect2(x, y, r.size.x - 48, 70), "Тикаша", "носит дерево", Color8(250, 90, 170), "Снять", "red")
-	y += 80
-	_otext(Vector2(x, y + 18), "Свободные — 3", 20, INK, Color(0, 0, 0, 0), 0)
-	y += 30
-	_person_row(Rect2(x, y, r.size.x - 48, 70), "Пакос", "отдыхает", Color8(60, 120, 255), "Карточка", "blue")
-
-
-func _person_row(r: Rect2, name: String, info: String, col: Color, btn: String, style: String) -> void:
-	_rrect(r, 16, Color.WHITE, Color8(180, 194, 224), 3)
-	var face := Rect2(r.position + Vector2(8, 8), Vector2(54, 54))
-	_grad_rect_r(face, Color8(150, 220, 255), Color8(90, 170, 240), 12)
-	_rrect_line(face, 12, INK, 3)
-	var g := {"color": col, "shape": name.length() % 3, "eyes": 1, "fingers": 4, "size": 0, "pattern": 0, "female": false,
-		"hair_color": Color8(60, 40, 30)}
-	for k in Genetics.DOMINANT + Genetics.RECESSIVE:
-		g[k] = false
-	CreatureArt.draw(self, face.position + Vector2(27, 50), 30.0, g, 0.3)
-	_otext(Vector2(r.position.x + 76, r.position.y + 32), name, 22, INK, Color(0, 0, 0, 0), 0)
-	_otext(Vector2(r.position.x + 76, r.position.y + 56), info, 16, Color8(90, 100, 140), Color(0, 0, 0, 0), 0)
-	var b := Rect2(r.end.x - 150, r.position.y + 10, 138, 48)
-	var top: Color = Color8(255, 110, 100) if style == "red" else Color8(86, 170, 255)
-	var bot: Color = Color8(226, 54, 60) if style == "red" else Color8(42, 110, 230)
-	_rrect(Rect2(b.position + Vector2(0, 4), b.size), 14, top.darkened(0.45), INK, 3)
-	_grad_rect_r(b, top, bot, 14)
-	_rrect_line(b, 14, INK, 3)
-	_otext(Vector2(b.position.x, b.position.y + 32), btn, 19, Color.WHITE, INK, 5, b.size.x)
-
-
-func _bar(r: Rect2, label: String, v: float, col: Color, text := "") -> void:
-	var lw := 130.0 if r.size.x > 300 else 110.0
-	_otext(Vector2(r.position.x, r.position.y + 26), label, 18, INK, Color(0, 0, 0, 0), 0)
-	var b := Rect2(r.position.x + lw, r.position.y + 4, r.size.x - lw, r.size.y - 8)
-	_rrect(b, b.size.y / 2, Color8(54, 62, 100), INK, 3)
-	if v > 0.01:
-		var f := Rect2(b.position + Vector2(3, 3), Vector2(maxf(b.size.y, (b.size.x - 6) * clampf(v, 0, 1)), b.size.y - 6))
-		_grad_rect_r(f, col.lightened(0.25), col.darkened(0.1), f.size.y / 2)
-		_rrect(Rect2(f.position + Vector2(6, 3), Vector2(f.size.x - 12, f.size.y * 0.3)), 4, Color(1, 1, 1, 0.35), Color(0, 0, 0, 0), 0)
-	var tt := text if not text.is_empty() else "%d%%" % roundi(v * 100)
-	_otext(Vector2(b.position.x, b.position.y + b.size.y * 0.72), tt, 16, Color.WHITE, INK, 5, b.size.x)
-
-
-func _chip(at: Vector2, text: String, col: Color) -> float:
-	var w := 26.0 + text.length() * 10.0
-	var r := Rect2(at, Vector2(w, 36))
-	_rrect(Rect2(r.position + Vector2(0, 3), r.size), 18, col.darkened(0.4), Color(0, 0, 0, 0), 0)
-	_rrect(r, 18, col, INK, 3)
-	_otext(Vector2(r.position.x, r.position.y + 25), text, 16, INK, Color(0, 0, 0, 0), 0, w)
-	return w
+## Текст с мягкой тенью (без толстой обводки).
+func _stext(pos: Vector2, text: String, fs: int, col: Color, width := -1.0) -> void:
+	var align := HORIZONTAL_ALIGNMENT_CENTER if width > 0 else HORIZONTAL_ALIGNMENT_LEFT
+	draw_string(_font, pos + Vector2(0, 2), text, align, width, fs, Color(0, 0, 0, 0.35))
+	draw_string(_font, pos, text, align, width, fs, col)
 
 
 # --- Значки -----------------------------------------------------------------------------
@@ -913,6 +728,14 @@ func _otext(pos: Vector2, text: String, fs: int, col: Color, outline: Color, ow:
 		draw_string(_font, pos + Vector2(0, fs * 0.09), text, align, width, fs, outline)
 		draw_string_outline(_font, pos, text, align, width, fs, ow, outline)
 	draw_string(_font, pos, text, align, width, fs, col)
+
+
+## Прямоугольник со скруглением, обрезанный по внешней фигуре (полосы каймы).
+func _rect_clip(band: Rect2, outer: Rect2, rad: float, col: Color) -> void:
+	var a := _rrect_pts(outer, rad)
+	var b := PackedVector2Array([band.position, Vector2(band.end.x, band.position.y), band.end, Vector2(band.position.x, band.end.y)])
+	for poly in Geometry2D.intersect_polygons(a, b):
+		draw_colored_polygon(poly, col)
 
 
 func _rect(r: Rect2, col: Color) -> void:

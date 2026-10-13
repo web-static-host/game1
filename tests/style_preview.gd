@@ -6,7 +6,7 @@ var _node: Node2D
 var _frame := 0
 var _out := "user://"
 
-const SHEETS := ["style_summer", "style_winter", "style_ui"]
+const SHEETS := ["style_preview"]
 
 
 func _initialize() -> void:
