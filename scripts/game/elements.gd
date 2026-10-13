@@ -496,7 +496,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "погиб(ла) от жары")
-	var cold := Colony.COLD - (u.stat("cold") - 1.0) * 30.0
+	var cold := Colony.cold_limit(u)
 	if t < cold:
 		u.health -= minf(2.0, (cold - t) / 100.0) * dt
 		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: комната или генератор" % [u.name, roundi(t)], "warning")

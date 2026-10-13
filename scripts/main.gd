@@ -517,6 +517,11 @@ func _unit_spec(u: Unit) -> Dictionary:
 		extra.append(["", "ждёт ребёнка", Color(1.0, 0.7, 0.8)])
 	if u.child:
 		extra.append(["", "ест вдвое больше"])
+	if u.state == Unit.State.WORK and colony.light_factor(u) < 1.0:
+		extra.append(["", "темно — работает медленнее (%d%%)" % roundi(colony.light_factor(u) * 100.0), Color(1.0, 0.8, 0.5)])
+	var cold := Colony.cold_limit(u)
+	if colony.elements.temperature(u.cell()) < cold:
+		extra.append(["", "мёрзнет", Color(0.6, 0.8, 1.0)])
 	rows.append({"type": "chips", "items": extra})
 	return {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
 

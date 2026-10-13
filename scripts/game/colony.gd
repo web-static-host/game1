@@ -2175,6 +2175,48 @@ func _move(u: Unit, dt: float) -> void:
 
 
 ## Смягчённая характеристика: +30% силы — это +18% к скорости работы.
+# --- Свет -----------------------------------------------------------------------------
+
+## Под землёй темно: пока нет электричества, светит только солнце — сверху и в открытую шахту.
+const DARK_WORK := 0.7
+## Как глубоко солнце проникает в открытую сверху шахту.
+const SUN_SHAFT := 8
+## Светящийся житель освещает всё вокруг себя.
+const GLOW_RADIUS := 4
+
+
+## Светло ли в клетке: над землёй, в открытой шахте недалеко от неба, в комнате с электричеством,
+## рядом со светящимся жителем.
+func is_lit(c: Vector2i) -> bool:
+	var surf := world.gen.surface_y(c.x)
+	if c.y < surf:
+		return true
+	if c.y - surf < SUN_SHAFT:
+		var open := true
+		for y in range(surf, c.y):
+			if Mat.is_solid(world.get_mat(c.x, y)):
+				open = false
+				break
+		if open:
+			return true
+	if powered() and interior.has(c):
+		return true
+	for o in units:
+		if o.ability("light") == true and o.cell().distance_squared_to(c) <= GLOW_RADIUS * GLOW_RADIUS:
+			return true
+	return false
+
+
+## Множитель работы от освещения: в темноте медленнее, зоркие — меньше теряют;
+## меланисты видят в темноте, а безглазым свет не нужен.
+func light_factor(u: Unit) -> float:
+	if u.genome.is_empty() or u.ability("night_vision") == true or Genetics.eyes_of(u.genome) == 0:
+		return 1.0
+	if is_lit(u.cell()):
+		return 1.0
+	return minf(1.0, DARK_WORK * soft(u.stat("vision")))
+
+
 static func soft(v: float) -> float:
 	return 1.0 + (v - 1.0) * 0.6
 
@@ -2212,7 +2254,7 @@ func _work(u: Unit, dt: float) -> void:
 		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning")
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
-		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor()
+		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor() * light_factor(u)
 	match u.task:
 		Unit.Task.DIG:
 			var c := u.target
@@ -3686,6 +3728,11 @@ func time_to_winter() -> float:
 ## Температура в комнате (по её середине).
 func room_temp(p: Project) -> float:
 	return elements.temperature(p.rect.get_center())
+
+
+## Ниже какой температуры жителю холодно: синим и пушистым — ниже, красным — выше.
+static func cold_limit(u: Unit) -> float:
+	return COLD - (u.stat("cold") - 1.0) * 30.0
 
 
 func farm_warm(p: Project) -> bool:

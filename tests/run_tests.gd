@@ -34,6 +34,7 @@ func _initialize() -> void:
 	test_wear_and_repair()
 	test_calendar()
 	test_seasons()
+	test_darkness()
 	test_elements()
 	test_gas_alarm()
 	test_scouting()
@@ -1145,6 +1146,45 @@ func test_seasons() -> void:
 	colony.elements.affect_unit(u, 10.0)
 	check(u.health < 100.0 or u.stat("cold") > 1.3, "на морозе житель мёрзнет (%.1f)" % u.health)
 	check(colony.winter_food_need() > 0.0, "колония знает, сколько еды нужно на зиму")
+
+
+func test_darkness() -> void:
+	var colony := _new_colony(33)
+	var w := colony.world
+	var x := _find_solid_column(w)
+	_start(colony, x)
+	var s := w.gen.surface_y(x)
+	check(colony.is_lit(Vector2i(x, s - 1)), "над землёй светло")
+	check(not colony.is_lit(Vector2i(x, s + 5)), "в толще земли темно")
+	for y in range(s, s + 5):
+		w.set_material(x, y, Mat.AIR)
+	check(colony.is_lit(Vector2i(x, s + 4)), "в открытую шахту светит солнце")
+	check(not colony.is_lit(Vector2i(x, s + 30)), "глубоко под шахтой темно")
+	var u: Unit = colony.units[0]
+	var g := u.genome.duplicate(true)
+	g["eyes"] = [1, 1]
+	g["melanist"] = [false, false]
+	g["glow"] = [false, false]
+	u.set_genome(g)
+	for o in colony.units:
+		if o != u:
+			o.pos = Vector2(x + 200, s - 1)
+	u.pos = Vector2(x + 3, s + 20)
+	check(colony.light_factor(u) < 1.0, "в темноте работают медленнее (%.2f)" % colony.light_factor(u))
+	var glow := colony.units[1]
+	var gg := glow.genome.duplicate(true)
+	gg["glow"] = [true, true]
+	glow.set_genome(gg)
+	glow.pos = u.pos + Vector2(2, 0)
+	check(colony.light_factor(u) == 1.0, "светящийся житель освещает соседей")
+	glow.pos = Vector2(x + 200, s - 1)
+	g["melanist"] = [true, true]
+	u.set_genome(g)
+	check(colony.light_factor(u) == 1.0, "меланист видит в темноте")
+	g["melanist"] = [false, false]
+	g["eyes"] = [0, 0]
+	u.set_genome(g)
+	check(colony.light_factor(u) == 1.0, "безглазому свет не нужен")
 
 
 ## Сплошной гранитный блок w×h с левым верхним углом o (для опытов со стихиями).
