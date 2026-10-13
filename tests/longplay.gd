@@ -183,6 +183,13 @@ func _on_log(text: String, kind: String) -> void:
 
 func _debug() -> void:
 	var farms := colony.rooms_of(RoomType.FARM)
+	for f in farms:
+		print("DBGF ферма %s темп %.1f тепло %s раб %s прогресс %.1f" % [f.rect, colony.room_temp(f), colony.farm_warm(f), colony.assigned_to(f).map(func(u: Unit) -> String: return "%s:%s" % [u.name, Unit.TASK_NAMES[u.task]]), f.farm_progress])
+	for h in colony.projects:
+		if farms.size() > 0 and absi(h.rect.get_center().y - farms[0].rect.get_center().y) <= 6 and h.kind == Project.Kind.ROOM:
+			print("DBGF рядом %s %s фаза %s назн %d ждёт %d горит %s blocked «%s» paused %s" % [h.title(), h.rect, h.phase_name(), h.purpose, _pending_purpose.get(h.id, -1), h.burning, h.blocked, h.paused])
+		if h.purpose == RoomType.HEARTH or _pending_purpose.get(h.id, -1) == RoomType.HEARTH:
+			print("DBGF очаг %s фаза %s горит %s blocked «%s» дерево %d" % [h.rect, h.phase_name(), h.burning, h.blocked, colony.inventory.get("wood", 0)])
 	print("DBG %s еда %s ягоды %s ферм %d на земле еды %d" % [_time(), colony.inventory.get("food", 0),
 		colony.inventory.get("berries", 0), farms.size(), colony.drop_total("food") + colony.drop_total("berries")])
 	for u in colony.units:
@@ -256,6 +263,9 @@ func _play() -> void:
 	_professions()
 	if _fix_shaft():
 		return
+	# Тепло ферме — важнее остальных строек.
+	if _heat_farms():
+		return
 	if _busy() >= 2:
 		return
 	if _need_home():
@@ -263,8 +273,6 @@ func _play() -> void:
 	if not _has_room(RoomType.STORAGE) and _surface_room(RoomType.STORAGE):
 		return
 	if not _has_room(RoomType.GRANARY) and _surface_room(RoomType.GRANARY):
-		return
-	if _heat_farms():
 		return
 	if _shaft():
 		return
@@ -406,7 +414,8 @@ func _professions() -> void:
 	for p in places:
 		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
-		if p.purpose == RoomType.STORAGE and adults.size() < 7:
+		# Склад: работник нужен, когда людей хватает или горит очаг (запас дров).
+		if p.purpose == RoomType.STORAGE and adults.size() < 7 and colony.rooms_of(RoomType.HEARTH).is_empty():
 			slots = 0
 		if p.purpose == RoomType.FARM:
 			slots = mini(slots, 1 if adults.size() < 7 else 2)
@@ -439,8 +448,15 @@ func _heat_farms() -> bool:
 				has_hearth = true
 		if has_hearth:
 			continue
-		for rx in [farm.rect.end.x, farm.rect.position.x - 3]:
-			var r := Rect2i(rx, farm.rect.position.y, 3, 3)
+		var spots: Array[Rect2i] = []
+		for dy in [0, -3, 3]:
+			for rx in [farm.rect.end.x, farm.rect.end.x + 1, farm.rect.position.x - 3, farm.rect.position.x - 4, farm.rect.position.x + 1, farm.rect.end.x - 4]:
+				spots.append(Rect2i(rx, farm.rect.position.y + dy, 3, 3))
+		for r in spots:
+			var hc := r.get_center()
+			var fc := farm.rect.get_center()
+			if maxi(absi(hc.x - fc.x), absi(hc.y - fc.y)) > 4:
+				continue
 			if colony.validate(Project.Kind.ROOM, r, "wood").is_empty():
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
 				if p != null:

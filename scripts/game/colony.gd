@@ -3456,6 +3456,9 @@ func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		for k in _needed_now(p):
 			if GATHER_SOURCES.has(k):
 				keys[k] = true
+	# Погасший очаг — тоже нужда: рубят дрова.
+	if _hearth_starving():
+		keys["wood"] = true
 	for k in keys:
 		var kind: int = GATHER_SOURCES[k]
 		if kind < 0:
@@ -3761,6 +3764,27 @@ func carry_cap() -> int:
 
 
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
+## Есть ли очаг, которому не хватает дров (тогда свободные идут рубить).
+func _hearth_starving() -> bool:
+	for p in rooms_of(RoomType.HEARTH):
+		if not p.paused and p.blocked.begins_with("Нет дров"):
+			return true
+	return false
+
+
+## Полено в очаг: со склада, а нет — из кучи дров неподалёку (до 12 м).
+func _hearth_fuel(p: Project) -> bool:
+	if inventory.get("wood", 0) >= 1:
+		inventory["wood"] -= 1
+		return true
+	var c := p.rect.get_center()
+	for d: Vector2i in drops:
+		if absi(d.x - c.x) <= 12 and absi(d.y - c.y) <= 12 and drop_amount(d, "wood") > 0:
+			_take_drop(d, "wood", 1)
+			return true
+	return false
+
+
 ## Очаги: жгут дрова, пока вокруг холодно; без дров гаснут.
 func _hearth_tick(dt: float) -> void:
 	for p in rooms_of(RoomType.HEARTH):
@@ -3773,8 +3797,7 @@ func _hearth_tick(dt: float) -> void:
 		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
 		if not cold:
 			continue
-		if p.farm_progress <= 0.0 and inventory.get("wood", 0) >= 1:
-			inventory["wood"] -= 1
+		if p.farm_progress <= 0.0 and _hearth_fuel(p):
 			p.farm_progress += RoomType.HEARTH_FUEL_TIME
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
@@ -4272,6 +4295,8 @@ func _offline_need(taken: Dictionary) -> Array:
 		for k in _needed_now(p):
 			if GATHER_SOURCES.has(k) and GATHER_SOURCES[k] >= 0:
 				keys[k] = true
+	if _hearth_starving():
+		keys["wood"] = true
 	if keys.is_empty():
 		return []
 	var h := _offline_harvest(taken)

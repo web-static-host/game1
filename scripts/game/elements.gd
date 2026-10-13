@@ -390,10 +390,12 @@ func _gas_alarm() -> void:
 		if p.is_water_structure() or p.purpose == RoomType.DEGAS or p.purpose == RoomType.VENT:
 			continue
 		var g := gas_in(p.rect.grow(1))
-		# Искру даёт только кирка: стоит лишь копка, готовые комнаты работают (душно — да).
+		# Искру даёт кирка: копка стоит уже при тревоге. Готовые комнаты — когда газом
+		# опасно дышать (иначе работники задохнутся).
 		var digging := p.phase == Project.Phase.DIG
+		var stop_at := GAS_ALARM if digging else GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0)
 		if p.hazard_pending == "methane":
-			if g < GAS_CLEAR or not digging:
+			if g < GAS_CLEAR:
 				p.paused = false
 				p.hazard_pending = ""
 				p.blocked = ""
@@ -402,7 +404,7 @@ func _gas_alarm() -> void:
 		elif p.hazard_ack.has("methane"):
 			if g < GAS_CLEAR:
 				p.hazard_ack.erase("methane")
-		elif g >= GAS_ALARM and not p.paused and digging:
+		elif g >= stop_at and not p.paused:
 			colony.gas_stop(p)
 
 

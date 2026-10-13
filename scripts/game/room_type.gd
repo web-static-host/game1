@@ -94,7 +94,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		GRANARY:
 			return {"wood": 2 * w}
 		HEARTH:
-			return {"stone": 10, "clay": 4}
+			# Только камень — его можно собрать с валунов с самого начала.
+			return {"stone": 12}
 	return {}
 
 
