@@ -41,6 +41,7 @@ var colony: Colony
 var selected_unit := 0
 var _nodes := {}
 var _overlay: Node2D
+var _models: ModelSprites
 
 
 ## Узел одного жителя: хранит записанные позы и рисует текущую.
@@ -58,6 +59,9 @@ class CreatureSprite:
 	func _draw() -> void:
 		if pose.is_empty():
 			return
+		if ModelSprites.draw_creature(self, pose.split("|")[0], Vector2.ZERO, BODY_W, looks):
+			return
+		material = null
 		if not cache.has(pose):
 			var g := looks.duplicate()
 			var key := pose.split("|")[0]
@@ -68,6 +72,9 @@ class CreatureSprite:
 
 
 func _ready() -> void:
+	_models = ModelSprites.new()
+	_models.baked.connect(refresh)
+	add_child(_models)
 	_overlay = Node2D.new()
 	_overlay.z_index = 1
 	add_child(_overlay)
@@ -96,6 +103,17 @@ func _process(_delta: float) -> void:
 			_nodes[id].queue_free()
 			_nodes.erase(id)
 	_overlay.queue_redraw()
+
+
+## Перерисовать всех (модель готова или переключили 3D / рисованных).
+func refresh() -> void:
+	for id in _nodes:
+		(_nodes[id] as CreatureSprite).queue_redraw()
+
+
+## Житель нарисован 3D-моделью.
+func _is_model(node: CreatureSprite) -> bool:
+	return _models.is_baked and ModelSprites.enabled and ModelSprites.fits(node.looks)
 
 
 ## Точка ступней жителя в координатах слоя.
@@ -222,11 +240,16 @@ func _draw_overlay() -> void:
 			_overlay.draw_string(font, Vector2(zp.x + 22, zp.y - 36 + bob), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1, 0.6))
 		elif node.pose.begins_with("carry") and u.carry_amount > 0:
 			# Груз над головой в поднятых руках.
-			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, -h - 8 * sc), 10)
+			var top := -h - 8 * sc
+			if _is_model(node):
+				top = _models.hand_pos(pose, h / sc).y * sc - 4 * sc
+			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, top), 10)
 		elif u.state == Unit.State.WORK and u.task != Unit.Task.EAT:
 			var g := node.looks.duplicate()
 			g["pose"] = POSES.get(pose, {})
 			var hand := CreatureArt.hand_pos(BODY_W, g, 1.0) * sc
+			if _is_model(node):
+				hand = _models.hand_pos(pose, h / sc) * sc
 			hand.x *= u.facing
 			_draw_tool(u, foot + hand, float(u.facing))
 		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))

@@ -23,4 +23,6 @@ func _draw() -> void:
 	bg.set_corner_radius_all(12)
 	draw_style_box(bg, Rect2(Vector2.ZERO, size))
 	var h := CreatureArt.height_of(body_w, looks)
-	CreatureArt.draw(self, Vector2(size.x * 0.5, size.y * 0.5 + h * 0.5 + 4.0), body_w, looks, 1.0)
+	var at := Vector2(size.x * 0.5, size.y * 0.5 + h * 0.5 + 4.0)
+	if not ModelSprites.draw_creature(self, "idle", at, body_w, looks):
+		CreatureArt.draw(self, at, body_w, looks, 1.0)

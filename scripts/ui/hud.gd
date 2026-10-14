@@ -14,6 +14,7 @@ signal science_pressed
 signal people_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
+signal models_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
@@ -975,6 +976,17 @@ func _build_menu(center: CenterContainer) -> void:
 	_menu_new.pressed.connect(func() -> void:
 		_menu.visible = false
 		_new_game.visible = true)
+	var models := CheckButton.new()
+	models.text = "3D-модель жителей"
+	models.button_pressed = ModelSprites.enabled
+	models.focus_mode = Control.FOCUS_NONE
+	models.add_theme_font_size_override("font_size", 22)
+	models.toggled.connect(func(on: bool) -> void: models_toggled.emit(on))
+	v.add_child(models)
+	var hint := _label("Треугольные одноглазые без мутаций — из 3D-модели, остальные рисованные. Выключите, чтобы сравнить.", 16, MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(380, 0)
+	v.add_child(hint)
 	_build_new_game(center)
 
 

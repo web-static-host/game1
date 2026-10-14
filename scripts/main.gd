@@ -41,6 +41,7 @@ var _send_unit := 0
 func _ready() -> void:
 	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
 	ThemeDB.fallback_font = Fonts.bold()
+	ModelSprites.enabled = bool(_settings().get("models", true))
 	var data := SaveSystem.load_data()
 	var seed_value := int(data["seed"]) if data.has("seed") else _new_seed()
 	# Старые сохранения (без версии генерации) — на первой версии, чтобы мир не изменился.
@@ -115,6 +116,14 @@ func _build_scene() -> void:
 	hud.new_game_confirmed.connect(_new_game)
 	hud.science_pressed.connect(_show_science)
 	hud.people_pressed.connect(_show_people)
+	hud.models_toggled.connect(func(on: bool) -> void:
+		ModelSprites.enabled = on
+		var d := _settings()
+		d["models"] = on
+		var f := FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
+		if f != null:
+			f.store_string(JSON.stringify(d))
+		world_view.units_layer.refresh())
 	hud.room_options_changed.connect(_on_room_options)
 
 
@@ -156,6 +165,15 @@ func _notification(what: int) -> void:
 
 
 const NEW_GAME_PATH := "user://new_game.json"
+const SETTINGS_PATH := "user://settings.json"
+
+
+## Настройки игры (не колонии): переживают новую игру.
+func _settings() -> Dictionary:
+	if not FileAccess.file_exists(SETTINGS_PATH):
+		return {}
+	var d = JSON.parse_string(FileAccess.get_file_as_string(SETTINGS_PATH))
+	return d if typeof(d) == TYPE_DICTIONARY else {}
 
 
 ## Настройки новой игры, выбранные в меню (читаются один раз).
