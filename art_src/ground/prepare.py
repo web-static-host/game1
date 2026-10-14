@@ -14,6 +14,7 @@ OUT = os.path.join(HERE, '..', '..', 'assets', 'ground')
 EDGE = 0.12      # доля размера на перетекание при сшивке
 MEAN = 0.7       # средняя яркость текстуры породы (как в ChunkView.ROCK_MEAN)
 REL_STD = 0.12   # разброс яркости относительно среднего — полосы видны, но не пестрят
+FOG_REL_STD = 0.06   # туман занимает почти весь экран — фактура вдвое мягче
 ROCK_SIZE = 512
 # Кромки: (файл, строки рисунка от–до, строка «линии земли» в исходнике).
 EDGES = [('grass_edge', 470, 646, 560), ('snow_edge', 588, 681, 630)]
@@ -39,7 +40,7 @@ def rock(name):
     g = seam_x(g, e)
     g = seam_x(g.T, e).T
     m, s = g.mean(), g.std()
-    g = MEAN + (g - m) / s * (MEAN * REL_STD)
+    g = MEAN + (g - m) / s * (MEAN * (FOG_REL_STD if name == 'fog' else REL_STD))
     im = Image.fromarray((np.clip(g, 0, 1) * 255 + 0.5).astype(np.uint8)).resize((ROCK_SIZE, ROCK_SIZE), Image.LANCZOS)
     im.convert('RGB').save(os.path.join(OUT, name + '.png'))
     print(name, 'mean', round(float(m), 3), '->', MEAN)
