@@ -18,8 +18,22 @@ static func color(key: String) -> Color:
 	return COLORS.get(key, Color(0.6, 0.6, 0.6))
 
 
-## Значок ресурса key с центром c и радиусом r.
+## Картинка значка (assets/icons/<key>.png, нарезка из art_src/icons) или null.
+static var _tex := {}
+static func texture(key: String) -> Texture2D:
+	if not _tex.has(key):
+		var path := "res://assets/icons/%s.png" % key
+		_tex[key] = load(path) if ResourceLoader.exists(path) else null
+	return _tex[key]
+
+
+## Значок ресурса key с центром c и радиусом r: картинка, а если её нет — рисунок кодом.
 static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
+	var t := texture(key)
+	if t != null:
+		var h := Vector2(r, r) * 1.12
+		ci.draw_texture_rect(t, Rect2(c - h, h * 2.0), false)
+		return
 	var col := color(key)
 	var dark := col.darkened(0.4)
 	match key:

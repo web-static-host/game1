@@ -15,6 +15,8 @@ var camera: CameraController
 var hud: Hud
 var mode := Hud.Mode.LOOK
 var _sky: ColorRect
+## Высота земли, к которой привязан фон (y клетки): самая низкая земля на экране, сглаженно.
+var _sky_ground := NAN
 var _night: CanvasModulate
 var _speed_idx := 0
 var _autosave := 0.0
@@ -88,6 +90,10 @@ func _build_scene() -> void:
 	_sky.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/sky.gdshader")
+	# Слои фона (горы, лес, холмы, облака) — картинки из assets/background/.
+	for n in ["mountains_1", "mountains_2", "forest_1", "forest_2", "hills_1", "hills_2", "clouds"]:
+		mat.set_shader_parameter(n, load("res://assets/background/%s.png" % n))
+	mat.set_shader_parameter("world_seed", float(world.gen.world_seed % 1000))
 	_sky.material = mat
 	sky_layer.add_child(_sky)
 
@@ -142,7 +148,7 @@ func _process(delta: float) -> void:
 		camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * 10.0 * minf(1.0, _shake)
 	elif camera.offset != Vector2.ZERO:
 		camera.offset = Vector2.ZERO
-	_update_sky()
+	_update_sky(delta)
 	_status_timer -= delta
 	if _status_timer <= 0.0:
 		_status_timer = STATUS_INTERVAL
@@ -1325,7 +1331,7 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
-	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())])
+	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())], _weather_icon())
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
@@ -1340,7 +1346,22 @@ func _clamp_camera() -> void:
 	camera.position = Vector2(clampf(camera.position.x, min_x, max_x), clampf(camera.position.y, min_y, max_y))
 
 
-func _update_sky() -> void:
+## Значок у даты. Погоды в игре пока нет — значок по времени суток и сезону
+## (зимой идёт снег, как в SeasonFx); дождь, гроза и туман — на будущее.
+func _weather_icon() -> String:
+	if colony.daylight() < 0.3:
+		return "moon"
+	match colony.season():
+		Colony.Season.WINTER:
+			return "snow"
+		Colony.Season.AUTUMN:
+			return "cloud"
+		Colony.Season.SPRING:
+			return "sun_cloud"
+	return "sun"
+
+
+func _update_sky(delta := 0.0) -> void:
 	var half_h := get_viewport_rect().size.y * 0.5 / camera.zoom.y
 	var top_y := world_view.origin.y + (camera.position.y - half_h) / ChunkView.TILE
 	var bottom_y := world_view.origin.y + (camera.position.y + half_h) / ChunkView.TILE
@@ -1352,7 +1373,20 @@ func _update_sky() -> void:
 	m.set_shader_parameter("winter", 1.0 if colony.is_winter() else 0.0)
 	m.set_shader_parameter("cam_x", world_view.origin.x + camera.position.x / ChunkView.TILE)
 	m.set_shader_parameter("view_w", get_viewport_rect().size.x / camera.zoom.x / ChunkView.TILE)
-	m.set_shader_parameter("ground_alt", -float(colony.home.y))
+	# Фон стоит на самой низкой земле в кадре (с запасом по краям), иначе там, где
+	# поверхность ниже базы, под холмами пусто. Сдвиг плавный, чтобы фон не прыгал.
+	var view_w: float = get_viewport_rect().size.x / camera.zoom.x / ChunkView.TILE
+	var cx: float = world_view.origin.x + camera.position.x / ChunkView.TILE
+	var low := world.gen.land_y(int(cx))
+	var x := int(cx - view_w * 0.6)
+	while x <= int(cx + view_w * 0.6):
+		low = maxi(low, world.gen.land_y(x))
+		x += 3
+	if is_nan(_sky_ground) or delta <= 0.0:
+		_sky_ground = low
+	else:
+		_sky_ground = lerpf(_sky_ground, low, 1.0 - exp(-delta * 1.5))
+	m.set_shader_parameter("ground_alt", -_sky_ground)
 	world_view.set_season(colony.is_winter(), colony.calendar_month())
 	# Ночью мир чуть темнее.
 	_night.color = Color(0.62, 0.66, 0.85).lerp(Color.WHITE, light)

@@ -14,6 +14,8 @@ static func make(p_key: String, size_px := 26.0, p_glyph := "", p_tint := Color(
 	v.tint = p_tint
 	v.custom_minimum_size = Vector2(size_px, size_px)
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Картинки значков крупнее, чем в интерфейсе, — уменьшаем с мипмапами, без ряби.
+	v.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	return v
 
 

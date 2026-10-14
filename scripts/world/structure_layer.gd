@@ -213,6 +213,19 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 
 
 
+## Полка у задней стены: доска с бликом сверху, тенью снизу и кронштейнами.
+func _shelf(x0: float, x1: float, y: float, alpha: float) -> void:
+	var wood := Color(BED_FRAME.lightened(0.1), alpha)
+	draw_rect(Rect2(x0, y + 3, x1 - x0, 4), Color(0, 0, 0, 0.18 * alpha))
+	_rbox(Rect2(x0, y - 1, x1 - x0, 4), 1, wood, Color(BED_FRAME.darkened(0.35), alpha), 1)
+	draw_line(Vector2(x0 + 2, y - 0.5), Vector2(x1 - 2, y - 0.5), Color(1, 1, 1, 0.25 * alpha), 1.0)
+	var n := maxi(2, int((x1 - x0) / (TILE * 2.0)) + 1)
+	for i in n:
+		var bx := lerpf(x0 + 6, x1 - 6, float(i) / (n - 1))
+		draw_colored_polygon(PackedVector2Array([Vector2(bx - 1.5, y + 3), Vector2(bx + 1.5, y + 3), Vector2(bx + 1.5, y + 9), Vector2(bx - 1.5, y + 5)]),
+			Color(BED_FRAME.darkened(0.25), alpha))
+
+
 ## Мягкое световое пятно: веер треугольников от яркого центра к прозрачному краю.
 func _glow(c: Vector2, rad: float, col: Color) -> void:
 	var edge := Color(col, 0.0)
@@ -273,7 +286,7 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 			var w := RoomType.usable_width(p)
 			var room_cap := RoomType.CAPACITY_PER_CELL * w
 			# Полка на половине высоты и ящики по видам ресурсов: чем больше, тем больше ящиков.
-			draw_line(Vector2(x0 + 4, floor_y - 40), Vector2(x0 + w * TILE - 4, floor_y - 40), Color(BED_FRAME, alpha), 3.0)
+			_shelf(x0 + 4, x0 + w * TILE - 4, floor_y - 40, alpha)
 			var slots := w * 2
 			var slot := 0
 			var keys: Array = colony.inventory.keys()

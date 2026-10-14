@@ -164,6 +164,11 @@ func _base_surface(x: int) -> int:
 	return int(round(-h))
 
 
+## Уровень земли в столбце x без озёр (у озера — уровень воды).
+func land_y(x: int) -> int:
+	return _base_surface(x)
+
+
 ## y первой твёрдой клетки в столбце x (у озера — его дно).
 func surface_y(x: int) -> int:
 	var b := _base_surface(x)
