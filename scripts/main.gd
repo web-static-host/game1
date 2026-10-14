@@ -83,6 +83,10 @@ func _build_scene() -> void:
 	_sky.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/sky.gdshader")
+	# Слои фона (горы, лес, холмы, облака) — картинки из assets/background/.
+	for n in ["mountains_1", "mountains_2", "forest_1", "forest_2", "hills_1", "clouds"]:
+		mat.set_shader_parameter(n, load("res://assets/background/%s.png" % n))
+	mat.set_shader_parameter("world_seed", float(world.gen.world_seed % 1000))
 	_sky.material = mat
 	sky_layer.add_child(_sky)
 
