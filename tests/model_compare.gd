@@ -37,6 +37,7 @@ func _process(_delta: float) -> bool:
 		_main.world_view.focus_cell(_main._home + Vector2i(0, -2))
 		_main.camera.zoom = Vector2(2.2, 2.2)
 	if _frame == 60:
+		print("модель: ", ModelSprites.status)
 		_shot("model_on")
 		ModelSprites.enabled = false
 		_main.world_view.units_layer.refresh()

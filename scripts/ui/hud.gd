@@ -65,6 +65,7 @@ var _build_btn: IconButton
 var _build_row: HBoxContainer
 var _menu: PanelContainer
 var _menu_new: Button
+var _models_hint: Label
 var _new_game: PanelContainer
 var _disasters: CheckButton
 var _log: VBoxContainer
@@ -334,6 +335,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	menu.pressed.connect(func() -> void:
 		var open := not _menu.visible
 		close_overlays()
+		_models_hint.text = "Треугольные одноглазые без мутаций — из 3D-модели, остальные рисованные. Модель: %s." % ModelSprites.status
 		_menu.visible = open)
 
 
@@ -983,10 +985,10 @@ func _build_menu(center: CenterContainer) -> void:
 	models.add_theme_font_size_override("font_size", 22)
 	models.toggled.connect(func(on: bool) -> void: models_toggled.emit(on))
 	v.add_child(models)
-	var hint := _label("Треугольные одноглазые без мутаций — из 3D-модели, остальные рисованные. Выключите, чтобы сравнить.", 16, MUTED)
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.custom_minimum_size = Vector2(380, 0)
-	v.add_child(hint)
+	_models_hint = _label("", 16, MUTED)
+	_models_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_models_hint.custom_minimum_size = Vector2(380, 0)
+	v.add_child(_models_hint)
 	_build_new_game(center)
 
 

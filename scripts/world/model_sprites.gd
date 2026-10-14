@@ -72,6 +72,8 @@ const POSES := {
 ## Включены ли 3D-жители (настройка в меню) и общий экземпляр (его создаёт UnitLayer).
 static var enabled := true
 static var shared: ModelSprites
+## Что с моделью: готовится / готово / почему не вышло (показываем в «Меню»).
+static var status := "готовится…"
 
 var atlas: Texture2D
 var mask: Texture2D
@@ -104,7 +106,11 @@ static func draw_scale(h: float) -> float:
 func _ready() -> void:
 	shared = self
 	# Без видеокарты (тесты, сервер) рисовать нечем — жители остаются рисованными.
-	if DisplayServer.get_name() == "headless" or not ResourceLoader.exists(MODEL):
+	if DisplayServer.get_name() == "headless":
+		status = "нет видеокарты"
+		return
+	if not ResourceLoader.exists(MODEL):
+		status = "нет файла модели"
 		return
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/model_tint.gdshader")
@@ -112,19 +118,33 @@ func _ready() -> void:
 
 
 func _bake() -> void:
+	for attempt in 3:
+		if await _bake_once(attempt):
+			status = "готово"
+			is_baked = true
+			baked.emit()
+			return
+	push_warning("ModelSprites: " + status)
+
+
+## Снять атлас. Прозрачность берём не из альфа-канала кадра (на части телефонов 3D в
+## отдельном окне отдаёт его пустым), а из кадра-маски: R — силуэт, G — где красить тело.
+## Оба кадра — в 2 раза крупнее и потом уменьшаются: так края гладкие без MSAA.
+func _bake_once(attempt: int) -> bool:
 	var names: Array = POSES.keys()
 	var cols := 6
 	var rows := ceili(names.size() / float(cols))
+	var ss := 2
 	_vp = SubViewport.new()
-	_vp.size = Vector2i(cols * CELL, rows * CELL)
-	_vp.transparent_bg = true
+	_vp.size = Vector2i(cols * CELL, rows * CELL) * ss
+	_vp.transparent_bg = false
 	_vp.own_world_3d = true
-	_vp.msaa_3d = Viewport.MSAA_4X
 	_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(_vp)
 	var env := WorldEnvironment.new()
 	env.environment = Environment.new()
-	env.environment.background_mode = Environment.BG_CLEAR_COLOR
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.8, 0.8, 0.8)
 	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.environment.ambient_light_color = Color(0.75, 0.78, 0.9)
 	env.environment.ambient_light_energy = 0.55
@@ -150,13 +170,15 @@ func _bake() -> void:
 	white.albedo_color = Color(0.92, 0.92, 0.92)
 	white.roughness = 0.45
 	white.metallic_specular = 0.35
-	var flat_white := StandardMaterial3D.new()
-	flat_white.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var flat_black := StandardMaterial3D.new()
-	flat_black.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	flat_black.albedo_color = Color.BLACK
+	var flat_body := StandardMaterial3D.new()
+	flat_body.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	flat_body.albedo_color = Color(1, 1, 0)
+	var flat_face := StandardMaterial3D.new()
+	flat_face.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	flat_face.albedo_color = Color(1, 0, 0)
 	var scene: PackedScene = load(MODEL)
 	var meshes := []
+	frames.clear()
 	for i in names.size():
 		var pose: Dictionary = POSES[names[i]]
 		var c := i % cols
@@ -167,43 +189,92 @@ func _bake() -> void:
 		model.rotation_degrees.y = YAW
 		var skel: Skeleton3D = model.find_children("*", "Skeleton3D", true, false)[0]
 		pose_skeleton(skel, pose.get("bones", []))
-		skel.force_update_all_bone_transforms()
 		var closed: bool = pose.get("closed", false)
 		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 			var body := mi.name == "Buddy_FinalBody" or (closed and mi.name == "Approved_EyeWhite")
 			if closed and mi.name in FACE_PARTS:
 				mi.visible = false
-			meshes.append([mi, white if body else null, flat_white if body else flat_black])
-		var foot := cam.unproject_position(model.position)
-		var hand := cam.unproject_position(skel.to_global(skel.get_bone_global_pose(skel.find_bone("Hand.R")).origin))
-		var eye := cam.unproject_position(model.to_global(EYE))
+			meshes.append([mi, white if body else null, flat_body if body else flat_face])
+		var foot := cam.unproject_position(model.position) / ss
+		var hand := cam.unproject_position(skel.to_global(skel.get_bone_global_pose(skel.find_bone("Hand.R")).origin)) / ss
+		var eye := cam.unproject_position(model.to_global(EYE)) / ss
 		var cell := Vector2(c * CELL, r * CELL)
 		frames[names[i]] = {"region": Rect2(cell, Vector2(CELL, CELL)), "foot": foot - cell, "hand": hand - foot, "eye": eye - foot}
 
 	for m in meshes:
 		(m[0] as MeshInstance3D).material_override = m[1]
-	var color := await _shot()
+	var color := await _shot(2 + attempt * 2)
 	for m in meshes:
 		(m[0] as MeshInstance3D).material_override = m[2]
 	key.visible = false
 	rim.visible = false
-	var shape := await _shot()
+	env.environment.background_color = Color.BLACK
+	env.environment.ambient_light_energy = 0.0
+	var shape := await _shot(2 + attempt * 2)
 	_vp.queue_free()
 	_vp = null
-	if color == null or shape == null or color.is_empty():
-		return
+	if color == null or shape == null or color.is_empty() or shape.is_empty():
+		status = "не удалось снять кадр модели"
+		return false
+	var size := Vector2i(cols * CELL, rows * CELL)
+	for img: Image in [color, shape]:
+		img.convert(Image.FORMAT_RGBA8)
+		img.resize(size.x, size.y, Image.INTERPOLATE_BILINEAR)
+	# Проверка: в середине тела позы покоя — тело (R и G), в глазу — не тело (только R).
+	var idle: Dictionary = frames["idle"]
+	var at: Vector2 = (idle["region"] as Rect2).position + (idle["foot"] as Vector2)
+	var body_px := shape.get_pixelv(Vector2i(at + Vector2(0, -1.0 * CELL / SPAN)))
+	var eye_px := shape.get_pixelv(Vector2i(at + (idle["eye"] as Vector2)))
+	if body_px.r < 0.5 or body_px.g < 0.5 or eye_px.r < 0.5 or eye_px.g > 0.5:
+		status = "кадр модели пустой (тело %.2f/%.2f, глаз %.2f/%.2f)" % [body_px.r, body_px.g, eye_px.r, eye_px.g]
+		return false
 	color.generate_mipmaps()
 	shape.generate_mipmaps()
 	atlas = ImageTexture.create_from_image(color)
 	mask = ImageTexture.create_from_image(shape)
 	material.set_shader_parameter("mask", mask)
-	is_baked = true
-	baked.emit()
+	return await _selftest()
 
 
-func _shot() -> Image:
-	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	await RenderingServer.frame_post_draw
+## Самопроверка всей цепочки (атлас + маска + шейдер): рисуем позу покоя белым в маленькое
+## окно на чёрном фоне и смотрим, что середина тела светлая, а угол клетки — чёрный.
+func _selftest() -> bool:
+	var n := 64
+	var vp := SubViewport.new()
+	vp.size = Vector2i(n, n)
+	vp.transparent_bg = false
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(vp)
+	var bg := ColorRect.new()
+	bg.color = Color.BLACK
+	bg.size = Vector2(n, n)
+	vp.add_child(bg)
+	var idle: Dictionary = frames["idle"]
+	var k := float(n) / CELL
+	var node := Node2D.new()
+	node.material = material
+	node.draw.connect(func() -> void: node.draw_texture_rect_region(atlas, Rect2(0, 0, n, n), idle["region"], Color.WHITE))
+	vp.add_child(node)
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var img := vp.get_texture().get_image()
+	vp.queue_free()
+	if img == null or img.is_empty():
+		status = "проверка: нет кадра"
+		return false
+	var body := img.get_pixelv(Vector2i(((idle["foot"] as Vector2) + Vector2(0, -1.0 * CELL / SPAN)) * k))
+	var corner := img.get_pixel(1, 1)
+	if body.get_luminance() < 0.35 or corner.get_luminance() > 0.2:
+		status = "проверка не прошла (тело %.2f, фон %.2f)" % [body.get_luminance(), corner.get_luminance()]
+		return false
+	return true
+
+
+func _shot(wait: int) -> Image:
+	_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	for i in wait:
+		await RenderingServer.frame_post_draw
+	_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	return _vp.get_texture().get_image()
 
 
