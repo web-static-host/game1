@@ -15,6 +15,7 @@ signal people_pressed
 signal save_pressed
 signal new_game_confirmed(disasters: bool)
 signal models_toggled(on: bool)
+signal background_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
@@ -66,6 +67,7 @@ var _build_row: HBoxContainer
 var _menu: PanelContainer
 var _menu_new: Button
 var _models_hint: Label
+var _background: CheckButton
 var _new_game: PanelContainer
 var _disasters: CheckButton
 var _log: VBoxContainer
@@ -978,6 +980,16 @@ func _build_menu(center: CenterContainer) -> void:
 	_menu_new.pressed.connect(func() -> void:
 		_menu.visible = false
 		_new_game.visible = true)
+	_background = CheckButton.new()
+	_background.text = "Игра в фоне"
+	_background.focus_mode = Control.FOCUS_NONE
+	_background.add_theme_font_size_override("font_size", 22)
+	_background.toggled.connect(func(on: bool) -> void: background_toggled.emit(on))
+	v.add_child(_background)
+	var bg_hint := _label("Включено — пока вас нет, жители работают (до 3 часов). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
+	bg_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bg_hint.custom_minimum_size = Vector2(380, 0)
+	v.add_child(bg_hint)
 	var models := CheckButton.new()
 	models.text = "3D-модель жителей"
 	models.button_pressed = ModelSprites.enabled
@@ -1028,6 +1040,11 @@ func _build_new_game(center: CenterContainer) -> void:
 		_new_game.visible = false
 		new_game_confirmed.emit(_disasters.button_pressed))
 	cancel.pressed.connect(func() -> void: _new_game.visible = false)
+
+
+## Положение переключателя «Игра в фоне» (из настроек).
+func set_background(on: bool) -> void:
+	_background.set_pressed_no_signal(on)
 
 
 func _menu_button(parent: Control, text: String) -> Button:

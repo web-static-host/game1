@@ -21,6 +21,10 @@ var _autosave := 0.0
 var _status_timer := 0.0
 var _home := Vector2i.ZERO
 var _paused_at := 0.0
+## Игра в фоне: пока игрок вышел, жители работают (оффлайн-прогресс). По умолчанию — нет.
+var _background := false
+## Приложение свёрнуто — симуляция стоит.
+var _away := false
 var _restarting := false
 ## Варианты постройки над водой: [[вид, рамка], ...].
 var _water_options := []
@@ -42,6 +46,7 @@ func _ready() -> void:
 	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
 	ThemeDB.fallback_font = Fonts.bold()
 	ModelSprites.enabled = bool(_settings().get("models", true))
+	_background = bool(_settings().get("background", false))
 	var data := SaveSystem.load_data()
 	var seed_value := int(data["seed"]) if data.has("seed") else _new_seed()
 	# Старые сохранения (без версии генерации) — на первой версии, чтобы мир не изменился.
@@ -118,18 +123,18 @@ func _build_scene() -> void:
 	hud.people_pressed.connect(_show_people)
 	hud.models_toggled.connect(func(on: bool) -> void:
 		ModelSprites.enabled = on
-		var d := _settings()
-		d["models"] = on
-		var f := FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
-		if f != null:
-			f.store_string(JSON.stringify(d))
+		_save_setting("models", on)
 		world_view.units_layer.refresh())
+	hud.set_background(_background)
+	hud.background_toggled.connect(func(on: bool) -> void:
+		_background = on
+		_save_setting("background", on))
 	hud.room_options_changed.connect(_on_room_options)
 
 
 func _process(delta: float) -> void:
 	# Большие паузы (сворачивание) учитываются как оффлайн, а не через delta.
-	var dt := minf(delta, 0.25)
+	var dt := 0.0 if _away else minf(delta, 0.25)
 	colony.update(dt * SPEEDS[_speed_idx])
 	_clamp_camera()
 	if _shake > 0.0:
@@ -152,12 +157,16 @@ func _process(delta: float) -> void:
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT:
-			if world != null:
+			# Вышли из игры — она на паузе (а с «Игрой в фоне» — посчитаем, сколько успели).
+			if world != null and not _away:
+				_away = true
 				_save()
 				_paused_at = Time.get_unix_time_from_system()
-		NOTIFICATION_APPLICATION_RESUMED:
-			if world != null and _paused_at > 0.0:
-				_apply_offline(_paused_at)
+		NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN:
+			if world != null and _away:
+				_away = false
+				if _paused_at > 0.0:
+					_apply_offline(_paused_at)
 				_paused_at = 0.0
 		NOTIFICATION_WM_CLOSE_REQUEST:
 			if world != null:
@@ -166,6 +175,14 @@ func _notification(what: int) -> void:
 
 const NEW_GAME_PATH := "user://new_game.json"
 const SETTINGS_PATH := "user://settings.json"
+
+
+func _save_setting(key: String, value: Variant) -> void:
+	var d := _settings()
+	d[key] = value
+	var f := FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(d))
 
 
 ## Настройки игры (не колонии): переживают новую игру.
@@ -204,7 +221,7 @@ func _save() -> void:
 
 func _apply_offline(since_unix: float) -> void:
 	var away := Time.get_unix_time_from_system() - since_unix
-	if since_unix <= 0.0 or away < 60.0:
+	if since_unix <= 0.0 or away < 60.0 or not _background:
 		return
 	var simulated := minf(away, OFFLINE_CAP_SEC)
 	var inv_before := colony.inventory.duplicate()
@@ -755,6 +772,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["people", "работников %d/%d" % [colony.assigned_to(p).size(), colony.work_slots(p)]])
 				chips.append(["", "+%d места каждому %s" % [RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
+				if colony.assigned_to(p).is_empty():
+					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у жителя)."})
 				var lacking := colony.storage_deficit(p)
 				if not colony.assigned_to(p).is_empty() and not lacking.is_empty():
 					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())

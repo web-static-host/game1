@@ -71,7 +71,6 @@ func _draw() -> void:
 ## Цвета по материалу стен: [задняя стена, рама, линии кладки].
 const WALLS := {
 	"wood": [Color(0.8, 0.56, 0.35), Color(0.48, 0.31, 0.19), Color(0.74, 0.51, 0.31)],
-	"clay": [Color(0.9, 0.68, 0.5), Color(0.62, 0.4, 0.27), Color(0.84, 0.6, 0.43)],
 	"stone": [Color(0.7, 0.73, 0.8), Color(0.42, 0.45, 0.55), Color(0.6, 0.63, 0.71)],
 	"brick": [Color(0.84, 0.43, 0.32), Color(0.5, 0.24, 0.18), Color(0.95, 0.84, 0.74)],
 	"metal": [Color(0.64, 0.7, 0.78), Color(0.34, 0.39, 0.47), Color(0.52, 0.58, 0.66)],
@@ -198,12 +197,6 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 			while y < r.end.y - 6:
 				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), Color(c[2], 0.8), 1.5)
 				y += bh
-		_:
-			# Глиняная штукатурка: мягкие пятна.
-			for k in int(r.size.x / 18.0):
-				var px := r.position.x + 10 + k * 18 + WorldGen.hash01(p.id, k, 61) * 8.0
-				var py := r.position.y + 12 + WorldGen.hash01(p.id, k, 62) * (r.size.y - 30)
-				draw_circle(Vector2(px, py), 4 + WorldGen.hash01(p.id, k, 63) * 4, c[2])
 	# Тень под потолком.
 	draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), Vector2(r.end.x, r.position.y + 16), Vector2(r.position.x, r.position.y + 16)]),
 		PackedColorArray([Color(0, 0, 0, 0.3), Color(0, 0, 0, 0.3), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))

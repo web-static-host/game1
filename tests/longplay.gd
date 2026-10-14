@@ -414,9 +414,7 @@ func _professions() -> void:
 	for p in places:
 		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
-		# Склад: работник нужен, когда людей хватает или горит очаг (запас дров).
-		if p.purpose == RoomType.STORAGE and adults.size() < 7 and colony.rooms_of(RoomType.HEARTH).is_empty():
-			slots = 0
+		# Склад и амбар без работника не наполняются — по одному всегда.
 		if p.purpose == RoomType.FARM:
 			slots = mini(slots, 1 if adults.size() < 7 else 2)
 		if p.purpose == RoomType.LAB and adults.size() < 8:

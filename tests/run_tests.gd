@@ -18,6 +18,7 @@ func _initialize() -> void:
 	test_room_from_surface_realtime()
 	test_workers_and_ladder()
 	test_room_materials()
+	test_site_keeps_yield()
 	test_room_purposes()
 	test_needs_realtime()
 	test_family()
@@ -221,7 +222,7 @@ func test_pause_and_materials() -> void:
 			break
 	check(colony.toggle_harvest(tree).is_empty(), "дерево отмечено на сбор")
 	colony.advance_offline(5000.0)
-	check(w.feature_at(tree) == WorldGen.FEATURE_NONE or colony.inventory.get("wood", 0) > 0, "дерево срублено по нужде стройки")
+	check(w.feature_at(tree) == WorldGen.FEATURE_NONE or colony.inventory.get("wood", 0) + colony.drop_total("wood") > 0, "дерево срублено по нужде стройки")
 	check(p.phase == Project.Phase.DONE, "дерево пошло на укрепление — стройка завершена")
 
 
@@ -397,12 +398,36 @@ func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 	return [colony, room]
 
 
+## Срубленное и выкопанное на стройке остаётся на ней: идёт в её материалы, а не на склад.
+func test_site_keeps_yield() -> void:
+	var colony := _new_colony(31)
+	var w := colony.world
+	_start(colony, 0)
+	colony.inventory = {"wood": 0, "stone": 0}
+	var tree := 0
+	for tx in range(-300, 300):
+		if w.feature_at(tx) == WorldGen.FEATURE_TREE and w.gen.surface_y(tx - 2) == w.gen.surface_y(tx) \
+				and w.gen.surface_y(tx + 3) == w.gen.surface_y(tx):
+			tree = tx
+			break
+	var ts := w.gen.surface_y(tree)
+	var house := colony.create_project(Project.Kind.ROOM, Rect2i(tree - 1, ts - 3, 3, 3))
+	check(house != null and house.clear_x.has(tree), "дерево на месте дома — в расчистке")
+	var got: int = colony.feature_yield(tree)[1]
+	var need: int = colony.remaining(house).get("wood", 0)
+	colony._complete_harvest(tree, colony.units[0])
+	check(house.delivered.get("wood", 0) == mini(got, need), "срубленное дерево сразу пошло на этот дом (%d из %d)" % [house.delivered.get("wood", 0), got])
+	check(colony.inventory.get("wood", 0) == 0, "на склад дерево не понесли")
+	check(colony.drop_total("wood") == maxi(0, got - need), "на земле — только излишек")
+	check(colony.units[0].task != Unit.Task.HAUL or got > need, "рубщик не тащит дерево на склад")
+
+
 func test_room_materials() -> void:
 	var colony := _new_colony(12)
 	check(colony.available_materials() == ["wood"], "в начале доступно только дерево")
 	colony._add("clay", 3)
 	colony._add("stone", 3)
-	check(colony.available_materials() == ["wood", "clay", "stone"], "глина и камень открываются после добычи")
+	check(colony.available_materials() == ["wood", "stone"], "камень открывается после добычи, глина — не материал стен")
 	var r := Rect2i(0, 0, 6, 3)
 	check(Project.cost_for(Project.Kind.ROOM, r, "stone").has("stone"), "каменная комната требует камень")
 	check(not Project.cost_for(Project.Kind.ROOM, r, "wood").has("stone"), "деревянная — без камня")
@@ -955,6 +980,12 @@ func test_lakes_and_fishing() -> void:
 	check(not colony.pathing.node(Vector2i(deep, level - 1)), "по водной глади не бегают")
 	if w.gen.surface_y(deep) - level >= 2:
 		check(not colony.pathing.node(Vector2i(deep, level)), "по глубокой воде не ходят")
+	# Через озеро без моста не идут.
+	var shore_l := Vector2i(x0 - 1, w.gen.surface_y(x0 - 1) - 1)
+	var shore_r := Vector2i(x1 + 1, w.gen.surface_y(x1 + 1) - 1)
+	var walk := Pathing.path_to(colony.pathing.explore(shore_l)[0], shore_r)
+	var wet := walk.filter(func(c: Vector2i) -> bool: return w.get_mat(c.x, c.y) == Mat.WATER)
+	check(wet.is_empty(), "через озеро не идут — ни вплавь, ни вброд (%d клеток в воде)" % wet.size())
 	var row := level - 1
 	var bridge_r := Rect2i(x0, row, x1 - x0 + 1, 1)
 	check(colony.validate(Project.Kind.BRIDGE, bridge_r).is_empty(), "мостик от берега до берега: " + colony.validate(Project.Kind.BRIDGE, bridge_r))
@@ -1113,6 +1144,7 @@ func test_hauling() -> void:
 	check(room.delivered.is_empty(), "лишнего на стройке не осталось")
 	# Без ресурса на складе плашка красная.
 	colony.inventory = {}
+	colony.drops.clear()
 	var gx2 := _flat_x(w, gx + 8)
 	var shed := colony.create_project(Project.Kind.ROOM, Rect2i(gx2, w.gen.surface_y(gx2) - 3, 3, 3))
 	if shed != null:
@@ -1129,6 +1161,18 @@ func test_storage_workers() -> void:
 	var colony: Colony = res[0]
 	var room: Project = res[1]
 	check(room.purpose == RoomType.STORAGE, "склад обустроен")
+	# Без работника на склад не носят: добро лежит, где упало.
+	for u in colony.units:
+		u.workplace = 0
+	colony.inventory = {}
+	colony.drops.clear()
+	var pile := Vector2i(roundi(colony.units[0].pos.x), roundi(colony.units[0].pos.y))
+	colony.drop_item(pile, "wood", 6)
+	for i in 120:
+		colony.update(0.5)
+	check(colony.inventory.get("wood", 0) == 0 and colony.drop_total("wood") == 6, "без работника склада дерево никто не понёс")
+	check(not colony.can_store("wood"), "складу без работника некуда принимать")
+	colony.drops.clear()
 	check(not room.targets.is_empty() and room.gatherers > 0, "у склада есть нормы запаса и рабочие")
 	colony.inventory = {}
 	room.targets = {"wood": 15, "stone": 0}
@@ -1750,7 +1794,8 @@ func test_economy() -> void:
 	colony.inventory = {"wood": 40, "stone": 40, "clay": 40, "food": 50}
 	check(colony.set_purpose(lab, RoomType.KILN), "лабораторию переделали в печь")
 	colony.advance_offline(3000.0)
-	check(lab.purpose == RoomType.KILN and colony.inventory.get("brick", 0) > 0, "печь обожгла кирпич (%d)" % colony.inventory.get("brick", 0))
+	var bricks: int = colony.inventory.get("brick", 0) + colony.drop_total("brick")
+	check(lab.purpose == RoomType.KILN and bricks > 0, "печь обожгла кирпич (%d)" % bricks)
 	check(colony.inventory.get("clay", 40) < 40, "на кирпич ушла глина")
 	# Генератор жжёт уголь и даёт энергию.
 	colony.research.done.append("electricity")

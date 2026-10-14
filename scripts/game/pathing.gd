@@ -4,7 +4,8 @@ extends RefCounted
 ## - ходят по открытым клеткам, под ногами — опора, над головой — свободно;
 ## - в выкопанных клетках и готовых постройках есть лестницы: можно лезть вверх/вниз;
 ## - по рельефу шагают на ступеньку в 1 м, залезают на уступ в 2 м;
-## - озеро переплывают по поверхности (медленно).
+## - в озёра не заходят и не плавают: водоём переходят только по мосту; мелкую воду
+##   в выработке — вброд; упавший в воду выплывает к берегу.
 
 const MAX_NODES := 3000
 const MAX_RADIUS := 140
@@ -57,9 +58,10 @@ func standable(c: Vector2i) -> bool:
 		return false
 	if deck.has(c):
 		return true
-	# Плывут по поверхности озера: тело в воде, голова над водой.
-	if world.get_mat(c.x, c.y) == Mat.WATER and world.is_open(c.x, c.y - 1):
-		return true
+	# В озёра не заходят (вода над землёй) — только по мосту; глубокую воду не переплывают.
+	# Мелко в выработке (подтопило, дно под ногами) — проходят вброд.
+	if world.get_mat(c.x, c.y) == Mat.WATER and (c.y < world.gen.surface_y(c.x) or not solid(c + DOWN)):
+		return false
 	var below := c + DOWN
 	if solid(below) or climbable(c) or climbable(below):
 		return true

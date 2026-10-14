@@ -105,9 +105,9 @@ const COLD := 0.0
 ## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
 const WINTER_FISH_SLOWDOWN := 2.0
 ## Сколько лет служит постройка до полного износа (на поверхности).
-const WEAR_YEARS := {"wood": 20.0, "clay": 40.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
+const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
 ## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
-const WEAR_UNDERGROUND := {"wood": 0.6, "clay": 0.85, "stone": 1.0, "brick": 0.9, "metal": 0.6}
+const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "metal": 0.6}
 ## Предупреждения об износе.
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
@@ -310,9 +310,8 @@ func unit_at(p: Vector2) -> Unit:
 ## Материалы стен, доступные колонии: дерево сразу, остальное — когда добыто.
 func available_materials() -> Array[String]:
 	var out: Array[String] = ["wood"]
-	for k in ["clay", "stone"]:
-		if known_resources.has(k):
-			out.append(k)
+	if known_resources.has("stone"):
+		out.append("stone")
 	if research.has("bricks"):
 		out.append("brick")
 	if research.has("metallurgy"):
@@ -1260,6 +1259,20 @@ func _take_store(key: String, n: int) -> int:
 	return t
 
 
+## Без игрока жители берут и со склада, и с куч на земле (склада может не быть).
+func _take_any(key: String, n: int) -> int:
+	var t := _take_store(key, n)
+	for c: Vector2i in drops.keys():
+		if t >= n:
+			break
+		t += _take_drop(c, key, n - t)
+	return t
+
+
+func _have_any(key: String) -> int:
+	return inventory.get(key, 0) + drop_total(key)
+
+
 # --- Сбор ресурсов на поверхности -------------------------------------------------
 
 ## Пометить объект на сбор. Пустая строка — успех, иначе причина отказа.
@@ -1295,10 +1308,15 @@ func harvestable(x: int) -> bool:
 
 
 func _in_clearing(x: int) -> bool:
+	return _clearing_project(x) != null
+
+
+## Стройка, на месте которой стоит объект x (его убирают при расчистке).
+func _clearing_project(x: int) -> Project:
 	for p in projects:
 		if p.phase == Project.Phase.DIG and p.clear_x.has(x):
-			return true
-	return false
+			return p
+	return null
 
 
 ## room — склад, для которого житель добывал: добычу он несёт туда сам.
@@ -1311,12 +1329,14 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 		world.set_berries(x, world.berries(x) - y[1])
 	else:
 		world.remove_feature(x)
+	var site := _clearing_project(x)
 	if room != 0 and u != null and y[1] > 0:
 		_carry_to(u, room, y[0], y[1])
 	elif y[1] > 0:
-		drop_item(_ground_cell(x), y[0], y[1])
-		# Кто добыл — тот и несёт на склад, сколько унесёт (остальное подберут).
-		if u != null and not offline:
+		var before := drop_amount(_landing(_ground_cell(x)), y[0])
+		drop_item(_ground_cell(x), y[0], y[1], site)
+		# Кто добыл — тот и несёт на склад излишек, сколько унесёт (остальное подберут).
+		if u != null and not offline and drop_amount(_landing(_ground_cell(x)), y[0]) > before:
 			_pick_up(u, _landing(_ground_cell(x)), y[0])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
 		var what := "собрал ягоды"
@@ -1347,7 +1367,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		if Mat.is_ore(m):
 			var depth := c.y - world.gen.surface_y(c.x)
 			amount = 1 + int(WorldGen.hash01(c.x, c.y, 17) * (2.0 + depth / 250.0))
-		drop_item(c, key, amount)
+		drop_item(c, key, amount, p)
 		if p != null:
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
@@ -1359,7 +1379,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 	if c.y == world.gen.surface_y(c.x) and world.feature_at(c.x) != WorldGen.FEATURE_NONE:
 		var y: Array = feature_yield(c.x)
 		world.remove_feature(c.x)
-		drop_item(_ground_cell(c.x), y[0], y[1])
+		drop_item(_ground_cell(c.x), y[0], y[1], p)
 	var hazards := {}
 	for n in world.reveal_around(c.x, c.y):
 		var nm := world.get_mat(n.x, n.y)
@@ -1658,8 +1678,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
-			if u.satiety < HUNGRY + 5.0 and has_food():
-				_eat_from(u, _take_store, DINING_BONUS if not rooms_of(RoomType.DINING).is_empty() else 1.0)
+			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("berries") > 0:
+				_eat_from(u, _take_any, DINING_BONUS if not rooms_of(RoomType.DINING).is_empty() else 1.0)
 			elif u.satiety < HUNGRY + 5.0:
 				for bx in _bushes:
 					if world.feature_at(bx) == WorldGen.FEATURE_BUSH and world.berries(bx) >= 1.0:
@@ -2950,11 +2970,21 @@ func _claimed_drop(c: Vector2i, key: String) -> int:
 
 ## Добытое ложится там, где добыто (падает на пол). Пустая порода — сразу в отвал,
 ## оффлайн жители успевают всё перетаскать — сразу на склад.
-func drop_item(c: Vector2i, key: String, n: int) -> void:
+## site — стройка, на которой добыто (расчистка, копка): что ей нужно, остаётся
+## на месте и сразу идёт в её материалы; на склад уносят только излишек.
+func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if key.is_empty() or n <= 0:
 		return
 	known_resources[key] = true
-	if offline or RoomType.BULK.has(key):
+	if site != null:
+		var use := mini(n, int(remaining(site).get(key, 0)))
+		if use > 0:
+			site.delivered[key] = site.delivered.get(key, 0) + use
+			n -= use
+			if n <= 0:
+				return
+	# Без игрока жители успевают донести — но только туда, где есть работник склада.
+	if RoomType.BULK.has(key) or (offline and can_store(key)):
 		_add(key, n)
 		return
 	var spot := _landing(c)
@@ -3038,20 +3068,27 @@ func _store_spot(key: String, dist: Dictionary) -> Variant:
 	var best = null
 	var best_d := 1 << 30
 	for room in store_rooms():
-		if not RoomType.stores(room, key):
+		if not RoomType.stores(room, key) or not store_staffed(room):
 			continue
 		for x in range(RoomType.floor_start(room), room.rect.end.x):
 			var c := Vector2i(x, room.rect.end.y - 1)
 			if dist.has(c) and dist[c] < best_d:
 				best_d = dist[c]
 				best = c
-	if best == null:
-		for dx in range(-8, -1):
-			var c := _ground_cell(home.x + dx)
-			if dist.has(c) and dist[c] < best_d:
-				best_d = dist[c]
-				best = c
 	return best
+
+
+## Склад (амбар) принимает добро, только когда на него назначен работник.
+func store_staffed(room: Project) -> bool:
+	return not room.paused and not assigned_to(room).is_empty()
+
+
+## Есть ли куда нести ресурс: склад или амбар для него с назначенным работником.
+func can_store(key: String) -> bool:
+	for room in store_rooms():
+		if RoomType.stores(room, key) and store_staffed(room):
+			return true
+	return false
 
 
 ## Свободный житель уносит лежащее на земле на склад (если там есть место).
@@ -3066,8 +3103,10 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 		if stand == null or dist[stand] >= best_d:
 			continue
 		for k in drops[c]:
-			# Носят только то, что этот склад (амбар) хранит.
-			if only != null and not RoomType.stores(only, k):
+			# Носят только то, что этот склад (амбар) хранит, и только если там есть работник.
+			if only != null and not (RoomType.stores(only, k) and store_staffed(only)):
+				continue
+			if only == null and not can_store(k):
 				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
 			var room: int = capacity(k) - inventory.get(k, 0) - _incoming(k)
@@ -3092,6 +3131,8 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 
 ## Житель берёт ресурс с кучи c (рядом с ним) и несёт на склад.
 func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
+	if not can_store(key):
+		return
 	var room: int = capacity(key) - inventory.get(key, 0) - _incoming(key)
 	var n := mini(carry_cap(), mini(drop_amount(c, key), room))
 	if n <= 0:
@@ -3705,12 +3746,9 @@ func missing_inputs(p: Project) -> Dictionary:
 
 
 ## Готовая продукция: при игроке — кучей на полу мастерской (её уносят подсобные),
-## без игрока — сразу на склад.
+## без игрока — сразу на склад (если на нём есть работник).
 func _produce(p: Project, k: String, n: int) -> void:
-	if offline:
-		_add(k, n)
-	else:
-		drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
+	drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
 
 
 func _craft(p: Project) -> void:
@@ -4149,10 +4187,9 @@ func _offline_deliver(p: Project) -> void:
 		return
 	var left := remaining(p)
 	for k in left:
-		var n := mini(carry_cap(), mini(left[k], inventory.get(k, 0)))
+		var n := _take_any(k, mini(carry_cap(), left[k]))
 		if n <= 0:
 			continue
-		inventory[k] -= n
 		p.delivered[k] = p.delivered.get(k, 0) + n
 		break
 	_try_pay(p)
@@ -4175,7 +4212,7 @@ func _offline_gather_x(kind: int, taken: Dictionary) -> Variant:
 func _offline_can_haul(p: Project) -> bool:
 	var left := remaining(p)
 	for k in left:
-		if inventory.get(k, 0) > 0:
+		if _have_any(k) > 0:
 			return true
 	return false
 
