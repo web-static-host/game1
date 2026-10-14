@@ -75,6 +75,12 @@ func _ready() -> void:
 	_update_status()
 
 
+## Игру закрыли (любым способом) — сохраняем последнее состояние.
+func _exit_tree() -> void:
+	if world != null:
+		_save()
+
+
 func _new_seed() -> int:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -174,7 +180,8 @@ func _notification(what: int) -> void:
 				if _paused_at > 0.0:
 					_apply_offline(_paused_at)
 				_paused_at = 0.0
-		NOTIFICATION_WM_CLOSE_REQUEST:
+		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_WM_GO_BACK_REQUEST:
+			# «Назад» на Android закрывает игру сразу — сохраняем в этот момент.
 			if world != null:
 				_save()
 
