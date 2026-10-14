@@ -1,6 +1,8 @@
 ## Текстуры земли для игры: картинки ChatGPT → assets/ground/.
 ## - rock_1..3: серые пласты породы. Сшиты по обеим осям (бесшовные), уменьшены до 512 px,
 ##   яркость приведена к среднему MEAN — игра красит их цветом породы, умножая на цвет / MEAN.
+## - fog: фактура неразведанной земли (картинка ChatGPT fog.png), одна на весь мир —
+##   по ней нельзя угадать, что под землёй. Обрабатывается как rock_*.
 ## - grass_edge, snow_edge: кромка поверх земли. Обрезаны по рисунку, сшиты по горизонтали.
 ## Запуск: python3 art_src/ground/prepare.py  (нужны Pillow и numpy)
 import os
@@ -58,7 +60,8 @@ def edge(name, y0, y1, line):
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
-    for n in ('rock_1', 'rock_2', 'rock_3'):
-        rock(n)
+    for n in ('rock_1', 'rock_2', 'rock_3', 'fog'):
+        if os.path.exists(os.path.join(HERE, n + '.png')):
+            rock(n)
     for e in EDGES:
         edge(*e)
