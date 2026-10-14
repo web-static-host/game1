@@ -586,7 +586,9 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 					p.needs_support.append(i)
 					break
 	# Деревья, кусты и валуны на месте стройки убираются на этапе 1 — как ресурс.
-	for x in features_in(r):
+	# Мост и пристань не мешают деревьям (крона у берега — не помеха), их не рубят:
+	# дальний берег до постройки моста всё равно не достать.
+	for x in ([] if p.is_water_structure() else features_in(r)):
 		p.clear_x.append(x)
 		world.set_feature_mark(x, true)
 	projects.append(p)

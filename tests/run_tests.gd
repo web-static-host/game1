@@ -1001,6 +1001,7 @@ func test_lakes_and_fishing() -> void:
 	_start(colony, x0 - 3)
 	colony.inventory = {"wood": 49, "stone": 20, "food": 0}
 	var br := colony.create_project(Project.Kind.BRIDGE, bridge_r)
+	check(br != null and br.clear_x.is_empty(), "мосту расчистка не нужна — дерево на дальнем берегу не держит стройку")
 	colony.advance_offline(5000.0)
 	check(br.phase == Project.Phase.DONE, "мостик построен")
 	check(colony.pathing.standable(Vector2i(x0 + 2, row)), "по мостику можно ходить над водой")

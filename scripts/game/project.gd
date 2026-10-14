@@ -336,6 +336,9 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	for x in d.get("clear_x", []):
 		p.clear_x.append(int(x))
+	# Мосту и пристани расчистка не нужна (раньше ждали дерево на дальнем берегу).
+	if p.is_water_structure():
+		p.clear_x.clear()
 	for k in d.get("store_filter", []):
 		p.store_filter.append(str(k))
 	p.exposed_t = float(d.get("exposed_t", 0.0))
