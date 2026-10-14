@@ -22,6 +22,7 @@ uniform sampler2D mountains_2 : source_color, filter_linear_mipmap, repeat_disab
 uniform sampler2D forest_1 : source_color, filter_linear_mipmap, repeat_disable;
 uniform sampler2D forest_2 : source_color, filter_linear_mipmap, repeat_disable;
 uniform sampler2D hills_1 : source_color, filter_linear_mipmap, repeat_disable;
+uniform sampler2D hills_2 : source_color, filter_linear_mipmap, repeat_disable;
 // Атлас из 5 облаков в ряд.
 uniform sampler2D clouds : source_color, filter_linear_mipmap, repeat_disable;
 
@@ -128,13 +129,12 @@ void fragment() {
 		c = over(c, tex, 0.3, horizon, cover);
 	}
 
-	// Холмы: кусок 30 клеток, параллакс 0.45. Вариант пока один — без отражения,
-	// иначе на стыке видна симметрия.
-	q = layer_uv(cam_x * 0.45 + px, above, 30.0, -4.0 - 30.0 * 96.0 / 1199.0, 30.0 * 419.0 / 1199.0, 3.0, 1.0, false, g);
+	// Холмы: кусок 30 клеток, параллакс 0.45.
+	q = layer_uv(cam_x * 0.45 + px, above, 30.0, -4.0 - 30.0 * 104.0 / 1199.0, 30.0 * 452.0 / 1199.0, 3.0, 2.0, true, g);
 	dx = dFdx(g);
 	dy = dFdy(g);
 	if (q.w > 0.0) {
-		tex = textureGrad(hills_1, q.xy, dx, dy);
+		tex = q.z < 0.5 ? textureGrad(hills_1, q.xy, dx, dy) : textureGrad(hills_2, q.xy, dx, dy);
 		c = over(c, tex, 0.0, horizon, cover);
 	}
 

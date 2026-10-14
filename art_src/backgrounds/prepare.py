@@ -17,7 +17,7 @@ PAD = 0.3     # снизу дорисовываем столько (доля в�
 LAYERS = {
     'mountains': ['mountains_1', 'mountains_2'],
     'forest': ['forest_1', 'forest_2'],
-    'hills': ['hills_1'],
+    'hills': ['hills_1', 'hills_2'],
 }
 # Облака — рамки (x0, y0, x1, y1) в clouds.png.
 CLOUDS = [(41, 96, 724, 404), (828, 98, 1515, 413), (471, 413, 1105, 682), (904, 659, 1496, 956), (49, 692, 815, 959)]
@@ -132,5 +132,5 @@ if __name__ == '__main__':
         imgs = pad_bottom(imgs)
         for i, im in enumerate(imgs):
             save(im, os.path.join(OUT, '%s_%d.png' % (layer, i + 1)))
-        print(layer, len(imgs), 'x', imgs[0].shape[1], imgs[0].shape[0], 'crop y0', y0)
+        print(layer, len(imgs), 'x', imgs[0].shape[1], imgs[0].shape[0], 'crop y0', y0, 'pad', imgs[0].shape[0] - (1024 - y0))
     clouds()
