@@ -5,17 +5,18 @@ import os, sys, math, random
 import bpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', '..', 'assets', 'rooms')
+# ROOMS_OUT, ROOMS_WIDTHS=6, ROOMS_SAMPLES=24 — для быстрых проб.
+OUT = os.environ.get('ROOMS_OUT') or os.path.join(HERE, '..', '..', 'assets', 'rooms')
 PX = 64           # пикселей на метр (клетку) в рендере
 H = 3.0           # высота комнаты
-WIDTHS = [3, 6, 9]
+WIDTHS = [int(v) for v in os.environ.get('ROOMS_WIDTHS', '3,6,9').split(',')]
 
 
 def reset():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
-    sc.cycles.samples = 96
+    sc.cycles.samples = int(os.environ.get('ROOMS_SAMPLES', 96))
     sc.cycles.use_denoising = True
     sc.render.film_transparent = True
     sc.view_settings.view_transform = 'Standard'
@@ -114,45 +115,121 @@ def bolt(x, z, y, m):
     bpy.ops.object.shade_smooth()
 
 
+# Объём «разрезом»: внутренность — настоящая коробка глубиной D, которую потом сжимаем
+# к задней стене на постоянный отступ (вынужденная перспектива). Камера ортогональная,
+# поэтому передняя рама ровно совпадает с клетками, а глубина одинакова у комнат 3/6/9.
+D = 1.5                 # глубина комнаты (м)
+FS, FT, FB = 0.2, 0.22, 0.14   # толщина передней рамы: бок, верх, низ
+INSET = (0.36, 0.3, 0.46)      # насколько сужается к задней стене: бок, потолок, пол
+
+
+def warp(objs, w):
+    """Сжать вершины объектов к задней стене: чем глубже (y), тем ближе к центру."""
+    X0, X1, Z0, Z1 = FS, w - FS, FB, H - FT
+    for o in objs:
+        bpy.context.view_layer.objects.active = o
+        for s in bpy.context.selected_objects:
+            s.select_set(False)
+        o.select_set(True)
+        bpy.ops.object.convert(target='MESH')
+        mw = o.matrix_world.copy()
+        inv = mw.inverted()
+        for v in o.data.vertices:
+            p = mw @ v.co
+            k = min(1.0, max(0.0, p.y / D))
+            ax, at, ab = INSET[0] * k, INSET[1] * k, INSET[2] * k
+            x = X0 + ax + (p.x - X0) * (X1 - X0 - 2 * ax) / (X1 - X0)
+            z = Z0 + ab + (p.z - Z0) * (Z1 - Z0 - ab - at) / (Z1 - Z0)
+            p.x, p.z = x, z
+            v.co = inv @ p
+        o.data.update()
+
+
+def planks_along(name, axis, a0, a1, b0, b1, plane, side, mats, rnd, ph=0.3, t=0.06):
+    """Доски поверхности. axis='x' — доски вдоль x (рядами по второй оси b),
+    plane — координата поверхности по третьей оси, side — куда толщина (±1)."""
+    out = []
+    b = b0
+    row = 0
+    while b < b1 - 0.01:
+        b2 = min(b1, b + ph)
+        a = a0 if row % 2 == 0 else a0 - rnd.uniform(0.6, 1.4)
+        while a < a1:
+            ln = rnd.uniform(1.6, 2.8)
+            x0, x1 = max(a0, a), min(a1, a + ln)
+            if x1 - x0 > 0.05:
+                c0, c1 = sorted((plane, plane + side * t))
+                m = rnd.choice(mats)
+                if axis == 'xz':      # задняя стена: доски по x, ряды по z, толщина по y
+                    out.append(box(name, x0 + .015, b + .015, x1 - .015, b2 - .015, c0, c1, m, .03))
+                elif axis == 'xy':    # пол/потолок: доски по x, ряды по y, толщина по z
+                    o = box(name, x0 + .015, c0, x1 - .015, c1, b + .015, b2 - .015, m, .03)
+                    out.append(o)
+            a += ln
+        b = b2
+        row += 1
+    return out
+
+
 def wood_room(w):
     rnd = random.Random(w)
     tones = ['#d9904f', '#cc8245', '#e29c5a', '#c47a40']
     planks = [mat('plank%d' % i, c, 0.65, 0.35) for i, c in enumerate(tones)]
+    floor_t = [mat('fl%d' % i, c, 0.5, 0.3) for i, c in enumerate(['#b06a3a', '#a5613a', '#b9743f'])]
+    ceil_t = [mat('cl%d' % i, c, 0.6, 0.3) for i, c in enumerate(['#9c5a2e', '#a96534'])]
     gap = mat('gap', '#3a1f10', 0.9)
     post = mat('post', '#8a4f26', 0.55, 0.3)
-    floor = mat('floor', '#a8653a', 0.5, 0.3)
+    frame = mat('frame', '#7a4422', 0.5, 0.3)
     iron = mat('iron', '#3b3536', 0.35)
-    # Задняя стена: горизонтальные доски со сдвинутыми стыками; за ними тёмная щель.
-    box('back', 0, 0, w, H, 0.32, 0.4, gap, 0)
-    ph = 0.3
-    z = 0.0
-    row = 0
-    while z < H - 0.01:
-        x = 0.0 if row % 2 == 0 else -rnd.uniform(0.6, 1.4)
-        while x < w:
-            ln = rnd.uniform(1.6, 2.8)
-            x0, x1 = max(0.0, x), min(w, x + ln)
-            if x1 - x0 > 0.05:
-                box('p', x0 + 0.015, z + 0.015, x1 - 0.015, z + ph - 0.015, 0.18, 0.32, rnd.choice(planks), 0.035)
-            x += ln
-        z += ph
-        row += 1
-    # Пол — толстая доска, потолок — балка; по бокам и через 3 м — стойки с укосинами.
-    box('floor', -0.02, 0.0, w + 0.02, 0.2, -0.25, 0.3, floor, 0.04)
-    box('ceil', -0.02, H - 0.24, w + 0.02, H, -0.2, 0.3, post, 0.04)
-    xs = list(range(0, w + 1, 3))
-    for x in xs:
-        x0 = x - 0.0 if x == 0 else (x - 0.24 if x == w else x - 0.12)
-        x0 = 0.0 if x == 0 else x0
-        box('post', x0, 0.18, x0 + 0.24, H - 0.2, -0.18, 0.28, post, 0.04)
+    X0, X1, Z0, Z1 = FS, w - FS, FB, H - FT
+    inner = []
+    # Тёмная подложка за всеми досками — в щелях между ними.
+    inner.append(box('back_gap', X0 - .1, Z0 - .1, X1 + .1, Z1 + .1, D + 0.06, D + 0.12, gap, 0))
+    inner.append(box('floor_gap', X0 - .1, Z0 - .14, X1 + .1, Z0 - .06, -0.1, D + .1, gap, 0))
+    inner.append(box('ceil_gap', X0 - .1, Z1 + .06, X1 + .1, Z1 + .14, -0.1, D + .1, gap, 0))
+    # Задняя стена, пол, потолок — доски.
+    inner += planks_along('back', 'xz', X0, X1, Z0, Z1, D, 1, planks, rnd)
+    inner += planks_along('floor', 'xy', X0, X1, 0.0, D, Z0, -1, floor_t, rnd, ph=0.3)
+    inner += planks_along('ceil', 'xy', X0, X1, 0.0, D, Z1, 1, ceil_t, rnd, ph=0.375)
+    # Боковые стены: доски вдоль глубины, рядами по высоте.
+    for x, sd in ((X0, -1), (X1, 1)):
+        g0, g1 = sorted((x + sd * .06, x + sd * .12))
+        inner.append(box('side_gap', g0, Z0 - .1, g1, Z1 + .1, -0.1, D + .1, gap, 0))
+        z = Z0
+        while z < Z1 - 0.01:
+            z2 = min(Z1, z + 0.3)
+            c0, c1 = sorted((x, x + sd * 0.06))
+            inner.append(box('side', c0, z + .015, c1, z2 - .015, -0.05, D + .02, rnd.choice(planks), .03))
+            z = z2
+    # Стойки в задних углах и балки по рёбрам потолка и пола.
+    for x in (X0, X1 - 0.2):
+        inner.append(box('corner', x, Z0, x + 0.2, Z1, D - 0.2, D, post, .04))
+    inner.append(box('back_top', X0, Z1 - 0.16, X1, Z1, D - 0.16, D, post, .04))
+    inner.append(box('back_low', X0, Z0, X1, Z0 + 0.1, D - 0.1, D, post, .03))
+    for x in (X0, X1 - 0.16):
+        inner.append(box('ceil_edge', x, Z1 - 0.16, x + 0.16, Z1, 0.0, D, post, .04))
+    # Через 3 м — стойки на задней стене с укосинами под потолочной балкой.
+    for x in range(3, w, 3):
+        inner.append(box('post', x - 0.1, Z0, x + 0.1, Z1, D - 0.14, D, post, .04))
         for side in (-1, 1):
-            if (x == 0 and side < 0) or (x == w and side > 0):
-                continue
-            px = x0 + (0.24 if side > 0 else 0.0)
-            beam('brace', (px - side * 0.08, H - 0.8), (px + side * 0.6, H - 0.18), 0.13, -0.12, 0.22, post)
-            bolt(px + side * 0.07, H - 0.64, -0.19, iron)
-        bolt(x0 + 0.12, H - 0.12, -0.21, iron)
-        bolt(x0 + 0.12, 0.1, -0.26, iron)
+            px = x + side * 0.1
+            inner.append(beam('brace', (px - side * 0.06, Z1 - 0.7), (px + side * 0.5, Z1 - 0.12), 0.12, D - 0.12, D - 0.02, post))
+            bolt(px + side * 0.06, Z1 - 0.56, D - 0.13, iron)
+            inner.append(bpy.context.object)
+    # Потолочные балки поперёк, в глубину.
+    for x in range(3, w, 3):
+        inner.append(box('joist', x - 0.09, Z1 - 0.14, x + 0.09, Z1, 0.0, D, post, .04))
+    warp(inner, w)
+    # Передняя рама — толстые брусья поверх разреза, с болтами в углах.
+    box('f_left', 0, 0, FS, H, -0.2, 0.06, frame, .05)
+    box('f_right', w - FS, 0, w, H, -0.2, 0.06, frame, .05)
+    box('f_top', 0, H - FT, w, H, -0.22, 0.04, frame, .05)
+    box('f_bot', 0, 0, w, FB, -0.24, 0.04, frame, .04)
+    for x in (FS / 2, w - FS / 2):
+        for z in (H - FT / 2, FB / 2 + 0.01):
+            bolt(x, z, -0.24, iron)
+    for x in range(3, w, 3):
+        bolt(x, H - FT / 2, -0.24, iron)
 
 
 def light_and_camera(w):
@@ -174,6 +251,14 @@ def light_and_camera(w):
     fill.data.energy = 0.6
     fill.data.angle = math.radians(60)
     fill.rotation_euler = (math.radians(85), math.radians(15), 0)
+    # Тёплый рассеянный свет внутри, под потолком у передней рамы.
+    bpy.ops.object.light_add(type='AREA', location=(w / 2, 0.4, H - 0.45))
+    inner = bpy.context.object
+    inner.data.shape = 'RECTANGLE'
+    inner.data.size = w * 0.8
+    inner.data.size_y = 0.6
+    inner.data.energy = 14 * w
+    inner.data.color = (1.0, 0.82, 0.6)
     bpy.ops.object.camera_add(location=(w / 2, -20, H / 2), rotation=(math.radians(90), 0, 0))
     cam = bpy.context.object
     cam.data.type = 'ORTHO'
