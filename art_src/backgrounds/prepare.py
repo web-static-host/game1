@@ -11,6 +11,8 @@ from PIL import Image
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, '..', '..', 'assets', 'background')
 EDGE = 0.22   # доля ширины на перетекание у каждого края
+PAD = 0.3     # снизу дорисовываем столько (доля высоты): переход в ровный цвет низа.
+              # Шейдер ниже картинки повторяет последнюю строку — она однотонная, без полос.
 
 LAYERS = {
     'mountains': ['mountains_1', 'mountains_2'],
@@ -93,6 +95,21 @@ def seam_layer(names):
     return out, y0
 
 
+def pad_bottom(imgs):
+    """Продлить низ всех вариантов: нижние строки плавно уходят в общий средний цвет."""
+    h = imgs[0].shape[0]
+    n = int(h * PAD)
+    base = np.mean([im[-max(4, h // 12):].reshape(-1, 4).mean(axis=0) for im in imgs], axis=0)
+    out = []
+    for im in imgs:
+        last = im[-1]
+        t = (np.arange(1, n + 1, dtype=np.float32) / n)[:, None, None]
+        t = t * t * (3 - 2 * t)
+        ext = last[None] * (1 - t) + base[None, None] * t
+        out.append(np.concatenate([im, ext], axis=0))
+    return out
+
+
 def clouds():
     src = Image.open(os.path.join(HERE, 'clouds.png')).convert('RGBA')
     cw, ch = CLOUD_CELL
@@ -112,6 +129,7 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for layer, names in LAYERS.items():
         imgs, y0 = seam_layer(names)
+        imgs = pad_bottom(imgs)
         for i, im in enumerate(imgs):
             save(im, os.path.join(OUT, '%s_%d.png' % (layer, i + 1)))
         print(layer, len(imgs), 'x', imgs[0].shape[1], imgs[0].shape[0], 'crop y0', y0)

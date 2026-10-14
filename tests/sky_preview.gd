@@ -12,6 +12,7 @@ const SHOTS := [
 	[40, -160, 1.0, false, "sky_west"],
 	[50, 30, 0.55, false, "sky_far"],
 	[60, 0, 1.0, true, "sky_winter"],
+	[70, "low", 0.8, true, "sky_low"],
 ]
 
 
@@ -30,7 +31,7 @@ func _process(_delta: float) -> bool:
 	for s in SHOTS:
 		if _frame == s[0] - 6:
 			var home: Vector2i = _main._home
-			var x: int = home.x + s[1]
+			var x: int = home.x + s[1] if s[1] is int else _lowest_x(home.x)
 			_main.world_view.focus_cell(Vector2i(x, _main.world.gen.surface_y(x) - 5))
 			_main.camera.zoom = Vector2(s[2], s[2])
 			_main.colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5 if s[3] else Colony.MONTH * 4.5
@@ -39,3 +40,12 @@ func _process(_delta: float) -> bool:
 			root.get_texture().get_image().save_png(path)
 			print("saved ", path)
 	return _frame > SHOTS[-1][0]
+
+
+## Где рядом с базой земля ниже всего — там фон должен опуститься вместе с ней.
+func _lowest_x(x0: int) -> int:
+	var best := x0
+	for x in range(x0 - 200, x0 + 200):
+		if _main.world.gen.land_y(x) > _main.world.gen.land_y(best):
+			best = x
+	return best

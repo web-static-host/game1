@@ -15,6 +15,8 @@ var camera: CameraController
 var hud: Hud
 var mode := Hud.Mode.LOOK
 var _sky: ColorRect
+## Высота земли, к которой привязан фон (y клетки): самая низкая земля на экране, сглаженно.
+var _sky_ground := NAN
 var _night: CanvasModulate
 var _speed_idx := 0
 var _autosave := 0.0
@@ -141,7 +143,7 @@ func _process(delta: float) -> void:
 		camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * 10.0 * minf(1.0, _shake)
 	elif camera.offset != Vector2.ZERO:
 		camera.offset = Vector2.ZERO
-	_update_sky()
+	_update_sky(delta)
 	_status_timer -= delta
 	if _status_timer <= 0.0:
 		_status_timer = STATUS_INTERVAL
@@ -1325,7 +1327,7 @@ func _clamp_camera() -> void:
 	camera.position = Vector2(clampf(camera.position.x, min_x, max_x), clampf(camera.position.y, min_y, max_y))
 
 
-func _update_sky() -> void:
+func _update_sky(delta := 0.0) -> void:
 	var half_h := get_viewport_rect().size.y * 0.5 / camera.zoom.y
 	var top_y := world_view.origin.y + (camera.position.y - half_h) / ChunkView.TILE
 	var bottom_y := world_view.origin.y + (camera.position.y + half_h) / ChunkView.TILE
@@ -1337,7 +1339,20 @@ func _update_sky() -> void:
 	m.set_shader_parameter("winter", 1.0 if colony.is_winter() else 0.0)
 	m.set_shader_parameter("cam_x", world_view.origin.x + camera.position.x / ChunkView.TILE)
 	m.set_shader_parameter("view_w", get_viewport_rect().size.x / camera.zoom.x / ChunkView.TILE)
-	m.set_shader_parameter("ground_alt", -float(colony.home.y))
+	# Фон стоит на самой низкой земле в кадре (с запасом по краям), иначе там, где
+	# поверхность ниже базы, под холмами пусто. Сдвиг плавный, чтобы фон не прыгал.
+	var view_w: float = get_viewport_rect().size.x / camera.zoom.x / ChunkView.TILE
+	var cx: float = world_view.origin.x + camera.position.x / ChunkView.TILE
+	var low := world.gen.land_y(int(cx))
+	var x := int(cx - view_w * 0.6)
+	while x <= int(cx + view_w * 0.6):
+		low = maxi(low, world.gen.land_y(x))
+		x += 3
+	if is_nan(_sky_ground) or delta <= 0.0:
+		_sky_ground = low
+	else:
+		_sky_ground = lerpf(_sky_ground, low, 1.0 - exp(-delta * 1.5))
+	m.set_shader_parameter("ground_alt", -_sky_ground)
 	world_view.set_season(colony.is_winter(), colony.calendar_month())
 	# Ночью мир чуть темнее.
 	_night.color = Color(0.62, 0.66, 0.85).lerp(Color.WHITE, light)
