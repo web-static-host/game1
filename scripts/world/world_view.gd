@@ -32,6 +32,8 @@ func setup(p_world: WorldData, p_colony: Colony, p_camera: Camera2D) -> void:
 	structures.view = self
 	structures.colony = colony
 	structures.z_index = 5
+	# Картинки комнат рендерятся крупнее и уменьшаются — со сглаживанием.
+	structures.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(structures)
 	units_layer = UnitLayer.new()
 	units_layer.view = self

@@ -121,6 +121,37 @@ func _draw_done(p: Project) -> void:
 
 
 func _draw_room_shell(p: Project, r: Rect2) -> void:
+	var tex := room_texture(p.material, p.rect.size.x)
+	if tex != null:
+		draw_texture_rect(tex, r, false)
+	else:
+		_draw_room_walls(p, r)
+	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
+	if p.ladder or _wall_outside(p, -1):
+		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+	if _wall_outside(p, 1):
+		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+	# Лампа горит, только когда есть электричество.
+	if colony.powered() and colony.is_underground(p):
+		var lamp := Vector2(r.get_center().x, r.position.y + 10)
+		_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
+		draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
+		draw_circle(lamp + Vector2(0, 4), 5, LAMP)
+		draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+
+
+## Готовая картинка комнаты (рендер из Blender, assets/rooms/) или null — тогда рисуем сами.
+static var _room_tex := {}
+static func room_texture(material: String, w: int) -> Texture2D:
+	var key := "%s_%d" % [material, w]
+	if not _room_tex.has(key):
+		var path := "res://assets/rooms/%s.png" % key
+		_room_tex[key] = load(path) if ResourceLoader.exists(path) else null
+	return _room_tex[key]
+
+
+## Стены, пол и рама, нарисованные кодом (для материалов без готовой картинки).
+func _draw_room_walls(p: Project, r: Rect2) -> void:
 	var c: Array = WALLS.get(p.material, WALLS["wood"])
 	var wall: Color = c[0]
 	draw_rect(r, wall)
@@ -186,18 +217,7 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 	frame.set_border_width_all(5)
 	frame.set_corner_radius_all(6)
 	draw_style_box(frame, r)
-	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
-	if p.ladder or _wall_outside(p, -1):
-		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-	if _wall_outside(p, 1):
-		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-	# Лампа горит, только когда есть электричество.
-	if colony.powered() and colony.is_underground(p):
-		var lamp := Vector2(r.get_center().x, r.position.y + 10)
-		_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
-		draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
-		draw_circle(lamp + Vector2(0, 4), 5, LAMP)
-		draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+
 
 
 ## Мягкое световое пятно: веер треугольников от яркого центра к прозрачному краю.
