@@ -19,7 +19,6 @@ const TUNNEL_MAX_WIDTH := 3
 ## Материалы стен комнат: ключ -> [название, множитель времени стройки].
 const MATERIALS := {
 	"wood": ["Дерево", 1.0],
-	"clay": ["Глина", 1.2],
 	"stone": ["Камень", 1.5],
 	"brick": ["Кирпич", 1.3],
 	"metal": ["Сталь", 1.6],
@@ -41,7 +40,7 @@ var blocked := ""
 var workers := 1
 ## Лестница у левой стены (нужна, если пол комнаты ниже поверхности).
 var ladder := false
-## Материал стен комнаты: ключ ресурса ("wood", "clay", "stone").
+## Материал стен комнаты: ключ ресурса ("wood", "stone", "brick", "metal").
 var material := "wood"
 ## Назначение комнаты (RoomType) и оборудование.
 var purpose := 0
@@ -326,6 +325,9 @@ static func from_dict(d: Dictionary) -> Project:
 	p.workers = int(d.get("workers", 2))
 	p.ladder = bool(d.get("ladder", false))
 	p.material = str(d.get("material", "wood"))
+	# Глиняных комнат больше нет (глина — только сырьё для кирпича): старые стали кирпичными.
+	if p.material == "clay":
+		p.material = "brick"
 	p.purpose = int(d.get("purpose", 0))
 	p.equip_target = int(d.get("equip_target", 0))
 	p.equip_paid = bool(d.get("equip_paid", false))

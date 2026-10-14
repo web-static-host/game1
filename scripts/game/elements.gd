@@ -455,14 +455,20 @@ func temperature(c: Vector2i) -> float:
 func _temperature(c: Vector2i) -> float:
 	var t := Env.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
 	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг.
+	# Несколько очагов рядом не складываются в жару — греет самый сильный.
+	var fire := 0.0
 	for p in colony.projects:
 		if not p.burning or p.phase != Project.Phase.DONE:
 			continue
-		var gc := p.rect.get_center()
-		var d := maxi(absi(c.x - gc.x), absi(c.y - gc.y))
-		if d <= Colony.HEAT_RADIUS:
-			# Рядом (3 м) — полное тепло, дальше плавно слабеет.
-			t += Colony.HEAT * clampf(float(Colony.HEAT_RADIUS + 1 - d) / (Colony.HEAT_RADIUS - 2), 0.0, 1.0)
+		# Расстояние от стен комнаты (внутри — 0): рядом полное тепло, дальше плавно слабеет.
+		var r := p.rect
+		var dx := maxi(0, maxi(r.position.x - c.x, c.x - (r.end.x - 1)))
+		var dy := maxi(0, maxi(r.position.y - c.y, c.y - (r.end.y - 1)))
+		var d := maxi(dx, dy)
+		var zone := RoomType.heat_zone(p)
+		if d <= zone.y:
+			fire = maxf(fire, Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0))
+	t += fire
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):

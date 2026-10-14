@@ -173,7 +173,7 @@ func _prepare_base() -> void:
 	var home := colony.create_project(R, Rect2i(x0 + 1, s + 3, 7, 3), -1, "wood")
 	colony.create_project(T, Rect2i(x0 - 9, s + 9, 9, 3))
 	var farm := colony.create_project(R, Rect2i(x0 + 1, s + 10, 7, 3), -1, "stone")
-	var store := colony.create_project(R, Rect2i(x0 - 9, s + 6, 8, 3), -1, "clay")
+	var store := colony.create_project(R, Rect2i(x0 - 9, s + 6, 8, 3), -1, "stone")
 	for u in colony.units:
 		u.lifespan = 0.0 # для снимков — без старения
 	colony.advance_offline(100000.0)
