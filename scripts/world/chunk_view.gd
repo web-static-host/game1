@@ -77,20 +77,18 @@ static func rock_tex_of(m: int) -> int:
 	return RockTex.LAYERED
 
 
-## Неразведанная земля: у поверхности мягкая, глубже — слои, совсем глубоко — плотная.
-static func fog_tex_of(depth: int) -> int:
-	if depth < 30:
-		return RockTex.SOFT
-	return RockTex.LAYERED if depth < 120 else RockTex.DENSE
+## Без текстуры: неразведанная земля («туман») всегда однотонная — по ней нельзя
+## угадать, что внутри. Пласты рисуем только на открытой породе (кайма, выработки).
+const FLAT := -1
 
 
 static func _tinted(col: Color) -> Color:
 	return Color(col.r / ROCK_MEAN, col.g / ROCK_MEAN, col.b / ROCK_MEAN, col.a)
 
 
-## Клетка (или её часть) земли текстурой ti, подкрашенной в col. Без текстуры — заливка.
+## Клетка (или её часть) земли текстурой ti, подкрашенной в col. FLAT или нет текстуры — заливка.
 func _fill_rect(r: Rect2, col: Color, ti: int) -> void:
-	var t: Texture2D = _rock_tex[ti] if ti < _rock_tex.size() else null
+	var t: Texture2D = _rock_tex[ti] if ti >= 0 and ti < _rock_tex.size() else null
 	if t == null:
 		draw_rect(r, col)
 		return
@@ -100,7 +98,7 @@ func _fill_rect(r: Rect2, col: Color, ti: int) -> void:
 
 
 func _fill_poly(pts: PackedVector2Array, col: Color, ti: int) -> void:
-	var t: Texture2D = _rock_tex[ti] if ti < _rock_tex.size() else null
+	var t: Texture2D = _rock_tex[ti] if ti >= 0 and ti < _rock_tex.size() else null
 	if t == null:
 		draw_colored_polygon(pts, col)
 		return
@@ -196,7 +194,7 @@ func _draw() -> void:
 					_draw_water(lx, ly, x, y)
 				if not line.is_zero_approx() and y + 1 > minf(line.x, line.z):
 					var sr := Rect2(lx * TILE, ly * TILE, TILE, TILE)
-					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)), RockTex.SOFT)
+					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)), FLAT)
 					for poly in Geometry2D.intersect_polygons(_band_poly(lx, ly, line), _rect_poly(sr)):
 						_fill_poly(poly, soil, RockTex.SOFT)
 				continue # небо рисует фон
@@ -208,7 +206,7 @@ func _draw() -> void:
 			var depth := y - surf
 			if y < band_to and f & ChunkData.F_DUG == 0 and Mat.is_solid(m):
 				# Что под травой — неизвестно: видна только полоса почвы в полблока.
-				_draw_clipped(lx, ly, line, fog_color(depth, v), fog_tex_of(depth))
+				_draw_clipped(lx, ly, line, fog_color(depth, v), FLAT)
 				var band := _band_poly(lx, ly, line)
 				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
 					_fill_poly(poly, soil, RockTex.SOFT)
@@ -224,7 +222,7 @@ func _draw() -> void:
 						_draw_smooth_grass(lx, ly, line, x)
 				continue
 			if f & ChunkData.F_REVEALED == 0:
-				_fill_rect(r, fog_color(depth, v), fog_tex_of(depth))
+				draw_rect(r, fog_color(depth, v))
 				continue
 			var dug := f & ChunkData.F_DUG != 0
 			if dug or m == Mat.AIR or Mat.is_fluid(m):
@@ -252,7 +250,7 @@ func _draw_open_cell(lx: int, ly: int, r: Rect2, m: int, dug: bool, depth: int, 
 		back = rock_color(host, v).darkened(0.62).lerp(BACK, 0.5)
 	else:
 		back = fog_color(depth, v).darkened(0.55)
-	_fill_rect(r, back, rock_tex_of(host) if dug else fog_tex_of(depth))
+	_fill_rect(r, back, rock_tex_of(host) if dug else FLAT)
 	# Мягкая тень под потолком.
 	if dug and not _is_open(lx, ly - 1):
 		draw_polygon(_rect_poly(Rect2(r.position, Vector2(TILE, 12))),
@@ -285,12 +283,11 @@ static func _corner_fill(r: Rect2, corner: Vector2i) -> PackedVector2Array:
 	return pts
 
 
-## Текстура клетки по тем же правилам, что и цвет в _solid_color.
+## Текстура клетки по тем же правилам, что и цвет в _solid_color (туман — без текстуры).
 func _solid_tex(lx: int, ly: int) -> int:
 	var f := _flags_at(lx, ly)
 	if f < 0 or f & ChunkData.F_REVEALED == 0:
-		var x := chunk.cx * SIZE + lx
-		return fog_tex_of(chunk.cy * SIZE + ly - world.gen.surface_y(x))
+		return FLAT
 	return rock_tex_of(_mat_at(lx, ly))
 
 
@@ -316,7 +313,7 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	var faded := mask == 0
 	var fog := fog_color(y - surf, v)
 	if faded:
-		_fill_rect(r, fog, fog_tex_of(y - surf))
+		draw_rect(r, fog)
 		_half_strips(lx, ly, r, base, open_l, open_r, open_u, open_d, PackedVector2Array(), ti)
 	elif mask == 0:
 		_fill_rect(r, base, ti)
