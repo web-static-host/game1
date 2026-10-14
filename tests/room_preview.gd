@@ -1,5 +1,5 @@
 extends SceneTree
-## Снимки пустых деревянных комнат (3, 6, 9 клеток) — новые картинки и как было.
+## Снимки комнат из разных материалов (дерево, кирпич-склад, металл, камень) — новые картинки и как было.
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка>
 
 var _main: Node
@@ -24,14 +24,14 @@ func _process(_delta: float) -> bool:
 		var world: WorldData = _main.world
 		var x0: int = _main._home.x + 2
 		var s := world.gen.surface_y(x0)
-		colony.inventory = {"wood": 600, "stone": 300, "food": 200}
+		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "metal": 300}
 		colony.known_resources = {"wood": true, "stone": true}
 		var T := Project.Kind.TUNNEL
 		var R := Project.Kind.ROOM
 		colony.create_project(T, Rect2i(x0, s, 1, 12))
 		colony.create_project(R, Rect2i(x0 + 1, s + 2, 9, 3), -1, "wood")
-		colony.create_project(R, Rect2i(x0 + 1, s + 5, 6, 3), -1, "wood")
-		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "wood")
+		colony.create_project(R, Rect2i(x0 + 1, s + 5, 6, 3), -1, "brick")
+		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "metal")
 		colony.create_project(R, Rect2i(x0 + 1, s + 8, 6, 3), -1, "stone")
 		for u in colony.units:
 			u.lifespan = 0.0
@@ -44,6 +44,9 @@ func _process(_delta: float) -> bool:
 		# Для превью: без износа, светло, жители сыты и стоят в комнатах.
 		for pr in colony.projects:
 			pr.wear = 0.0
+			# Кирпичная — склад: видно полку.
+			if pr.material == "brick" and pr.kind == R:
+				pr.purpose = RoomType.STORAGE
 		_main.world_view.light.visible = false
 		var spots := [Vector2(x0 + 3, s + 4), Vector2(x0 + 7, s + 4), Vector2(x0 + 3, s + 7), Vector2(x0 + 8, s + 7), Vector2(x0 + 4, s + 10)]
 		for i in colony.units.size():

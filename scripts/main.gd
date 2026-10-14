@@ -1312,7 +1312,7 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
-	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())])
+	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())], _weather_icon())
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
@@ -1325,6 +1325,21 @@ func _clamp_camera() -> void:
 	var min_y := (mini(colony.highest_y, colony.home.y) - 40 - o.y) * t
 	var max_y := (maxi(colony.deepest_y, colony.home.y) + 14 - o.y) * t
 	camera.position = Vector2(clampf(camera.position.x, min_x, max_x), clampf(camera.position.y, min_y, max_y))
+
+
+## Значок у даты. Погоды в игре пока нет — значок по времени суток и сезону
+## (зимой идёт снег, как в SeasonFx); дождь, гроза и туман — на будущее.
+func _weather_icon() -> String:
+	if colony.daylight() < 0.3:
+		return "moon"
+	match colony.season():
+		Colony.Season.WINTER:
+			return "snow"
+		Colony.Season.AUTUMN:
+			return "cloud"
+		Colony.Season.SPRING:
+			return "sun_cloud"
+	return "sun"
 
 
 func _update_sky(delta := 0.0) -> void:

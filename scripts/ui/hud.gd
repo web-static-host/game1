@@ -59,6 +59,8 @@ const GREEN := Color(0.3, 0.72, 0.38)
 
 var _status: Label
 var _date: Label
+var _weather: TextureRect
+var _weather_name := ""
 var _res_box: HBoxContainer
 var _res_sig := ""
 var _build_btn: IconButton
@@ -207,9 +209,25 @@ func _build_top(column: VBoxContainer) -> void:
 	_date.add_theme_font_override("font", Fonts.black())
 	_status = _label("", 16, MUTED)
 	var version := _label("v" + str(ProjectSettings.get_setting("application/config/version", "dev")), 13, Color(1, 1, 1, 0.4))
+	# Строка даты: значок погоды слева от текста.
+	var date_row := HBoxContainer.new()
+	date_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	date_row.alignment = BoxContainer.ALIGNMENT_END
+	date_row.add_theme_constant_override("separation", 6)
+	_weather = TextureRect.new()
+	_weather.custom_minimum_size = Vector2(28, 28)
+	_weather.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_weather.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_weather.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_weather.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_weather.visible = false
+	date_row.add_child(_weather)
+	date_row.add_child(_date)
+	right.add_child(date_row)
 	for l in [_date, _status, version]:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		right.add_child(l)
+		if l != _date:
+			right.add_child(l)
 
 
 static func _outlined(text: String, fs: int, col: Color) -> Label:
@@ -252,13 +270,19 @@ func _chip_plain(glyph: String, text: String, col: Color) -> HBoxContainer:
 	var item := HBoxContainer.new()
 	item.add_theme_constant_override("separation", 4)
 	item.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	item.add_child(IconView.make("", 22, glyph, col))
+	# Житель и молния — картинками, если они есть; иначе значок кодом в цвет текста.
+	item.add_child(IconView.make(glyph, 24) if ResIcon.texture(glyph) != null else IconView.make("", 22, glyph, col))
 	item.add_child(_label(text, 19, col))
 	return item
 
 
-func set_date(text: String) -> void:
+## Дата и значок погоды (имя картинки assets/icons/weather_<weather>.png).
+func set_date(text: String, weather := "") -> void:
 	_date.text = text
+	if weather != _weather_name:
+		_weather_name = weather
+		_weather.texture = ResIcon.texture("weather_" + weather) if not weather.is_empty() else null
+		_weather.visible = _weather.texture != null
 
 
 ## Высотомер (глубина или высота камеры).
