@@ -787,7 +787,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			RoomType.FARM:
 				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 				if not colony.farm_warm(p):
-					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужен очаг рядом (греет 6 м) или генератор." \
+					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужен очаг рядом (греет от стен на 6–10 м) или генератор." \
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
@@ -821,11 +821,14 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
-				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан). Работая, греет всё вокруг (6 м)." % int(RoomType.FUEL_TIME)})
+				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан). Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
 			RoomType.HEARTH:
 				chips.append(["", "горит" if p.burning else "не горит"])
-				rows.append({"type": "text", "text": "Жжёт 1 дерево со склада за %d с, пока вокруг холоднее %d °C. Греет всё в 6 м: жилые, ферму." \
-					% [int(RoomType.HEARTH_FUEL_TIME), int(Colony.HEARTH_ON_BELOW)]})
+				var n := RoomType.stoves(p)
+				var zone := RoomType.heat_zone(p)
+				chips.append(["", "печей %d" % n])
+				rows.append({"type": "text", "text": "Каждая печь жжёт 1 дерево за %d с, пока вокруг холоднее %d °C. Греет от стен комнаты: в %d м — полное тепло (+%d °C), дальше слабее, до %d м. Жилые и ферму — ставьте рядом." \
+					% [int(RoomType.HEARTH_FUEL_TIME), int(Colony.HEARTH_ON_BELOW), zone.x, int(Colony.HEAT), zone.y]})
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])

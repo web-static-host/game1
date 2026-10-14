@@ -22,10 +22,10 @@ const HINTS := [
 	"энергия: сжигает метан, уголь или дрова",
 	"собирает метан вокруг (20 м) — топливо для генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
-	"отопление: жжёт дрова со склада и греет всё вокруг (6 м)",
+	"отопление: кирпичные печи (по одной на 3 м) жгут дрова и греют от стен на 6–10 м",
 ]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH: "bricks"}
 ## Мастерские: [сырьё, продукция, секунд работы на цикл].
 const RECIPES := {
 	KILN: [{"clay": 2, "wood": 1}, {"brick": 2}, 20.0],
@@ -55,6 +55,18 @@ static func usable_width(p: Project) -> int:
 
 static func floor_start(p: Project) -> int:
 	return p.rect.position.x + (1 if p.ladder else 0)
+
+
+## Печей в очаге: по одной на 3 м ширины комнаты (1–3).
+static func stoves(p: Project) -> int:
+	return clampi(p.rect.size.x / 3, 1, 3)
+
+
+## Очаг греет от стен комнаты: полное тепло в пределах full клеток, дальше слабеет до reach.
+## Больше печей — греет дальше. Генератор греет как одна печь.
+static func heat_zone(p: Project) -> Vector2i:
+	var n := stoves(p) if p.purpose == HEARTH else 1
+	return Vector2i(2 + n, 4 + 2 * n)
 
 
 static func beds(p: Project) -> int:
@@ -94,8 +106,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		GRANARY:
 			return {"wood": 2 * w}
 		HEARTH:
-			# Только камень — его можно собрать с валунов с самого начала.
-			return {"stone": 12}
+			# Печи кладут из кирпича.
+			return {"brick": 6 * stoves(p)}
 	return {}
 
 

@@ -198,6 +198,12 @@ func test_offline_build() -> void:
 	check(colony.interior.has(Vector2i(x + 2, s + 4)), "клетки комнаты стали интерьером")
 	check(w.is_revealed(x + 5, s + 4), "стены комнаты открыты")
 	check(not w.is_revealed(x + 8, s + 4), "дальше стен — по-прежнему неизвестно")
+	# Подтопленная выработка — не озеро: до воды доходят и плывут по её поверхности.
+	w.set_fluid(x, s + 4, Mat.WATER)
+	w.set_fluid(x, s + 5, Mat.WATER)
+	colony.pathing.clear_cache()
+	var down := Pathing.path_to(colony.pathing.explore(Vector2i(x, s))[0], Vector2i(x, s + 4))
+	check(not down.is_empty(), "в подтопленной шахте доплывают до воды")
 
 
 func test_pause_and_materials() -> void:
@@ -1281,6 +1287,22 @@ func test_seasons() -> void:
 	colony._hearth_tick(1.0)
 	colony.elements._temp_memo.clear()
 	check(hearth.burning and colony.farm_warm(farm), "очаг рядом — ферме тепло (%.0f °C)" % colony.room_temp(farm))
+	# Тепло считается от стен очага: у стены и в 3 м от неё — полное, большой очаг греет дальше.
+	var hr := hearth.rect
+	var base_t := Env.temperature(hr.position.y + 1, w.gen.surface_y(hr.end.x + 3), colony.season_delta())
+	var at3 := colony.elements._temperature(Vector2i(hr.end.x + 2, hr.position.y + 1))
+	check(at3 >= base_t + Colony.HEAT - 0.5, "в 3 м от стены очага — полное тепло (%.0f °C)" % at3)
+	var far := Vector2i(hr.end.x + 7, hr.position.y + 1)
+	var far_small := colony.elements._temperature(far) - Env.temperature(far.y, w.gen.surface_y(far.x), colony.season_delta())
+	hearth.rect = Rect2i(hr.position.x, hr.position.y, 9, 3)
+	colony.elements._temp_memo.clear()
+	check(RoomType.stoves(hearth) == 3, "в очаге 9 м — три печи")
+	var far_big := colony.elements._temperature(far + Vector2i(6, 0)) - Env.temperature(far.y, w.gen.surface_y(far.x + 6), colony.season_delta())
+	check(far_small < 0.5 and far_big > 0.5, "малый очаг в 7 м от стены не греет, большой — греет (%.1f / %.1f)" % [far_small, far_big])
+	var hc := RoomType.equip_cost(RoomType.HEARTH, hearth)
+	check(hc.get("brick", 0) == 18 and not hc.has("stone"), "три печи кладут из 18 кирпичей (%s)" % str(hc))
+	check(RoomType.REQUIRES.get(RoomType.HEARTH, "") == "bricks", "очаг — после обжига кирпича")
+	hearth.rect = hr
 	colony.projects.erase(hearth)
 	colony.elements._temp_memo.clear()
 	var cold_farm := _fake_room(colony, RoomType.FARM, x - 8)

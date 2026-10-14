@@ -92,10 +92,10 @@ enum Season { WINTER, SPRING, SUMMER, AUTUMN }
 const SEASON_NAMES := ["зима", "весна", "лето", "осень"]
 ## Температура на поверхности в середине каждого месяца (январь … декабрь), °C; между — плавно.
 const MONTH_TEMPS := [-8.0, -5.0, 8.0, 12.0, 16.0, 20.0, 23.0, 21.0, 15.0, 8.0, 1.0, -5.0]
-## Тепло даёт только огонь: очаг и работающий генератор греют всё вокруг себя.
-## Без отопления в комнате так же холодно, как в земле вокруг.
+## Тепло даёт только огонь: очаг и работающий генератор греют всё вокруг себя
+## (от стен комнаты, дальность — RoomType.heat_zone). Без отопления в комнате так же
+## холодно, как в земле вокруг.
 const HEAT := 18.0
-const HEAT_RADIUS := 6
 ## Очаг горит, пока у него холоднее этого.
 const HEARTH_ON_BELOW := 18.0
 ## Ферма растит грибы только в тепле.
@@ -3810,17 +3810,18 @@ func _hearth_starving() -> bool:
 	return false
 
 
-## Полено в очаг: со склада, а нет — из кучи дров неподалёку (до 12 м).
-func _hearth_fuel(p: Project) -> bool:
-	if inventory.get("wood", 0) >= 1:
-		inventory["wood"] -= 1
-		return true
+## Дрова в печи (по полену на печь): со склада, а нет — из кучи дров неподалёку (до 12 м).
+## Возвращает, сколько поленьев нашлось.
+func _hearth_fuel(p: Project, need: int) -> int:
+	var got := mini(need, inventory.get("wood", 0))
+	inventory["wood"] = inventory.get("wood", 0) - got
 	var c := p.rect.get_center()
-	for d: Vector2i in drops:
-		if absi(d.x - c.x) <= 12 and absi(d.y - c.y) <= 12 and drop_amount(d, "wood") > 0:
-			_take_drop(d, "wood", 1)
-			return true
-	return false
+	for d: Vector2i in drops.keys():
+		if got >= need:
+			break
+		if absi(d.x - c.x) <= 12 and absi(d.y - c.y) <= 12:
+			got += _take_drop(d, "wood", need - got)
+	return got
 
 
 ## Очаги: жгут дрова, пока вокруг холодно; без дров гаснут.
@@ -3835,8 +3836,10 @@ func _hearth_tick(dt: float) -> void:
 		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
 		if not cold:
 			continue
-		if p.farm_progress <= 0.0 and _hearth_fuel(p):
-			p.farm_progress += RoomType.HEARTH_FUEL_TIME
+		if p.farm_progress <= 0.0:
+			# Каждая печь жжёт своё полено; не хватило на все — горит меньше.
+			var n := RoomType.stoves(p)
+			p.farm_progress += RoomType.HEARTH_FUEL_TIME * _hearth_fuel(p, n) / n
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true

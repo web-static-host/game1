@@ -263,6 +263,9 @@ func _play() -> void:
 	_professions()
 	if _fix_shaft():
 		return
+	# Лес у базы на исходе, а за прудом есть — мост, пока есть из чего строить.
+	if _bridge():
+		return
 	# Тепло ферме — важнее остальных строек.
 	if _heat_farms():
 		return
@@ -279,6 +282,53 @@ func _play() -> void:
 	if _pier():
 		return
 	_more_storage()
+
+
+## Озёра не переплывают: если пруд отрезает округу — мост на другой берег (до двух мостов),
+## как сделал бы игрок, когда у базы кончается лес и ягоды.
+func _bridge() -> bool:
+	var bridges := colony.projects.filter(func(q: Project) -> bool: return q.kind == Project.Kind.BRIDGE)
+	if bridges.size() >= 2 or _trees_reachable() >= 6:
+		return false
+	var best := Rect2i()
+	var best_d := 1 << 30
+	for k in range(-6, 7):
+		var l := world.gen._lake_of_segment(k)
+		if l.is_empty():
+			continue
+		var sp := world.gen.lake_water_span(l)
+		if sp.x > sp.y:
+			continue
+		var r := Rect2i(sp.x - 1, int(l["level"]) - 1, sp.y - sp.x + 3, 1)
+		if bridges.any(func(q: Project) -> bool: return q.rect.intersects(r)):
+			continue
+		var d := mini(absi(sp.x - colony.home.x), absi(sp.y - colony.home.x))
+		if d < best_d and colony.validate(Project.Kind.BRIDGE, r).is_empty():
+			best = r
+			best_d = d
+	if best_d > 90:
+		return false
+	if colony.inventory.get("wood", 0) + colony.drop_total("wood") < Project.cost_for(Project.Kind.BRIDGE, best)["wood"]:
+		return false
+	if colony.create_project(Project.Kind.BRIDGE, best) != null:
+		_act("мост")
+		return true
+	return false
+
+
+## Сколько взрослых деревьев можно срубить, не переходя воду.
+func _trees_reachable() -> int:
+	var u: Unit = colony.units[0] if not colony.units.is_empty() else null
+	if u == null:
+		return 0
+	var dist: Dictionary = colony.pathing.explore(u.cell())[1]
+	var n := 0
+	for x in range(colony.home.x - 90, colony.home.x + 91):
+		if world.feature_at(x) == WorldGen.FEATURE_TREE and world.growth(x) >= 0.5:
+			var g := world.gen.surface_y(x) - 1
+			if dist.has(Vector2i(x - 1, g)) or dist.has(Vector2i(x + 1, g)) or dist.has(Vector2i(x, g)):
+				n += 1
+	return n
 
 
 ## Шахту залило подземной водой или в ней метан: насосная или дегазация у верха
@@ -436,6 +486,9 @@ func _best_material() -> String:
 
 ## Холодной ферме — очаг вплотную (малая комната 3×3 сбоку на том же уровне).
 func _heat_farms() -> bool:
+	# Печи — из кирпича: до обжига кирпича очаг не поставить.
+	if not colony.research.has("bricks"):
+		return false
 	for farm in colony.rooms_of(RoomType.FARM):
 		if colony.farm_warm(farm):
 			continue
