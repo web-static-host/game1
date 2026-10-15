@@ -1055,8 +1055,20 @@ func waiting_for_materials() -> bool:
 func set_purpose(p: Project, t: int) -> bool:
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
+	if t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and p.brick_stoves:
+		return false
 	if not research.has(RoomType.REQUIRES.get(t, "")):
 		return false
+	if is_hearth_upgrade(p, t):
+		# Каменные печи перекладывают кирпичом: очаг остаётся очагом.
+		p.equip_ladder = false
+		p.equip_target = t
+		p.equip_paid = false
+		p.equip_done = 0.0
+		p.phase = Project.Phase.EQUIP
+		_log("%s: перекладываем печи кирпичом" % p.title(), "info")
+		_try_pay(p)
+		return true
 	_release_beds(p)
 	p.equip_ladder = false
 	p.equip_target = t
@@ -1069,6 +1081,11 @@ func set_purpose(p: Project, t: int) -> bool:
 	_log("%s: обустройство под «%s»" % [p.title(), RoomType.NAMES[t]], "info")
 	_try_pay(p)
 	return true
+
+
+## Улучшение каменного очага до кирпичного.
+func is_hearth_upgrade(p: Project, t: int) -> bool:
+	return t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and not p.brick_stoves
 
 
 ## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
@@ -1092,7 +1109,7 @@ func cancel_equip(p: Project) -> void:
 		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
-	if not p.equip_ladder:
+	if not p.equip_ladder and not is_hearth_upgrade(p, p.equip_target):
 		p.purpose = RoomType.NONE
 	p.equip_ladder = false
 	p.blocked = ""
@@ -1118,7 +1135,14 @@ func _finish_equip(p: Project) -> void:
 				_drop(u)
 		_log("%s: лестница готова" % p.title(), "good")
 		return
-	p.purpose = p.equip_target
+	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
+	if p.brick_stoves and p.purpose == RoomType.HEARTH:
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("Готово: %s — печи кирпичные (%s)" % [p.title(), RoomType.purpose_hint(RoomType.HEARTH_BRICK)], "good")
+		return
+	p.purpose = RoomType.base_type(p.equip_target)
 	p.farm_progress = 0.0
 	for u in units:
 		if u.project_id == p.id:
@@ -1129,7 +1153,7 @@ func _finish_equip(p: Project) -> void:
 			p.targets = default_targets(p)
 			p.gatherers = 1
 	if p.purpose != RoomType.NONE:
-		_log("Готово: %s (%s)" % [p.title(), RoomType.HINTS[p.purpose]], "good")
+		_log("Готово: %s (%s)" % [p.title(), RoomType.purpose_hint(p.equip_target)], "good")
 
 
 func rooms_of(t: int) -> Array[Project]:
@@ -3564,6 +3588,9 @@ func service_years(p: Project) -> float:
 			years /= 1.0 + (t - 40.0) / 60.0
 	if research.has("maintenance"):
 		years /= 0.7
+	# Кирпичные печи держат очаг вдвое дольше.
+	if p.purpose == RoomType.HEARTH and p.brick_stoves:
+		years *= 2.0
 	return years
 
 
@@ -3841,7 +3868,8 @@ func _hearth_tick(dt: float) -> void:
 		if p.farm_progress <= 0.0:
 			# Каждая печь жжёт своё полено; не хватило на все — горит меньше.
 			var n := RoomType.stoves(p)
-			p.farm_progress += RoomType.HEARTH_FUEL_TIME * _hearth_fuel(p, n) / n
+			var per_log := RoomType.HEARTH_FUEL_TIME * (RoomType.BRICK_STOVE_GAIN if p.brick_stoves else 1.0)
+			p.farm_progress += per_log * _hearth_fuel(p, n) / n
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true

@@ -577,7 +577,8 @@ func _show_project(p: Project) -> void:
 				return
 			colony.demolish(p)
 			_select(null, null), "danger"])
-	var preview := {"v": maxi(p.purpose, 1)}
+	var current := RoomType.HEARTH_BRICK if p.purpose == RoomType.HEARTH and p.brick_stoves else p.purpose
+	var preview := {"v": maxi(current, 1)}
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		if RoomType.is_store(p.purpose):
 			controls.append(_storage_targets(p))
@@ -588,9 +589,12 @@ func _show_project(p: Project) -> void:
 		for t in range(1, RoomType.NAMES.size()):
 			if colony.research.has(RoomType.REQUIRES.get(t, "")):
 				purposes.append(t)
+			# Очаг — с каменными или (после обжига кирпича) кирпичными печами.
+			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
+				purposes.append(RoomType.HEARTH_BRICK)
 		controls.append({
 			"label": "Назначение", "value": maxi(0, purposes.find(preview["v"])), "min": 0, "max": purposes.size() - 1,
-			"options": purposes.map(func(t: int) -> String: return RoomType.NAMES[t]),
+			"options": purposes.map(func(t: int) -> String: return RoomType.purpose_name(t)),
 			"changed": func(i: int) -> void:
 				preview["v"] = purposes[i]
 				_info_target = ["project", p.id, purposes[i]]
@@ -601,6 +605,11 @@ func _show_project(p: Project) -> void:
 				_show_project(p)
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
+		# Каменный очаг можно переложить кирпичом.
+		if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
+			actions.push_front(["Кирпичные печи", func() -> void:
+				if colony.set_purpose(p, RoomType.HEARTH_BRICK):
+					_show_project(p), "primary"])
 	if colony.is_workplace(p):
 		controls.push_front(_workers_list(p))
 		actions.push_front(["Назначить", func() -> void: _pick_worker(p), "primary"])
@@ -833,15 +842,19 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["", "горит" if p.burning else "не горит"])
 				var n := RoomType.stoves(p)
 				var zone := RoomType.heat_zone(p)
-				chips.append(["", "печей %d" % n])
+				var per_log := RoomType.HEARTH_FUEL_TIME * (RoomType.BRICK_STOVE_GAIN if p.brick_stoves else 1.0)
+				chips.append(["", "печей %d, %s" % [n, "кирпичные" if p.brick_stoves else "каменные"]])
 				rows.append({"type": "text", "text": "Каждая печь жжёт 1 дерево за %d с, пока вокруг холоднее %d °C. Греет от стен комнаты: в %d м — полное тепло (+%d °C), дальше слабее, до %d м. Жилые и ферму — ставьте рядом." \
-					% [int(RoomType.HEARTH_FUEL_TIME), int(Colony.HEARTH_ON_BELOW), zone.x, int(Colony.HEAT), zone.y]})
+					% [int(per_log), int(Colony.HEARTH_ON_BELOW), zone.x, int(Colony.HEAT), zone.y]})
+				if not p.brick_stoves:
+					rows.append({"type": "text", "text": "Кирпичные печи (после «Обжига кирпича»): дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше."})
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])
-		if preview_purpose > 0 and preview_purpose != p.purpose:
+		var current := RoomType.HEARTH_BRICK if p.purpose == RoomType.HEARTH and p.brick_stoves else p.purpose
+		if preview_purpose > 0 and preview_purpose != current:
 			var cost := RoomType.equip_cost(preview_purpose, p)
-			rows.append({"type": "text", "text": "«%s»: %s" % [RoomType.NAMES[preview_purpose], RoomType.HINTS[preview_purpose]],
+			rows.append({"type": "text", "text": "«%s»: %s" % [RoomType.purpose_name(preview_purpose), RoomType.purpose_hint(preview_purpose)],
 				"color": Color.WHITE})
 			if not cost.is_empty():
 				rows.append({"type": "resources", "label": "Обустройство", "items": _cost_items(cost)})

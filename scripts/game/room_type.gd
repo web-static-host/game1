@@ -22,10 +22,16 @@ const HINTS := [
 	"энергия: сжигает метан, уголь или дрова",
 	"собирает метан вокруг (20 м) — топливо для генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
-	"отопление: кирпичные печи (по одной на 3 м) жгут дрова и греют от стен на 6–10 м",
+	"отопление: печи (по одной на 3 м) жгут дрова и греют от стен на 6–10 м",
 ]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH: "bricks"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH_BRICK: "bricks"}
+## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
+## готовая комната — HEARTH с brick_stoves.
+const HEARTH_BRICK := 100
+## Кирпичные печи против каменных: дров в 1.5 раза меньше, тепло в 1.5 раза дальше,
+## очаг изнашивается вдвое медленнее.
+const BRICK_STOVE_GAIN := 1.5
 ## Мастерские: [сырьё, продукция, секунд работы на цикл].
 const RECIPES := {
 	KILN: [{"clay": 2, "wood": 1}, {"brick": 2}, 20.0],
@@ -66,7 +72,30 @@ static func stoves(p: Project) -> int:
 ## Больше печей — греет дальше. Генератор греет как одна печь.
 static func heat_zone(p: Project) -> Vector2i:
 	var n := stoves(p) if p.purpose == HEARTH else 1
-	return Vector2i(2 + n, 4 + 2 * n)
+	var z := Vector2i(2 + n, 4 + 2 * n)
+	if p.purpose == HEARTH and p.brick_stoves:
+		z = Vector2i(roundi(z.x * BRICK_STOVE_GAIN), roundi(z.y * BRICK_STOVE_GAIN))
+	return z
+
+
+## Назначение без варианта (кирпичный очаг — это очаг).
+static func base_type(t: int) -> int:
+	return HEARTH if t == HEARTH_BRICK else t
+
+
+static func purpose_name(t: int) -> String:
+	match t:
+		HEARTH:
+			return "Очаг (каменные печи)"
+		HEARTH_BRICK:
+			return "Очаг (кирпичные печи)"
+	return NAMES[t]
+
+
+static func purpose_hint(t: int) -> String:
+	if t == HEARTH_BRICK:
+		return "отопление: кирпичные печи — дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше"
+	return HINTS[t]
 
 
 static func beds(p: Project) -> int:
@@ -106,7 +135,9 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		GRANARY:
 			return {"wood": 2 * w}
 		HEARTH:
-			# Печи кладут из кирпича.
+			# Каменные печи — из того, что есть с самого начала.
+			return {"stone": 8 * stoves(p)}
+		HEARTH_BRICK:
 			return {"brick": 6 * stoves(p)}
 	return {}
 

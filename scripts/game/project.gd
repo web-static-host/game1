@@ -51,6 +51,8 @@ var equip_done := 0.0
 var farm_progress := 0.0
 ## Обустройство — это постройка лестницы (назначение не меняется).
 var equip_ladder := false
+## Очаг с кирпичными печами (иначе — каменные).
+var brick_stoves := false
 ## Объекты поверхности (столбцы x), которые надо убрать на этапе 1.
 var clear_x: Array[int] = []
 ## Что хранит склад (пусто — всё).
@@ -283,6 +285,7 @@ func to_dict() -> Dictionary:
 		"equip_done": equip_done,
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
+		"brick_stoves": brick_stoves,
 		"clear_x": clear_x,
 		"store_filter": store_filter,
 		"exposed_t": exposed_t,
@@ -334,6 +337,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_done = float(d.get("equip_done", 0.0))
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
+	p.brick_stoves = bool(d.get("brick_stoves", false))
 	for x in d.get("clear_x", []):
 		p.clear_x.append(int(x))
 	# Мосту и пристани расчистка не нужна (раньше ждали дерево на дальнем берегу).

@@ -486,9 +486,6 @@ func _best_material() -> String:
 
 ## Холодной ферме — очаг вплотную (малая комната 3×3 сбоку на том же уровне).
 func _heat_farms() -> bool:
-	# Печи — из кирпича: до обжига кирпича очаг не поставить.
-	if not colony.research.has("bricks"):
-		return false
 	for farm in colony.rooms_of(RoomType.FARM):
 		if colony.farm_warm(farm):
 			continue

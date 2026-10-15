@@ -458,6 +458,28 @@ func test_room_purposes() -> void:
 	colony._add("stone", 10)
 	check(colony.inventory["stone"] == colony.capacity("stone"), "лишнее сверх вместимости не помещается")
 
+	# Очаг: каменный сразу; после обжига кирпича печи перекладывают кирпичом.
+	var hres := _colony_with_room(23)
+	var hcol: Colony = hres[0]
+	var hroom: Project = hres[1]
+	hcol.inventory = {"stone": 60, "wood": 30, "food": 60}
+	check(hcol.set_purpose(hroom, RoomType.HEARTH), "каменный очаг — без исследований")
+	hcol.advance_offline(3000.0)
+	check(hroom.purpose == RoomType.HEARTH and not hroom.brick_stoves, "каменный очаг готов")
+	check(not hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "без обжига кирпича улучшить нельзя")
+	hcol.research.done.append("bricks")
+	hcol.inventory["brick"] = 40
+	check(hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "улучшение до кирпичных печей начато")
+	hcol.cancel_project(hroom)
+	check(hroom.purpose == RoomType.HEARTH and hroom.phase == Project.Phase.DONE, "отмена улучшения оставляет каменный очаг")
+	hcol.inventory["brick"] = 40
+	check(hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "улучшение снова начато")
+	hcol.advance_offline(3000.0)
+	check(hroom.purpose == RoomType.HEARTH and hroom.brick_stoves and hroom.phase == Project.Phase.DONE, "печи кирпичные")
+	check(not hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "дважды не улучшают")
+	var saved := Project.from_dict(hroom.to_dict())
+	check(saved.brick_stoves, "кирпичные печи сохраняются")
+
 	var farm_res := _colony_with_room(22, RoomType.FARM)
 	var fc: Colony = farm_res[0]
 	var farm: Project = farm_res[1]
@@ -1301,8 +1323,18 @@ func test_seasons() -> void:
 	var far_big := colony.elements._temperature(far + Vector2i(6, 0)) - Env.temperature(far.y, w.gen.surface_y(far.x + 6), colony.season_delta())
 	check(far_small < 0.5 and far_big > 0.5, "малый очаг в 7 м от стены не греет, большой — греет (%.1f / %.1f)" % [far_small, far_big])
 	var hc := RoomType.equip_cost(RoomType.HEARTH, hearth)
-	check(hc.get("brick", 0) == 18 and not hc.has("stone"), "три печи кладут из 18 кирпичей (%s)" % str(hc))
-	check(RoomType.REQUIRES.get(RoomType.HEARTH, "") == "bricks", "очаг — после обжига кирпича")
+	check(hc.get("stone", 0) == 24 and not hc.has("brick"), "три каменные печи — 24 камня (%s)" % str(hc))
+	check(RoomType.equip_cost(RoomType.HEARTH_BRICK, hearth).get("brick", 0) == 18, "три кирпичные — 18 кирпичей")
+	check(not RoomType.REQUIRES.has(RoomType.HEARTH) and RoomType.REQUIRES[RoomType.HEARTH_BRICK] == "bricks",
+		"каменный очаг — сразу, кирпичный — после обжига кирпича")
+	# Кирпичные печи: тепло дальше в 1.5 раза, служат вдвое дольше.
+	var stone_zone := RoomType.heat_zone(hearth)
+	var stone_years := colony.service_years(hearth)
+	hearth.brick_stoves = true
+	var brick_zone := RoomType.heat_zone(hearth)
+	check(brick_zone.y > stone_zone.y and brick_zone.x > stone_zone.x, "кирпичные печи греют дальше (%s → %s)" % [stone_zone, brick_zone])
+	check(is_equal_approx(colony.service_years(hearth), stone_years * 2.0), "кирпичный очаг служит вдвое дольше")
+	hearth.brick_stoves = false
 	hearth.rect = hr
 	colony.projects.erase(hearth)
 	colony.elements._temp_memo.clear()

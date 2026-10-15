@@ -96,7 +96,7 @@ func _draw_done(p: Project) -> void:
 				_draw_furniture(p, r, p.purpose, 1.0)
 				_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 0.25 + 0.6 * t)
 			else:
-				_draw_furniture(p, r, p.equip_target, 0.25 + 0.6 * t)
+				_draw_furniture(p, r, RoomType.base_type(p.equip_target), 0.25 + 0.6 * t)
 			var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
 			draw_rect(bar, BAR_BG)
 			draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
@@ -352,19 +352,22 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				draw_line(Vector2(cx, cy), Vector2(cx, cy) + dir * 17, Color(0.85, 0.88, 0.92, alpha), 5.0)
 			draw_circle(Vector2(cx, cy), 4, Color(0.2, 0.2, 0.22, alpha))
 		RoomType.HEARTH:
-			# Кирпичные печи (по одной на 3 м); горят — огонь и тёплый свет вокруг.
+			# Печи (по одной на 3 м): каменные серые, кирпичные красные; горят — огонь и свет.
 			var n := RoomType.stoves(p)
 			var span := RoomType.usable_width(p) * TILE
+			var brick_made := p.brick_stoves and p.phase == Project.Phase.DONE
+			var body := Color(0.72, 0.36, 0.26, alpha) if brick_made else Color(0.62, 0.6, 0.66, alpha)
+			var edge := Color(0.45, 0.2, 0.15, alpha) if brick_made else Color(0.4, 0.38, 0.44, alpha)
+			var top := Color(0.55, 0.28, 0.2, alpha) if brick_made else Color(0.52, 0.5, 0.56, alpha)
 			for i in n:
 				var cx := x0 + span * (i + 0.5) / n
-				var brick := Color(0.72, 0.36, 0.26, alpha)
-				_rbox(Rect2(cx - 24, floor_y - 34, 48, 34), 5, brick, Color(0.45, 0.2, 0.15, alpha), 2)
+				_rbox(Rect2(cx - 24, floor_y - 34, 48, 34), 5, body, edge, 2)
 				for row in 3:
-					draw_line(Vector2(cx - 22, floor_y - 10 - row * 9), Vector2(cx + 22, floor_y - 10 - row * 9), Color(0.9, 0.75, 0.65, 0.35 * alpha), 1.0)
+					draw_line(Vector2(cx - 22, floor_y - 10 - row * 9), Vector2(cx + 22, floor_y - 10 - row * 9), Color(1, 1, 1, 0.25 * alpha), 1.0)
 				_rbox(Rect2(cx - 14, floor_y - 22, 28, 22), 8, Color(0.16, 0.1, 0.1, alpha))
-				_rbox(Rect2(cx - 28, floor_y - 40, 56, 8), 3, Color(0.55, 0.28, 0.2, alpha))
+				_rbox(Rect2(cx - 28, floor_y - 40, 56, 8), 3, top, Color(0, 0, 0, 0), 0)
 				# Труба в потолок.
-				draw_rect(Rect2(cx - 6, r.position.y + 4, 12, floor_y - 40 - r.position.y - 4), Color(0.6, 0.3, 0.22, alpha))
+				draw_rect(Rect2(cx - 6, r.position.y + 4, 12, floor_y - 40 - r.position.y - 4), top.lightened(0.08))
 				if p.burning and alpha >= 1.0:
 					var tt := Time.get_ticks_msec() / 1000.0 + i * 1.3
 					_glow(Vector2(cx, floor_y - 12), r.size.y * 1.2, Color(1.0, 0.6, 0.25, 0.22))
