@@ -669,10 +669,10 @@ func _storage_targets(p: Project) -> Dictionary:
 	for k in keys:
 		if not RoomType.stores(p, k):
 			continue
-		items.append([k, colony.inventory.get(k, 0), int(p.targets.get(k, 0)), colony.capacity(k),
+		items.append([k, colony.inventory.get(k, 0), int(colony.store_targets.get(k, 0)), colony.capacity(k),
 			Colony.GATHER_SOURCES.has(k)])
-	return {"type": "targets", "label": "Держать в запасе (назначенные работники добывают до нормы):", "items": items,
-		"changed": func(key: String, v: int) -> void: p.targets[key] = v}
+	return {"type": "targets", "label": "Держать в запасе — общее для всех складов (работники добывают до нормы):", "items": items,
+		"changed": func(key: String, v: int) -> void: colony.store_targets[key] = v}
 
 
 ## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.

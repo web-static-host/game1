@@ -887,7 +887,7 @@ func _build_targets(st: Dictionary) -> void:
 		row.add_theme_constant_override("separation", 8)
 		_controls.add_child(row)
 		row.add_child(IconView.make(item[0], 30))
-		var name := _label("%s · есть %s" % [Mat.resource_name(item[0]), Fmt.int_spaced(item[1])], 18, Color.WHITE)
+		var name := _label("%s · %s из %s" % [Mat.resource_name(item[0]), Fmt.int_spaced(item[1]), Fmt.int_spaced(item[3])], 18, Color.WHITE)
 		if not item[4]:
 			name.text += " (только копкой)"
 			name.add_theme_color_override("font_color", MUTED)

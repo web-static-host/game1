@@ -688,6 +688,26 @@ func test_roles() -> void:
 	kiln.stock = {"clay": 2, "wood": 1}
 	colony._craft(kiln)
 	check(kiln.stock.get("clay", 0) == 0 and colony.drop_total("brick") == 2, "кирпич лежит в мастерской, глина из запаса печи")
+	# Мастер печи без подсобных сам носит сырьё в свою печь и обжигает кирпич.
+	colony.set_profession(hauler, Unit.Prof.ANY)
+	for u in colony.units:
+		colony._drop(u)
+		u.workplace = 0
+	kiln.stock = {}
+	colony.drops.clear()
+	colony.inventory["clay"] = 10
+	colony.inventory["wood"] = 10
+	var master: Unit = colony.units[1]
+	check(colony.assign_work(master, kiln).is_empty(), "мастер назначен в печь")
+	var fetched := false
+	t = 0.0
+	while t < 300.0 and colony.drop_total("brick") == 0:
+		colony.update(0.5)
+		t += 0.5
+		if master.task == Unit.Task.HAUL and master.project_id == kiln.id:
+			fetched = true
+	check(fetched and colony.drop_total("brick") > 0, "мастер сам принёс глину и обжёг кирпич (%.0f с)" % t)
+	colony.unassign_work(master)
 	colony.projects.erase(kiln)
 	for u in colony.units:
 		colony._drop(u)
@@ -1202,9 +1222,9 @@ func test_storage_workers() -> void:
 	check(colony.inventory.get("wood", 0) == 0 and colony.drop_total("wood") == 6, "без работника склада дерево никто не понёс")
 	check(not colony.can_store("wood"), "складу без работника некуда принимать")
 	colony.drops.clear()
-	check(not room.targets.is_empty() and room.gatherers > 0, "у склада есть нормы запаса и рабочие")
+	check(not colony.store_targets.is_empty() and room.gatherers > 0, "у складов есть нормы запаса и рабочие")
 	colony.inventory = {}
-	room.targets = {"wood": 15, "stone": 0}
+	colony.store_targets = {"wood": 15, "stone": 0}
 	colony.assign_work(colony.units[0], room)
 	colony.assign_work(colony.units[1], room)
 	var carried := false
@@ -1221,7 +1241,7 @@ func test_storage_workers() -> void:
 		colony.update(0.5)
 	check(colony.inventory.get("wood", 0) < 15 + 12, "выше нормы не добывают (%d)" % colony.inventory.get("wood", 0))
 	colony.inventory = {}
-	room.targets = {"stone": 10}
+	colony.store_targets = {"stone": 10}
 	colony.advance_offline(3000.0)
 	check(colony.inventory.get("stone", 0) > 0, "оффлайн склад тоже пополняется")
 
@@ -1306,6 +1326,20 @@ func test_seasons() -> void:
 	check(colony.shore_spots().is_empty(), "зимой с берега не порыбачить — лёд")
 	check(not colony.farm_warm(farm), "подземная ферма зимой без огня холодная (%.0f °C)" % colony.room_temp(farm))
 	var hearth := _hearth(colony, farm)
+	# Погасший без дров очаг летом не держит тревогу «нет дров» (иначе все рубят лес).
+	var hr0 := hearth.rect
+	hearth.rect = Rect2i(x, w.gen.surface_y(x) - 3, 3, 3)
+	colony.game_time = Colony.MONTH * 4.5
+	colony.inventory["wood"] = 0
+	hearth.blocked = "Нет дров — очаг погас"
+	colony._hearth_tick(1.0)
+	check(hearth.blocked.is_empty() and not colony._hearth_starving(), "летом на поверхности тревога «нет дров» снимается")
+	hearth.rect = hr0
+	hearth.blocked = "Нет дров — очаг погас"
+	colony.inventory["wood"] = 5
+	check(not colony._hearth_starving(), "дрова есть — очаг не «голодает»")
+	colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5
+	colony.elements._temp_memo.clear()
 	colony.inventory["wood"] = 20
 	colony._hearth_tick(1.0)
 	colony.elements._temp_memo.clear()

@@ -163,6 +163,11 @@ static func job_work(p: Project) -> float:
 	return ladder_work(p) if p.equip_ladder else equip_work(p.equip_target, p)
 
 
+## Склад — для стройматериалов, амбар — для еды (без учёта галочек «что хранить»).
+static func same_kind(p: Project, key: String) -> bool:
+	return FOOD_KEYS.has(key) == (p.purpose == GRANARY)
+
+
 static func stores(p: Project, key: String) -> bool:
 	if p.purpose == GRANARY:
 		return FOOD_KEYS.has(key)

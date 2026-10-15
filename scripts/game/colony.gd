@@ -196,6 +196,8 @@ var _scout_at := -100.0
 var _offline_progress := {}
 ## Добытое лежит там, где добыто, пока не унесут: клетка -> {ресурс: количество}.
 var drops := {}
+## Нормы запаса — общие для всех складов и амбаров: ресурс -> сколько держать.
+var store_targets := {}
 
 
 func _init(p_world: WorldData) -> void:
@@ -1149,9 +1151,13 @@ func _finish_equip(p: Project) -> void:
 			_drop(u)
 	if RoomType.is_store(p.purpose):
 		_full_warned.clear()
-		if p.targets.is_empty():
-			p.targets = default_targets(p)
+		if p.gatherers <= 0:
 			p.gatherers = 1
+		# Нормы по умолчанию для того, что этот склад хранит (уже заданные не трогаем).
+		var defaults := default_targets(p)
+		for k in defaults:
+			if not store_targets.has(k):
+				store_targets[k] = defaults[k]
 	if p.purpose != RoomType.NONE:
 		_log("Готово: %s (%s)" % [p.title(), RoomType.purpose_hint(p.equip_target)], "good")
 
@@ -1934,7 +1940,10 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
 		RoomType.KILN, RoomType.FORGE:
-			return has_inputs(p) and _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
+			# Нет сырья — мастер сам приносит его со склада в свою мастерскую.
+			if has_inputs(p):
+				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
+			return _try_supply(u, p, parents, dist)
 		RoomType.STORAGE, RoomType.GRANARY:
 			# Работники склада и амбара: рубят отмеченное игроком, добывают до нормы,
 			# относят добытое на хранение.
@@ -3129,10 +3138,11 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 		if stand == null or dist[stand] >= best_d:
 			continue
 		for k in drops[c]:
-			# Носят только то, что этот склад (амбар) хранит, и только если там есть работник.
-			if only != null and not (RoomType.stores(only, k) and store_staffed(only)):
+			# Работник склада носит стройматериалы, амбара — еду; на любой склад, где есть
+			# работник и место.
+			if only != null and not RoomType.same_kind(only, k):
 				continue
-			if only == null and not can_store(k):
+			if not can_store(k):
 				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
 			var room: int = capacity(k) - inventory.get(k, 0) - _incoming(k)
@@ -3416,16 +3426,19 @@ func gatherers_on(p: Project) -> int:
 
 
 ## Ресурсы склада, которых меньше нормы (и есть куда положить).
+## Чего не хватает до нормы — для работников склада (стройматериалы) или амбара (еда).
+## Нормы общие, работник любого склада работает на все склады.
 func storage_deficit(p: Project) -> Array[String]:
 	var out: Array[String] = []
-	for k in p.targets:
-		if not GATHER_SOURCES.has(k) or not RoomType.stores(p, k):
+	for k in store_targets:
+		if not GATHER_SOURCES.has(k) or not RoomType.same_kind(p, k):
 			continue
-		if inventory.get(k, 0) < mini(int(p.targets[k]), capacity(k)):
+		if inventory.get(k, 0) < mini(int(store_targets[k]), capacity(k)):
 			out.append(k)
-	# Чего не хватает сильнее — в первую очередь.
+	# Чего не хватает сильнее (меньшая доля нормы) — в первую очередь: добыча чередуется,
+	# а не идёт подряд одного ресурса.
 	out.sort_custom(func(a: String, b: String) -> bool:
-		return inventory.get(a, 0) / float(maxi(1, p.targets[a])) < inventory.get(b, 0) / float(maxi(1, p.targets[b])))
+		return inventory.get(a, 0) / float(maxi(1, store_targets[a])) < inventory.get(b, 0) / float(maxi(1, store_targets[b])))
 	return out
 
 
@@ -3833,6 +3846,8 @@ func carry_cap() -> int:
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
 ## Есть ли очаг, которому не хватает дров (тогда свободные идут рубить).
 func _hearth_starving() -> bool:
+	if _have_any("wood") > 0:
+		return false
 	for p in rooms_of(RoomType.HEARTH):
 		if not p.paused and p.blocked.begins_with("Нет дров"):
 			return true
@@ -3864,6 +3879,9 @@ func _hearth_tick(dt: float) -> void:
 		var c := p.rect.get_center()
 		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
 		if not cold:
+			# Потеплело — топить не нужно: «нет дров» больше не тревога (иначе все рубят лес).
+			if p.blocked.begins_with("Нет дров"):
+				p.blocked = ""
 			continue
 		if p.farm_progress <= 0.0:
 			# Каждая печь жжёт своё полено; не хватило на все — горит меньше.
@@ -4500,6 +4518,7 @@ func to_dict() -> Dictionary:
 		"fish": fish,
 		"elements": elements.to_dict(),
 		"drops": _drops_list(),
+		"store_targets": store_targets,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
@@ -4529,9 +4548,17 @@ func load_dict(d: Dictionary) -> void:
 		dig_progress[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
 	for e in d.get("harvest_progress", []):
 		harvest_progress[int(e[0])] = float(e[1])
+	store_targets.clear()
+	var st: Dictionary = d.get("store_targets", {})
+	for k in st:
+		store_targets[str(k)] = int(st[k])
 	for pd in d.get("projects", []):
 		var p := Project.from_dict(pd)
 		projects.append(p)
+		# Старые сохранения: нормы были у каждого склада — берём наибольшую.
+		if not d.has("store_targets"):
+			for k in p.targets:
+				store_targets[k] = maxi(int(store_targets.get(k, 0)), int(p.targets[k]))
 		_register_room(p)
 		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			for c in p.cells():
