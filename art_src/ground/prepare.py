@@ -1,6 +1,8 @@
 ## Текстуры земли для игры: картинки ChatGPT → assets/ground/.
 ## - rock_1..3: серые пласты породы. Сшиты по обеим осям (бесшовные), уменьшены до 512 px,
 ##   яркость приведена к среднему MEAN — игра красит их цветом породы, умножая на цвет / MEAN.
+## - fog: фактура неразведанной земли (картинка ChatGPT fog.png), одна на весь мир —
+##   по ней нельзя угадать, что под землёй. Обрабатывается как rock_*.
 ## - grass_edge, snow_edge: кромка поверх земли. Обрезаны по рисунку, сшиты по горизонтали.
 ## Запуск: python3 art_src/ground/prepare.py  (нужны Pillow и numpy)
 import os
@@ -12,6 +14,7 @@ OUT = os.path.join(HERE, '..', '..', 'assets', 'ground')
 EDGE = 0.12      # доля размера на перетекание при сшивке
 MEAN = 0.7       # средняя яркость текстуры породы (как в ChunkView.ROCK_MEAN)
 REL_STD = 0.12   # разброс яркости относительно среднего — полосы видны, но не пестрят
+FOG_REL_STD = 0.06   # туман занимает почти весь экран — фактура вдвое мягче
 ROCK_SIZE = 512
 # Кромки: (файл, строки рисунка от–до, строка «линии земли» в исходнике).
 EDGES = [('grass_edge', 470, 646, 560), ('snow_edge', 588, 681, 630)]
@@ -37,7 +40,7 @@ def rock(name):
     g = seam_x(g, e)
     g = seam_x(g.T, e).T
     m, s = g.mean(), g.std()
-    g = MEAN + (g - m) / s * (MEAN * REL_STD)
+    g = MEAN + (g - m) / s * (MEAN * (FOG_REL_STD if name == 'fog' else REL_STD))
     im = Image.fromarray((np.clip(g, 0, 1) * 255 + 0.5).astype(np.uint8)).resize((ROCK_SIZE, ROCK_SIZE), Image.LANCZOS)
     im.convert('RGB').save(os.path.join(OUT, name + '.png'))
     print(name, 'mean', round(float(m), 3), '->', MEAN)
@@ -58,7 +61,8 @@ def edge(name, y0, y1, line):
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
-    for n in ('rock_1', 'rock_2', 'rock_3'):
-        rock(n)
+    for n in ('rock_1', 'rock_2', 'rock_3', 'fog'):
+        if os.path.exists(os.path.join(HERE, n + '.png')):
+            rock(n)
     for e in EDGES:
         edge(*e)

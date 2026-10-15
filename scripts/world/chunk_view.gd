@@ -57,7 +57,7 @@ func setup(p_world: WorldData, p_chunk: ChunkData) -> void:
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	if _rock_tex.is_empty():
-		for n in ["rock_1", "rock_2", "rock_3"]:
+		for n in ["rock_1", "rock_2", "rock_3", "fog"]:
 			_rock_tex.append(_load("res://assets/ground/%s.png" % n))
 		_grass_tex = _load("res://assets/ground/grass_edge.png")
 		_snow_tex = _load("res://assets/ground/snow_edge.png")
@@ -77,16 +77,17 @@ static func rock_tex_of(m: int) -> int:
 	return RockTex.LAYERED
 
 
-## Без текстуры: неразведанная земля («туман») всегда однотонная — по ней нельзя
-## угадать, что внутри. Пласты рисуем только на открытой породе (кайма, выработки).
-const FLAT := -1
+## Неразведанная земля («туман»): одна фактура на весь мир (assets/ground/fog.png),
+## не зависит от того, что внутри, — по ней ничего не угадать. Пока картинки нет — заливка.
+## Пласты пород рисуем только на открытой породе (кайма, выработки).
+const FOG := 3
 
 
 static func _tinted(col: Color) -> Color:
 	return Color(col.r / ROCK_MEAN, col.g / ROCK_MEAN, col.b / ROCK_MEAN, col.a)
 
 
-## Клетка (или её часть) земли текстурой ti, подкрашенной в col. FLAT или нет текстуры — заливка.
+## Клетка (или её часть) земли текстурой ti, подкрашенной в col. Нет картинки — заливка.
 func _fill_rect(r: Rect2, col: Color, ti: int) -> void:
 	var t: Texture2D = _rock_tex[ti] if ti >= 0 and ti < _rock_tex.size() else null
 	if t == null:
@@ -194,7 +195,7 @@ func _draw() -> void:
 					_draw_water(lx, ly, x, y)
 				if not line.is_zero_approx() and y + 1 > minf(line.x, line.z):
 					var sr := Rect2(lx * TILE, ly * TILE, TILE, TILE)
-					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)), FLAT)
+					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)), FOG)
 					for poly in Geometry2D.intersect_polygons(_band_poly(lx, ly, line), _rect_poly(sr)):
 						_fill_poly(poly, soil, RockTex.SOFT)
 				continue # небо рисует фон
@@ -206,7 +207,7 @@ func _draw() -> void:
 			var depth := y - surf
 			if y < band_to and f & ChunkData.F_DUG == 0 and Mat.is_solid(m):
 				# Что под травой — неизвестно: видна только полоса почвы в полблока.
-				_draw_clipped(lx, ly, line, fog_color(depth, v), FLAT)
+				_draw_clipped(lx, ly, line, fog_color(depth, v), FOG)
 				var band := _band_poly(lx, ly, line)
 				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
 					_fill_poly(poly, soil, RockTex.SOFT)
@@ -222,7 +223,7 @@ func _draw() -> void:
 						_draw_smooth_grass(lx, ly, line, x)
 				continue
 			if f & ChunkData.F_REVEALED == 0:
-				draw_rect(r, fog_color(depth, v))
+				_fill_rect(r, fog_color(depth, v), FOG)
 				continue
 			var dug := f & ChunkData.F_DUG != 0
 			if dug or m == Mat.AIR or Mat.is_fluid(m):
@@ -250,7 +251,7 @@ func _draw_open_cell(lx: int, ly: int, r: Rect2, m: int, dug: bool, depth: int, 
 		back = rock_color(host, v).darkened(0.62).lerp(BACK, 0.5)
 	else:
 		back = fog_color(depth, v).darkened(0.55)
-	_fill_rect(r, back, rock_tex_of(host) if dug else FLAT)
+	_fill_rect(r, back, rock_tex_of(host) if dug else FOG)
 	# Мягкая тень под потолком.
 	if dug and not _is_open(lx, ly - 1):
 		draw_polygon(_rect_poly(Rect2(r.position, Vector2(TILE, 12))),
@@ -287,7 +288,7 @@ static func _corner_fill(r: Rect2, corner: Vector2i) -> PackedVector2Array:
 func _solid_tex(lx: int, ly: int) -> int:
 	var f := _flags_at(lx, ly)
 	if f < 0 or f & ChunkData.F_REVEALED == 0:
-		return FLAT
+		return FOG
 	return rock_tex_of(_mat_at(lx, ly))
 
 
@@ -313,7 +314,7 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	var faded := mask == 0
 	var fog := fog_color(y - surf, v)
 	if faded:
-		draw_rect(r, fog)
+		_fill_rect(r, fog, FOG)
 		_half_strips(lx, ly, r, base, open_l, open_r, open_u, open_d, PackedVector2Array(), ti)
 	elif mask == 0:
 		_fill_rect(r, base, ti)
