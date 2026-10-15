@@ -368,6 +368,17 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				_rbox(Rect2(cx - 28, floor_y - 40, 56, 8), 3, top, Color(0, 0, 0, 0), 0)
 				# Труба в потолок.
 				draw_rect(Rect2(cx - 6, r.position.y + 4, 12, floor_y - 40 - r.position.y - 4), top.lightened(0.08))
+				if p.gas_boiler and p.phase == Project.Phase.DONE:
+					# Железный газовый котёл на печи: бак с заклёпками, манометр и газовая труба.
+					var steel := Color(0.46, 0.5, 0.56, alpha)
+					var b := Rect2(cx - 17, floor_y - 68, 34, 27)
+					_rbox(b, 7, steel, Color(0.26, 0.29, 0.33, alpha), 2)
+					draw_rect(Rect2(b.position.x + 2, b.position.y + 6, b.size.x - 4, 3), Color(1, 1, 1, 0.18 * alpha))
+					for k in 4:
+						draw_circle(Vector2(b.position.x + 6 + k * 7.3, b.end.y - 5), 1.6, Color(0.3, 0.32, 0.36, alpha))
+					draw_circle(Vector2(cx + 9, b.position.y + 12), 4.5, Color(0.92, 0.9, 0.84, alpha))
+					draw_line(Vector2(cx + 9, b.position.y + 12), Vector2(cx + 11, b.position.y + 9), Color(0.7, 0.15, 0.1, alpha), 1.2)
+					draw_rect(Rect2(b.position.x - 8, b.position.y + 14, 9, 4), Color(0.75, 0.62, 0.2, alpha))
 				if p.burning and alpha >= 1.0:
 					var tt := Time.get_ticks_msec() / 1000.0 + i * 1.3
 					_glow(Vector2(cx, floor_y - 12), r.size.y * 1.2, Color(1.0, 0.6, 0.25, 0.22))
@@ -375,9 +386,9 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 						var fx := cx + (k - 1) * 7.0
 						var fh := 11.0 + 5.0 * sin(tt * 7.0 + k * 2.0)
 						draw_colored_polygon(PackedVector2Array([Vector2(fx - 5, floor_y - 2), Vector2(fx + 5, floor_y - 2), Vector2(fx + sin(tt * 5.0 + k) * 2.0, floor_y - 2 - fh)]),
-							Color(1.0, 0.5, 0.15))
+							Color(0.3, 0.55, 1.0) if p.on_gas else Color(1.0, 0.5, 0.15))
 						draw_colored_polygon(PackedVector2Array([Vector2(fx - 3, floor_y - 2), Vector2(fx + 3, floor_y - 2), Vector2(fx, floor_y - 2 - fh * 0.6)]),
-							Color(1.0, 0.85, 0.35))
+							Color(0.7, 0.88, 1.0) if p.on_gas else Color(1.0, 0.85, 0.35))
 			# Поленница у последней печи.
 			var wx := x0 + span * (n - 0.5) / n + 32
 			for k in 3:

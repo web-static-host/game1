@@ -566,6 +566,18 @@ func test_room_purposes() -> void:
 	check(not hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "дважды не улучшают")
 	var saved := Project.from_dict(hroom.to_dict())
 	check(saved.brick_stoves, "кирпичные печи сохраняются")
+	# Газовые котлы — железное улучшение очага после «Газового отопления»; кирпич остаётся.
+	hcol.inventory["iron"] = 40
+	check(not hcol.set_purpose(hroom, RoomType.HEARTH_GAS), "без «Газового отопления» котлы не ставят")
+	hcol.research.done.append("gas_heating")
+	check(hcol.set_purpose(hroom, RoomType.HEARTH_GAS), "ставим газовые котлы")
+	hcol.advance_offline(3000.0)
+	check(hroom.purpose == RoomType.HEARTH and hroom.gas_boiler and hroom.brick_stoves and hroom.phase == Project.Phase.DONE,
+		"котлы стоят, печи остались кирпичными")
+	check(RoomType.current_purpose(hroom) == RoomType.HEARTH_GAS and not hcol.set_purpose(hroom, RoomType.HEARTH_GAS), "котлы дважды не ставят")
+	check(Project.from_dict(hroom.to_dict()).gas_boiler, "котлы сохраняются")
+	var hroom2: Project = _colony_with_room(9, RoomType.NONE)[1]
+	check(not hcol.set_purpose(hroom2, RoomType.HEARTH_GAS), "котёл — только на готовый очаг")
 
 	var farm_res := _colony_with_room(22, RoomType.FARM)
 	var fc: Colony = farm_res[0]
@@ -778,6 +790,22 @@ func test_roles() -> void:
 	kiln.stock = {"clay": 2, "wood": 1}
 	colony._craft(kiln)
 	check(kiln.stock.get("clay", 0) == 0 and colony.drop_total("brick") == 2, "кирпич лежит в мастерской, глина из запаса печи")
+	# Печь для кирпича топят углём (вдвое дольше дров, берут первым) или дровами.
+	kiln.stock = {"clay": 4, "coal": 1}
+	kiln.fuel = 0.0
+	colony.drops.clear()
+	check(colony.has_inputs(kiln), "глина есть, топливо — уголь")
+	colony._craft(kiln)
+	check(kiln.stock.get("coal", 0) == 0 and is_equal_approx(kiln.fuel, 1.0), "1 уголь — на два обжига (остался ещё один)")
+	colony._craft(kiln)
+	check(colony.drop_total("brick") == 4 and kiln.fuel < 0.01, "на одном угле — два обжига, 4 кирпича")
+	check(not colony.has_inputs(kiln) and colony.missing_inputs(kiln).has("wood"), "без топлива печь стоит")
+	kiln.stock = {"clay": 2, "wood": 1, "coal": 1}
+	colony._craft(kiln)
+	check(kiln.stock.get("wood", 0) == 1 and kiln.stock.get("coal", 0) == 0, "уголь сжигают раньше дров")
+	kiln.stock = {}
+	kiln.fuel = 0.0
+	colony.drops.clear()
 	# Мастер печи без подсобных сам носит сырьё в свою печь и обжигает кирпич.
 	colony.set_profession(hauler, Unit.Prof.ANY)
 	for u in colony.units:
@@ -1416,6 +1444,29 @@ func test_seasons() -> void:
 	check(colony.shore_spots().is_empty(), "зимой с берега не порыбачить — лёд")
 	check(not colony.farm_warm(farm), "подземная ферма зимой без огня холодная (%.0f °C)" % colony.room_temp(farm))
 	var hearth := _hearth(colony, farm)
+	# Очаг топят сначала углём: 1 уголь — как два полена.
+	colony.inventory["coal"] = 3
+	colony.inventory["wood"] = 5
+	check(colony._hearth_fuel(hearth, 1) == 2 and colony.inventory["coal"] == 2 and colony.inventory["wood"] == 5,
+		"очаг взял уголь (за два полена), дрова не тронул")
+	colony.inventory["coal"] = 0
+	check(colony._hearth_fuel(hearth, 1) == 1 and colony.inventory["wood"] == 4, "угля нет — горят дрова")
+	# Печь сама метан не жжёт (даже после «Газового отопления»); с газовым котлом — первым и греет дальше.
+	colony.inventory["methane"] = 2
+	colony.research.done.append("gas_heating")
+	colony._hearth_fuel(hearth, 1)
+	check(colony.inventory["methane"] == 2 and not hearth.on_gas, "печь без котла метан не жжёт")
+	var zone_wood := RoomType.heat_zone(hearth)
+	hearth.gas_boiler = true
+	check(colony._hearth_fuel(hearth, 1) == 3 and colony.inventory["methane"] == 1 and colony.inventory["wood"] == 3 and hearth.on_gas,
+		"на газу: очаг взял метан (как 3 полена), дрова не тронул")
+	var zone_gas := RoomType.heat_zone(hearth)
+	check(zone_gas.x > zone_wood.x and zone_gas.y > zone_wood.y, "на газу греет дальше (%s → %s)" % [zone_wood, zone_gas])
+	colony.inventory["methane"] = 0
+	colony._hearth_fuel(hearth, 1)
+	check(not hearth.on_gas, "метан кончился — снова на дровах")
+	hearth.gas_boiler = false
+	colony.research.done.erase("gas_heating")
 	# Погасший без дров очаг летом не держит тревогу «нет дров» (иначе все рубят лес).
 	var hr0 := hearth.rect
 	hearth.rect = Rect2i(x, w.gen.surface_y(x) - 3, 3, 3)

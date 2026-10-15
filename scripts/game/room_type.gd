@@ -17,24 +17,31 @@ const HINTS := [
 	"откачивает воду вокруг (16 м)",
 	"охлаждает воздух вокруг (20 м)",
 	"учёные открывают технологии",
-	"обжиг: 2 глины + 1 дерево → 2 кирпича",
+	"обжиг: 2 глины + топливо (1 дерево или ½ угля) → 2 кирпича",
 	"плавка: 2 железа + 1 уголь → 1 сталь",
 	"энергия: сжигает метан, уголь или дрова",
 	"собирает метан вокруг (20 м) — топливо для генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
-	"отопление: печи (по одной на 3 м) жгут дрова и греют от стен на 6–10 м",
+	"отопление: печи (по одной на 3 м) жгут уголь или дрова и греют от стен на 6–10 м",
 ]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH_BRICK: "bricks"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
+## Улучшение очага: железные газовые котлы над печами (готовая комната — HEARTH с gas_boiler).
+## Только котёл жжёт метан; без метана печи под ним топят углём и дровами.
+const HEARTH_GAS := 101
 ## Кирпичные печи против каменных: дров в 1.5 раза меньше, тепло в 1.5 раза дальше,
 ## очаг изнашивается вдвое медленнее.
 const BRICK_STOVE_GAIN := 1.5
+## Мастерские, которым нужно топливо: 1 на цикл обжига (уголь или дрова).
+const FUELED := [KILN]
+## Топливо: на сколько «поленьев» хватает единицы. Уголь горит вдвое дольше и идёт первым.
+const FUEL_VALUE := {"methane": 3.0, "coal": 2.0, "wood": 1.0}
 ## Мастерские: [сырьё, продукция, секунд работы на цикл].
 const RECIPES := {
-	KILN: [{"clay": 2, "wood": 1}, {"brick": 2}, 20.0],
+	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
 	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
 }
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
@@ -75,12 +82,24 @@ static func heat_zone(p: Project) -> Vector2i:
 	var z := Vector2i(2 + n, 4 + 2 * n)
 	if p.purpose == HEARTH and p.brick_stoves:
 		z = Vector2i(roundi(z.x * BRICK_STOVE_GAIN), roundi(z.y * BRICK_STOVE_GAIN))
+	# Котёл на газу жарче.
+	if p.purpose == HEARTH and p.gas_boiler and p.on_gas:
+		z += Vector2i(1, 2)
 	return z
 
 
 ## Назначение без варианта (кирпичный очаг — это очаг).
 static func base_type(t: int) -> int:
-	return HEARTH if t == HEARTH_BRICK else t
+	return HEARTH if t == HEARTH_BRICK or t == HEARTH_GAS else t
+
+
+## Как обустроена комната сейчас (для очага — с вариантом печей).
+static func current_purpose(p: Project) -> int:
+	if p.purpose == HEARTH and p.gas_boiler:
+		return HEARTH_GAS
+	if p.purpose == HEARTH and p.brick_stoves:
+		return HEARTH_BRICK
+	return p.purpose
 
 
 static func purpose_name(t: int) -> String:
@@ -89,10 +108,14 @@ static func purpose_name(t: int) -> String:
 			return "Очаг (каменные печи)"
 		HEARTH_BRICK:
 			return "Очаг (кирпичные печи)"
+		HEARTH_GAS:
+			return "Очаг (газовые котлы)"
 	return NAMES[t]
 
 
 static func purpose_hint(t: int) -> String:
+	if t == HEARTH_GAS:
+		return "железные котлы над печами жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше; без метана печи топят углём и дровами"
 	if t == HEARTH_BRICK:
 		return "отопление: кирпичные печи — дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше"
 	return HINTS[t]
@@ -139,6 +162,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 8 * stoves(p)}
 		HEARTH_BRICK:
 			return {"brick": 6 * stoves(p)}
+		HEARTH_GAS:
+			return {"iron": 4 * stoves(p)}
 	return {}
 
 

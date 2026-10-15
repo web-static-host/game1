@@ -57,6 +57,10 @@ var farm_progress := 0.0
 var equip_ladder := false
 ## Очаг с кирпичными печами (иначе — каменные).
 var brick_stoves := false
+## Очаг сейчас горит на метане (газовое отопление).
+var on_gas := false
+## Над печами очага стоят железные газовые котлы (жгут метан).
+var gas_boiler := false
 ## Объекты поверхности (столбцы x), которые надо убрать на этапе 1.
 var clear_x: Array[int] = []
 ## Что хранит склад (пусто — всё).
@@ -77,6 +81,8 @@ var support_progress := 0.0
 var delivered := {}
 ## Сырьё, которое подсобные рабочие уже принесли в мастерскую.
 var stock := {}
+## Сколько циклов обжига ещё горит заложенное топливо (печь для кирпича).
+var fuel := 0.0
 ## Горит ли огонь (очаг, генератор) — греет всё вокруг. Не сохраняется: пересчитывается.
 var burning := false
 ## Износ готовой постройки 0..1 (1 — разрушается) и уровень последнего предупреждения.
@@ -298,6 +304,8 @@ func to_dict() -> Dictionary:
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
 		"brick_stoves": brick_stoves,
+		"gas_boiler": gas_boiler,
+		"fuel": fuel,
 		"clear_x": clear_x,
 		"store_filter": store_filter,
 		"exposed_t": exposed_t,
@@ -350,6 +358,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.brick_stoves = bool(d.get("brick_stoves", false))
+	p.gas_boiler = bool(d.get("gas_boiler", false))
+	p.fuel = float(d.get("fuel", 0.0))
 	for x in d.get("clear_x", []):
 		p.clear_x.append(int(x))
 	# Мосту и пристани расчистка не нужна (раньше ждали дерево на дальнем берегу).

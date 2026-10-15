@@ -1097,18 +1097,21 @@ func waiting_for_materials() -> bool:
 func set_purpose(p: Project, t: int) -> bool:
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
-	if t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and p.brick_stoves:
+	# Котлы и кирпичные печи — улучшения очага; второй раз их не ставят.
+	if t == RoomType.HEARTH_GAS and not is_hearth_upgrade(p, t):
+		return false
+	if t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and not is_hearth_upgrade(p, t):
 		return false
 	if not research.has(RoomType.REQUIRES.get(t, "")):
 		return false
 	if is_hearth_upgrade(p, t):
-		# Каменные печи перекладывают кирпичом: очаг остаётся очагом.
+		# Печи перекладывают кирпичом или ставят котлы: очаг остаётся очагом.
 		p.equip_ladder = false
 		p.equip_target = t
 		p.equip_paid = false
 		p.equip_done = 0.0
 		p.phase = Project.Phase.EQUIP
-		_log("%s: перекладываем печи кирпичом" % p.title(), "info")
+		_log("%s: %s" % [p.title(), "ставим газовые котлы" if t == RoomType.HEARTH_GAS else "перекладываем печи кирпичом"], "info")
 		_try_pay(p)
 		return true
 	_release_beds(p)
@@ -1125,9 +1128,11 @@ func set_purpose(p: Project, t: int) -> bool:
 	return true
 
 
-## Улучшение каменного очага до кирпичного.
+## Улучшение очага: каменные печи — до кирпичных, любые — газовыми котлами.
 func is_hearth_upgrade(p: Project, t: int) -> bool:
-	return t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and not p.brick_stoves
+	if p.purpose != RoomType.HEARTH:
+		return false
+	return (t == RoomType.HEARTH_BRICK and not p.brick_stoves) or (t == RoomType.HEARTH_GAS and not p.gas_boiler)
 
 
 ## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
@@ -1177,13 +1182,19 @@ func _finish_equip(p: Project) -> void:
 				_drop(u)
 		_log("%s: лестница готова" % p.title(), "good")
 		return
-	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
-	if p.brick_stoves and p.purpose == RoomType.HEARTH:
+	if is_hearth_upgrade(p, p.equip_target):
+		if p.equip_target == RoomType.HEARTH_GAS:
+			p.gas_boiler = true
+		else:
+			p.brick_stoves = true
 		for u in units:
 			if u.project_id == p.id:
 				_drop(u)
-		_log("Готово: %s — печи кирпичные (%s)" % [p.title(), RoomType.purpose_hint(RoomType.HEARTH_BRICK)], "good")
+		_log("Готово: %s — %s (%s)" % [p.title(), "газовые котлы" if p.equip_target == RoomType.HEARTH_GAS else "печи кирпичные",
+			RoomType.purpose_hint(p.equip_target)], "good")
 		return
+	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
+	p.gas_boiler = false
 	p.purpose = RoomType.base_type(p.equip_target)
 	p.farm_progress = 0.0
 	for u in units:
@@ -3335,6 +3346,23 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		u.to_store = false
 		_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
 		return true
+	# Топливо про запас: уголь, если есть, иначе дрова.
+	if RoomType.FUELED.has(p.purpose):
+		var want := SUPPLY_CYCLES - fuel_have(p) - _incoming_to(p, "coal") * 2.0 - _incoming_to(p, "wood")
+		if want > 0.0:
+			for k in ["coal", "wood"]:
+				var src := _haul_source(k, dist)
+				if src[0] == null:
+					continue
+				var units := ceili(want / float(RoomType.FUEL_VALUE[k]))
+				u.carry_key = k
+				u.carry_amount = mini(carry_cap(), mini(units, src[2]))
+				u.haul_stage = 0
+				u.from_drop = src[1] != null
+				u.haul_src = src[1] if src[1] != null else Vector2i.ZERO
+				u.to_store = false
+				_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
+				return true
 	return false
 
 
@@ -3830,7 +3858,29 @@ func has_inputs(p: Project) -> bool:
 	for k in need:
 		if _input_have(p, k) < need[k]:
 			return false
-	return true
+	return not RoomType.FUELED.has(p.purpose) or fuel_have(p) >= 1.0
+
+
+## На сколько циклов хватит топлива у мастерской: горящее + уголь и дрова в запасе печи.
+func fuel_have(p: Project) -> float:
+	var n := p.fuel
+	for k in ["coal", "wood"]:
+		n += _input_have(p, k) * float(RoomType.FUEL_VALUE[k])
+	return n
+
+
+## Подбросить топлива на цикл: сначала уголь, потом дрова.
+func _burn_fuel(p: Project) -> void:
+	if p.fuel < 1.0:
+		for k in ["coal", "wood"]:
+			if _input_have(p, k) >= 1:
+				if p.stock.get(k, 0) >= 1:
+					p.stock[k] -= 1
+				else:
+					inventory[k] = inventory.get(k, 0) - 1
+				p.fuel += float(RoomType.FUEL_VALUE[k])
+				break
+	p.fuel = maxf(0.0, p.fuel - 1.0)
 
 
 ## Чего не хватает мастерской (пусто — всё есть).
@@ -3842,6 +3892,8 @@ func missing_inputs(p: Project) -> Dictionary:
 	for k in need:
 		if _input_have(p, k) < need[k]:
 			out[k] = need[k]
+	if RoomType.FUELED.has(p.purpose) and fuel_have(p) < 1.0:
+		out["wood"] = 1
 	return out
 
 
@@ -3859,6 +3911,8 @@ func _craft(p: Project) -> void:
 		var from_stock := mini(p.stock.get(k, 0), recipe[0][k])
 		p.stock[k] = p.stock.get(k, 0) - from_stock
 		inventory[k] = inventory.get(k, 0) - (recipe[0][k] - from_stock)
+	if RoomType.FUELED.has(p.purpose):
+		_burn_fuel(p)
 	for k in recipe[1]:
 		_produce(p, k, recipe[1][k])
 
@@ -3928,25 +3982,42 @@ func carry_cap() -> int:
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
 ## Есть ли очаг, которому не хватает дров (тогда свободные идут рубить).
 func _hearth_starving() -> bool:
-	if _have_any("wood") > 0:
+	if _have_any("wood") > 0 or _have_any("coal") > 0:
 		return false
+	var gas: bool = inventory.get("methane", 0) > 0
 	for p in rooms_of(RoomType.HEARTH):
-		if not p.paused and p.blocked.begins_with("Нет дров"):
+		if not p.paused and p.blocked.begins_with("Нет дров") and not (p.gas_boiler and gas):
 			return true
 	return false
 
 
-## Дрова в печи (по полену на печь): со склада, а нет — из кучи дров неподалёку (до 12 м).
-## Возвращает, сколько поленьев нашлось.
+## Топливо в печи (по «полену» на печь): сначала уголь (за два полена), потом дрова —
+## со склада, а нет — из кучи неподалёку (до 12 м). Возвращает, на сколько поленьев нашлось.
 func _hearth_fuel(p: Project, need: int) -> int:
-	var got := mini(need, inventory.get("wood", 0))
-	inventory["wood"] = inventory.get("wood", 0) - got
-	var c := p.rect.get_center()
-	for d: Vector2i in drops.keys():
-		if got >= need:
+	var got := 0
+	p.on_gas = false
+	var kinds := ["coal", "wood"]
+	# Газовый котёл: сначала метан от дегазации (печь сама метан не жжёт).
+	if p.gas_boiler:
+		kinds.push_front("methane")
+	for k in kinds:
+		var per := int(RoomType.FUEL_VALUE[k])
+		var want := ceili(float(need - got) / per)
+		if want <= 0:
 			break
-		if absi(d.x - c.x) <= 12 and absi(d.y - c.y) <= 12:
-			got += _take_drop(d, "wood", need - got)
+		var take := mini(want, inventory.get(k, 0))
+		inventory[k] = inventory.get(k, 0) - take
+		got += take * per
+		var c := p.rect.get_center()
+		for d: Vector2i in drops.keys():
+			if got >= need:
+				break
+			if absi(d.x - c.x) <= 12 and absi(d.y - c.y) <= 12:
+				var t := _take_drop(d, k, ceili(float(need - got) / per))
+				take += t
+				got += t * per
+		if k == "methane" and take > 0:
+			p.on_gas = true
 	return got
 
 
@@ -3976,7 +4047,7 @@ func _hearth_tick(dt: float) -> void:
 			if p.blocked.begins_with("Нет дров"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
-			p.blocked = "Нет дров — очаг погас"
+			p.blocked = "Нет дров и угля — очаг погас"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 		if was != p.burning:
 			elements._temp_memo.clear()
