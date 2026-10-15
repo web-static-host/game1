@@ -1453,7 +1453,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		world.remove_feature(c.x)
 		drop_item(_ground_cell(c.x), y[0], y[1], p)
 	var hazards := {}
-	for n in world.reveal_around(c.x, c.y):
+	for n in world.reveal_around(c.x, c.y, see_radius()):
 		var nm := world.get_mat(n.x, n.y)
 		_note_discovery(nm, n)
 		if Mat.is_fluid(nm) and not hazards.has(nm):
@@ -2880,11 +2880,12 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 
 ## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
 func _hazard_stop(p: Project, c: Vector2i) -> bool:
-	var r := 4 if research.has("geology") else 2
+	var r := 2 + 2 * geology_level()
 	for dy in range(-r, r + 1):
 		for dx in range(-r, r + 1):
 			var n := c + Vector2i(dx, dy)
-			if world.is_revealed(n.x, n.y):
+			# Уже вскрытое — не тревога; видимое, но ещё в толще породы — тревога.
+			if world.is_dug(n.x, n.y):
 				continue
 			var kind := ""
 			match world.get_mat(n.x, n.y):
@@ -3862,12 +3863,36 @@ func _craft(p: Project) -> void:
 		_produce(p, k, recipe[1][k])
 
 
+## Уровень геологоразведки (0–4).
+func geology_level() -> int:
+	var n := 0
+	for id in ["geology", "geology2", "geology3", "geology4"]:
+		if research.has(id):
+			n += 1
+	return n
+
+
+## На сколько клеток от выработок видно породу.
+func see_radius() -> int:
+	return 1 + geology_level()
+
+
+## Новый уровень геологии — заново осматриваем все выработки.
+func _reveal_known() -> void:
+	var r := see_radius()
+	for c in world.dug_cells():
+		for n in world.reveal_around(c.x, c.y, r):
+			_note_discovery(world.get_mat(n.x, n.y), n)
+
+
 func _research(work: float) -> void:
 	var lab_power := 1.0 + 0.5 * power_ratio if research.has("electricity") and power_made > 0 else 1.0
 	var finished := research.add(work * Research.POINTS_PER_SEC * lab_power)
 	if finished.is_empty():
 		return
 	_log("Изучено: %s. %s" % [Research.tech_name(finished), Research.TECHS[finished][1]], "good")
+	if finished.begins_with("geology"):
+		_reveal_known()
 	_log("Учёные ждут: выберите следующее исследование («Наука»)", "info")
 
 

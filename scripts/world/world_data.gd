@@ -244,13 +244,14 @@ func set_dug(x: int, y: int) -> void:
 	_set_flags(x, y, ChunkData.F_DUG | ChunkData.F_REVEALED)
 
 
-## Открывает 8 соседей клетки. Если вскрыта природная полость — открывает её целиком.
+## Открывает клетки вокруг (radius 1 — 8 соседей, больше — после геологоразведки).
+## Если вскрыта природная полость — открывает её целиком.
 ## Возвращает список впервые увиденных клеток [Vector2i].
-func reveal_around(x: int, y: int) -> Array[Vector2i]:
+func reveal_around(x: int, y: int, radius := 1) -> Array[Vector2i]:
 	var found: Array[Vector2i] = []
 	var caves: Array[Vector2i] = []
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
 			if dx == 0 and dy == 0:
 				continue
 			var nx := x + dx
@@ -320,6 +321,18 @@ func modified_fluids() -> Dictionary:
 		var c: ChunkData = chunks[key]
 		if c.has_fluid_overlay():
 			out[key] = c.fluid
+	return out
+
+
+## Все выкопанные клетки мира.
+func dug_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var flags_by_chunk := modified_flags()
+	for key: Vector2i in flags_by_chunk:
+		var flags: PackedByteArray = flags_by_chunk[key]
+		for i in flags.size():
+			if flags[i] & ChunkData.F_DUG:
+				out.append(Vector2i(key.x * SIZE + (i & MASK), key.y * SIZE + (i >> ChunkData.SHIFT)))
 	return out
 
 

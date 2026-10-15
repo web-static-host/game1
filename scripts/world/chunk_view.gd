@@ -313,7 +313,13 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	# Под землёй порода видна только у самой выработки и плавно уходит в темноту.
 	var faded := mask == 0
 	var fog := fog_color(y - surf, v)
-	if faded:
+	# Разведано геологией (вдали от выработки, ни одной открытой соседней клетки):
+	# порода видна целиком, чуть приглушённая.
+	var far := faded and not (open_l or open_r or open_u or open_d or _is_open(lx - 1, ly - 1) \
+		or _is_open(lx + 1, ly - 1) or _is_open(lx - 1, ly + 1) or _is_open(lx + 1, ly + 1))
+	if far:
+		_fill_rect(r, base.lerp(fog, 0.35), ti)
+	elif faded:
 		_fill_rect(r, fog, FOG)
 		_half_strips(lx, ly, r, base, open_l, open_r, open_u, open_d, PackedVector2Array(), ti)
 	elif mask == 0:
@@ -333,7 +339,7 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		draw_rect(Rect2(r.position.x, r.end.y - 3, TILE, 3), shade)
 
 	if Mat.is_ore(m):
-		_draw_ore(r, m, x, y, [open_l, open_r, open_u, open_d] if faded else [])
+		_draw_ore(r, m, x, y, [open_l, open_r, open_u, open_d] if faded and not far else [])
 	elif m == Mat.MAGMA:
 		draw_circle(r.get_center(), TILE * 0.3, Color(1.0, 0.85, 0.3, 0.8))
 

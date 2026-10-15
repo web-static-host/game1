@@ -21,6 +21,7 @@ func _initialize() -> void:
 	test_site_keeps_yield()
 	test_new_room_load()
 	test_mine()
+	test_geology_levels()
 	test_room_purposes()
 	test_needs_realtime()
 	test_family()
@@ -460,6 +461,38 @@ func test_mine() -> void:
 	check(room.phase == Project.Phase.DONE, "комната в шахте построена без копки")
 	var saved := Project.from_dict(pieces[0].to_dict())
 	check(saved.kind == M, "шахта сохраняется")
+
+
+## Геологоразведка: каждый уровень — на клетку дальше видно породу от выработок.
+func test_geology_levels() -> void:
+	var colony := _new_colony(5)
+	var w := colony.world
+	# Выработка в прочной породе (сыпучая сразу осыплется в выкопанное).
+	var c := Vector2i.ZERO
+	for xx in range(0, 300):
+		var cc := Vector2i(xx, w.gen.surface_y(xx) + 30)
+		var firm := true
+		for dy in range(-2, 2):
+			var m := w.get_mat(cc.x, cc.y + dy)
+			if not Mat.is_solid(m) or Mat.is_loose(m) or Mat.is_fluid(m):
+				firm = false
+		if firm:
+			c = cc
+			break
+	var x := c.x
+	var s := c.y - 30
+	check(colony.see_radius() == 1, "без геологии видно на 1 клетку")
+	colony._complete_dig(c, null, null)
+	check(w.is_revealed(c.x + 1, c.y) and not w.is_revealed(c.x + 2, c.y), "у выработки видна только соседняя клетка")
+	colony.research.done.append("geology")
+	colony._reveal_known()
+	check(colony.see_radius() == 2 and w.is_revealed(c.x + 2, c.y) and not w.is_revealed(c.x + 3, c.y),
+		"геология I: видно на 2 клетки, и старые выработки осмотрены заново")
+	colony.research.done.append("geology2")
+	var c2 := Vector2i(x, s + 27)
+	colony._complete_dig(c2, null, null)
+	check(w.is_revealed(c2.x + 3, c2.y) and not w.is_revealed(c2.x + 4, c2.y), "геология II: новая выработка — на 3 клетки")
+	check(Research.TECHS["geology4"][3] == ["geology3"], "уровни геологии идут цепочкой до IV")
 
 
 ## Под готовым этажом новая комната несёт его вес: лёгкая не выдержит каменный верх.
