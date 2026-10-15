@@ -411,6 +411,15 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 			draw_line(Vector2(x - 13, r.position.y + 5), Vector2(x + 13, r.position.y + 5), dark, 6.0)
 			draw_line(Vector2(x - 13, r.position.y + 3), Vector2(x + 13, r.position.y + 3), col, 6.0)
 			x += TILE * 3.0
+		# Шахта — рельсы для вагонеток по полу.
+		if p.kind == Project.Kind.MINE:
+			var rail := Color(0.42, 0.42, 0.46, alpha)
+			var y := r.end.y - 4
+			var sx := r.position.x + 4
+			while sx < r.end.x - 4:
+				draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
+				sx += 10
+			draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
 
 
 func _draw_site(p: Project, font: Font) -> void:

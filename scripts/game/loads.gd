@@ -100,6 +100,10 @@ func room_error(r: Rect2i, mat: String) -> String:
 	tmp.rect = r
 	tmp.material = mat
 	var predicted := compute(tmp)
+	# Сама новая комната: если над ней уже стоят этажи, их вес ляжет на неё.
+	if utilization(tmp, predicted) > 1.0:
+		return "Эта комната не выдержит: сверху будет %d т, а стены из «%s» держат %d т — выберите материал прочнее" % [
+			roundi(predicted[-1]), Project.MATERIALS.get(mat, ["?"])[0].to_lower(), roundi(bearing(tmp))]
 	for p in colony.projects:
 		if p.kind == Project.Kind.ROOM and utilization(p, predicted) > 1.0:
 			return "%s не выдержит: сверху будет %d т, держит %d т — стройте легче или внизу прочнее" % [

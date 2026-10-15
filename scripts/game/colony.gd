@@ -335,16 +335,19 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 	for y in range(r.position.y, r.end.y):
 		for x in range(r.position.x, r.end.x):
 			var c := Vector2i(x, y)
-			if project_at(c) != null:
+			var other := project_at(c)
+			if other != null and not (kind == Project.Kind.ROOM and _room_fits_mine(r, other)):
+				if other.kind == Project.Kind.MINE and kind == Project.Kind.ROOM:
+					return "Комнату в шахте ставьте на всю её высоту, когда шахта готова"
 				return "Пересекается с другой стройкой"
 			if world.is_revealed(x, y) and Mat.is_fluid(world.get_mat(x, y)):
 				return "В зоне стройки %s" % Mat.name_of(world.get_mat(x, y)).to_lower()
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		return _water_structure_error(kind, r)
-	if kind == Project.Kind.TUNNEL:
+	if kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
-				return "Тоннели — только под землёй. Над землёй стройте комнаты"
+				return "%s — только под землёй. Над землёй стройте комнаты" % ("Тоннели" if kind == Project.Kind.TUNNEL else "Шахты")
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -363,6 +366,41 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			return "Потолок из породы «%s» не удержать даже с укреплением: здесь не шире %d м" % [
 				Mat.name_of(span[1]).to_lower(), span[0] * 3]
 	return ""
+
+
+## Комнату можно поставить в готовую шахту — ровно на её высоту.
+func _room_fits_mine(r: Rect2i, m: Project) -> bool:
+	return m.kind == Project.Kind.MINE and m.phase == Project.Phase.DONE \
+		and r.position.y == m.rect.position.y and r.end.y == m.rect.end.y
+
+
+## Комната встаёт в шахту: шахта делится на куски слева и справа от комнаты.
+func _carve_mines(r: Rect2i) -> void:
+	for m in projects.duplicate():
+		if m.kind != Project.Kind.MINE or not m.rect.intersects(r):
+			continue
+		projects.erase(m)
+		for c in m.cells():
+			if r.has_point(c):
+				interior.erase(c)
+		var parts: Array[Rect2i] = []
+		if r.position.x > m.rect.position.x:
+			parts.append(Rect2i(m.rect.position.x, m.rect.position.y, r.position.x - m.rect.position.x, m.rect.size.y))
+		if r.end.x < m.rect.end.x:
+			parts.append(Rect2i(r.end.x, m.rect.position.y, m.rect.end.x - r.end.x, m.rect.size.y))
+		for pr in parts:
+			var q := Project.new()
+			q.id = next_project_id
+			next_project_id += 1
+			q.kind = Project.Kind.MINE
+			q.rect = pr
+			q.phase = Project.Phase.DONE
+			q.paid = true
+			q.workers = m.workers
+			q.wear = m.wear
+			for i in q.slice_count():
+				q.supported.append(i)
+			projects.append(q)
 
 
 ## [допустимый пролёт без крепи, самая слабая порода потолка] для комнаты r.
@@ -571,6 +609,8 @@ func has_access(r: Rect2i) -> bool:
 func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> Project:
 	if not validate(kind, r, material).is_empty():
 		return null
+	if kind == Project.Kind.ROOM:
+		_carve_mines(r)
 	var p := Project.new()
 	p.id = next_project_id
 	next_project_id += 1
@@ -581,7 +621,7 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
 	# Срезы, где есть порода: их копают по одному и сразу крепят.
-	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
 		for i in p.slice_count():
 			for c in p.slice_cells(i):
 				if Mat.is_solid(world.get_mat(c.x, c.y)):
@@ -2544,6 +2584,11 @@ func _task_order(u: Unit) -> Array[String]:
 		return ["workplace", "projects", "need", "haul"]
 	if u.profession == Unit.Prof.HAULER:
 		return ["haul", "projects", "need"]
+	# Шахтёры — сначала в шахты, строители — сначала на остальные стройки.
+	if u.profession == Unit.Prof.MINER:
+		return ["mines", "projects", "need", "haul"]
+	if u.profession == Unit.Prof.BUILDER:
+		return ["builds", "projects", "need", "haul"]
 	# Строители и свободные: сначала стройка, потом переноска.
 	return ["projects", "need", "haul"]
 
@@ -2604,16 +2649,28 @@ func _assign(u: Unit) -> bool:
 			"projects":
 				if _try_projects(u, parents, dist):
 					return true
+			"mines":
+				if _try_projects(u, parents, dist, Project.Kind.MINE):
+					return true
+			"builds":
+				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
+					return true
 	return false
 
 
 ## Стройки: копка, расчистка, укрепление, стройка, обустройство, ремонт, доставка материалов.
 ## Назначенный строитель, если места заняты свободными, занимает место одного из них.
-func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+## only — только стройки этого вида, skip — кроме этого вида. Шахтёр вытесняет свободного
+## из шахты, строитель — с остальных строек.
+func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, skip := -1) -> bool:
 	for p in projects:
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 			continue
-		if workers_on(p) >= p.workers and not (u.profession == Unit.Prof.BUILDER and _bump_free_worker(p)):
+		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
+			continue
+		var mine := p.kind == Project.Kind.MINE
+		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
+		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)):
 			continue
 		if p.phase == Project.Phase.DIG:
 			if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
@@ -4328,7 +4385,7 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if not taken.has(key) and fish_in(_lake_near(spot.x)) >= 1.0:
 						taken[key] = true
 						return [key, Unit.Task.FISH, null]
-			"dig", "build", "projects":
+			"dig", "build", "projects", "mines", "builds":
 				for p in projects:
 					var slot := "w%d" % p.id
 					if p.paused or taken.get(slot, 0) >= p.workers:

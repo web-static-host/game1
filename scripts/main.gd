@@ -286,7 +286,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE
+	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE or m == Hud.Mode.MINE
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -419,6 +419,7 @@ func _pick_workplace(u: Unit) -> void:
 	_info_target = []
 	var items := []
 	for role in [[Unit.Prof.BUILDER, "в первую очередь идёт на стройки: копает, строит, обустраивает, чинит"],
+			[Unit.Prof.MINER, "в первую очередь копает шахты — добыча руды и ископаемых"],
 			[Unit.Prof.HAULER, "в первую очередь носит: материалы на стройки, сырьё в мастерские, добычу и продукцию на склад"],
 			[Unit.Prof.ANY, "стройка, если есть место, иначе переноска"]]:
 		var prof: int = role[0]
@@ -745,6 +746,10 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			chips.append(["", "стены: " + p.material_name().to_lower()])
 		Project.Kind.TUNNEL:
 			chips.append(["", "потоков: %d" % Colony.tunnel_lanes(p.rect)])
+		Project.Kind.MINE:
+			chips.append(["", "шахтёров %d" % colony.units.filter(func(o: Unit) -> bool: return o.workplace == 0 and o.profession == Unit.Prof.MINER).size()])
+			if p.phase == Project.Phase.DONE:
+				rows.append({"type": "text", "text": "Готовая шахта: здесь можно ставить комнаты на всю её высоту."})
 		_:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
@@ -924,7 +929,7 @@ func _people_spec() -> Dictionary:
 		chips.append(["", "%s: %d" % [d, counts[d]]])
 	return {"title": "Жители", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
 		"rows": [{"type": "chips", "label": "Сейчас", "items": chips},
-			{"type": "text", "text": "На стройку первыми идут строители, потом свободные. Носят первыми подсобные, потом свободные — но свободный бросит ношу, если на стройке есть место."}]}
+			{"type": "text", "text": "В шахты первыми идут шахтёры, на остальные стройки — строители, потом свободные. Носят первыми подсобные, потом свободные — но свободный бросит ношу, если на стройке есть место."}]}
 
 
 func _show_people() -> void:
@@ -933,6 +938,7 @@ func _show_people() -> void:
 	_info_target = ["people"]
 	var spec := _people_spec()
 	var groups := [["Строители", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.BUILDER],
+		["Шахтёры", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.MINER],
 		["Подсобные рабочие", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.HAULER],
 		["На местах работы", func(u: Unit) -> bool: return not u.child and u.workplace != 0],
 		["Свободные", func(u: Unit) -> bool: return colony.is_free(u)],
@@ -957,6 +963,7 @@ func _show_people() -> void:
 			controls.append({"type": "people", "label": "%s — %d" % [g[0], items.size()], "items": items, "empty": "Никого."})
 	spec["controls"] = controls
 	spec["actions"] = [["+ Строитель", func() -> void: _pick_role(Unit.Prof.BUILDER), "primary"],
+		["+ Шахтёр", func() -> void: _pick_role(Unit.Prof.MINER), "primary"],
 		["+ Подсобный", func() -> void: _pick_role(Unit.Prof.HAULER), "primary"]]
 	hud.show_panel(spec)
 
@@ -965,7 +972,7 @@ func _show_people() -> void:
 func _pick_role(prof: int) -> void:
 	_info_target = []
 	var stat := "agility" if prof == Unit.Prof.BUILDER else "strength"
-	var skill := "build" if prof == Unit.Prof.BUILDER else "gather"
+	var skill := "build" if prof == Unit.Prof.BUILDER else ("dig" if prof == Unit.Prof.MINER else "gather")
 	var cands := colony.units.filter(func(o: Unit) -> bool:
 		return not o.child and not (o.workplace == 0 and o.profession == prof))
 	var score := func(o: Unit) -> float:
@@ -1088,6 +1095,10 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 			r = pick[1]
 	elif mode == Hud.Mode.TUNNEL:
 		err = colony.validate(kind, r)
+	elif mode == Hud.Mode.MINE:
+		# Шахта — всегда 3 м: полоса тянется по горизонтали от места, где коснулись.
+		r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, Project.MINE_HEIGHT)
+		err = colony.validate(kind, r)
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
@@ -1152,6 +1163,8 @@ func _mode_kind() -> int:
 			return Project.Kind.ROOM
 		Hud.Mode.BRIDGE:
 			return Project.Kind.BRIDGE
+		Hud.Mode.MINE:
+			return Project.Kind.MINE
 	return Project.Kind.TUNNEL
 
 
@@ -1193,7 +1206,7 @@ func _pending_spec() -> Dictionary:
 	if not cost.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
-	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL:
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
 		if sw > 0:
@@ -1205,13 +1218,17 @@ func _pending_spec() -> Dictionary:
 			Mat.name_of(span[1]).to_lower(), span[0]]})
 	for lower in colony.ladders_needed(r):
 		rows.append({"type": "resources", "label": "Лестница внизу", "items": _cost_items(RoomType.ladder_cost(lower))})
-	if kind == Project.Kind.ROOM and not colony.rooms_below(r).is_empty():
+	if kind == Project.Kind.ROOM:
 		var tmp := Project.new()
 		tmp.id = -1
 		tmp.kind = kind
 		tmp.rect = r
 		tmp.material = _pending_material
 		var predicted := colony.loads.compute(tmp)
+		# Будущая нагрузка на саму комнату: вес этажей, которые уже стоят над ней.
+		var own := colony.loads.utilization(tmp, predicted)
+		rows.append(_progress("Нагрузка на неё", minf(own, 1.0), "%d т из %d т" % [
+			roundi(float(predicted.get(-1, 0.0))), roundi(Loads.bearing(tmp))], _wear_color(own * 0.9)))
 		for lower in colony.rooms_below(r):
 			var util := colony.loads.utilization(lower, predicted)
 			rows.append(_progress("Нагрузка внизу", minf(util, 1.0), "%s: %d%%" % [lower.title(), roundi(util * 100.0)],

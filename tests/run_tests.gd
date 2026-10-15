@@ -19,6 +19,8 @@ func _initialize() -> void:
 	test_workers_and_ladder()
 	test_room_materials()
 	test_site_keeps_yield()
+	test_new_room_load()
+	test_mine()
 	test_room_purposes()
 	test_needs_realtime()
 	test_family()
@@ -428,6 +430,58 @@ func test_site_keeps_yield() -> void:
 	check(colony.units[0].task != Unit.Task.HAUL or got > need, "рубщик не тащит дерево на склад")
 
 
+## Шахта: 3 м высотой, только под землёй, с крепью; шахтёры идут первыми; на её месте —
+## комната (шахта делится).
+func test_mine() -> void:
+	var colony := _new_colony(31)
+	var w := colony.world
+	_start(colony, 0)
+	colony.inventory = {"wood": 80, "stone": 60, "food": 200}
+	var x := _find_solid_column(w)
+	var s := w.gen.surface_y(x)
+	var M := Project.Kind.MINE
+	check(not colony.validate(M, Rect2i(x + 1, s + 3, 8, 2)).is_empty(), "шахта не 3 м высотой — нельзя")
+	check(not colony.validate(M, Rect2i(x + 1, s - 3, 8, 3)).is_empty(), "шахта над землёй — нельзя")
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	var mine := colony.create_project(M, Rect2i(x + 1, s + 3, 9, 3))
+	check(mine != null and mine.needs_support.size() > 0, "шахта заложена и требует крепи")
+	var miner: Unit = colony.units[0]
+	colony.set_profession(miner, Unit.Prof.MINER)
+	colony.advance_offline(20000.0)
+	check(mine.phase == Project.Phase.DONE, "шахта прокопана и закреплена")
+	# Комната — только на всю высоту шахты; шахта делится на куски по бокам.
+	check(not colony.validate(Project.Kind.ROOM, Rect2i(x + 3, s + 2, 3, 3)).is_empty(), "комната со сдвигом по высоте — нельзя")
+	var room_r := Rect2i(x + 4, s + 3, 3, 3)
+	check(colony.validate(Project.Kind.ROOM, room_r, "wood").is_empty(), "комната в готовой шахте — можно: " + colony.validate(Project.Kind.ROOM, room_r, "wood"))
+	var room := colony.create_project(Project.Kind.ROOM, room_r, -1, "wood")
+	var pieces := colony.projects.filter(func(q: Project) -> bool: return q.kind == M)
+	check(room != null and not colony.projects.has(mine) and pieces.size() == 2, "шахта поделилась на два куска (%d)" % pieces.size())
+	colony.advance_offline(20000.0)
+	check(room.phase == Project.Phase.DONE, "комната в шахте построена без копки")
+	var saved := Project.from_dict(pieces[0].to_dict())
+	check(saved.kind == M, "шахта сохраняется")
+
+
+## Под готовым этажом новая комната несёт его вес: лёгкая не выдержит каменный верх.
+func test_new_room_load() -> void:
+	var colony := _new_colony(12)
+	var w := colony.world
+	var x := _flat_x(w, 0)
+	var s := w.gen.surface_y(x)
+	var top := Project.new()
+	top.id = 777
+	top.kind = Project.Kind.ROOM
+	top.phase = Project.Phase.DONE
+	top.material = "stone"
+	top.rect = Rect2i(x, s - 3, 6, 3)
+	colony.projects.append(top)
+	colony.loads.loads = colony.loads.compute()
+	var below := Rect2i(x, s, 6, 3)
+	var err := colony.loads.room_error(below, "wood")
+	check(err.begins_with("Эта комната не выдержит"), "деревянная под каменной не выдержит: " + err)
+	check(colony.loads.room_error(below, "stone").is_empty(), "каменная под каменной выдержит")
+
+
 func test_room_materials() -> void:
 	var colony := _new_colony(12)
 	check(colony.available_materials() == ["wood"], "в начале доступно только дерево")
@@ -625,7 +679,10 @@ func test_professions() -> void:
 	colony.inventory["food"] = 200
 	var u := colony.units[0]
 	u.profession = Unit.Prof.BUILDER
-	check(colony._task_order(u)[0] == "projects", "строитель сначала идёт на стройку")
+	check(colony._task_order(u)[0] == "builds", "строитель сначала идёт на стройку (не в шахту)")
+	u.profession = Unit.Prof.MINER
+	check(colony._task_order(u)[0] == "mines", "шахтёр сначала идёт в шахту")
+	u.profession = Unit.Prof.BUILDER
 	u.profession = Unit.Prof.HAULER
 	check(colony._task_order(u)[0] == "haul", "подсобный сначала носит")
 	u.profession = Unit.Prof.ANY

@@ -19,16 +19,18 @@ signal background_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
-enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND }
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE }
 
 ## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
 	[Mode.TUNNEL, "tunnel", "Тоннель"],
+	[Mode.MINE, "mine", "Шахта"],
 	[Mode.ROOM, "room", "Комната"],
 	[Mode.BRIDGE, "bridge", "Мост"],
 ]
 const TOOL_HINTS := {
 	Mode.TUNNEL: "Проведите пальцем рамку тоннеля. Карта — двумя пальцами",
+	Mode.MINE: "Проведите пальцем вдоль шахты (всегда 3 м высотой). Карта — двумя пальцами",
 	Mode.ROOM: "Выберите размер и материал, коснитесь карты. Карта — двумя пальцами",
 	Mode.BRIDGE: "Проведите пальцем над озером",
 }

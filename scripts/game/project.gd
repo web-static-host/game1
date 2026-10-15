@@ -4,7 +4,9 @@ extends RefCounted
 ## этап 2 — построить (нужны ресурсы). Можно поставить на паузу.
 
 ## BRIDGE — мостик над водой (переход и рыбалка), PIER — рыболовная пристань.
-enum Kind { TUNNEL, ROOM, BRIDGE, PIER }
+## MINE — шахта: горизонтальная выработка в 3 м высотой для добычи (копают шахтёры);
+## на её месте потом можно ставить комнаты.
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -12,6 +14,8 @@ const ROOM_MIN := Vector2i(3, 3)
 const ROOM_MAX := Vector2i(24, 3)
 ## Все комнаты одной высоты — как этажи.
 const ROOM_HEIGHT := 3
+## Шахта — как этаж комнаты, чтобы на её месте потом встали комнаты.
+const MINE_HEIGHT := 3
 ## Размеры на выбор при закладке.
 const ROOM_WIDTHS := [3, 6, 9]
 const TUNNEL_MAX_LEN := 64
@@ -99,7 +103,7 @@ func title() -> String:
 
 
 static func kind_name(k: int) -> String:
-	return ["Тоннель", "Комната", "Мостик", "Пристань"][k]
+	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта"][k]
 
 
 func is_water_structure() -> bool:
@@ -255,6 +259,14 @@ static func size_error(k: int, r: Rect2i) -> String:
 			return "Комната — не шире %d м" % ROOM_MAX.x
 		if h != ROOM_HEIGHT:
 			return "Комната — %d м в высоту" % ROOM_HEIGHT
+		return ""
+	if k == Kind.MINE:
+		if h != MINE_HEIGHT:
+			return "Шахта — всегда %d м в высоту" % MINE_HEIGHT
+		if w < 2:
+			return "Шахта — от 2 м в длину"
+		if w > TUNNEL_MAX_LEN:
+			return "Шахта — не длиннее %d м" % TUNNEL_MAX_LEN
 		return ""
 	if h < 2:
 		return "Тоннель — высотой от 2 м, иначе человек не пройдёт"

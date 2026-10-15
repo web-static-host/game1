@@ -7,7 +7,7 @@ enum State { IDLE, MOVE, WORK, FALL, SWIM }
 enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH, GOTO }
 ## Роль жителя без места работы: свободный, строитель или подсобный рабочий
 ## (остальные значения — из старых сохранений).
-enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST, HAULER }
+enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST, HAULER, MINER }
 
 const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий", "Сергей", "Николай", "Михаил", "Андрей", "Егор", "Павел",
 	"Тимофей", "Глеб", "Лев", "Матвей", "Фёдор", "Роман", "Кирилл", "Олег", "Степан", "Юрий"]
@@ -15,7 +15,7 @@ const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Н
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
 const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит укрепление", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку"]
-const PROF_NAMES := ["Свободный", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный", "Подсобный рабочий"]
+const PROF_NAMES := ["Свободный", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный", "Подсобный рабочий", "Шахтёр"]
 ## Сколько секунд длится детство: полгода игры.
 const CHILD_TIME := 3600.0
 ## Обычная жизнь — 3,5 года игры (год — 2 часа), у каждого своя (долголетие, случай).
@@ -258,7 +258,7 @@ static func from_dict(d: Dictionary) -> Unit:
 	# Старые профессии: копатель стал строителем, остальные — свободными.
 	if u.profession == Prof.DIGGER:
 		u.profession = Prof.BUILDER
-	elif u.profession != Prof.BUILDER and u.profession != Prof.HAULER:
+	elif u.profession not in [Prof.BUILDER, Prof.HAULER, Prof.MINER]:
 		u.profession = Prof.ANY
 	u.child = bool(d.get("child", false))
 	u.age = float(d.get("age", 0.0))
