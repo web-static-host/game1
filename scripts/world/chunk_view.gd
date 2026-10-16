@@ -7,10 +7,11 @@ extends Node2D
 const SIZE := ChunkData.SIZE
 const TILE := 32.0
 const ROUND := 11.0
-## Толщина почвенного слоя вдоль сглаженной поверхности, в клетках.
-const SOIL_BAND := 0.5
-## Насколько глубоко (в долях клетки) видна порода от края выработки.
-const FADE := 0.5
+## Толщина почвенного слоя вдоль сглаженной поверхности, в клетках (целый блок:
+## полоска в полклетки читалась как непонятная полоса).
+const SOIL_BAND := 1.0
+## Насколько глубоко (в долях клетки) видна порода от края выработки — целая клетка.
+const FADE := 1.0
 const NEIGHBORS: Array[Vector2i] = [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-2, 0), Vector2i(2, 0)]
 const CORNERS: Array[Vector2i] = [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1)]
 const GRASS := Color(0.46, 0.84, 0.26)
@@ -23,9 +24,10 @@ const SNOW_DARK := Color(0.75, 0.83, 0.93)
 static var snow := false
 ## Время года для листвы: месяцы от 1 января (0..12), меняет WorldView.set_season.
 static var season_m := 4.5
-## Неразведанная земля — однотонный землистый тон: что внутри, не видно, пока не вскопают.
-const FOG_TOP := Color(0.43, 0.34, 0.27)
-const FOG_DEEP := Color(0.31, 0.26, 0.28)
+## Неразведанная земля — тёплый землистый тон, как на прототипе (поверх — общая фактура
+## почвы): что внутри, не видно, пока не вскопают.
+const FOG_TOP := Color(0.51, 0.3, 0.18)
+const FOG_DEEP := Color(0.36, 0.21, 0.15)
 const FOG_HOT := Color(0.4, 0.22, 0.15)
 ## Задняя стенка выработки — тёплая тёмная.
 const BACK := Color(0.23, 0.16, 0.16)
@@ -339,7 +341,7 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		draw_rect(Rect2(r.position.x, r.end.y - 3, TILE, 3), shade)
 
 	if Mat.is_ore(m):
-		_draw_ore(r, m, x, y, [open_l, open_r, open_u, open_d] if faded and not far else [])
+		_draw_ore(r, m, x, y)
 	elif m == Mat.MAGMA:
 		draw_circle(r.get_center(), TILE * 0.3, Color(1.0, 0.85, 0.3, 0.8))
 
