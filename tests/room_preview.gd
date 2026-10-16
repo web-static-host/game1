@@ -42,11 +42,12 @@ func _process(_delta: float) -> bool:
 			u.satiety = 90.0
 			u.energy = 90.0
 		# Для превью: без износа, светло, жители сыты и стоят в комнатах.
+		colony.drops.clear()    # кучки на полу мешают разглядеть обстановку
 		for pr in colony.projects:
 			pr.wear = 0.0
-			# Кирпичная — склад: видно полку.
-			if pr.material == "brick" and pr.kind == R:
-				pr.purpose = RoomType.STORAGE
+			# Обстановка-картинки: дерево и металл — жилые, кирпич и камень — склады.
+			if pr.kind == R:
+				pr.purpose = RoomType.STORAGE if pr.material in ["brick", "stone"] else RoomType.HOME
 		_main.world_view.light.visible = false
 		var spots := [Vector2(x0 + 3, s + 4), Vector2(x0 + 7, s + 4), Vector2(x0 + 3, s + 7), Vector2(x0 + 8, s + 7), Vector2(x0 + 4, s + 10)]
 		for i in colony.units.size():
@@ -58,7 +59,7 @@ func _process(_delta: float) -> bool:
 		for i in 3:
 			colony.update(0.1)
 		_main.world_view.focus_cell(Vector2i(x0 + 6, s + 5))
-		_main.camera.zoom = Vector2(1.7, 1.7)
+		_main.camera.zoom = Vector2(2.2, 2.2)
 	if _frame == 40:
 		_shot("room_new")
 		for k in StructureLayer._room_tex.keys():
