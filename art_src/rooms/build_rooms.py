@@ -8,7 +8,7 @@ import bmesh
 HERE = os.path.dirname(os.path.abspath(__file__))
 # ROOMS_OUT, ROOMS_WIDTHS=6, ROOMS_MATERIALS=stone, ROOMS_SAMPLES=24 — для быстрых проб.
 OUT = os.environ.get('ROOMS_OUT') or os.path.join(HERE, '..', '..', 'assets', 'rooms')
-PX = 64           # пикселей на метр (клетку) в рендере
+PX = int(os.environ.get('ROOMS_PX', 64))   # пикселей на метр (клетку); ROOMS_PX=256 — крупно, основа для ChatGPT
 H = 3.0           # высота комнаты
 WIDTHS = [int(v) for v in os.environ.get('ROOMS_WIDTHS', '3,6,9').split(',')]
 # Глины нет: автор её уберёт из игры, там остаётся рисунок кодом.
