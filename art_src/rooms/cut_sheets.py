@@ -21,7 +21,7 @@ SHEETS = {
         'shelf_plant': (915, 470, 1.1), 'shelf_toy': (1310, 470, 1.05),
         'shelf_vine': (300, 715, 1.15),
         'picture_mountain': (652, 700, 0.55), 'picture_leaf': (957, 700, 0.4), 'picture_sun': (1290, 700, 0.5),
-        'bunting': (300, 900, 1.9), 'plush': (703, 905, 0.32),
+        'plush': (703, 905, 0.32),
     },
     'storage': {
         'rack': (436, 100, 2.0), 'hoist': (1066, 75, 2.2),
@@ -34,6 +34,17 @@ SHEETS = {
         'drum_oil': (320, 900, 0.42), 'tank_methane': (582, 900, 0.36),
         'barrel': (865, 900, 0.55), 'logs': (1185, 900, 0.75),
     },
+}
+
+
+# Части предмета (рамки в пикселях готового спрайта): таль режем, чтобы брус тянулся во всю комнату.
+PARTS = {
+    'storage': {'hoist': {
+        'hoist_cap': (0, 0, 27, 48),        # левый торец бруса
+        'hoist_beam': (30, 0, 58, 48),      # кусок бруса — повторяется по длине
+        'hoist_block': (58, 0, 102, 136),   # блок с цепью и крюком (с куском бруса за ним)
+        'hoist_winch': (196, 0, 282, 90),   # лебёдка с правым торцом
+    }},
 }
 
 
@@ -54,8 +65,11 @@ def cut(room, items):
         item[..., 3] = np.where(mask[y0:y1, x0:x1], item[..., 3], 0)
         w = round(width_m * PX_PER_M)
         h = round(item.shape[0] * w / item.shape[1])
-        Image.fromarray(item, 'RGBA').resize((w, h), Image.LANCZOS).save(os.path.join(OUT, room, name + '.png'))
+        sprite = Image.fromarray(item, 'RGBA').resize((w, h), Image.LANCZOS)
+        sprite.save(os.path.join(OUT, room, name + '.png'))
         print(room, name, (w, h), '%.2f×%.2f м' % (width_m, h / PX_PER_M))
+        for part, box in PARTS.get(room, {}).get(name, {}).items():
+            sprite.crop(box).save(os.path.join(OUT, room, part + '.png'))
 
 
 if __name__ == '__main__':

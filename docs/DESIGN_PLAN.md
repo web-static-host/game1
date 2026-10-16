@@ -50,7 +50,7 @@
    предметы — из листов `art_src/rooms/sheets/<комната>_items.png` на прозрачном фоне (с прототипа
    деревянная мебель от деревянной стены чисто не отделяется — проверено, в т. ч. rembg);
    нарезка `art_src/rooms/cut_sheets.py` → `assets/furniture/<комната>/`, расстановка —
-   `StructureLayer._draw_home_furniture` / `_draw_storage_furniture`. Готово: жилая, склад;
+   `StructureLayer._draw_home_furniture` / `_draw_storage_furniture`. Готово: жилая, склад (без флажков; брус тали — во всю комнату);
    состояния «строится» / «повреждена».
 4. Улица — деревья по сезонам, ели, кусты, валуны (модели).
 5. Жители — квадратные и круглые на основе `art_src/characters/BlueBuddy.blend`,
