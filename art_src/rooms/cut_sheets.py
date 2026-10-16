@@ -48,6 +48,26 @@ PARTS = {
 }
 
 
+def tall_rack(sprite):
+    """Стеллаж выше: доски как есть, промежутки между ними растянуты под ящик (0,45 м)
+    с запасом — ящики встают в ячейки, а не висят перед стеллажом.
+    Строки исходного спрайта (166 px): верх стоек 0–21, доски 21–52, 80–108, 126–157, ножки 157–166."""
+    gap = 66
+    parts = [(0, 52, None), (52, 80, gap), (80, 108, None), (108, 126, gap), (126, 166, None)]
+    pieces = []
+    for y0, y1, h in parts:
+        piece = sprite.crop((0, y0, sprite.width, y1))
+        if h is not None:
+            piece = piece.resize((sprite.width, h), Image.LANCZOS)
+        pieces.append(piece)
+    out = Image.new('RGBA', (sprite.width, sum(pc.height for pc in pieces)), (0, 0, 0, 0))
+    y = 0
+    for pc in pieces:
+        out.alpha_composite(pc, (0, y))
+        y += pc.height
+    return out
+
+
 def cut(room, items):
     a = np.asarray(Image.open(os.path.join(HERE, 'sheets', room + '_items.png')).convert('RGBA'))
     solid = a[..., 3] > 20
@@ -70,6 +90,10 @@ def cut(room, items):
         print(room, name, (w, h), '%.2f×%.2f м' % (width_m, h / PX_PER_M))
         for part, box in PARTS.get(room, {}).get(name, {}).items():
             sprite.crop(box).save(os.path.join(OUT, room, part + '.png'))
+        if name == 'rack':
+            tall = tall_rack(sprite)
+            tall.save(os.path.join(OUT, room, 'rack_tall.png'))
+            print(room, 'rack_tall', tall.size, '— полки на %.2f и %.2f м' % ((166 - 126) / PX_PER_M, (tall.height - 52 - 66) / PX_PER_M))
 
 
 if __name__ == '__main__':
