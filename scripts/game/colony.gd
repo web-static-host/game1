@@ -2079,6 +2079,7 @@ func update(dt: float) -> void:
 		if _access_t >= 5:
 			_access_t = 0
 			_check_access()
+			_settle_drops()
 		# Воду откачали — затопленная стройка продолжается сама.
 		for p in projects:
 			if p.paused and p.blocked.begins_with("В зоне"):
@@ -2135,6 +2136,9 @@ func _update_unit(u: Unit, dt: float) -> void:
 					# Дела нет — ищем реже, чтобы толпа бездельников не грузила игру.
 					u.idle_fails += 1
 					u.retry = minf(1.5 + 0.75 * u.idle_fails, 5.0)
+					# Бездельники не стоят толпой в одной точке — расходятся по комнатам.
+					if not offline and u.state == Unit.State.IDLE and _crowded(u):
+						_stroll(u)
 		Unit.State.FALL:
 			u.pos.x = roundf(u.pos.x)
 			var k := Vector2i(roundi(u.pos.x), floori(u.pos.y))
@@ -2159,6 +2163,46 @@ func _update_unit(u: Unit, dt: float) -> void:
 				_drop(u)
 				return
 			_work(u, dt)
+
+
+## Рядом (в той же клетке) стоит другой житель без дела.
+func _crowded(u: Unit) -> bool:
+	for o in units:
+		if o != u and o.state == Unit.State.IDLE and absf(o.pos.x - u.pos.x) < 0.8 and absf(o.pos.y - u.pos.y) < 0.5:
+			return true
+	return false
+
+
+## Житель без дела отходит на свободное место: в свою спальню, а если до неё
+## не дойти — в ближайшую комнату, где никто не стоит.
+func _stroll(u: Unit) -> bool:
+	var reach := pathing.explore(u.cell())
+	var dist: Dictionary = reach[1]
+	var taken := {}
+	for o in units:
+		if o != u:
+			taken[o.cell()] = true
+			if o.task == Unit.Task.STROLL:
+				taken[o.target] = true
+	var home: Array[Vector2i] = []
+	var near: Array[Vector2i] = []
+	for p in projects:
+		if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
+			continue
+		for x in range(RoomType.floor_start(p), p.rect.end.x):
+			var c := Vector2i(x, p.rect.end.y - 1)
+			if taken.has(c) or not dist.has(c) or c == u.cell():
+				continue
+			if p.id == u.bed_room and dist[c] <= 80:
+				home.append(c)
+			elif dist[c] <= 40:
+				near.append(c)
+	var pool := home if not home.is_empty() else near
+	if pool.is_empty():
+		return false
+	var to: Vector2i = pool[rng.randi() % pool.size()]
+	_start(u, Unit.Task.STROLL, to, to, 0, reach[0])
+	return true
 
 
 ## Приземление: с высоты больше 4 м — травма.
@@ -2416,6 +2460,8 @@ func _work(u: Unit, dt: float) -> void:
 			u.work_t += dt
 			if u.work_t >= SCOUT_WAIT:
 				_drop(u)
+		Unit.Task.STROLL:
+			_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
 			rp.repair_done += rate * build_bonus()
@@ -2541,7 +2587,7 @@ func _task_valid(u: Unit) -> bool:
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
 			return sp != null and not sp.paused and sp.phase == Project.Phase.DIG and sp.support_paid and sp.support_slice >= 0
-		Unit.Task.SLEEP, Unit.Task.GOTO:
+		Unit.Task.SLEEP, Unit.Task.GOTO, Unit.Task.STROLL:
 			return true
 	return false
 
@@ -3140,10 +3186,44 @@ func drop_total(key: String) -> int:
 func _drop_stand(c: Vector2i, dist: Dictionary) -> Variant:
 	if dist.has(c):
 		return c
-	for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1)]:
+	# Куча в щели, на уступе или над головой — дотягиваются с соседней клетки.
+	for d in DROP_REACH:
 		if dist.has(c + d):
 			return c + d
 	return null
+
+
+const DROP_REACH := [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1),
+	Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1), Vector2i(-2, 0), Vector2i(2, 0)]
+
+
+## Кучи, засыпанные породой (обвал, песок), переносятся на ближайшее открытое место
+## над ними, а висящие в воздухе — падают на пол. Иначе их никто не достанет.
+func _settle_drops() -> void:
+	for c: Vector2i in drops.keys():
+		var to := c
+		if not world.is_open(c.x, c.y) and world.get_mat(c.x, c.y) != Mat.WATER:
+			var found = null
+			for dy in range(0, 12):
+				for dx in [0, -1, 1, -2, 2]:
+					var k := c + Vector2i(dx, -dy)
+					if world.is_open(k.x, k.y):
+						found = k
+						break
+				if found != null:
+					break
+			if found == null:
+				continue
+			to = found
+		to = _landing(to)
+		if to == c:
+			continue
+		var d: Dictionary = drops[c]
+		drops.erase(c)
+		var dest: Dictionary = drops.get(to, {})
+		for k in d:
+			dest[k] = int(dest.get(k, 0)) + int(d[k])
+		drops[to] = dest
 
 
 ## Ближайший источник ресурса: [где встать, клетка кучи или null, сколько можно взять].

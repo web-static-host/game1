@@ -51,6 +51,8 @@ func _initialize() -> void:
 	test_drops_and_scouting()
 	test_food_balance()
 	test_build_priority()
+	test_idle_spread()
+	test_buried_drop()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2177,3 +2179,44 @@ func test_build_priority() -> void:
 		for i in 20:
 			colony.update(0.5)
 		check(q.blocked.begins_with("Нет доступа"), "до недоступной стройки — предупреждение: " + q.blocked)
+
+
+func test_idle_spread() -> void:
+	# Бездельники не стоят толпой в одной клетке: один отходит на свободное место в комнате.
+	var res := _colony_with_room(31)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	check(room.phase == Project.Phase.DONE, "комната для прогулки готова")
+	var a: Unit = colony.units[0]
+	var b: Unit = colony.units[1]
+	var spot := Vector2(RoomType.floor_start(room), room.rect.end.y - 1)
+	for u in [a, b]:
+		colony._drop(u)
+		u.pos = spot
+		u.state = Unit.State.IDLE
+	check(colony._crowded(a), "двое в одной клетке — толпа")
+	check(colony._stroll(a) and a.task == Unit.Task.STROLL and a.target != b.cell(), "один отходит в сторону (%s)" % a.target)
+	for i in 400:
+		colony._update_unit(a, 0.05)
+		if a.task != Unit.Task.STROLL:
+			break
+	check(a.cell() != b.cell() and not colony._crowded(b), "разошлись: %s и %s" % [a.cell(), b.cell()])
+
+
+func test_buried_drop() -> void:
+	# Засыпанную породой кучу выносит наверх, и её уносят на склад.
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	colony.assign_work(colony.units[0], room)
+	colony.store_targets = {}
+	colony.drops.clear()
+	var u: Unit = colony.units[1]
+	var at := Vector2i(roundi(u.pos.x), roundi(u.pos.y) + 1)
+	check(not colony.world.is_open(at.x, at.y), "клетка под ногами — порода")
+	colony.drops[at] = {"clay": 5}
+	colony._settle_drops()
+	check(colony.drop_amount(at, "clay") == 0 and colony.drop_total("clay") == 5, "кучу вынесло из породы")
+	for i in 600:
+		colony.update(0.5)
+	check(colony.drop_total("clay") == 0, "глину унесли на склад (на земле %d)" % colony.drop_total("clay"))

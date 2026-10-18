@@ -1131,7 +1131,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	if r.size == Vector2i.ZERO:
 		return
 	var kind := _mode_kind()
-	var err := colony.validate(kind, r)
+	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else "wood")
 	if mode == Hud.Mode.BRIDGE:
 		err = "Мостик и пристань строятся над озером" if _water_options.is_empty() else ""
 		for o in _water_options:
@@ -1159,8 +1159,10 @@ func _on_room_options(width: int, material: String) -> void:
 	s.preview = placed[0]
 	s.preview_ok = (placed[1] as String).is_empty()
 	s.preview_text = "%d×%d" % [s.preview.size.x, s.preview.size.y]
-	if hud.info_visible() and s.preview_ok:
+	if s.preview_ok:
 		_pending = s.preview
+		_pending_kind = Project.Kind.ROOM
+		_pending_workers = Project.recommended_workers(_pending_kind, _pending, colony.adults())
 		_show_pending()
 	elif not s.preview_ok:
 		hud.hide_info()
@@ -1172,9 +1174,9 @@ func _room_rect(c: Vector2i) -> Array:
 	var base := Rect2i(c.x - _room_w / 2, c.y - 1, _room_w, Project.ROOM_HEIGHT)
 	for dy in [0, 1, -1, 2, -2, 3, -3]:
 		var r := Rect2i(base.position + Vector2i(0, dy), base.size)
-		if colony.validate(Project.Kind.ROOM, r).is_empty():
+		if colony.validate(Project.Kind.ROOM, r, hud.room_material()).is_empty():
 			return [r, ""]
-	return [base, colony.validate(Project.Kind.ROOM, base)]
+	return [base, colony.validate(Project.Kind.ROOM, base, hud.room_material())]
 
 
 func _mode_kind() -> int:
