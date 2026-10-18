@@ -419,7 +419,7 @@ func _pick_workplace(u: Unit) -> void:
 	_info_target = []
 	var items := []
 	for role in [[Unit.Prof.BUILDER, "в первую очередь идёт на стройки: копает, строит, обустраивает, чинит"],
-			[Unit.Prof.MINER, "в первую очередь копает шахты — добыча руды и ископаемых"],
+			[Unit.Prof.MINER, "только копает: сначала шахты (руда и ископаемые), потом копку на других стройках"],
 			[Unit.Prof.HAULER, "в первую очередь носит: материалы на стройки, сырьё в мастерские, добычу и продукцию на склад"],
 			[Unit.Prof.ANY, "стройка, если есть место, иначе переноска"]]:
 		var prof: int = role[0]
@@ -551,9 +551,18 @@ func _show_project(p: Project) -> void:
 		actions.append(["Продолжить" if p.paused else "Пауза", func() -> void:
 			colony.set_paused(p, not p.paused)
 			_show_project(p)])
-		actions.append(["Отменить", func() -> void:
-			colony.cancel_project(p)
-			_select(null, null), "danger"])
+		if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG:
+			# Шахту можно остановить в любой момент: готовые метры остаются.
+			actions.append(["Остановить", func() -> void:
+				colony.cancel_project(p)
+				if colony.projects.has(p):
+					_show_project(p)
+				else:
+					_select(null, null), "danger"])
+		else:
+			actions.append(["Отменить", func() -> void:
+				colony.cancel_project(p)
+				_select(null, null), "danger"])
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
 	if p.phase == Project.Phase.DONE and p.paused:
 		actions.append(["Продолжить", func() -> void:
@@ -758,6 +767,10 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			chips.append(["", "шахтёров %d" % colony.units.filter(func(o: Unit) -> bool: return o.workplace == 0 and o.profession == Unit.Prof.MINER).size()])
 			if p.phase == Project.Phase.DONE:
 				rows.append({"type": "text", "text": "Готовая шахта: здесь можно ставить комнаты на всю её высоту."})
+			else:
+				var done := colony.mine_meters_done(p)
+				rows.append(_progress("Готово", float(done) / maxf(1.0, p.slice_count()), "%d из %d м" % [done, p.slice_count()]))
+				rows.append({"type": "text", "text": "Шахта строится по метру: метр выкопан и закреплён — готов. «Остановить» — готовая часть остаётся шахтой. Шахтёры только копают, крепь ставят строители, дерево на крепь и добытое носят работники складов (шахта у них в первую очередь) и подсобные."})
 		_:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])

@@ -705,6 +705,9 @@ func flee_gas(u: Unit) -> void:
 
 
 func cancel_project(p: Project) -> void:
+	if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
+		stop_mine(p)
+		return
 	if p.phase == Project.Phase.EQUIP:
 		cancel_equip(p)
 		return
@@ -918,6 +921,70 @@ func active_slices(p: Project) -> Array[int]:
 	return out
 
 
+## --- Шахта: строится по метру -------------------------------------------------------
+
+## Метр шахты готов: выкопан и, если нужно, закреплён.
+func mine_meter_done(p: Project, i: int) -> bool:
+	return slice_dug(p, i) and (not p.needs_support.has(i) or p.supported.has(i))
+
+
+func mine_meters_done(p: Project) -> int:
+	var n := 0
+	for i in p.slice_count():
+		if mine_meter_done(p, i):
+			n += 1
+	return n
+
+
+## Остановить шахту: готовые метры (самый длинный сплошной участок) становятся готовой
+## шахтой, остальное отменяется. Ничего не готово — стройка просто отменяется.
+func stop_mine(p: Project) -> void:
+	var best_a := -1
+	var best_n := 0
+	var a := -1
+	for i in p.slice_count():
+		if mine_meter_done(p, i):
+			if a < 0:
+				a = i
+			if i - a + 1 > best_n:
+				best_n = i - a + 1
+				best_a = a
+		else:
+			a = -1
+	if best_n == 0:
+		cancel_project(p)
+		return
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	# Крепь, за которую уже заплатили, но не поставили, — дерево обратно.
+	if p.support_paid and not p.supported.has(p.support_slice):
+		p.delivered["wood"] = int(p.delivered.get("wood", 0)) + p.slice_wood()
+	p.support_slice = -1
+	p.support_paid = false
+	var old := p.cells()
+	var total := p.slice_count()
+	p.rect = Rect2i(p.rect.position.x + best_a, p.rect.position.y, best_n, p.rect.size.y)
+	var ns: Array[int] = []
+	var sp: Array[int] = []
+	for i in p.needs_support:
+		if i >= best_a and i < best_a + best_n:
+			ns.append(i - best_a)
+	for i in p.supported:
+		if i >= best_a and i < best_a + best_n:
+			sp.append(i - best_a)
+	p.needs_support = ns
+	p.supported = sp
+	p.clear_x.clear()
+	_finish_project(p)
+	_log("%s остановлена: готово %d м из %d" % [p.title(), best_n, total], "info")
+	var cut: Array[Vector2i] = []
+	for c in old:
+		if not p.has_cell(c):
+			cut.append(c)
+	physics.check_area(cut)
+
+
 ## Срез выкопан целиком.
 func slice_dug(p: Project, i: int) -> bool:
 	for c in p.slice_cells(i):
@@ -1003,6 +1070,10 @@ func _check_phase(p: Project) -> void:
 		if not p.supported.has(i):
 			all_supported = false
 	if remaining_dig(p).is_empty() and uncleared(p).is_empty() and all_supported:
+		if p.kind == Project.Kind.MINE:
+			# Шахта — без отделки: выкопана и закреплена — готова.
+			_finish_project(p)
+			return
 		p.phase = Project.Phase.BUILD
 		_register_room(p)
 		var lines: PackedStringArray = []
@@ -1998,8 +2069,10 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
 			return _try_supply(u, p, parents, dist)
 		RoomType.STORAGE, RoomType.GRANARY:
-			# Работники склада и амбара: рубят отмеченное игроком, добывают до нормы,
-			# относят добытое на хранение.
+			# Работники склада и амбара: сначала шахты (крепь туда, добытое оттуда),
+			# потом рубят отмеченное игроком, добывают до нормы, относят добытое на хранение.
+			if p.purpose == RoomType.STORAGE and _try_mine_logistics(u, p, parents, dist):
+				return true
 			if p.purpose == RoomType.STORAGE and _try_harvest(u, parents, dist):
 				return true
 			for k in storage_deficit(p):
@@ -2645,8 +2718,9 @@ func _task_order(u: Unit) -> Array[String]:
 	if u.profession == Unit.Prof.HAULER:
 		return ["haul", "projects", "need"]
 	# Шахтёры — сначала в шахты, строители — сначала на остальные стройки.
+	# Шахтёр только копает: сначала шахты, потом копка на других стройках.
 	if u.profession == Unit.Prof.MINER:
-		return ["mines", "projects", "need", "haul"]
+		return ["mines", "projects"]
 	if u.profession == Unit.Prof.BUILDER:
 		return ["builds", "projects", "need", "haul"]
 	# Строители и свободные: сначала стройка, потом переноска.
@@ -2732,6 +2806,11 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
 		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)):
 			continue
+		# Шахтёр только копает: крепь ставят строители, носят — склады и подсобные.
+		if u.profession == Unit.Prof.MINER and u.workplace == 0:
+			if p.phase == Project.Phase.DIG and _try_dig(u, p, parents, dist):
+				return true
+			continue
 		if p.phase == Project.Phase.DIG:
 			if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
 					or _try_dig(u, p, parents, dist):
@@ -2746,9 +2825,34 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 				task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
 		if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
 			return true
-		if _try_haul(u, p, parents, dist):
+		if (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
 			return true
 	return false
+
+
+## Кто носит в шахту и из шахты: работники складов и подсобные рабочие.
+func mine_hauler(u: Unit) -> bool:
+	if u.profession == Unit.Prof.HAULER and u.workplace == 0:
+		return true
+	var w := project_by_id(u.workplace)
+	return w != null and w.purpose == RoomType.STORAGE
+
+
+## Куча в шахте (или у её края).
+func in_mine(c: Vector2i) -> bool:
+	for p in projects:
+		if p.kind == Project.Kind.MINE and p.rect.grow(1).has_point(c):
+			return true
+	return false
+
+
+## Работник склада в первую очередь обслуживает шахты: несёт туда дерево на крепь
+## и уносит добытое оттуда в свой склад.
+func _try_mine_logistics(u: Unit, store: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	for m in projects:
+		if m.kind == Project.Kind.MINE and m.phase == Project.Phase.DIG and not m.paused and _try_haul(u, m, parents, dist):
+			return true
+	return _try_cleanup(u, parents, dist, store, true)
 
 
 func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, parents: Dictionary) -> void:
@@ -3293,7 +3397,8 @@ func can_store(key: String) -> bool:
 
 
 ## Свободный житель уносит лежащее на земле на склад (если там есть место).
-func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null) -> bool:
+func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
+	var may_mine := mine_hauler(u)
 	var best = null
 	var best_c := Vector2i.ZERO
 	var best_k := ""
@@ -3303,6 +3408,10 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
 		if stand == null or dist[stand] >= best_d:
+			continue
+		# Добытое в шахте уносят только работники складов и подсобные.
+		var mined := in_mine(c)
+		if (mines_only and not mined) or (mined and not may_mine):
 			continue
 		for k in drops[c]:
 			# Работник склада носит стройматериалы, амбара — еду; на любой склад, где есть
@@ -3406,6 +3515,8 @@ func _is_supply(p: Project) -> bool:
 func _try_logistics(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	for p in projects:
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		if p.kind == Project.Kind.MINE and not mine_hauler(u):
 			continue
 		if _try_haul(u, p, parents, dist):
 			return true
