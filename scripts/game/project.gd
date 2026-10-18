@@ -97,6 +97,8 @@ var repair_work := 0.0
 ## Склад: сколько жителей сами добывают ресурсы и какой запас держать.
 var gatherers := 0
 var targets := {}
+## Что лежит именно в этом складе/амбаре (в дегазации — метан в баке): ключ -> количество.
+var held := {}
 ## Предупреждения геолога: опасности, на которые игрок разрешил копать, и текущее.
 var hazard_ack: Array[String] = []
 var hazard_pending := ""
@@ -326,6 +328,7 @@ func to_dict() -> Dictionary:
 		"repair_work": repair_work,
 		"gatherers": gatherers,
 		"targets": targets,
+		"held": held,
 		"hazard_ack": hazard_ack,
 		"hazard_pending": hazard_pending,
 	}
@@ -387,6 +390,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.repair_work = float(d.get("repair_work", 0.0))
 	p.gatherers = int(d.get("gatherers", 0))
 	p.targets = _int_dict(d.get("targets", {}))
+	p.held = _int_dict(d.get("held", {}))
 	for k in d.get("hazard_ack", []):
 		p.hazard_ack.append(str(k))
 	p.hazard_pending = str(d.get("hazard_pending", ""))

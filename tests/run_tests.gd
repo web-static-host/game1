@@ -53,6 +53,7 @@ func _initialize() -> void:
 	test_build_priority()
 	test_idle_spread()
 	test_buried_drop()
+	test_separate_stores()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -543,9 +544,11 @@ func test_room_purposes() -> void:
 	colony.advance_offline(3000.0)
 	check(room.purpose == RoomType.STORAGE and room.phase == Project.Phase.DONE, "склад обустроен")
 	check(colony.capacity("stone") > cap0, "склад увеличил вместимость")
-	colony.inventory = {"stone": colony.capacity("stone") - 1}
-	colony._add("stone", 10)
-	check(colony.inventory["stone"] == colony.capacity("stone"), "лишнее сверх вместимости не помещается")
+	colony.assign_work(colony.units[0], room)
+	colony.inventory = {}
+	colony._add("stone", colony.capacity("stone") + 10)
+	check(colony.inventory["stone"] == colony.capacity("stone") and colony.held_in(room, "stone") == colony.room_cap(room, "stone"),
+		"лишнее сверх вместимости не помещается, склад полон")
 
 	# Очаг: каменный сразу; после обжига кирпича печи перекладывают кирпичом.
 	var hres := _colony_with_room(23)
@@ -1342,9 +1345,9 @@ func test_storage_workers() -> void:
 	check(colony.inventory.get("wood", 0) == 0 and colony.drop_total("wood") == 6, "без работника склада дерево никто не понёс")
 	check(not colony.can_store("wood"), "складу без работника некуда принимать")
 	colony.drops.clear()
-	check(not colony.store_targets.is_empty() and room.gatherers > 0, "у складов есть нормы запаса и рабочие")
+	check(not room.targets.is_empty() and room.gatherers > 0, "у склада свои нормы запаса и рабочие")
 	colony.inventory = {}
-	colony.store_targets = {"wood": 15, "stone": 0}
+	room.targets = {"wood": 15, "stone": 0}
 	colony.assign_work(colony.units[0], room)
 	colony.assign_work(colony.units[1], room)
 	var carried := false
@@ -1361,7 +1364,7 @@ func test_storage_workers() -> void:
 		colony.update(0.5)
 	check(colony.inventory.get("wood", 0) < 15 + 12, "выше нормы не добывают (%d)" % colony.inventory.get("wood", 0))
 	colony.inventory = {}
-	colony.store_targets = {"stone": 10}
+	room.targets = {"stone": 10}
 	colony.advance_offline(3000.0)
 	check(colony.inventory.get("stone", 0) > 0, "оффлайн склад тоже пополняется")
 
@@ -2220,3 +2223,71 @@ func test_buried_drop() -> void:
 	for i in 600:
 		colony.update(0.5)
 	check(colony.drop_total("clay") == 0, "глину унесли на склад (на земле %d)" % colony.drop_total("clay"))
+
+
+func test_separate_stores() -> void:
+	# У каждого склада своё содержимое, нормы и работники; метан — только в баке дегазации.
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var a: Project = res[1]
+	var rb := Rect2i(a.rect.end.x, a.rect.position.y, 6, 3)
+	colony.inventory = {"wood": 80, "stone": 80, "food": 50}
+	var err := colony.validate(Project.Kind.ROOM, rb)
+	check(err.is_empty(), "второй склад можно поставить рядом: " + err)
+	var b := colony.create_project(Project.Kind.ROOM, rb)
+	colony.advance_offline(20000.0)
+	colony.inventory = {"wood": 80, "stone": 80, "food": 50}
+	colony.set_purpose(b, RoomType.STORAGE)
+	colony.advance_offline(5000.0)
+	check(b.purpose == RoomType.STORAGE, "второй склад готов")
+	for u in colony.units:
+		u.workplace = 0
+		u.satiety = 100.0
+		u.energy = 100.0
+		u.health = 100.0
+	colony.assign_work(colony.units[0], a)
+	colony.assign_work(colony.units[1], b)
+	colony.inventory = {"food": 50}
+	colony.drops.clear()
+	colony._sync_held()
+	a.targets = {"wood": 10}
+	b.targets = {}
+	var t := 0.0
+	while t < 3000.0 and colony.held_in(a, "wood") < 10:
+		colony.update(0.5)
+		t += 0.5
+	check(colony.held_in(a, "wood") >= 10, "работник склада А нарубил в свой склад (%d)" % colony.held_in(a, "wood"))
+	check(colony.held_in(b, "wood") == 0, "в склад Б с пустыми нормами дерево не попало")
+	check(colony.inventory.get("wood", 0) >= colony.held_in(a, "wood"), "итог колонии — сумма складов")
+	# Положить в конкретный склад и взять именно из него.
+	colony._add("stone", 7, b)
+	check(colony.held_in(b, "stone") == 7 and colony.held_in(a, "stone") == 0, "камень лежит только в складе Б")
+	check(colony._remove("stone", 3, b) == 3 and colony.held_in(b, "stone") == 4, "взяли из склада Б")
+	check(colony._remove("stone", 10, a) == 0, "из склада А камня не взять — там его нет")
+	# Метан: без дегазации хранить негде; с ней — в бак до его вместимости.
+	check(colony._add("methane", 5) == 0, "без дегазации метан хранить негде")
+	colony.inventory = {"wood": 80, "stone": 80, "food": 50}
+	colony._sync_held()
+	check(colony.set_purpose(b, RoomType.DEGAS), "склад Б переделываем в дегазацию")
+	colony.advance_offline(5000.0)
+	check(b.purpose == RoomType.DEGAS, "дегазация готова")
+	var cap := colony.room_cap(b, "methane")
+	check(cap > 0 and colony._add("methane", cap + 50) == cap and colony.held_in(b, "methane") == cap,
+		"метан — в баке дегазации, лишнее не помещается (%d)" % cap)
+	check(colony.room_cap(a, "methane") == 0 and colony.held_in(a, "methane") == 0, "на складе метан не хранится")
+	colony._remove("methane", 10)
+	check(colony.held_in(b, "methane") == cap - 10 and colony.inventory["methane"] == cap - 10, "генератор берёт газ из бака")
+	# Старое сохранение: общий запас раскладывается по складам, метан — в бак (лишний улетает).
+	var d := colony.to_dict()
+	d.erase("stores_v")
+	d["inventory"]["methane"] = cap + 500
+	d["inventory"]["wood"] = 300
+	for pd in d["projects"]:
+		pd.erase("held")
+	var loaded := Colony.new(colony.world)
+	loaded.load_dict(d)
+	var la := loaded.project_by_id(a.id)
+	var lb := loaded.project_by_id(b.id)
+	check(loaded.held_in(lb, "methane") == cap and loaded.inventory["methane"] == cap, "старое сохранение: метан в баке, лишний улетучился")
+	check(loaded.held_in(la, "wood") == mini(300 - RoomType.BASE_CAPACITY, loaded.room_cap(la, "wood")) and loaded.inventory["wood"] == 300,
+		"старое сохранение: дерево разложено по складу (в складе %d, у базы %d)" % [loaded.held_in(la, "wood"), loaded.base_have("wood")])

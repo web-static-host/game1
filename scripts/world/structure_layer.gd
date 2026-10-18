@@ -396,10 +396,7 @@ func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> v
 	for key in keys:
 		if RoomType.BULK.has(key) or not RoomType.stores(p, key):
 			continue
-		var total_cap := colony.storage_capacity(key)
-		if total_cap <= 0:
-			continue
-		var mine := colony.stored_split(key).x * RoomType.CAPACITY_PER_CELL * w / float(total_cap)
+		var mine := float(colony.held_in(p, key)) * RoomType.CAPACITY_PER_CELL * w / maxf(1.0, colony.room_cap(p, key))
 		var tex := furniture("storage", "crate_" + key) if CRATES.has(key) else furniture("storage", "crate")
 		for i in ceili(mine / per):
 			if slot >= slots:
@@ -467,7 +464,6 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				draw_line(Vector2(bx + 23, floor_y - 18), Vector2(bx + bw - 5, floor_y - 18), Color(1, 1, 1, 0.35 * alpha), 2.0)
 		RoomType.STORAGE, RoomType.GRANARY:
 			var w := RoomType.usable_width(p)
-			var room_cap := RoomType.CAPACITY_PER_CELL * w
 			# Полка на половине высоты и ящики по видам ресурсов: чем больше, тем больше ящиков.
 			_shelf(x0 + 4, x0 + w * TILE - 4, floor_y - 40, alpha)
 			var slots := w * 2
@@ -477,10 +473,7 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 			for k in keys:
 				if RoomType.BULK.has(k) or not RoomType.stores(p, k):
 					continue
-				var total_cap := colony.storage_capacity(k)
-				if total_cap <= 0:
-					continue
-				var mine := colony.stored_split(k).x * room_cap / total_cap
+				var mine := float(colony.held_in(p, k)) * RoomType.CAPACITY_PER_CELL * w / maxf(1.0, colony.room_cap(p, k))
 				var boxes := ceili(mine / 10.0)
 				for i in boxes:
 					if slot >= slots * 2:

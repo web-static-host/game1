@@ -1207,8 +1207,8 @@ func _finish_equip(p: Project) -> void:
 		# Нормы по умолчанию для того, что этот склад хранит (уже заданные не трогаем).
 		var defaults := default_targets(p)
 		for k in defaults:
-			if not store_targets.has(k):
-				store_targets[k] = defaults[k]
+			if not p.targets.has(k):
+				p.targets[k] = defaults[k]
 	if p.purpose != RoomType.NONE:
 		_log("Готово: %s (%s)" % [p.title(), RoomType.purpose_hint(p.equip_target)], "good")
 
@@ -1224,7 +1224,7 @@ func rooms_of(t: int) -> Array[Project]:
 func capacity(key: String) -> int:
 	if RoomType.BULK.has(key):
 		return 1 << 30
-	return RoomType.BASE_CAPACITY + storage_capacity(key)
+	return _base_cap(key) + storage_capacity(key)
 
 
 ## Вместимость складов для ресурса (без кучи на земле).
@@ -1237,17 +1237,16 @@ func store_rooms() -> Array[Project]:
 
 func storage_capacity(key: String) -> int:
 	var c := 0
-	for p in store_rooms():
-		if RoomType.stores(p, key):
-			c += RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
-	return roundi(c * 1.5) if research.has("shelving") else c
+	for p in holders(key):
+		c += room_cap(p, key)
+	return c
 
 
-## Сколько ресурса лежит на складах, сколько — кучей на земле.
+## Сколько ресурса лежит в складах, сколько — у базы.
 func stored_split(key: String) -> Vector2i:
 	var have: int = inventory.get(key, 0)
-	var inside := mini(have, storage_capacity(key))
-	return Vector2i(inside, have - inside)
+	var pile := base_have(key)
+	return Vector2i(have - pile, pile)
 
 
 func set_store_filter(p: Project, keys: Array[String]) -> void:
@@ -1336,10 +1335,7 @@ func _eat_from(u: Unit, take: Callable, bonus := 1.0) -> void:
 
 
 func _take_store(key: String, n: int) -> int:
-	var t := mini(n, inventory.get(key, 0))
-	if t > 0:
-		inventory[key] -= t
-	return t
+	return _remove(key, n)
 
 
 ## Без игрока жители берут и со склада, и с куч на земле (склада может не быть).
@@ -1413,7 +1409,13 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 	else:
 		world.remove_feature(x)
 	var site := _clearing_project(x)
-	if room != 0 and u != null and y[1] > 0:
+	if room != 0 and offline and y[1] > 0:
+		# Оффлайн работник склада сразу кладёт добытое в свой склад.
+		var to := project_by_id(room)
+		var put := _add(y[0], y[1], to) if to != null else 0
+		if put < y[1]:
+			drop_item(_ground_cell(x), y[0], y[1] - put)
+	elif room != 0 and u != null and y[1] > 0:
 		_carry_to(u, room, y[0], y[1])
 	elif y[1] > 0:
 		var before := drop_amount(_landing(_ground_cell(x)), y[0])
@@ -2074,6 +2076,7 @@ func update(dt: float) -> void:
 	_explore_t += dt
 	if _explore_t >= 1.0:
 		_explore_t = 0.0
+		_sync_held()
 		explore()
 		_access_t += 1
 		if _access_t >= 5:
@@ -3076,13 +3079,11 @@ func _source_spots(key: String) -> Array[Vector2i]:
 		for dx in range(3, 6):
 			out.append(_ground_cell(home.x + dx))
 		return out
-	var split := stored_split(key)
-	if split.x > 0:
-		for room in store_rooms():
-			if RoomType.stores(room, key):
-				for x in range(RoomType.floor_start(room), room.rect.end.x):
-					out.append(Vector2i(x, room.rect.end.y - 1))
-	if split.y > 0 or out.is_empty():
+	for room in holders(key):
+		if held_in(room, key) > 0 and RoomType.is_store(room.purpose):
+			for x in range(RoomType.floor_start(room), room.rect.end.x):
+				out.append(Vector2i(x, room.rect.end.y - 1))
+	if base_have(key) > 0 or out.is_empty():
 		for dx in range(-8, -1):
 			out.append(_ground_cell(home.x + dx))
 	return out
@@ -3249,16 +3250,32 @@ func _haul_source(key: String, dist: Dictionary) -> Array:
 
 ## Куда отнести ресурс на хранение: ближайший склад для него, иначе кучи у базы.
 func _store_spot(key: String, dist: Dictionary) -> Variant:
+	var t = _store_target(key, dist)
+	return t[0] if t != null else null
+
+
+## Ближайший склад с работником, куда влезет ресурс: [где встать, склад] или null.
+## only — только этот склад.
+func _store_target(key: String, dist: Dictionary, only: Project = null) -> Variant:
 	var best = null
 	var best_d := 1 << 30
-	for room in store_rooms():
-		if not RoomType.stores(room, key) or not store_staffed(room):
+	for room in ([only] if only != null else store_rooms()):
+		if not RoomType.stores(room, key) or not store_staffed(room) or room_free(room, key) <= 0:
 			continue
-		for x in range(RoomType.floor_start(room), room.rect.end.x):
-			var c := Vector2i(x, room.rect.end.y - 1)
-			if dist.has(c) and dist[c] < best_d:
-				best_d = dist[c]
-				best = c
+		var c = _room_stand(room, dist)
+		if c != null and dist[c] < best_d:
+			best_d = dist[c]
+			best = [c, room]
+	return best
+
+
+## Ближайшая к жителю клетка пола комнаты.
+func _room_stand(room: Project, dist: Dictionary) -> Variant:
+	var best = null
+	for x in range(RoomType.floor_start(room), room.rect.end.x):
+		var c := Vector2i(x, room.rect.end.y - 1)
+		if dist.has(c) and (best == null or dist[c] < dist[best]):
+			best = c
 	return best
 
 
@@ -3282,6 +3299,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_k := ""
 	var best_n := 0
 	var best_d := 1 << 30
+	var best_room: Project = null
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
 		if stand == null or dist[stand] >= best_d:
@@ -3291,17 +3309,19 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			# работник и место.
 			if only != null and not RoomType.same_kind(only, k):
 				continue
-			if not can_store(k):
-				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
-			var room: int = capacity(k) - inventory.get(k, 0) - _incoming(k)
-			if avail > 0 and room > 0:
-				best = stand
-				best_c = c
-				best_k = k
-				best_n = mini(carry_cap(), mini(avail, room))
-				best_d = dist[stand]
-				break
+			if avail <= 0:
+				continue
+			var to = _store_target(k, dist, only)
+			if to == null:
+				continue
+			best = stand
+			best_c = c
+			best_k = k
+			best_room = to[1]
+			best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
+			best_d = dist[stand]
+			break
 	if best == null:
 		return false
 	u.carry_key = best_k
@@ -3310,7 +3330,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	u.from_drop = true
 	u.haul_src = best_c
 	u.to_store = true
-	_start(u, Unit.Task.HAUL, best, best, 0, parents)
+	_start(u, Unit.Task.HAUL, best, best, best_room.id, parents)
 	return true
 
 
@@ -3318,13 +3338,15 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
 	if not can_store(key):
 		return
-	var room: int = capacity(key) - inventory.get(key, 0) - _incoming(key)
-	var n := mini(carry_cap(), mini(drop_amount(c, key), room))
+	var to = _store_target(key, pathing.explore(u.cell())[1])
+	if to == null:
+		return
+	var n := mini(carry_cap(), mini(drop_amount(c, key), room_free(to[1], key)))
 	if n <= 0:
 		return
 	_drop(u)
 	u.task = Unit.Task.HAUL
-	u.project_id = 0
+	u.project_id = to[1].id
 	u.carry_key = key
 	u.carry_amount = n
 	u.haul_stage = 0
@@ -3520,17 +3542,38 @@ func _haul_pickup(u: Unit) -> void:
 	if u.from_drop:
 		take = _take_drop(u.haul_src, u.carry_key, u.carry_amount)
 	else:
-		take = mini(u.carry_amount, inventory.get(u.carry_key, 0))
-		if take > 0:
-			inventory[u.carry_key] -= take
+		# Берёт из того склада, у которого стоит; у базы — из запаса у базы.
+		var from := store_at(u.cell())
+		if from != null and held_in(from, u.carry_key) > 0:
+			take = _remove(u.carry_key, u.carry_amount, from)
+		else:
+			take = _remove(u.carry_key, u.carry_amount)
 	if take <= 0:
 		_drop(u)
 		return
 	u.carry_amount = take
 	u.haul_stage = 1
 	var reach := pathing.explore(u.cell())
-	var stand = _store_spot(u.carry_key, reach[1]) if u.to_store else _near_rect(p.rect, reach[1])
+	var stand = null
+	if u.to_store:
+		# Несёт в тот склад, куда собирался; там уже нет места — в ближайший другой.
+		if p != null and RoomType.is_store(p.purpose) and store_staffed(p):
+			stand = _room_stand(p, reach[1])
+		if stand == null:
+			var to = _store_target(u.carry_key, reach[1])
+			if to != null:
+				stand = to[0]
+				u.project_id = to[1].id
+	else:
+		stand = _near_rect(p.rect, reach[1])
 	if stand == null:
+		# Нести некуда — кладёт обратно.
+		var back := u.carry_amount
+		if u.from_drop:
+			drop_item(u.cell(), u.carry_key, back)
+		else:
+			_add(u.carry_key, back)
+		u.carry_amount = 0
 		_drop(u)
 		return
 	u.path = Pathing.path_to(reach[0], stand)
@@ -3548,8 +3591,9 @@ func _haul_deliver(u: Unit) -> void:
 	u.carry_amount = 0
 	_drop(u)
 	if to_storage or p == null:
-		# Не влезло на склад — остаётся лежать здесь.
-		drop_item(spot, k, n - _add(k, n))
+		# В свой склад; не влезло — остаётся лежать здесь (подберут и отнесут в другой).
+		var room: Project = p if p != null and RoomType.is_store(p.purpose) else store_at(spot)
+		drop_item(spot, k, n - (_add(k, n, room) if room != null else _add(k, n)))
 		return
 	if _is_supply(p):
 		p.stock[k] = p.stock.get(k, 0) + n
@@ -3593,18 +3637,18 @@ func gatherers_on(p: Project) -> int:
 
 ## Ресурсы склада, которых меньше нормы (и есть куда положить).
 ## Чего не хватает до нормы — для работников склада (стройматериалы) или амбара (еда).
-## Нормы общие, работник любого склада работает на все склады.
+## У каждого склада свои нормы и своё содержимое: его работники добывают в него.
 func storage_deficit(p: Project) -> Array[String]:
 	var out: Array[String] = []
-	for k in store_targets:
-		if not GATHER_SOURCES.has(k) or not RoomType.same_kind(p, k):
+	for k in p.targets:
+		if not GATHER_SOURCES.has(k) or not RoomType.stores(p, k):
 			continue
-		if inventory.get(k, 0) < mini(int(store_targets[k]), capacity(k)):
+		if held_in(p, k) < mini(int(p.targets[k]), room_cap(p, k)):
 			out.append(k)
 	# Чего не хватает сильнее (меньшая доля нормы) — в первую очередь: добыча чередуется,
 	# а не идёт подряд одного ресурса.
 	out.sort_custom(func(a: String, b: String) -> bool:
-		return inventory.get(a, 0) / float(maxi(1, store_targets[a])) < inventory.get(b, 0) / float(maxi(1, store_targets[b])))
+		return held_in(p, a) / float(maxi(1, p.targets[a])) < held_in(p, b) / float(maxi(1, p.targets[b])))
 	return out
 
 
@@ -3613,7 +3657,7 @@ func default_targets(room: Project = null) -> Dictionary:
 	var out := {}
 	for k in DEFAULT_TARGETS:
 		if room == null or RoomType.stores(room, k):
-			out[k] = mini(DEFAULT_TARGETS[k], capacity(k))
+			out[k] = mini(DEFAULT_TARGETS[k], room_cap(room, k) if room != null else capacity(k))
 	return out
 
 
@@ -3957,7 +4001,7 @@ func _burn_fuel(p: Project) -> void:
 				if p.stock.get(k, 0) >= 1:
 					p.stock[k] -= 1
 				else:
-					inventory[k] = inventory.get(k, 0) - 1
+					_remove(k, 1)
 				p.fuel += float(RoomType.FUEL_VALUE[k])
 				break
 	p.fuel = maxf(0.0, p.fuel - 1.0)
@@ -3990,7 +4034,7 @@ func _craft(p: Project) -> void:
 	for k in recipe[0]:
 		var from_stock := mini(p.stock.get(k, 0), recipe[0][k])
 		p.stock[k] = p.stock.get(k, 0) - from_stock
-		inventory[k] = inventory.get(k, 0) - (recipe[0][k] - from_stock)
+		_remove(k, recipe[0][k] - from_stock)
 	if RoomType.FUELED.has(p.purpose):
 		_burn_fuel(p)
 	for k in recipe[1]:
@@ -4085,8 +4129,7 @@ func _hearth_fuel(p: Project, need: int) -> int:
 		var want := ceili(float(need - got) / per)
 		if want <= 0:
 			break
-		var take := mini(want, inventory.get(k, 0))
-		inventory[k] = inventory.get(k, 0) - take
+		var take := _remove(k, want)
 		got += take * per
 		var c := p.rect.get_center()
 		for d: Vector2i in drops.keys():
@@ -4141,14 +4184,10 @@ func _power_tick(dt: float) -> void:
 		if p.paused:
 			continue
 		if p.farm_progress <= 0.0:
-			if inventory.get("methane", 0) >= 1:
-				inventory["methane"] -= 1
-				p.farm_progress += RoomType.FUEL_TIME
-			elif inventory.get("coal", 0) >= 1:
-				inventory["coal"] -= 1
+			if _remove("methane", 1) >= 1 or _remove("coal", 1) >= 1:
 				p.farm_progress += RoomType.FUEL_TIME
 			elif inventory.get("wood", 0) >= 2:
-				inventory["wood"] -= 2
+				_remove("wood", 2)
 				p.farm_progress += RoomType.FUEL_TIME
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
@@ -4313,6 +4352,7 @@ static func game_span(seconds: float) -> String:
 ## (часть времени уходит на сон и еду). Возвращает число выкопанных клеток.
 func advance_offline(dt: float) -> int:
 	offline = true
+	_sync_held()
 	for u in units:
 		_drop(u)
 	# Пока игрока нет, жители перетаскивают добытое на склад.
@@ -4424,7 +4464,11 @@ func advance_offline(dt: float) -> int:
 					var x: int = int(key.substr(1))
 					harvest_progress[x] = harvest_progress.get(x, 0.0) + j[1] * step
 					if harvest_progress[x] >= HARVEST_TIME.get(world.feature_at(x), 20.0) - 0.001:
-						_complete_harvest(x, j[2])
+						# Работник склада — добытое сразу в его склад (у расчистки j[3] — стройка).
+						var gr: Project = j[3]
+						var to_room := gr.id if gr != null and gr.kind == Project.Kind.ROOM and gr.phase == Project.Phase.DONE \
+							and RoomType.is_store(gr.purpose) else 0
+						_complete_harvest(x, j[2], to_room)
 				Unit.Task.HAUL:
 					_offline_progress[key] = _offline_progress.get(key, 0.0) + j[1] * step
 					if _offline_progress[key] >= OFFLINE_HAUL_TIME - 0.001:
@@ -4548,7 +4592,7 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 						if x != null:
 							taken["h%d" % x] = true
 							taken[gslot] = taken.get(gslot, 0) + 1
-							return ["h%d" % x, Unit.Task.HARVEST, null]
+							return ["h%d" % x, Unit.Task.HARVEST, room]
 			"fish":
 				for p in projects:
 					var slot := "w%d" % p.id
@@ -4664,7 +4708,7 @@ func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
 				var x = _offline_gather_x(GATHER_SOURCES[k], taken)
 				if x != null:
 					taken["h%d" % x] = true
-					return ["h%d" % x, Unit.Task.HARVEST, null]
+					return ["h%d" % x, Unit.Task.HARVEST, p]
 	return []
 
 
@@ -4687,17 +4731,175 @@ func _offline_harvest(taken: Dictionary) -> Array:
 
 # --- Вспомогательное ----------------------------------------------------------------
 
-## Кладёт ресурс на склад с учётом вместимости. Возвращает, сколько поместилось.
-func _add(key: String, amount: int) -> int:
+## Склады раздельные: у каждого склада и амбара своё содержимое (held), метан —
+## в баках дегазации. inventory — итог по колонии: всё в комнатах плюс запас у базы
+## (стартовые припасы и то, что не легло в комнаты, — до BASE_CAPACITY).
+
+## Комнаты, где может лежать ресурс: метан — в дегазации, еда — в амбарах, остальное — на складах.
+func holders(key: String) -> Array[Project]:
+	if key == "methane":
+		return rooms_of(RoomType.DEGAS)
+	var out: Array[Project] = []
+	for p in store_rooms():
+		if RoomType.stores(p, key):
+			out.append(p)
+	return out
+
+
+## Сколько ресурса помещается в комнате p.
+func room_cap(p: Project, key: String) -> int:
+	if key == "methane":
+		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
+	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
+		return 0
+	var c := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	return roundi(c * 1.5) if research.has("shelving") else c
+
+
+func held_in(p: Project, key: String) -> int:
+	return int(p.held.get(key, 0))
+
+
+## Сколько ещё влезет в комнату p (с учётом того, что туда уже несут).
+func room_free(p: Project, key: String) -> int:
+	return room_cap(p, key) - held_in(p, key) - _incoming_room(p, key)
+
+
+func _incoming_room(p: Project, key: String) -> int:
+	var n := 0
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.project_id == p.id and u.carry_key == key and (u.to_store or u.gather_room != 0):
+			n += u.carry_amount
+	return n
+
+
+## Сколько лежит у базы (не в комнатах).
+func base_have(key: String) -> int:
+	var n: int = inventory.get(key, 0)
+	for p in holders(key):
+		n -= held_in(p, key)
+	return maxi(0, n)
+
+
+func _base_cap(key: String) -> int:
+	return 0 if key == "methane" else RoomType.BASE_CAPACITY
+
+
+## Склад (амбар) в клетке c.
+func store_at(c: Vector2i) -> Project:
+	var p := project_at(c)
+	if p != null and p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and RoomType.is_store(p.purpose):
+		return p
+	return null
+
+
+## В комнатах не может лежать больше, чем всего есть (итог правят напрямую: тесты, старые сохранения).
+func _clamp_held(key: String) -> void:
+	var total: int = inventory.get(key, 0)
+	var sum := 0
+	var rooms: Array[Project] = []
+	var hs := holders(key)
+	for p in projects:
+		if p.held.get(key, 0) > 0:
+			if not hs.has(p):
+				# Комнату снесли или переделали — её запас остаётся у базы.
+				p.held.erase(key)
+				continue
+			sum += held_in(p, key)
+			rooms.append(p)
+	rooms.sort_custom(func(a: Project, b: Project) -> bool: return held_in(a, key) > held_in(b, key))
+	for p in rooms:
+		if sum <= total:
+			break
+		var cut := mini(held_in(p, key), sum - total)
+		p.held[key] = held_in(p, key) - cut
+		if p.held[key] <= 0:
+			p.held.erase(key)
+		sum -= cut
+
+
+## Старые сохранения: запасы были общими. Нормы — каждому складу из общих, запасы
+## раскладываем по складам (что не влезло — у базы), метан — в баки дегазации
+## (не влезший улетучивается).
+func _migrate_stores() -> void:
+	for p in store_rooms():
+		if p.targets.is_empty():
+			for k in store_targets:
+				if RoomType.stores(p, k):
+					p.targets[k] = mini(int(store_targets[k]), room_cap(p, k))
+	for k in inventory.keys():
+		var extra := base_have(k) - _base_cap(k)
+		if extra <= 0:
+			continue
+		var rooms := holders(k)
+		for p in rooms:
+			if extra <= 0:
+				break
+			var put := clampi(room_cap(p, k) - held_in(p, k), 0, extra)
+			p.held[k] = held_in(p, k) + put
+			extra -= put
+		if k == "methane" and extra > 0:
+			inventory[k] = int(inventory[k]) - extra
+
+
+func _sync_held() -> void:
+	for k in inventory.keys():
+		_clamp_held(k)
+	for p in projects:
+		for k in p.held.keys():
+			if not inventory.has(k):
+				p.held.erase(k)
+
+
+## Берёт ресурс: из комнаты room (если указана), иначе сначала у базы, потом из складов.
+## Возвращает, сколько взято.
+func _remove(key: String, n: int, room: Project = null) -> int:
+	var t := mini(n, int(inventory.get(key, 0)))
+	if t <= 0:
+		return 0
+	if room != null:
+		t = mini(t, held_in(room, key))
+		room.held[key] = held_in(room, key) - t
+		if room.held[key] <= 0:
+			room.held.erase(key)
+	inventory[key] = int(inventory.get(key, 0)) - t
+	_clamp_held(key)
+	return t
+
+
+## Кладёт ресурс. В комнату room — только туда (остаток возвращается вызвавшему);
+## без комнаты — в склады с работником (метан — в баки дегазации), потом к базе.
+## Возвращает, сколько поместилось.
+func _add(key: String, amount: int, room: Project = null) -> int:
 	if key.is_empty() or amount <= 0:
 		return 0
 	known_resources[key] = true
+	_clamp_held(key)
 	var have: int = inventory.get(key, 0)
-	var cap := capacity(key)
-	var put := clampi(cap - have, 0, amount)
+	var put := 0
+	if RoomType.BULK.has(key):
+		put = amount
+	elif room != null:
+		put = clampi(room_cap(room, key) - held_in(room, key), 0, amount)
+		room.held[key] = held_in(room, key) + put
+	else:
+		# Без работника на склад ничего не носят.
+		for p in holders(key):
+			if put >= amount:
+				break
+			if key != "methane" and not store_staffed(p):
+				continue
+			var free := clampi(room_cap(p, key) - held_in(p, key), 0, amount - put)
+			if free > 0:
+				p.held[key] = held_in(p, key) + free
+				put += free
+		put += clampi(_base_cap(key) - base_have(key), 0, amount - put)
 	inventory[key] = have + put
+	var cap := capacity(key)
+	if room != null:
+		return put
 	# Предупреждаем один раз на ресурс, пока не построят новый склад.
-	if put < amount and not _full_warned.has(key):
+	if put < amount and not _full_warned.has(key) and key != "methane":
 		_full_warned[key] = true
 		_log("Склад полон: %s (%d). Постройте склад, лишнее выбрасывается." % [Mat.resource_name(key).to_lower(), cap], "warning")
 	return put
@@ -4752,6 +4954,7 @@ func to_dict() -> Dictionary:
 		"elements": elements.to_dict(),
 		"drops": _drops_list(),
 		"store_targets": store_targets,
+		"stores_v": 1,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
@@ -4836,6 +5039,8 @@ func load_dict(d: Dictionary) -> void:
 	loads.load_dict(d.get("loads", {}))
 	disasters = bool(d.get("disasters", true))
 	research.load_dict(d.get("research", {}))
+	if int(d.get("stores_v", 0)) < 1:
+		_migrate_stores()
 	loads.loads = loads.compute()
 	explore()
 	_refresh_bushes()
