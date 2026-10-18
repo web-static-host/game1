@@ -85,6 +85,10 @@ var stock := {}
 var fuel := 0.0
 ## Горит ли огонь (очаг, генератор) — греет всё вокруг. Не сохраняется: пересчитывается.
 var burning := false
+## Свет в комнате: -1 — сам (по умолчанию горит в ближних к генератору, пока хватает энергии),
+## 0 — выключен, 1 — включён. lit — горит ли сейчас (пересчитывается, не сохраняется).
+var light := -1
+var lit := false
 ## Износ готовой постройки 0..1 (1 — разрушается) и уровень последнего предупреждения.
 var wear := 0.0
 var wear_warned := 0
@@ -307,6 +311,7 @@ func to_dict() -> Dictionary:
 		"equip_ladder": equip_ladder,
 		"brick_stoves": brick_stoves,
 		"gas_boiler": gas_boiler,
+		"light": light,
 		"fuel": fuel,
 		"clear_x": clear_x,
 		"store_filter": store_filter,
@@ -362,6 +367,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.brick_stoves = bool(d.get("brick_stoves", false))
 	p.gas_boiler = bool(d.get("gas_boiler", false))
+	p.light = int(d.get("light", -1))
 	p.fuel = float(d.get("fuel", 0.0))
 	for x in d.get("clear_x", []):
 		p.clear_x.append(int(x))

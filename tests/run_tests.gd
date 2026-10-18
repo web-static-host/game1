@@ -55,6 +55,7 @@ func _initialize() -> void:
 	test_buried_drop()
 	test_separate_stores()
 	test_mine_meters()
+	test_lights()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -1685,6 +1686,11 @@ func test_elements() -> void:
 	vent.phase = Project.Phase.DONE
 	vent.purpose = RoomType.DEGAS
 	vent.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
+	check(RoomType.effect_radius(vent) == 10, "малая дегазация (3 м) — радиус 10")
+	vent.rect = Rect2i(o.x + 12, o.y + 5, 6, 3)
+	check(RoomType.effect_radius(vent) == 15, "средняя (6 м) — радиус 15")
+	vent.rect = Rect2i(o.x + 12, o.y + 5, 9, 3)
+	check(RoomType.effect_radius(vent) == 20, "большая (9 м) — радиус 20")
 	colony.projects.append(vent)
 	for i in 20:
 		el.update(1.0)
@@ -2339,3 +2345,68 @@ func test_mine_meters() -> void:
 		"остановили: готовая часть осталась шахтой (%d м)" % mine.rect.size.x)
 	for i in mine.slice_count():
 		check(colony.slice_dug(mine, i), "метр %d остановленной шахты выкопан" % i)
+
+
+func test_lights() -> void:
+	# Свет: 1 ед. энергии на 3 м комнаты; сам горит в ближних к генератору, пока хватает;
+	# в комнате включают и выключают целиком; на стройке — одна лампа там, где работают.
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	colony.research.done.append("electricity")
+	check(colony.lightable(room) and RoomType.blocks(room) == 2, "комната 6 м под землёй — 2 лампочки")
+	var gen := Project.new()
+	gen.id = 950
+	gen.kind = Project.Kind.ROOM
+	gen.phase = Project.Phase.DONE
+	gen.purpose = RoomType.GENERATOR
+	gen.rect = Rect2i(room.rect.end.x + 30, room.rect.position.y, 3, 3)
+	colony.projects.append(gen)
+	colony.inventory = {"coal": 10}
+	colony._power_tick(0.1)
+	check(colony.powered() and room.lit, "генератор работает — в комнате сам загорелся свет")
+	check(colony.power_used >= RoomType.blocks(room), "свет расходует энергию (%d)" % colony.power_used)
+	var c := Vector2i(room.rect.position.x + 2, room.rect.end.y - 1)
+	check(colony.is_lit(c), "в комнате со светом светло")
+	room.light = 0
+	colony._power_tick(0.1)
+	check(not room.lit and not colony.is_lit(c), "выключили — в комнате темно")
+	room.light = 1
+	colony._power_tick(0.1)
+	check(room.lit, "включили вручную — горит")
+	# Дальняя комната не загорается, если энергии не хватает: свет всей комнатой.
+	room.light = -1
+	var far := Project.new()
+	far.id = 951
+	far.kind = Project.Kind.ROOM
+	far.phase = Project.Phase.DONE
+	far.rect = Rect2i(room.rect.position.x - 200, room.rect.position.y, 9, 3)
+	colony.projects.append(far)
+	var near := Project.new()
+	near.id = 952
+	near.kind = Project.Kind.ROOM
+	near.phase = Project.Phase.DONE
+	near.rect = Rect2i(gen.rect.position.x - 9, gen.rect.position.y + 3, 9, 3)
+	colony.projects.append(near)
+	colony._power_tick(0.1)
+	var budget := colony.power_made
+	check(near.lit, "ближняя к генератору комната горит")
+	check(colony.power_used <= budget, "сам свет не берёт больше, чем есть (%d из %d)" % [colony.power_used, budget])
+	# Лампа на стройке — там, где житель работает.
+	var u: Unit = colony.units[0]
+	var site := Project.new()
+	site.id = 953
+	site.kind = Project.Kind.TUNNEL
+	site.phase = Project.Phase.DIG
+	site.rect = Rect2i(room.rect.position.x - 50, room.rect.position.y + 20, 1, 3)
+	colony.projects.append(site)
+	u.project_id = site.id
+	u.state = Unit.State.WORK
+	u.task = Unit.Task.DIG
+	u.pos = Vector2(site.rect.position)
+	room.light = 0
+	near.light = 0
+	far.light = 0
+	colony._power_tick(0.1)
+	check(colony.work_lamps.size() == 1 and colony.work_lamps[0] == u.cell(), "на стройке горит одна лампа у работника")
+	check(colony.is_lit(u.cell()), "у лампы светло")

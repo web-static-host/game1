@@ -22,12 +22,10 @@ const LAVA_COOL := 90.0
 ## Как часто вскрытый водоносный пласт выпускает клетку воды.
 const SPRING_TIME := 25.0
 const PUMP_TIME := 2.0
-const PUMP_RADIUS := 16
 const GAS_STEP := 1.0
 ## Сколько метана отдаёт вскрытая клетка, всего и в секунду.
 const SEEP_RESERVE := {Mat.GAS_POCKET: 40.0, Mat.COAL: 6.0}
 const SEEP_RATE := 0.06
-const DEGAS_RADIUS := 20
 ## Доля метана в зоне дегазации, которую она забирает за секунду.
 const DEGAS_TAKE := 0.6
 ## Метана в одной клетке газового кармана.
@@ -39,7 +37,6 @@ const GAS_CHOKE := 0.5
 ## Метан у стройки, при котором работы встают (ниже взрывоопасного), и «проветрено».
 const GAS_ALARM := 0.15
 const GAS_CLEAR := 0.05
-const VENT_RADIUS := 20
 const VENT_COOLING := 18.0
 ## Выше — жителям вредно (жара).
 const HOT := 50.0
@@ -275,8 +272,9 @@ func _pumps() -> void:
 			continue
 		var center := p.rect.get_center()
 		var best = null
-		for y in range(center.y - PUMP_RADIUS, center.y + PUMP_RADIUS + 1):
-			for x in range(center.x - PUMP_RADIUS, center.x + PUMP_RADIUS + 1):
+		var pr := RoomType.effect_radius(p)
+		for y in range(center.y - pr, center.y + pr + 1):
+			for x in range(center.x - pr, center.x + pr + 1):
 				if world.gen.surface_y(x) > y:
 					continue # озёра на поверхности не откачиваем
 				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER:
@@ -355,8 +353,9 @@ func _gas_tick() -> void:
 		if p.paused or colony.room_free(p, "methane") <= 0:
 			continue
 		var center := p.rect.get_center()
+		var dr := RoomType.effect_radius(p)
 		for c in next:
-			if absi(c.x - center.x) <= DEGAS_RADIUS and absi(c.y - center.y) <= DEGAS_RADIUS:
+			if absi(c.x - center.x) <= dr and absi(c.y - center.y) <= dr:
 				var take: float = next[c] * DEGAS_TAKE
 				next[c] -= take
 				_captured += take
@@ -477,7 +476,8 @@ func _temperature(c: Vector2i) -> float:
 					t = maxf(t, 1100.0 / (1.0 + Vector2(dx, dy).length() * 2.0))
 	for p in colony.rooms_of(RoomType.VENT):
 		var center := p.rect.get_center()
-		if absi(c.x - center.x) <= VENT_RADIUS and absi(c.y - center.y) <= VENT_RADIUS:
+		var vr := RoomType.effect_radius(p)
+		if absi(c.x - center.x) <= vr and absi(c.y - center.y) <= vr:
 			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("cooling") else 1.0)
 			break
 	return t

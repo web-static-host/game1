@@ -587,6 +587,16 @@ func _show_project(p: Project) -> void:
 				return
 			colony.demolish(p)
 			_select(null, null), "danger"])
+	# Свет — во всей комнате сразу: включить, выключить или вернуть «сам».
+	if colony.lightable(p) and colony.research.has("electricity"):
+		if p.light != -1:
+			actions.append(["Свет: сам", func() -> void:
+				p.light = -1
+				_show_project(p)])
+		actions.append(["Выключить свет" if p.lit or p.light == 1 else "Включить свет", func() -> void:
+			p.light = 0 if p.lit or p.light == 1 else 1
+			colony.relight()
+			_show_project(p)])
 	var current := RoomType.current_purpose(p)
 	var preview := {"v": maxi(current, 1)}
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
@@ -870,6 +880,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
 				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан — из баков дегазации). Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
+				rows.append({"type": "text", "text": "Свет: лампочка на каждые 3 м комнаты, 1 ед. энергии каждая. Сам свет включается в комнатах ближе к генератору, пока хватает энергии; в любой комнате его можно включить или выключить (всю сразу). На стройке и в шахте — одна лампа там, где сейчас работают."})
 			RoomType.DEGAS:
 				var cap := colony.room_cap(p, "methane")
 				rows.append(_progress("Метан в баке", float(colony.held_in(p, "methane")) / maxf(1.0, cap),
@@ -894,6 +905,13 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])
+		if colony.lightable(p) and colony.research.has("electricity"):
+			var n := RoomType.blocks(p)
+			var state := "горит" if p.lit else ("выключен" if p.light == 0 else ("не хватает энергии" if colony.powered() else "нет генератора"))
+			chips.append(["power", "свет: %s · %d ламп. = %d ед." % [state, n, n]])
+		var radius := RoomType.effect_radius(p)
+		if radius > 0:
+			chips.append(["", "радиус %d м" % radius])
 		var current := RoomType.current_purpose(p)
 		if preview_purpose > 0 and preview_purpose != current:
 			var cost := RoomType.equip_cost(preview_purpose, p)

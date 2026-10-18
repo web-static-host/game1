@@ -2430,26 +2430,96 @@ const SUN_SHAFT := 8
 const GLOW_RADIUS := 4
 
 
-## Светло ли в клетке: над землёй, в открытой шахте недалеко от неба, в комнате с электричеством,
-## рядом со светящимся жителем.
+## Светло ли в клетке: над землёй, в открытой шахте недалеко от неба, в комнате, где горит свет,
+## у лампы на стройке, рядом со светящимся жителем.
 func is_lit(c: Vector2i) -> bool:
-	var surf := world.gen.surface_y(c.x)
-	if c.y < surf:
+	if sunlit(c):
 		return true
-	if c.y - surf < SUN_SHAFT:
-		var open := true
-		for y in range(surf, c.y):
-			if Mat.is_solid(world.get_mat(c.x, y)):
-				open = false
-				break
-		if open:
+	if interior.has(c):
+		var p := project_by_id(interior[c])
+		if p != null and p.lit:
 			return true
-	if powered() and interior.has(c):
-		return true
+	for l in work_lamps:
+		if l.distance_squared_to(c) <= LAMP_RADIUS * LAMP_RADIUS:
+			return true
 	for o in units:
 		if o.ability("light") == true and o.cell().distance_squared_to(c) <= GLOW_RADIUS * GLOW_RADIUS:
 			return true
 	return false
+
+
+## Солнце: над землёй и в открытой сверху шахте недалеко от неба.
+func sunlit(c: Vector2i) -> bool:
+	var surf := world.gen.surface_y(c.x)
+	if c.y < surf:
+		return true
+	if c.y - surf < SUN_SHAFT:
+		for y in range(surf, c.y):
+			if Mat.is_solid(world.get_mat(c.x, y)):
+				return false
+		return true
+	return false
+
+
+## Свет от электричества: 1 единица энергии на лампочку. В комнате по лампочке на каждые 3 м,
+## свет включается и выключается во всей комнате сразу. По умолчанию горит в комнатах ближе
+## к генератору, пока хватает энергии. На стройке и в шахте — одна лампа там, где сейчас работают.
+const LAMP_RADIUS := 3
+var work_lamps: Array[Vector2i] = []
+
+
+## Комната, где может гореть электрический свет (под землёй).
+func lightable(p: Project) -> bool:
+	return p.kind == Project.Kind.ROOM and (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP) \
+		and is_underground(p)
+
+
+## Пересчитать свет сразу (после переключения в комнате).
+func relight() -> void:
+	_power_tick(0.0)
+
+
+func _lights_tick() -> void:
+	work_lamps.clear()
+	for p in projects:
+		p.lit = false
+	if not powered():
+		return
+	# Включённые вручную горят всегда.
+	var auto: Array[Project] = []
+	for p in projects:
+		if not lightable(p):
+			continue
+		if p.light == 1:
+			p.lit = true
+			power_used += RoomType.blocks(p)
+		elif p.light == -1:
+			auto.append(p)
+	# Лампы на стройках — по одной там, где сейчас работают (если там темно).
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing) or power_made - power_used < 1:
+			continue
+		for u in units:
+			if u.project_id == p.id and u.state == Unit.State.WORK \
+					and u.task in [Unit.Task.DIG, Unit.Task.BUILD, Unit.Task.SUPPORT, Unit.Task.EQUIP, Unit.Task.REPAIR] \
+					and not sunlit(u.cell()):
+				work_lamps.append(u.cell())
+				power_used += 1
+				break
+	# Остальные комнаты — от ближних к генератору, пока хватает энергии (комната целиком).
+	var gens := rooms_of(RoomType.GENERATOR)
+	var dist_of := func(p: Project) -> int:
+		var best := 1 << 30
+		for g in gens:
+			var d := g.rect.get_center() - p.rect.get_center()
+			best = mini(best, absi(d.x) + absi(d.y))
+		return best
+	auto.sort_custom(func(a: Project, b: Project) -> bool: return dist_of.call(a) < dist_of.call(b))
+	for p in auto:
+		var n := RoomType.blocks(p)
+		if power_made - power_used >= n:
+			p.lit = true
+			power_used += n
 
 
 ## Множитель работы от освещения: в темноте медленнее, зоркие — меньше теряют;
@@ -4316,6 +4386,7 @@ func _power_tick(dt: float) -> void:
 		for p in rooms_of(t):
 			if not p.paused:
 				power_used += RoomType.POWER_USE[t]
+	_lights_tick()
 	power_ratio = 1.0 if power_used == 0 else minf(1.0, float(power_made) / power_used)
 
 

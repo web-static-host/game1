@@ -60,6 +60,13 @@ func _draw() -> void:
 		var col := ChunkView.rock_color(f[2], 0.5)
 		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col)
 		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col.darkened(0.3), false, 2.0)
+	# Лампы там, где сейчас идёт работа на стройке или в шахте.
+	for c in colony.work_lamps:
+		var at := view.cell_to_local(c) + Vector2(TILE * 0.5, 2)
+		_glow(at + Vector2(0, 8), TILE * 2.2, Color(1.0, 0.86, 0.45, 0.3))
+		draw_line(at + Vector2(-6, -2), at + Vector2(6, -2), Color(0.3, 0.3, 0.32), 2.0)
+		draw_circle(at + Vector2(0, 3), 4, LAMP)
+	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
 		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
@@ -119,6 +126,29 @@ func _draw_done(p: Project) -> void:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
 
+## Радиус действия выбранной комнаты: насос, вентиляция, дегазация — квадрат вокруг центра;
+## очаг и генератор — полное тепло и до куда доходит (от стен комнаты).
+func _draw_zone(p: Project) -> void:
+	if p == null or p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
+		return
+	var rad := RoomType.effect_radius(p)
+	if rad > 0:
+		var c := p.rect.get_center()
+		var col := Color(0.45, 0.75, 1.0) if p.purpose != RoomType.VENT else Color(0.6, 0.95, 1.0)
+		var zr := _rect_px(Rect2i(c - Vector2i(rad, rad), Vector2i(rad * 2 + 1, rad * 2 + 1)))
+		draw_rect(zr, Color(col, 0.13))
+		_dashed_rect(zr, Color(col, 0.85), 3.0)
+		return
+	if p.purpose == RoomType.HEARTH or p.purpose == RoomType.GENERATOR:
+		var zone := RoomType.heat_zone(p)
+		var reach := _rect_px(p.rect.grow(zone.y))
+		var full := _rect_px(p.rect.grow(zone.x))
+		draw_rect(reach, Color(1.0, 0.6, 0.2, 0.09))
+		_dashed_rect(reach, Color(1.0, 0.6, 0.2, 0.6), 2.5)
+		draw_rect(full, Color(1.0, 0.45, 0.15, 0.12))
+		_dashed_rect(full, Color(1.0, 0.5, 0.2, 0.9), 3.0)
+
+
 func _draw_room_shell(p: Project, r: Rect2) -> void:
 	var tex := room_texture(p.material, p.rect.size.x)
 	if tex != null:
@@ -130,13 +160,18 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
 	if _wall_outside(p, 1):
 		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-	# Лампа горит, только когда есть электричество.
-	if colony.powered() and colony.is_underground(p):
-		var lamp := Vector2(r.get_center().x, r.position.y + 10)
-		_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
-		draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
-		draw_circle(lamp + Vector2(0, 4), 5, LAMP)
-		draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет.
+	if colony.research.has("electricity") and colony.is_underground(p):
+		var n := RoomType.blocks(p)
+		for i in n:
+			var lamp := Vector2(r.position.x + r.size.x * (i + 0.5) / n, r.position.y + 10)
+			draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
+			if p.lit:
+				_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
+				draw_circle(lamp + Vector2(0, 4), 5, LAMP)
+				draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+			else:
+				draw_circle(lamp + Vector2(0, 4), 5, Color(0.35, 0.35, 0.38))
 
 
 ## Готовая картинка комнаты (рендер из Blender, assets/rooms/) или null — тогда рисуем сами.
