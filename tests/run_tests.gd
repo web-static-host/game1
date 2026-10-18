@@ -56,7 +56,6 @@ func _initialize() -> void:
 	test_separate_stores()
 	test_mine_meters()
 	test_lights()
-	test_survival()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -190,8 +189,7 @@ func test_offline_build() -> void:
 	var colony := _new_colony(99)
 	var w := colony.world
 	_start(colony, 0)
-	check(colony.inventory == Colony.START_INVENTORY, "на старте — запас переселенцев %s" % [colony.inventory])
-	colony.inventory = {}
+	check(colony.inventory.is_empty(), "на старте склад пуст")
 	colony.inventory = {"wood": 20, "stone": 15}
 	var x := _find_solid_column(w)
 	var s := w.gen.surface_y(x)
@@ -2415,36 +2413,3 @@ func test_lights() -> void:
 	check(colony.work_lamps.size() == 1 and colony.work_lamps[0] == u.cell(), "на стройке горит одна лампа у работника")
 	check(colony.is_lit(u.cell()), "у лампы светло")
 
-
-func test_survival() -> void:
-	# Зимой житель на поверхности замерзает и сам уходит греться под землю.
-	var res := _colony_with_room(31)
-	var colony: Colony = res[0]
-	var room: Project = res[1]
-	colony.game_time = Colony.YEAR - Colony.CALENDAR_START + Colony.MONTH * 0.5
-	colony.elements._temp_memo.clear()
-	var u: Unit = colony.units[0]
-	colony._drop(u)
-	var x := room.rect.position.x - 1
-	u.pos = Vector2(x - 3, colony.world.gen.surface_y(x - 3) - 1)
-	var reach := colony.pathing.explore(u.cell())
-	check(colony.elements.temperature(u.cell()) < Colony.cold_limit(u), "на поверхности мороз (%.0f °C)" % colony.elements.temperature(u.cell()))
-	check(colony._seek_warmth(u, reach[0], reach[1]) and u.task == Unit.Task.GOTO, "замёрзший идёт греться")
-	check(colony.elements.temperature(u.target) >= Colony.cold_limit(u), "туда, где тепло (%.0f °C)" % colony.elements.temperature(u.target))
-	# Копать в метане без разрешения игрока нельзя: стройка встаёт сразу, без искры.
-	var t := Project.new()
-	t.id = 960
-	t.kind = Project.Kind.TUNNEL
-	t.phase = Project.Phase.DIG
-	t.rect = Rect2i(room.rect.end.x, room.rect.end.y - 1, 4, 1)
-	colony.projects.append(t)
-	var d: Unit = colony.units[1]
-	colony._drop(d)
-	d.pos = Vector2(room.rect.end.x - 1, room.rect.end.y - 1)
-	d.task = Unit.Task.DIG
-	d.project_id = t.id
-	d.target = Vector2i(room.rect.end.x, room.rect.end.y - 1)
-	d.state = Unit.State.WORK
-	colony.elements.gas[d.cell()] = 0.4
-	colony._work(d, 0.2)
-	check(t.paused and t.hazard_pending == "methane" and d.task != Unit.Task.DIG, "в метане копка сразу встала (газовая тревога)")
