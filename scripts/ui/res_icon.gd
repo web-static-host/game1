@@ -168,6 +168,15 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 			ci.draw_circle(c + Vector2(0, -r * 0.45), r * 0.32, col)
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(-r * 0.6, r * 0.8), c + Vector2(-r * 0.45, 0), c + Vector2(r * 0.45, 0), c + Vector2(r * 0.6, r * 0.8)]), col)
+		"frost":
+			# Снежинка: три оси с «веточками».
+			for k in 3:
+				var dir := Vector2.from_angle(PI / 2.0 + k * PI / 3.0)
+				ci.draw_line(c - dir * r * 0.85, c + dir * r * 0.85, col, w)
+				for s in [-1.0, 1.0]:
+					var tip: Vector2 = c + dir * r * 0.55 * s
+					ci.draw_line(tip, tip + (dir * s).rotated(0.8) * r * 0.3, col, w * 0.8)
+					ci.draw_line(tip, tip + (dir * s).rotated(-0.8) * r * 0.3, col, w * 0.8)
 		"warning":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -r * 0.85), c + Vector2(r * 0.9, r * 0.75), c + Vector2(-r * 0.9, r * 0.75)]), col)

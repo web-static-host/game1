@@ -1452,6 +1452,15 @@ func test_seasons() -> void:
 	check(deep > winter_top and deep > 0.0 and deep < 15.0, "на глубине 12 м зимой прохладно, но не мороз (%.0f °C)" % deep)
 	check(colony.shore_spots().is_empty(), "зимой с берега не порыбачить — лёд")
 	check(not colony.farm_warm(farm), "подземная ферма зимой без огня холодная (%.0f °C)" % colony.room_temp(farm))
+	var cold_home := Project.new()
+	cold_home.id = 970
+	cold_home.kind = Project.Kind.ROOM
+	cold_home.phase = Project.Phase.DONE
+	cold_home.purpose = RoomType.HOME
+	cold_home.rect = Rect2i(x, w.gen.surface_y(x) - 3, 6, 3)
+	check(colony.home_freezing(cold_home), "зимой в доме на поверхности без очага — мороз (значок)")
+	cold_home.purpose = RoomType.STORAGE
+	check(not colony.home_freezing(cold_home), "значок мороза — только у жилых домов")
 	var hearth := _hearth(colony, farm)
 	# Очаг топят сначала углём: 1 уголь — как два полена.
 	colony.inventory["coal"] = 3

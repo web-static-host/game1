@@ -54,6 +54,8 @@ func _draw() -> void:
 			_draw_wear_sign(p)
 		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE and not p.paused and colony.assigned_to(p).is_empty():
 			_draw_no_worker_sign(p)
+		if colony.home_freezing(p):
+			_draw_frost_sign(p)
 	# Падающая порода.
 	for f in colony.physics.fx:
 		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
@@ -835,6 +837,17 @@ func _draw_no_worker_sign(p: Project) -> void:
 	draw_circle(c, 15, Color(0, 0, 0, 0.55))
 	ResIcon.draw_glyph(self, "people", c, 11, col)
 	draw_line(c + Vector2(-9, 9), c + Vector2(9, -9), col, 2.5)
+
+
+## Жилой дом с морозом внутри: снежинка над серединой крыши.
+func _draw_frost_sign(p: Project) -> void:
+	var r := _rect_px(p.rect)
+	var c := Vector2(r.get_center().x, r.position.y - 16)
+	var col := Color(0.6, 0.85, 1.0)
+	if int(Time.get_ticks_msec() / 600) % 2 == 0:
+		col = col.lightened(0.35)
+	draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(self, "frost", c, 11, col)
 
 
 func _ground_y(x: float) -> float:

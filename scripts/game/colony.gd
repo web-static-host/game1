@@ -4511,6 +4511,12 @@ static func cold_limit(u: Unit) -> float:
 	return COLD - (u.stat("cold") - 1.0) * 30.0
 
 
+## В жилом доме мороз: жильцы мёрзнут во сне (нужен очаг рядом).
+func home_freezing(p: Project) -> bool:
+	return p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and p.purpose == RoomType.HOME \
+		and room_temp(p) < COLD
+
+
 func farm_warm(p: Project) -> bool:
 	return room_temp(p) >= FARM_MIN_TEMP
 

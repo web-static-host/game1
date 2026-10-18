@@ -830,6 +830,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					if u.bed_room == p.id:
 						used += 1
 				chips.append(["home", "кроватей %d, занято %d" % [RoomType.beds(p), used]])
+				if colony.home_freezing(p):
+					rows.append({"type": "warning", "text": "В доме мороз (%d °C) — жильцы мёрзнут во сне и могут погибнуть. Поставьте рядом очаг (греет от стен на 6–10 м)." % roundi(colony.room_temp(p))})
 				var free := colony.beds_total() - colony.units.size() - colony.pregnant_count()
 				chips.append(["people", "мест для детей в колонии: %d" % maxi(0, free)])
 			RoomType.STORAGE, RoomType.GRANARY:
