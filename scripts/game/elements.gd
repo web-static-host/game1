@@ -24,7 +24,7 @@ const SPRING_TIME := 25.0
 const PUMP_TIME := 2.0
 const GAS_STEP := 1.0
 ## Сколько метана отдаёт вскрытая клетка, всего и в секунду.
-const SEEP_RESERVE := {Mat.GAS_POCKET: 40.0, Mat.COAL: 6.0}
+const SEEP_RESERVE := {Mat.GAS_POCKET: 40.0, Mat.COAL: 2.5}
 const SEEP_RATE := 0.06
 ## Доля метана в зоне дегазации, которую она забирает за секунду.
 const DEGAS_TAKE := 0.6

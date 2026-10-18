@@ -52,6 +52,8 @@ func _draw() -> void:
 		_draw_supply(p, font)
 		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
 			_draw_wear_sign(p)
+		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE and not p.paused and colony.assigned_to(p).is_empty():
+			_draw_no_worker_sign(p)
 	# Падающая порода.
 	for f in colony.physics.fx:
 		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
@@ -821,6 +823,18 @@ func _draw_wear_sign(p: Project) -> void:
 	var c := Vector2(r.end.x - 14, r.position.y - 16)
 	draw_circle(c, 15, Color(0, 0, 0, 0.55))
 	ResIcon.draw_glyph(self, "warning", c, 12, col)
+
+
+## Рабочая комната без работника: перечёркнутый человечек над левым углом.
+func _draw_no_worker_sign(p: Project) -> void:
+	var r := _rect_px(p.rect)
+	var c := Vector2(r.position.x + 16, r.position.y - 16)
+	var col := Color(1.0, 0.45, 0.4)
+	if int(Time.get_ticks_msec() / 600) % 2 == 0:
+		col = col.lightened(0.3)
+	draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(self, "people", c, 11, col)
+	draw_line(c + Vector2(-9, 9), c + Vector2(9, -9), col, 2.5)
 
 
 func _ground_y(x: float) -> float:

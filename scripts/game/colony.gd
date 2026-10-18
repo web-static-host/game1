@@ -11,7 +11,10 @@ signal quaked(magnitude: int)
 
 const START_UNITS := 5
 ## Ресурсов на старте нет — их сначала нужно собрать.
-const START_INVENTORY := {}
+## Переселенцы приходят с небольшим запасом: на первый дом и пару недель еды.
+const START_INVENTORY := {"wood": 30, "food": 20}
+## Срубленное (не под стройку) дерево с такой вероятностью даёт поросль — лес восстанавливается.
+const STUMP_REGROW := 0.6
 const SUBSTEP := 0.2
 const WALK_SPEED := 3.0
 const CLIMB_SPEED := 1.6
@@ -99,7 +102,7 @@ const HEAT := 18.0
 ## Очаг горит, пока у него холоднее этого.
 const HEARTH_ON_BELOW := 18.0
 ## Ферма растит грибы только в тепле.
-const FARM_MIN_TEMP := 15.0
+const FARM_MIN_TEMP := 8.0
 ## Ниже этой температуры обычному жителю холодно (синие и пушистые терпят больше).
 const COLD := 0.0
 ## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
@@ -1479,6 +1482,9 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 		world.set_berries(x, world.berries(x) - y[1])
 	else:
 		world.remove_feature(x)
+		# Пень даёт поросль: лес у базы со временем отрастает (на месте стройки — нет).
+		if kind == WorldGen.FEATURE_TREE and not _in_clearing(x) and rng.randf() < STUMP_REGROW:
+			world.sprout(x, WorldGen.FEATURE_TREE)
 	var site := _clearing_project(x)
 	if room != 0 and offline and y[1] > 0:
 		# Оффлайн работник склада сразу кладёт добытое в свой склад.
@@ -1548,6 +1554,8 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		Mat.Hazard.GAS:
 			_log("Выброс метана на глубине %s! Нужна дегазация." % _depth_text(c), "danger")
 			elements.release_gas(c)
+			# Тревога сразу, а не на следующем шаге газа: иначе соседний забой успеет дать искру.
+			elements._gas_alarm()
 		Mat.Hazard.WATER:
 			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning")
 	elements.on_opened(c)
@@ -2281,6 +2289,35 @@ func _stroll(u: Unit) -> bool:
 	return true
 
 
+## Ближайшее тёплое место (теплее предела холода жителя на 3 °C) или null.
+func _warm_spot(u: Unit, dist: Dictionary) -> Variant:
+	var need := cold_limit(u) + 3.0
+	var best = null
+	var best_d := 1 << 30
+	for c: Vector2i in dist:
+		if dist[c] < best_d and elements.temperature(c) >= need and elements.gas_at(c) < Elements.GAS_CLEAR:
+			best_d = dist[c]
+			best = c
+	return best
+
+
+## Житель на морозе идёт греться: к огню, в тёплую комнату или под землю.
+func _seek_warmth(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	if elements.temperature(u.cell()) >= cold_limit(u):
+		return false
+	var warm = _warm_spot(u, dist)
+	if warm == null or warm == u.cell():
+		return false
+	_start(u, Unit.Task.GOTO, warm, warm, 0, parents)
+	if game_time - float(_warm_logged.get(u.id, -1000.0)) > MONTH:
+		_warm_logged[u.id] = game_time
+		_log("%s замёрз(ла) и идёт греться" % u.name, "warning")
+	return true
+
+
+var _warm_logged := {}
+
+
 ## Приземление: с высоты больше 4 м — травма.
 func _land(u: Unit, c: Vector2i) -> void:
 	u.pos.y = c.y
@@ -2574,6 +2611,12 @@ func _work(u: Unit, dt: float) -> void:
 	match u.task:
 		Unit.Task.DIG:
 			var c := u.target
+			# В метане кирку бросают сразу (искра — взрыв), если игрок не велел копать на свой риск.
+			var dp := project_by_id(u.project_id)
+			if dp != null and not dp.hazard_ack.has("methane") \
+					and maxf(elements.gas_at(u.cell()), elements.gas_at(u.cell() + Vector2i.UP)) >= Elements.GAS_ALARM:
+				gas_stop(dp)
+				return
 			elements.spark(u.cell())
 			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus()
 			if dig_progress[c] >= dig_time(c):
@@ -2802,6 +2845,9 @@ func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
+	# Замёрз — сначала погреться (у огня или под землёй), потом всё остальное.
+	if _seek_warmth(u, parents, dist):
+		return true
 	if u.energy < TIRED or (is_night() and u.energy < NIGHT_SLEEP):
 		_start_sleep(u, parents, dist)
 		return true
@@ -2943,9 +2989,14 @@ func _start_sleep(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
 	var room := project_by_id(u.bed_room)
 	if room != null:
 		var bed := bed_cell(room, u.bed_index)
-		if dist.has(bed):
+		# В промёрзшем доме не спят, если есть где погреться: спят на полу в тепле.
+		if dist.has(bed) and (elements.temperature(bed) >= cold_limit(u) or _warm_spot(u, dist) == null):
 			_start(u, Unit.Task.SLEEP, bed, bed, room.id, parents)
 			return
+	var warm = _warm_spot(u, dist) if elements.temperature(u.cell()) < cold_limit(u) else null
+	if warm != null:
+		_start(u, Unit.Task.SLEEP, warm, warm, 0, parents)
+		return
 	# Кровати нет или до неё не добраться — спит где стоит.
 	_start(u, Unit.Task.SLEEP, u.cell(), u.cell(), 0, parents)
 
@@ -3007,7 +3058,7 @@ func _start_eat_bush(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 
 
 ## Места для рыбалки с берега: у кромки воды озёр возле базы.
-const SHORE_FISH_TIME := 80.0
+const SHORE_FISH_TIME := 55.0
 
 
 func shore_spots() -> Array[Vector2i]:

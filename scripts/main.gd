@@ -668,14 +668,20 @@ func _pick_worker(p: Project) -> void:
 	_info_target = []
 	var items := []
 	var cands := colony.units.filter(func(u: Unit) -> bool: return not u.child and u.workplace != p.id)
-	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.suitability(a, p) > colony.suitability(b, p))
+	# Сначала свободные, занятые (на работе, строители, шахтёры, подсобные) — ниже, с пометкой.
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool:
+		if colony.is_free(a) != colony.is_free(b):
+			return colony.is_free(a)
+		return colony.suitability(a, p) > colony.suitability(b, p))
 	var stat := colony.work_stat(p)
 	for u: Unit in cands:
 		var info := "подходит на %d%% · %s %d%% · навык %d" % [roundi(colony.suitability(u, p) * 100),
 			Genetics.STAT_NAMES[stat].to_lower(), roundi(u.stat(stat) * 100), u.level(colony.work_skill(p))]
-		if u.workplace != 0:
-			info += " · сейчас: " + colony.workplace_name(colony.project_by_id(u.workplace))
-		items.append({"looks": Genetics.looks(u.genome), "name": u.name, "info": info, "button": "Назначить",
+		var busy := not colony.is_free(u)
+		if busy:
+			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
+		items.append({"looks": Genetics.looks(u.genome), "name": u.name, "info": info,
+			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
 				var err := colony.assign_work(u, p)
 				if not err.is_empty():
@@ -905,6 +911,9 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		if RoomType.POWER_USE.has(p.purpose) and colony.research.has("electricity"):
 			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() and colony.power_ratio >= 0.99 else
 				("не хватает" if colony.powered() else "нет"))])
+		if colony.is_workplace(p) and colony.assigned_to(p).is_empty() \
+				and p.purpose not in [RoomType.STORAGE, RoomType.GRANARY, RoomType.LAB]:
+			rows.append({"type": "warning", "text": "Никто не работает — назначьте работника («Назначить»): здесь работают только назначенные."})
 		if colony.lightable(p) and colony.research.has("electricity"):
 			var n := RoomType.blocks(p)
 			var state := "горит" if p.lit else ("выключен" if p.light == 0 else ("не хватает энергии" if colony.powered() else "нет генератора"))
@@ -1036,10 +1045,11 @@ func _pick_role(prof: int) -> void:
 	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
 	var items := []
 	for o: Unit in cands:
+		var busy := not colony.is_free(o)
 		items.append({"looks": Genetics.looks(o.genome), "name": o.name,
-			"info": "%s · %s %d%% · навык %d" % [colony.role_name(o).to_lower(), Genetics.STAT_NAMES[stat].to_lower(),
+			"info": "%s%s · %s %d%% · навык %d" % ["ЗАНЯТ: " if busy else "", colony.role_name(o).to_lower(), Genetics.STAT_NAMES[stat].to_lower(),
 				roundi(o.stat(stat) * 100), o.level(skill)],
-			"button": "Назначить", "pick": func() -> void:
+			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof)
 				_show_people()})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",

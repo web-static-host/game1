@@ -190,8 +190,19 @@ func _debug() -> void:
 			print("DBGF рядом %s %s фаза %s назн %d ждёт %d горит %s blocked «%s» paused %s" % [h.title(), h.rect, h.phase_name(), h.purpose, _pending_purpose.get(h.id, -1), h.burning, h.blocked, h.paused])
 		if h.purpose == RoomType.HEARTH or _pending_purpose.get(h.id, -1) == RoomType.HEARTH:
 			print("DBGF очаг %s фаза %s горит %s blocked «%s» дерево %d" % [h.rect, h.phase_name(), h.burning, h.blocked, colony.inventory.get("wood", 0)])
+	for st in colony.store_rooms():
+		print("DBGS %s %s раб %s нормы %s лежит %s дефицит %s" % [st.title(), st.rect, colony.assigned_to(st).map(func(u: Unit) -> String: return "%s:%s st%d" % [u.name, Unit.TASK_NAMES[u.task], u.state]), st.targets, st.held, colony.storage_deficit(st)])
+	print("DBGF берег %s рыба %s" % [colony.shore_spots(), colony.fish])
 	print("DBG %s еда %s ягоды %s ферм %d на земле еды %d" % [_time(), colony.inventory.get("food", 0),
 		colony.inventory.get("berries", 0), farms.size(), colony.drop_total("food") + colony.drop_total("berries")])
+	if not OS.get_environment("DEBUG_COLD").is_empty():
+		for h in colony.rooms_of(RoomType.HEARTH):
+			print("DBGH очаг %s горит %s blocked «%s» прогресс %.0f" % [h.rect, h.burning, h.blocked, h.farm_progress])
+		for hm in colony.rooms_of(RoomType.HOME):
+			print("DBGH дом %s темп %.1f" % [hm.rect, colony.room_temp(hm)])
+		for u in colony.units:
+			print("DBGU %s %s %s st%d здор %d темп %.1f предел %.1f" % [u.name, u.cell(), Unit.TASK_NAMES[u.task], u.state, roundi(u.health), colony.elements.temperature(u.cell()), Colony.cold_limit(u)])
+		return
 	for u in colony.units:
 		var reach := colony.pathing.explore(u.cell())
 		var to_farm = null
@@ -262,6 +273,11 @@ func _play() -> void:
 	_science()
 	_professions()
 	if _fix_shaft():
+		return
+	if _fix_gas():
+		return
+	# К зиме — очаг у жилых домов (иначе замёрзнут).
+	if _heat_homes():
 		return
 	# Лес у базы на исходе, а за прудом есть — мост, пока есть из чего строить.
 	if _bridge():
@@ -348,15 +364,69 @@ func _fix_shaft() -> bool:
 			if _pending_purpose.get(q.id, -1) == want or (q.purpose == want and absi(q.rect.position.y - p.rect.position.y) < 15):
 				return false
 		var top := p.rect.position.y
-		for rx in [shaft_x + 1, shaft_x - 6]:
-			for dy in [0, 1, 2]:
-				var room := Rect2i(rx, top - 3 + dy, 6, 3)
+		# Дегазацию ставят выше, где газа нет (её радиус 15 м накроет выработку).
+		for up in [0, 3, 6, 9, 12]:
+			for rx in [shaft_x + 1, shaft_x - 6]:
+				var room := Rect2i(rx, top - 3 - up, 6, 3)
 				var mat := _best_material()
+				if want == RoomType.DEGAS and colony.elements.gas_in(room.grow(2)) >= Elements.GAS_CLEAR:
+					continue
 				if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
 					var r := colony.create_project(Project.Kind.ROOM, room, -1, mat)
 					if r != null:
 						_pending_purpose[r.id] = want
 						_act("насосная" if want == RoomType.PUMP else "дегазация")
+						return true
+	return false
+
+
+## Метан остановил постройку (ферму, очаг, стройку) — дегазация рядом, где газа нет.
+func _fix_gas() -> bool:
+	for p in colony.projects:
+		if p.hazard_pending != "methane":
+			continue
+		var c := p.rect.get_center()
+		var covered := false
+		for q in colony.projects.duplicate():
+			var degas: bool = q.purpose == RoomType.DEGAS or _pending_purpose.get(q.id, -1) == RoomType.DEGAS
+			if not degas or maxi(absi(q.rect.get_center().x - c.x), absi(q.rect.get_center().y - c.y)) > (19 if q.rect.size.x >= 9 else 14):
+				continue
+			# Недостроенную дегазацию, которую саму остановил газ, переносят в чистое место.
+			if q.phase != Project.Phase.DONE and q.hazard_pending == "methane":
+				colony.cancel_project(q)
+				_pending_purpose.erase(q.id)
+				_act("перенос дегазации")
+				continue
+			covered = true
+		if not OS.get_environment("DEBUG_GAS").is_empty():
+			print("GAS %s %s covered %s" % [_time(), p.title(), covered])
+		if covered:
+			continue
+		var mat := _best_material()
+		# Большая дегазация (радиус 20 м) на земле над выработкой: наверху газа нет, стройке не мешает.
+		for d in [0, 6, -6, 12, -12]:
+			var sx: int = c.x + d - 4
+			var top := Rect2i(sx, world.gen.surface_y(sx) - 3, 9, 3)
+			if maxi(absi(top.get_center().x - c.x), absi(top.get_center().y - c.y)) > 19:
+				continue
+			if colony.validate(Project.Kind.ROOM, top, mat).is_empty():
+				var tr := colony.create_project(Project.Kind.ROOM, top, -1, mat)
+				if tr != null:
+					_pending_purpose[tr.id] = RoomType.DEGAS
+					_act("дегазация над выработкой")
+					return true
+		for dy in [0, -3, 3, -6, 6, -9]:
+			for rx in [p.rect.end.x, p.rect.end.x + 1, p.rect.position.x - 6, p.rect.position.x - 7, shaft_x + 1, shaft_x - 6]:
+				var room := Rect2i(rx, p.rect.end.y - 3 + dy, 6, 3)
+				if colony.elements.gas_in(room.grow(1)) >= Elements.GAS_CLEAR:
+					continue
+				if not OS.get_environment("DEBUG_GAS").is_empty():
+					print("   try %s: %s" % [room, colony.validate(Project.Kind.ROOM, room, mat)])
+				if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
+					var r := colony.create_project(Project.Kind.ROOM, room, -1, mat)
+					if r != null:
+						_pending_purpose[r.id] = RoomType.DEGAS
+						_act("дегазация от метана")
 						return true
 	return false
 
@@ -372,11 +442,6 @@ func _answer_geologist() -> void:
 				colony.set_paused(p, false)
 		return
 	for p: Project in colony.projects.duplicate():
-		# Дегазацию в газе копают на свой риск — иначе её не построить.
-		if p.paused and p.hazard_pending == "methane" and _pending_purpose.get(p.id, -1) == RoomType.DEGAS:
-			_act("дегазация на свой риск")
-			colony.set_paused(p, false)
-			continue
 		if not p.paused or p.hazard_pending.is_empty() or p.hazard_pending == "methane":
 			continue
 		_act("геолог")
@@ -453,14 +518,16 @@ func _professions() -> void:
 			have += 1
 			_act("роль")
 	# Места работы: еда — в первую очередь.
+	# Еда, наука, хранение; рыбалка с мостков — когда людей хватает (зимой подо льдом).
 	var order := [RoomType.FARM, RoomType.LAB, RoomType.GRANARY, RoomType.STORAGE, RoomType.KILN, RoomType.FORGE]
 	var places: Array[Project] = []
 	for t in order:
 		places.append_array(colony.rooms_of(t))
 	for p in colony.projects:
-		if p.is_water_structure() and p.phase == Project.Phase.DONE:
-			places.insert(0, p)
-	var keep_free := 1 if adults.size() < 10 else adults.size() / 4
+		if p.is_water_structure() and p.phase == Project.Phase.DONE and (colony.can_fish_from(p) or p.kind == Project.Kind.PIER):
+			places.append(p)
+	# Свободные нужны на стройки и подноску, но не в ущерб еде и науке.
+	var keep_free := 0 if adults.size() < 8 else adults.size() / 5
 	for p in places:
 		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
@@ -510,6 +577,33 @@ func _heat_farms() -> bool:
 				if p != null:
 					_pending_purpose[p.id] = RoomType.HEARTH
 					_act("очаг")
+					return true
+	return false
+
+
+## Жилые дома без очага рядом — малая комната-очаг вплотную (на земле или вторым этажом).
+func _heat_homes() -> bool:
+	# Утепляются к осени: летом тепло, а камень на очаг нужнее для шахты.
+	if colony.time_to_winter() > Colony.MONTH * 3.0:
+		return false
+	for p in colony.projects:
+		if _pending_purpose.get(p.id, -1) == RoomType.HEARTH:
+			return false
+	for home in colony.rooms_of(RoomType.HOME):
+		var warm := false
+		for p in colony.projects:
+			var hearth: bool = p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH
+			if hearth and absi(p.rect.get_center().x - home.rect.get_center().x) <= 7 and absi(p.rect.get_center().y - home.rect.get_center().y) <= 4:
+				warm = true
+		if warm:
+			continue
+		for r in [Rect2i(home.rect.end.x, home.rect.position.y, 3, 3), Rect2i(home.rect.position.x - 3, home.rect.position.y, 3, 3),
+				Rect2i(home.rect.position.x, home.rect.position.y - 3, 3, 3), Rect2i(home.rect.end.x - 3, home.rect.position.y - 3, 3, 3)]:
+			if colony.validate(Project.Kind.ROOM, r, "wood").is_empty():
+				var q := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
+				if q != null:
+					_pending_purpose[q.id] = RoomType.HEARTH
+					_act("очаг у дома")
 					return true
 	return false
 
