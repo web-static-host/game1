@@ -1497,7 +1497,8 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 		var before := drop_amount(_landing(_ground_cell(x)), y[0])
 		drop_item(_ground_cell(x), y[0], y[1], site)
 		# Кто добыл — тот и несёт на склад излишек, сколько унесёт (остальное подберут).
-		if u != null and not offline and drop_amount(_landing(_ground_cell(x)), y[0]) > before:
+		# Строители и шахтёры не носят: добытое уносят работники складов и подсобные.
+		if u != null and not offline and not builder_or_miner(u) and drop_amount(_landing(_ground_cell(x)), y[0]) > before:
 			_pick_up(u, _landing(_ground_cell(x)), y[0])
 		var fem := u != null and u.sex == Unit.Sex.FEMALE
 		var what := "собрал ягоды"
@@ -2797,7 +2798,7 @@ func _task_order(u: Unit) -> Array[String]:
 	if u.profession == Unit.Prof.MINER:
 		return ["mines", "projects"]
 	if u.profession == Unit.Prof.BUILDER:
-		return ["builds", "projects", "need", "haul"]
+		return ["builds", "projects", "need"]
 	# Строители и свободные: сначала стройка, потом переноска.
 	return ["projects", "need", "haul"]
 
@@ -2900,9 +2901,20 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 				task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
 		if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
 			return true
-		if (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
+		# Строители и шахтёры материалы не носят — это работа складов и подсобных.
+		# Строитель берёт сам только то, без чего его работа стоит прямо сейчас (дерево на крепь,
+		# материалы на оплату этапа), и ровно столько.
+		if builder_or_miner(u):
+			if u.profession == Unit.Prof.BUILDER and _try_haul(u, p, parents, dist, true):
+				return true
+		elif (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
 			return true
 	return false
+
+
+## Строитель или шахтёр (без места работы): только строят и копают, ничего не носят.
+func builder_or_miner(u: Unit) -> bool:
+	return u.workplace == 0 and (u.profession == Unit.Prof.BUILDER or u.profession == Unit.Prof.MINER)
 
 
 ## Кто носит в шахту и из шахты: работники складов и подсобные рабочие.
@@ -3551,8 +3563,16 @@ func _incoming(key: String) -> int:
 	return n
 
 
-func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_only := false) -> bool:
 	var left := remaining(p)
+	if now_only:
+		# Только то, что нужно прямо сейчас и ещё не принесено и не несут.
+		var now := _needed_now(p)
+		left = {}
+		for k in now:
+			var n: int = now[k] - int(p.delivered.get(k, 0)) - in_transit(p, k)
+			if n > 0:
+				left[k] = n
 	if left.is_empty() or _near_rect(p.rect, dist) == null:
 		return false
 	# Сначала то, без чего стройка стоит прямо сейчас.

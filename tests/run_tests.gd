@@ -56,6 +56,7 @@ func _initialize() -> void:
 	test_separate_stores()
 	test_mine_meters()
 	test_lights()
+	test_builders_dont_carry()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2422,3 +2423,46 @@ func test_lights() -> void:
 	check(colony.work_lamps.size() == 1 and colony.work_lamps[0] == u.cell(), "на стройке горит одна лампа у работника")
 	check(colony.is_lit(u.cell()), "у лампы светло")
 
+
+
+func test_builders_dont_carry() -> void:
+	# Строители и шахтёры ничего не носят: добытое и материалы носят склады, подсобные, свободные.
+	var colony := _new_colony(31)
+	var w := colony.world
+	_start(colony, 0)
+	colony.inventory = {"wood": 60, "stone": 40, "food": 50}
+	var builder: Unit = colony.units[0]
+	var miner: Unit = colony.units[1]
+	colony.set_profession(builder, Unit.Prof.BUILDER)
+	colony.set_profession(miner, Unit.Prof.MINER)
+	check(colony.builder_or_miner(builder) and colony.builder_or_miner(miner) and not colony.builder_or_miner(colony.units[2]),
+		"строитель и шахтёр — не носильщики")
+	check(not colony._task_order(builder).has("haul"), "у строителя в делах нет переноски")
+	var x := _flat_x(w, 10)
+	var room := colony.create_project(Project.Kind.ROOM, Rect2i(x, w.gen.surface_y(x) - 3, 6, 3))
+	var carried := false
+	var delivered := false
+	for i in 1200:
+		colony.update(0.5)
+		if miner.task == Unit.Task.HAUL or (builder.task == Unit.Task.HAUL and (builder.to_store or builder.gather_room != 0)):
+			carried = true
+		if room.paid or room.phase == Project.Phase.DONE:
+			delivered = true
+	check(not carried, "строитель и шахтёр за 10 минут не носили для склада и чужих нужд")
+	check(delivered, "материалы на стройку принесли другие")
+	# Строителю срочно нужно дерево на его стройку (этап стоит) — он берёт сам, ровно сколько нужно.
+	for u in colony.units:
+		if u != builder:
+			u.workplace = 0
+			colony.set_profession(u, Unit.Prof.MINER)
+	colony.inventory = {"wood": 60, "stone": 40, "food": 50}
+	var x2 := _flat_x(w, x + 20)
+	var hut := colony.create_project(Project.Kind.ROOM, Rect2i(x2, w.gen.surface_y(x2) - 3, 3, 3))
+	var self_carry := false
+	for i in 1200:
+		colony.update(0.5)
+		if builder.task == Unit.Task.HAUL and builder.project_id == hut.id:
+			self_carry = true
+			check(builder.carry_amount <= int(colony._needed_now(hut).get(builder.carry_key, 999)), "берёт не больше, чем нужно сейчас")
+			break
+	check(self_carry, "носить некому — строитель сам принёс то, без чего стоит его стройка")
