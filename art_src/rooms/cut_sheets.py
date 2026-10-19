@@ -12,11 +12,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, '..', '..', 'assets', 'furniture')
 PX_PER_M = 128    # пикселей на метр в спрайте (клетка в игре — 1 м, 32 px; запас под зум)
 
-# Лист: (файл, {предмет: (точка внутри x, y на листе, ширина в метрах[, склейка деталей px])}).
+# Листы: [(комната, файл, {предмет: (точка внутри x, y на листе, ширина в метрах[, склейка px])})].
 # Склейка — на сколько пикселей расширять маску, чтобы детали одного предмета (листья, цепь)
 # собрались вместе; у плотно стоящих предметов (ящики) — меньше, чтобы не слиплись соседи.
-SHEETS = {
-    'home': ('home_items.png', {
+SHEETS = [
+    ('home', 'home_items.png', {
         'bed_blue': (200, 160, 1.8), 'bed_pink': (580, 160, 1.8),
         'bed_green': (950, 160, 1.8), 'bed_yellow': (1330, 160, 1.8),
         'nightstand': (218, 500, 0.5), 'bookcase': (566, 430, 0.6),
@@ -26,8 +26,8 @@ SHEETS = {
         'plush': (703, 905, 0.32),
     }),
     # Склад — строго спереди (верх полок и ящиков не виден), как комната.
-    'storage': ('storage_items_front.png', {
-        'rack': (400, 60, 2.0, 6), 'hoist': (1200, 80, 2.2, 8),
+    ('storage', 'storage_items_front.png', {
+        'hoist': (1200, 80, 2.2, 8),
         'crate': (249, 427, 0.6, 2), 'crate_stone': (509, 427, 0.6, 2), 'crate_wood': (768, 427, 0.6, 2),
         'crate_brick': (1027, 427, 0.6, 2), 'crate_metal': (1287, 427, 0.6, 2),
         'crate_coal': (249, 593, 0.6, 2), 'crate_iron': (509, 593, 0.6, 2), 'crate_copper': (768, 593, 0.6, 2),
@@ -36,7 +36,11 @@ SHEETS = {
         'crate_clay': (1027, 753, 0.6, 2), 'crate_limestone': (1287, 753, 0.6, 2),
         'barrel': (640, 907, 0.55, 3), 'logs': (913, 920, 0.75, 3),
     }),
-}
+    # Массивный стеллаж — перерисован отдельно (на листе он был из тонких планок).
+    ('storage', 'storage_rack_front_thick.png', {
+        'rack': (760, 170, 2.0, 6),
+    }),
+]
 
 
 # Части предмета (рамки в пикселях готового спрайта) — если предмет собирают из кусков.
@@ -133,12 +137,12 @@ def cut(room, sheet, items):
         for part, box in PARTS.get(room, {}).get(name, {}).items():
             sprite.crop(box).save(os.path.join(OUT, room, part + '.png'))
         if name == 'rack':
-            tall, levels = stretch_rack(sprite, 0.5)
+            tall, levels = stretch_rack(sprite, 0.48)
             tall.save(os.path.join(OUT, room, 'rack_tall.png'))
             print(room, 'rack_tall', tall.size, '— верх планок над полом, м:', levels)
 
 
 if __name__ == '__main__':
-    for room, (sheet, items) in SHEETS.items():
+    for room, sheet, items in SHEETS:
         if os.path.exists(os.path.join(HERE, 'sheets', sheet)):
             cut(room, sheet, items)

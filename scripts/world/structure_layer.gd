@@ -433,11 +433,11 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 
 const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone"]
 ## Полки стеллажа: верх планок над полом (м, печатает art_src/rooms/cut_sheets.py для rack_tall),
-## по три ящика на полку — между стойками 1,83 м. Всё нарисовано строго спереди, как комната.
-const RACK_LEVELS := [0.133, 0.68]
+## по три ящика на полку — между массивными стойками 1,64 м. Всё нарисовано строго спереди, как комната.
+const RACK_LEVELS := [0.219, 0.836]
 const RACK_SLOTS := 3
-const RACK_SLOT_DX := 0.6
-const CRATE_SCALE := 1.0
+const RACK_SLOT_DX := 0.545
+const CRATE_SCALE := 0.9
 
 
 ## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
