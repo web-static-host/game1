@@ -293,11 +293,26 @@ func project_by_id(pid: int) -> Project:
 	return null
 
 
+## Игрок что-то поручил — жители без дела ищут работу сразу, а не через несколько секунд.
+func wake_idle() -> void:
+	for u in units:
+		if u.state == Unit.State.IDLE:
+			u.retry = 0.0
+			u.idle_fails = 0
+		elif u.task == Unit.Task.STROLL:
+			_drop(u)
+
+
 func project_at(c: Vector2i) -> Project:
+	var found: Project = null
 	for p in projects:
 		if p.has_cell(c):
-			return p
-	return null
+			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань).
+			if found == null or (p.is_water_structure() and found.is_water_structure() and p.area() < found.area()):
+				found = p
+			if not p.is_water_structure():
+				return p
+	return found
 
 
 func unit_at(p: Vector2) -> Unit:
@@ -338,6 +353,10 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 		for x in range(r.position.x, r.end.x):
 			var c := Vector2i(x, y)
 			var other := project_at(c)
+			# Мост и пристань друг другу не мешают: пристань может начинаться под мостом.
+			if other != null and other.is_water_structure() and (kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER) \
+					and other.kind != kind:
+				continue
 			if other != null and not (kind == Project.Kind.ROOM and _room_fits_mine(r, other)):
 				if other.kind == Project.Kind.MINE and kind == Project.Kind.ROOM:
 					return "Комнату в шахте ставьте на всю её высоту, когда шахта готова"
@@ -609,6 +628,7 @@ func has_access(r: Rect2i) -> bool:
 
 
 func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> Project:
+	wake_idle()
 	if not validate(kind, r, material).is_empty():
 		return null
 	if kind == Project.Kind.ROOM:
@@ -655,6 +675,7 @@ func ladders_needed(r: Rect2i) -> Array[Project]:
 
 
 func set_paused(p: Project, on: bool) -> void:
+	wake_idle()
 	p.paused = on
 	if not on and not p.hazard_pending.is_empty():
 		# Игрок решил копать дальше, несмотря на предупреждение геолога.
@@ -707,6 +728,7 @@ func flee_gas(u: Unit) -> void:
 
 
 func cancel_project(p: Project) -> void:
+	wake_idle()
 	if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
 		stop_mine(p)
 		return
@@ -724,6 +746,7 @@ func cancel_project(p: Project) -> void:
 	projects.erase(p)
 	for c in p.cells():
 		room_cells.erase(c)
+	_restore_water_overlaps(p)
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
@@ -761,6 +784,7 @@ func demolish(p: Project) -> bool:
 		interior.erase(c)
 		deck.erase(c)
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	_restore_water_overlaps(p)
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
@@ -1148,6 +1172,17 @@ func _finish_project(p: Project) -> void:
 		_log("Построено: %s" % p.title(), "good")
 
 
+## Убрали мост или пристань — общие с другой водной постройкой клетки снова её.
+func _restore_water_overlaps(gone: Project) -> void:
+	if not gone.is_water_structure():
+		return
+	for q in projects:
+		if q != gone and q.is_water_structure() and q.phase == Project.Phase.DONE and q.rect.intersects(gone.rect):
+			for c in q.cells():
+				interior[c] = q.id
+			_register_deck(q)
+
+
 func _register_deck(p: Project) -> void:
 	if not p.is_water_structure() or p.phase != Project.Phase.DONE:
 		return
@@ -1168,6 +1203,7 @@ func waiting_for_materials() -> bool:
 
 ## Начинает обустройство готовой комнаты под назначение t.
 func set_purpose(p: Project, t: int) -> bool:
+	wake_idle()
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
 	# Котлы и кирпичные печи — улучшения очага; второй раз их не ставят.
@@ -1210,6 +1246,7 @@ func is_hearth_upgrade(p: Project, t: int) -> bool:
 
 ## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
 func add_ladder(p: Project) -> bool:
+	wake_idle()
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or p.ladder:
 		return false
 	p.equip_ladder = true
@@ -1429,6 +1466,7 @@ func _have_any(key: String) -> int:
 
 ## Пометить объект на сбор. Пустая строка — успех, иначе причина отказа.
 func toggle_harvest(x: int) -> String:
+	wake_idle()
 	var f := world.feature_at(x)
 	if f == WorldGen.FEATURE_NONE:
 		return "Здесь нечего собирать"
@@ -1966,6 +2004,7 @@ func _closed_for(u: Unit, p: Project) -> bool:
 
 
 func assign_work(u: Unit, p: Project) -> String:
+	wake_idle()
 	if u.child:
 		return "Дети не работают"
 	if not is_workplace(p):
@@ -1984,6 +2023,7 @@ func assign_work(u: Unit, p: Project) -> String:
 
 ## Роль жителя без места работы: свободный, строитель или подсобный рабочий.
 func set_profession(u: Unit, prof: int) -> String:
+	wake_idle()
 	if u.child:
 		return "Дети не работают"
 	if u.profession == prof and u.workplace == 0:
@@ -2011,6 +2051,7 @@ func is_free(u: Unit) -> bool:
 
 
 func unassign_work(u: Unit) -> void:
+	wake_idle()
 	if u.workplace == 0:
 		return
 	u.workplace = 0
@@ -4074,6 +4115,7 @@ func repair_cost(p: Project) -> Dictionary:
 
 
 func start_repair(p: Project) -> bool:
+	wake_idle()
 	if not repair_error(p).is_empty():
 		return false
 	p.repairing = true
@@ -4129,6 +4171,7 @@ func collapse(p: Project, why: String) -> void:
 		interior.erase(c)
 		deck.erase(c)
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	_restore_water_overlaps(p)
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)

@@ -57,6 +57,7 @@ func _initialize() -> void:
 	test_mine_meters()
 	test_lights()
 	test_builders_dont_carry()
+	test_bridge_and_pier()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2466,3 +2467,46 @@ func test_builders_dont_carry() -> void:
 			check(builder.carry_amount <= int(colony._needed_now(hut).get(builder.carry_key, 999)), "берёт не больше, чем нужно сейчас")
 			break
 	check(self_carry, "носить некому — строитель сам принёс то, без чего стоит его стройка")
+
+
+func test_bridge_and_pier() -> void:
+	# Мост и пристань на одном озере не мешают друг другу; жители берутся за дело сразу.
+	var colony := _new_colony(31)
+	var w := colony.world
+	_start(colony, 0)
+	var lake := w.gen.lake_at(55)
+	if lake.is_empty():
+		for x in range(0, 200):
+			lake = w.gen.lake_at(x)
+			if not lake.is_empty():
+				break
+	check(not lake.is_empty(), "у базы есть пруд")
+	if lake.is_empty():
+		return
+	var span := w.gen.lake_water_span(lake)
+	var rects := colony.water_rects(span.x, span.y)
+	var br: Rect2i = rects["bridge"]
+	var pr: Rect2i = colony.water_rects(span.x, span.x + 4)["pier"]
+	check(colony.validate(Project.Kind.BRIDGE, br).is_empty(), "мост можно: " + colony.validate(Project.Kind.BRIDGE, br))
+	var bridge := colony.create_project(Project.Kind.BRIDGE, br)
+	bridge.phase = Project.Phase.DONE
+	colony._register_deck(bridge)
+	check(colony.validate(Project.Kind.PIER, pr).is_empty(), "при мосте пристань ставится: " + colony.validate(Project.Kind.PIER, pr))
+	var pier := colony.create_project(Project.Kind.PIER, pr)
+	check(pier != null, "пристань заложена рядом с мостом")
+	check(colony.project_at(pr.position) == pier, "нажатие на пристань выбирает пристань")
+	colony.cancel_project(pier)
+	check(colony.deck.has(pr.position) and colony.deck[pr.position] == bridge.id, "отменили пристань — мост цел")
+	# И наоборот: сначала пристань, потом мост.
+	var colony2 := _new_colony(31)
+	_start(colony2, 0)
+	var pier2 := colony2.create_project(Project.Kind.PIER, pr)
+	pier2.phase = Project.Phase.DONE
+	colony2._register_deck(pier2)
+	check(colony2.validate(Project.Kind.BRIDGE, br).is_empty(), "при пристани мост ставится: " + colony2.validate(Project.Kind.BRIDGE, br))
+	# Жители без дела берутся за новую стройку сразу.
+	var u: Unit = colony2.units[0]
+	colony2._drop(u)
+	u.retry = 5.0
+	colony2.create_project(Project.Kind.BRIDGE, br)
+	check(u.retry <= 0.0, "новое поручение будит бездельников сразу")

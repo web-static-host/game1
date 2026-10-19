@@ -706,7 +706,9 @@ func _storage_targets(p: Project) -> Dictionary:
 		items.append([k, colony.held_in(p, k), int(p.targets.get(k, 0)), colony.room_cap(p, k),
 			Colony.GATHER_SOURCES.has(k)])
 	return {"type": "targets", "label": "Лежит в этом складе и норма (работники этого склада добывают до нормы):", "items": items,
-		"changed": func(key: String, v: int) -> void: p.targets[key] = v}
+		"changed": func(key: String, v: int) -> void:
+			p.targets[key] = v
+			colony.wake_idle()}
 
 
 ## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.
