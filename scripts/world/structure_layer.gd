@@ -381,31 +381,82 @@ const HOME_DECOR := ["shelf_plant", "shelf_toy", "shelf_vine", "picture_mountain
 ## Жилая из картинок: кровать на каждые 2 м (там же, где спят жители — bed_rect), над ней
 ## полка или картинка — не на стойке стены и без повторов в комнате; в свободной клетке —
 ## тумбочка или шкаф.
-func _draw_home_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> void:
+func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.beds(p)
+	var spare := RoomType.usable_width(p) - n * 2 >= 1
+	var lay := _inside(p, r, n * 2.0 + (1.0 if spare else 0.0))
 	var posts := wall_posts(p.rect.size.x)
 	var used := {}
 	var start := int(WorldGen.hash01(p.id, 0, 90) * HOME_DECOR.size())
 	for i in n:
-		var slot_l := (x0 - r.position.x) / TILE + i * 2.0
+		var cx: float = lay.x + (i * 2 + 1) * lay.unit
+		var slot_l: float = (cx - lay.unit - r.position.x) / TILE
 		for k in HOME_DECOR.size():
 			var item: String = HOME_DECOR[(start + i + k) % HOME_DECOR.size()]
 			var tex := furniture("home", item)
 			if used.has(item) or tex == null:
 				continue
-			var cx := _decor_x(slot_l, slot_l + 2.0, tex.get_width() / FURN_PX_PER_M, posts)
-			if is_nan(cx):
+			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, tex.get_width() / FURN_PX_PER_M, posts)
+			if is_nan(dx):
 				continue
 			used[item] = true
-			_furn_at(tex, r.position.x + cx * TILE, fy - TILE * 1.15, alpha, 2)
+			_furn_hang(tex, r.position.x + dx * TILE, fy, alpha)
 			break
-		_furn_at(furniture("home", "bed_" + BED_COLORS[(p.id + i) % BED_COLORS.size()]), x0 + i * TILE * 2 + TILE, fy, alpha, 1)
-	var spare := RoomType.usable_width(p) - n * 2
-	if spare >= 1:
+		var bed := furniture("home", "bed_" + BED_COLORS[(p.id + i) % BED_COLORS.size()])
+		_furn_at(bed, cx, fy, alpha, 1, _fit(bed, lay.unit * 2))
+	if spare:
 		var side := furniture("home", "nightstand" if p.id % 2 == 0 else "bookcase")
 		if side != null:
-			_furn_at(side, x0 + n * TILE * 2 + TILE * 0.5, fy, alpha, 1)
+			_furn_at(side, lay.x + (n * 2 + 0.5) * lay.unit, fy, alpha, 1, _fit(side, lay.unit))
+
+
+## Мебель — только внутри комнаты: между лестницей (или боковой стеной) и правой стеной, с
+## отступом от стен (задняя стена уже пола). Место делится на units частей (метров по задумке);
+## если не хватает — части уже. Возвращает x — левый край, unit — ширина части в px.
+func _inside(p: Project, r: Rect2, units: float) -> Dictionary:
+	var lo := r.position.x + TILE * (1.1 if p.ladder else RACK_INSET)
+	var hi := r.end.x - TILE * RACK_INSET
+	var unit := minf(TILE, (hi - lo) / units)
+	return {"x": (lo + hi - unit * units) * 0.5, "unit": unit}
+
+
+## Настенные предметы висят на одной линии, заметно ниже потолка: картинки и инструменты —
+## верхом на высоте HANG_TOP (м над полом), полки — доской на SHELF_BOARD.
+const HANG_TOP := 1.95
+const SHELF_BOARD := 1.5
+func _furn_hang(t: Texture2D, cx: float, fy: float, alpha: float) -> void:
+	var h := t.get_height() / FURN_PX_PER_M * TILE
+	var top := fy - TILE * HANG_TOP
+	if t.resource_path.get_file().begins_with("shelf_"):
+		top = fy - TILE * SHELF_BOARD - _board_row(t) * h
+	_furn_at(t, cx, top + h, alpha, 2)
+
+
+## Доля высоты, на которой у полки доска (самая широкая строка картинки).
+static var _boards := {}
+func _board_row(t: Texture2D) -> float:
+	if not _boards.has(t):
+		var img := t.get_image()
+		if img.is_compressed():
+			img.decompress()
+		var best := 0
+		var best_n := -1
+		for y in img.get_height():
+			var n := 0
+			for x in range(0, img.get_width(), 2):
+				if img.get_pixel(x, y).a > 0.5:
+					n += 1
+			if n > best_n:
+				best_n = n
+				best = y
+		_boards[t] = float(best) / img.get_height()
+	return _boards[t]
+
+
+## Масштаб, при котором предмет помещается в ширину width (px) с зазором; крупнее не делаем.
+func _fit(t: Texture2D, width: float) -> float:
+	return minf(1.0, (width - TILE * 0.06) / (t.get_width() / FURN_PX_PER_M * TILE))
 
 
 ## Где повесить предмет шириной wm (м) над местом [a, b]: по центру, а если там стойка —
@@ -432,50 +483,172 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 
 
 const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone"]
-## Полки высокого стеллажа: высота переднего края доски над полом (м, по картинке rack_tall —
-## ящик стоит на верхней грани полки), по два ящика на полку: между толстыми стойками 1,37 м.
-const RACK_LEVELS := [0.18, 0.945]
-const RACK_SLOTS := 2
-const RACK_SLOT_DX := 0.33
-const CRATE_SCALE := 1.1
+## Полки стеллажа: верх планок над полом (м, печатает art_src/rooms/cut_sheets.py для rack_tall),
+## по три ящика на полку — между массивными стойками 1,64 м. Всё нарисовано строго спереди, как комната.
+const RACK_LEVELS := [0.219, 0.836]
+const RACK_SLOTS := 3
+const RACK_SLOT_DX := 0.545
+const CRATE_SCALE := 0.9
+const RACK_INSET := 0.35  # отступ стеллажей от боковой стены, м (задняя стена уже пола)
+const RACK_POST := 23.0    # толщина стойки стеллажа в пикселях спрайта (rack_tall.png)
 
 
-## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
-## в свободной клетке — бочка или брёвна, под потолком большой комнаты — таль.
-func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> void:
+## Склад из картинок: стеллаж на каждые 3 м, ящики с ресурсами по запасам (снизу вверх),
+## у задней стены, под потолком большой комнаты — таль.
+func _draw_storage_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
-	var w := RoomType.usable_width(p)
-	var racks := maxi(1, w / 2)
-	var rack := furniture("storage", "rack_tall")
-	for k in racks:
-		_furn_at(rack, x0 + k * TILE * 2 + TILE, fy, alpha, 1)
+	var rk := _draw_racks(p, r, furniture("storage", "rack_tall"), RACK_POST, fy, alpha)
 	# Ящики: сколько каждого ресурса лежит именно в этой комнате (Colony.held_in).
-	var slots := racks * RACK_SLOTS * RACK_LEVELS.size()
-	var per := float(RoomType.CAPACITY_PER_CELL * w) / slots
-	var slot := 0
 	var keys: Array = p.held.keys()
 	keys.sort()
+	var crates: Array[Texture2D] = []
 	for key in keys:
-		if not CRATES.has(key):
-			continue    # нефть, метан и прочее — без ящиков
-		var tex := furniture("storage", "crate_" + key)
-		for i in ceili(colony.held_in(p, key) / per):
-			if slot >= slots:
-				break
-			var level := slot / (racks * RACK_SLOTS)
-			var j := slot % (racks * RACK_SLOTS)
-			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + ((j % RACK_SLOTS) * 2 - 1) * RACK_SLOT_DX * TILE
-			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha, 0, CRATE_SCALE)
-			slot += 1
-	if w - racks * 2 >= 1:
-		var extra := furniture("storage", "barrel" if p.id % 2 == 0 else "logs")
-		if extra != null:
-			_furn_at(extra, x0 + racks * TILE * 2 + TILE * 0.5, fy, alpha, 1)
+		if CRATES.has(key):    # нефть, метан и прочее — без ящиков
+			crates.append_array(_boxes_of(p, key, rk, [furniture("storage", "crate_" + key)]))
+	_fill_racks(rk, crates, RACK_LEVELS, fy, alpha)
 	if p.rect.size.x >= 6:
-		# Брус — между лестницами (если есть), блок с крюком — над первым стеллажом.
+		# Брус — между лестницами (если есть), блок с крюком — в проходе за первым стеллажом.
 		var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
 		var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
-		_draw_hoist(left, right, x0 + TILE * 1.2, fy - TILE * 2.34, alpha)
+		_draw_hoist(left, right, rk.start + rk.rw + rk.gap * 0.5, fy - TILE * 2.34, alpha)
+
+
+## Стеллажи у задней стены, как на складе и в амбаре: на каждый блок в 3 м — один; справа
+## отступ от стены, слева всегда свободна клетка под лестницу (есть она или нет) — комнаты одной
+## ширины выглядят одинаково. Крайние — к краям, между ними проходы. post — стойка в px спрайта.
+## Возвращает раскладку: start, rw (ширина), gap (проход), racks, per_shelf, cap (ёмкость комнаты).
+func _draw_racks(p: Project, r: Rect2, rack: Texture2D, post: float, fy: float, alpha: float) -> Dictionary:
+	var racks := maxi(1, p.rect.size.x / 3)
+	var lo := r.position.x + TILE * 1.1
+	var hi := r.end.x - TILE * RACK_INSET
+	var rw := minf(TILE * 2, (hi - lo) / racks)
+	var gap := (hi - lo - racks * rw) / maxi(1, racks - 1)
+	var start := lo if racks > 1 else (lo + hi - rw) * 0.5
+	for k in racks:
+		_draw_rack(rack, start + k * (rw + gap) + rw * 0.5, fy, rw, post, alpha)
+	var inner := rw / TILE - 2 * post / FURN_PX_PER_M
+	return {"start": start, "rw": rw, "gap": gap, "racks": racks,
+		"per_shelf": clampi(int(inner / RACK_SLOT_DX + 0.01), 1, RACK_SLOTS),
+		"cap": float(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p))}
+
+
+## Ящики (корзины) ресурса key по запасу в комнате: каждый — на долю ёмкости, виды по очереди.
+func _boxes_of(p: Project, key: String, rk: Dictionary, kinds: Array) -> Array[Texture2D]:
+	var out: Array[Texture2D] = []
+	var per: float = rk.cap / (rk.racks * rk.per_shelf * RACK_LEVELS.size())
+	for i in ceili(colony.held_in(p, key) / per):
+		out.append(kinds[(i + p.id) % kinds.size()])
+	return out
+
+
+## Ставит ящики на полки стеллажей снизу вверх, слева направо.
+func _fill_racks(rk: Dictionary, boxes: Array[Texture2D], levels: Array, fy: float, alpha: float) -> void:
+	var row: int = rk.racks * rk.per_shelf
+	for slot in mini(boxes.size(), row * levels.size()):
+		var j := slot % row
+		var k: int = j / rk.per_shelf
+		var cx: float = rk.start + k * (rk.rw + rk.gap) + rk.rw * 0.5 \
+			+ (j % rk.per_shelf - (rk.per_shelf - 1) * 0.5) * RACK_SLOT_DX * TILE
+		_furn_at(boxes[slot], cx, fy - levels[slot / row] * TILE, alpha, 0, CRATE_SCALE)
+
+
+## Амбар: стеллажи как на складе, корзины с едой (рыба и грибы — «food», ягоды), над стеллажами —
+## жердь с подвешенными связками.
+const GRANARY_LEVELS := [0.227, 0.828]
+const GRANARY_POST := 21.0
+const BASKETS := {"food": ["basket_fish", "basket_mushroom"], "berries": ["basket_berries"]}
+const HANGERS := ["hang_fish", "hang_garlic", "hang_pepper", "hang_herbs", "hang_onion"]
+func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var rk := _draw_racks(p, r, furniture("granary", "rack_tall"), GRANARY_POST, fy, alpha)
+	var baskets: Array[Texture2D] = []
+	for key in BASKETS:
+		var kinds := []
+		for b in BASKETS[key]:
+			kinds.append(furniture("granary", b))
+		baskets.append_array(_boxes_of(p, key, rk, kinds))
+	_fill_racks(rk, baskets, GRANARY_LEVELS, fy, alpha)
+	# Жердь — над стеллажами, как на прототипе.
+	var left: float = rk.start - TILE * 0.1
+	var right: float = rk.start + rk.racks * rk.rw + (rk.racks - 1) * rk.gap + TILE * 0.1
+	var top := fy - TILE * 2.3
+	_draw_span("granary", "rod", left, right, top, alpha)
+	# Связки — по одной на 0,6 м, не над верёвками, без повторов подряд.
+	var k := TILE / FURN_PX_PER_M
+	var n := int((right - left - TILE * 0.5) / (TILE * 0.6))
+	var first := int(WorldGen.hash01(p.id, 0, 91) * HANGERS.size())
+	for i in n:
+		var t := furniture("granary", HANGERS[(first + i) % HANGERS.size()])
+		var cx := left + TILE * 0.25 + (i + 0.5) * (right - left - TILE * 0.5) / n
+		var hs := t.get_size() * k * 0.85
+		draw_texture_rect(t, Rect2(cx - hs.x * 0.5, top + 47 * k, hs.x, hs.y), false, Color(1, 1, 1, alpha))
+
+
+## Предмет, растянутый от left до right: торцы <name>_l, <name>_r и повторяющийся <name>_mid.
+func _draw_span(room: String, name: String, left: float, right: float, top: float, alpha: float) -> void:
+	var l := furniture(room, name + "_l")
+	var m := furniture(room, name + "_mid")
+	var rt := furniture(room, name + "_r")
+	var k := TILE / FURN_PX_PER_M
+	var mod := Color(1, 1, 1, alpha)
+	var x := left + l.get_width() * k
+	var end := right - rt.get_width() * k
+	while x < end:
+		var seg := minf(m.get_width() * k, end - x)
+		draw_texture_rect_region(m, Rect2(x, top, seg, m.get_height() * k), Rect2(0, 0, seg / k, m.get_height()), mod)
+		x += seg
+	draw_texture_rect(l, Rect2(left, top, l.get_width() * k, l.get_height() * k), false, mod)
+	draw_texture_rect(rt, Rect2(end, top, rt.get_width() * k, rt.get_height() * k), false, mod)
+
+
+## Ферма: грядка на каждые 2 м, на ней грибы трёх стадий роста (в холоде — блёклые); с
+## электричеством над грибами лампы роста на стене — горят, когда есть энергия. Выше на стене — по предмету
+## над грядкой, без повторов и не на стойках.
+const FARM_DECOR := ["tools", "can", "gauge", "hose"]
+func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.farm_slots(p)
+	var lay := _inside(p, r, n * 2.0)
+	var posts := wall_posts(p.rect.size.x)
+	var first := int(WorldGen.hash01(p.id, 0, 92) * FARM_DECOR.size())
+	var grow := clampf(p.farm_progress / RoomType.FARM_CYCLE, 0.0, 1.0)
+	var shoots := furniture("farm", "shoots_%d" % (1 + mini(2, int(grow * 3.0))))
+	var tint := Color(1, 1, 1, alpha) if colony.farm_warm(p) else Color(0.72, 0.75, 0.85, alpha)
+	var lamp: Texture2D = null
+	if colony.research.has("electricity"):
+		lamp = furniture("farm", "lamp_on" if colony.powered() else "lamp_off")
+	var bed := furniture("farm", "bed")
+	var sc := _fit(bed, lay.unit * 2)
+	var k := TILE / FURN_PX_PER_M * sc
+	for i in n:
+		var cx: float = lay.x + (i * 2 + 1) * lay.unit
+		var slot_l: float = (cx - lay.unit - r.position.x) / TILE
+		if i < FARM_DECOR.size():
+			var deco := furniture("farm", FARM_DECOR[(first + i) % FARM_DECOR.size()])
+			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, deco.get_width() / FURN_PX_PER_M, posts)
+			if not is_nan(dx):
+				_furn_hang(deco, r.position.x + dx * TILE, fy, alpha)
+		if lamp != null:
+			# Лампа на настенных креплениях — прямо над грибами, как на прототипе.
+			var lsz := lamp.get_size() * k
+			draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.9 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
+		var sz := shoots.get_size() * k
+		draw_texture_rect(shoots, Rect2(cx - sz.x * 0.5, fy - (bed.get_height() - 7) * k - sz.y, sz.x, sz.y), false, tint)
+		_furn_at(bed, cx, fy, alpha, 1, sc)
+
+
+## Стеллаж шириной width: стойки как на спрайте, середина (полки) сжата.
+func _draw_rack(t: Texture2D, cx: float, bottom: float, width: float, post_px: float, alpha: float) -> void:
+	var k := TILE / FURN_PX_PER_M
+	var sz := t.get_size()
+	var h := sz.y * k
+	var post := post_px * k
+	var x := cx - width * 0.5
+	var mod := Color(1, 1, 1, alpha)
+	_soft_ellipse(Vector2(cx, bottom - 1.0), width * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+	draw_texture_rect_region(t, Rect2(x, bottom - h, post, h), Rect2(0, 0, post_px, sz.y), mod)
+	draw_texture_rect_region(t, Rect2(x + post, bottom - h, width - 2 * post, h), Rect2(post_px, 0, sz.x - 2 * post_px, sz.y), mod)
+	draw_texture_rect_region(t, Rect2(x + width - post, bottom - h, post, h), Rect2(sz.x - post_px, 0, post_px, sz.y), mod)
 
 
 ## Таль: брус от left до right (торец, повторяющийся кусок, лебёдка справа), блок с цепью
@@ -498,7 +671,8 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 		draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
 		x += seg
 	draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
-	draw_line(Vector2(block_x + 20 * k, top + 37 * k), Vector2(winch_x + 12 * k, top + 44 * k), Color(0.35, 0.37, 0.4, alpha), maxf(1.0, 3 * k))
+	# Трос: от шкива каретки (правый край) к барабану лебёдки (координаты в пикселях спрайтов).
+	draw_line(Vector2(block_x + 25 * k, top + 38 * k), Vector2(winch_x + 12 * k, top + 46 * k), Color(0.55, 0.5, 0.45, alpha), maxf(1.0, 3 * k))
 	draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
 	draw_texture_rect(block, Rect2(block_x - block.get_width() * k * 0.5, top, block.get_width() * k, block.get_height() * k), false, mod)
 
@@ -507,10 +681,16 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 	var floor_y := r.end.y - 6
 	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
 	if purpose == RoomType.HOME and furniture("home", "bed_blue") != null:
-		_draw_home_furniture(p, r, x0, alpha)
+		_draw_home_furniture(p, r, alpha)
 		return
 	if purpose == RoomType.STORAGE and furniture("storage", "rack_tall") != null:
-		_draw_storage_furniture(p, r, x0, alpha)
+		_draw_storage_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.GRANARY and furniture("granary", "rack_tall") != null:
+		_draw_granary_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.FARM and furniture("farm", "bed") != null:
+		_draw_farm_furniture(p, r, alpha)
 		return
 	match purpose:
 		RoomType.HOME:

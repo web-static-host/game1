@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://css0fc7mvkjwe"
-path="res://.godot/imported/tank_methane.png-f4c82a7c80bd56261333e7f48600bba0.ctex"
+uid="uid://c244wy6dvd1s8"
+path="res://.godot/imported/shoots_2.png-09a888f0629195e87876376aa999d27f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/furniture/storage/tank_methane.png"
-dest_files=["res://.godot/imported/tank_methane.png-f4c82a7c80bd56261333e7f48600bba0.ctex"]
+source_file="res://assets/furniture/farm/shoots_2.png"
+dest_files=["res://.godot/imported/shoots_2.png-09a888f0629195e87876376aa999d27f.ctex"]
 
 [params]
 
@@ -21,7 +21,7 @@ compress/lossy_quality=0.7
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3go4r6mi3g28"
-path="res://.godot/imported/drum_oil.png-7a0b036086b8d2e12a087e7b0fa89a2d.ctex"
+uid="uid://xhotl07cmcmu"
+path="res://.godot/imported/rack.png-2f8618412401e3e7afb669302a6f0d63.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/furniture/storage/drum_oil.png"
-dest_files=["res://.godot/imported/drum_oil.png-7a0b036086b8d2e12a087e7b0fa89a2d.ctex"]
+source_file="res://assets/furniture/granary/rack.png"
+dest_files=["res://.godot/imported/rack.png-2f8618412401e3e7afb669302a6f0d63.ctex"]
 
 [params]
 
@@ -21,7 +21,7 @@ compress/lossy_quality=0.7
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
