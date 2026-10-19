@@ -438,19 +438,26 @@ const RACK_LEVELS := [0.219, 0.836]
 const RACK_SLOTS := 3
 const RACK_SLOT_DX := 0.545
 const CRATE_SCALE := 0.9
+const RACK_POST := 23.0    # толщина стойки стеллажа в пикселях спрайта (rack_tall.png)
 
 
 ## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
-## в свободной клетке — бочка или брёвна, под потолком большой комнаты — таль.
+## стеллажи по центру свободного места, под потолком большой комнаты — таль.
 func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var w := RoomType.usable_width(p)
-	var racks := maxi(1, w / 2)
+	# Стеллажей — по ширине комнаты (как без лестницы): одинаковые комнаты выглядят одинаково.
+	# Лестница отнимает метр — стеллажи уже, на полке помещается меньше ящиков.
+	var racks := maxi(1, p.rect.size.x / 2)
+	var rw := minf(TILE * 2, w * TILE / racks)
+	var start := x0 + (w * TILE - racks * rw) * 0.5
 	var rack := furniture("storage", "rack_tall")
 	for k in racks:
-		_furn_at(rack, x0 + k * TILE * 2 + TILE, fy, alpha, 1)
+		_draw_rack(rack, start + (k + 0.5) * rw, fy, rw, alpha)
+	var inner := rw / TILE - 2 * RACK_POST / FURN_PX_PER_M
+	var per_shelf := clampi(int(inner / RACK_SLOT_DX + 0.01), 1, RACK_SLOTS)
 	# Ящики: сколько каждого ресурса лежит именно в этой комнате (Colony.held_in).
-	var slots := racks * RACK_SLOTS * RACK_LEVELS.size()
+	var slots := racks * per_shelf * RACK_LEVELS.size()
 	var per := float(RoomType.CAPACITY_PER_CELL * w) / slots
 	var slot := 0
 	var keys: Array = p.held.keys()
@@ -462,20 +469,30 @@ func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> v
 		for i in ceili(colony.held_in(p, key) / per):
 			if slot >= slots:
 				break
-			var level := slot / (racks * RACK_SLOTS)
-			var j := slot % (racks * RACK_SLOTS)
-			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + (j % RACK_SLOTS - (RACK_SLOTS - 1) * 0.5) * RACK_SLOT_DX * TILE
+			var level := slot / (racks * per_shelf)
+			var j := slot % (racks * per_shelf)
+			var cx := start + (j / per_shelf + 0.5) * rw + (j % per_shelf - (per_shelf - 1) * 0.5) * RACK_SLOT_DX * TILE
 			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha, 0, CRATE_SCALE)
 			slot += 1
-	if w - racks * 2 >= 1:
-		var extra := furniture("storage", "barrel" if p.id % 2 == 0 else "logs")
-		if extra != null:
-			_furn_at(extra, x0 + racks * TILE * 2 + TILE * 0.5, fy, alpha, 1)
 	if p.rect.size.x >= 6:
 		# Брус — между лестницами (если есть), блок с крюком — над первым стеллажом.
 		var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
 		var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
-		_draw_hoist(left, right, x0 + TILE * 1.2, fy - TILE * 2.34, alpha)
+		_draw_hoist(left, right, start + rw * 0.6, fy - TILE * 2.34, alpha)
+
+
+## Стеллаж шириной width: стойки как на спрайте, середина (полки) сжата.
+func _draw_rack(t: Texture2D, cx: float, bottom: float, width: float, alpha: float) -> void:
+	var k := TILE / FURN_PX_PER_M
+	var sz := t.get_size()
+	var h := sz.y * k
+	var post := RACK_POST * k
+	var x := cx - width * 0.5
+	var mod := Color(1, 1, 1, alpha)
+	_soft_ellipse(Vector2(cx, bottom - 1.0), width * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+	draw_texture_rect_region(t, Rect2(x, bottom - h, post, h), Rect2(0, 0, RACK_POST, sz.y), mod)
+	draw_texture_rect_region(t, Rect2(x + post, bottom - h, width - 2 * post, h), Rect2(RACK_POST, 0, sz.x - 2 * RACK_POST, sz.y), mod)
+	draw_texture_rect_region(t, Rect2(x + width - post, bottom - h, post, h), Rect2(sz.x - RACK_POST, 0, RACK_POST, sz.y), mod)
 
 
 ## Таль: брус от left до right (торец, повторяющийся кусок, лебёдка справа), блок с цепью
