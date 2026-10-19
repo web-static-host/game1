@@ -447,11 +447,12 @@ const RACK_POST := 23.0    # толщина стойки стеллажа в п�
 func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var w := RoomType.usable_width(p)
-	# Стеллаж на каждый блок в 3 м, у задней стены: от боковых стен отступ, у лестницы — чуть-чуть.
+	# Стеллаж на каждый блок в 3 м, у задней стены: справа отступ от стены, слева всегда
+	# свободна клетка под лестницу (есть она или нет) — склады одной ширины выглядят одинаково.
 	# Крайние стеллажи — к краям, между ними проходы (в первом висит крюк тали).
 	var racks := maxi(1, p.rect.size.x / 3)
-	var lo := x0 + TILE * (0.1 if p.ladder else RACK_INSET)
-	var hi := x0 + w * TILE - TILE * RACK_INSET
+	var lo := r.position.x + TILE * 1.1
+	var hi := r.end.x - TILE * RACK_INSET
 	var rw := minf(TILE * 2, (hi - lo) / racks)
 	var gap := (hi - lo - racks * rw) / maxi(1, racks - 1)
 	var start := lo if racks > 1 else (lo + hi - rw) * 0.5
