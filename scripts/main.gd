@@ -1222,6 +1222,15 @@ func _on_room_options(width: int, material: String) -> void:
 ## Возвращает [рамка, ошибка (пусто — можно)].
 func _room_rect(c: Vector2i) -> Array:
 	var base := Rect2i(c.x - _room_w / 2, c.y - 1, _room_w, Project.ROOM_HEIGHT)
+	# Касание в готовой шахте: комната встаёт ровно по её высоте и в её пределах,
+	# а ошибка — настоящая причина (например, вес сверху), а не «сдвиг по высоте».
+	var m := colony.project_at(c)
+	if m != null and m.kind == Project.Kind.MINE and m.phase == Project.Phase.DONE:
+		var x := base.position.x
+		if _room_w <= m.rect.size.x:
+			x = clampi(x, m.rect.position.x, m.rect.end.x - _room_w)
+		var snapped := Rect2i(x, m.rect.position.y, _room_w, Project.ROOM_HEIGHT)
+		return [snapped, colony.validate(Project.Kind.ROOM, snapped, hud.room_material())]
 	for dy in [0, 1, -1, 2, -2, 3, -3]:
 		var r := Rect2i(base.position + Vector2i(0, dy), base.size)
 		if colony.validate(Project.Kind.ROOM, r, hud.room_material()).is_empty():

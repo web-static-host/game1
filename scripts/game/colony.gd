@@ -649,6 +649,9 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 				if Mat.is_solid(world.get_mat(c.x, c.y)):
 					p.needs_support.append(i)
 					break
+	# Всё уже выкопано и закреплено (комната в готовой шахте) — крепь не нужна.
+	if p.needs_support.is_empty():
+		p.support_wood = 0
 	# Деревья, кусты и валуны на месте стройки убираются на этапе 1 — как ресурс.
 	# Мост и пристань не мешают деревьям (крона у берега — не помеха), их не рубят:
 	# дальний берег до постройки моста всё равно не достать.
@@ -3163,7 +3166,8 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 	var best_stand = null
 	var best_d := 1 << 30
 	var any_free := false
-	for c in diggable_now(p):
+	var now := diggable_now(p)
+	for c in now:
 		if reserved.has(c):
 			continue
 		any_free = true
@@ -3172,6 +3176,18 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 			best_d = spot[1]
 			best_cell = c
 			best_stand = spot[0]
+	# К начатому срезу не подойти (например, над головой порода, а сверху не прокопано) —
+	# копаем доступную клетку соседнего среза, иначе стройка встанет навсегда.
+	if best_cell == null and _dig_deadlock(now):
+		for c in remaining_dig(p):
+			if reserved.has(c) or now.has(c):
+				continue
+			any_free = true
+			var spot := _work_spot(c, dist)
+			if spot[0] != null and spot[1] < best_d:
+				best_d = spot[1]
+				best_cell = c
+				best_stand = spot[0]
 	if best_cell == null:
 		# «Нет доступа» — только если к стройке вообще никто не подобрался.
 		if any_free and workers_on(p) == 0 and p.blocked.is_empty():
@@ -3182,6 +3198,21 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 	if _hazard_stop(p, best_cell):
 		return false
 	_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
+	return true
+
+
+## Тупик: начатый срез не докопать — к его клеткам не подойти никому (и их никто не копает).
+func _dig_deadlock(now: Array[Vector2i]) -> bool:
+	if now.is_empty():
+		return false
+	for c in now:
+		if reserved.has(c):
+			return false
+	for c in now:
+		can_reach(Rect2i(c, Vector2i.ONE))
+		for dist in _reach_cache:
+			if _work_spot(c, dist)[0] != null:
+				return false
 	return true
 
 

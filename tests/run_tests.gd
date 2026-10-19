@@ -59,6 +59,7 @@ func _initialize() -> void:
 	test_builders_dont_carry()
 	test_bridge_and_pier()
 	test_miner_alone()
+	test_tunnel_from_mine()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2546,3 +2547,52 @@ func test_miner_alone() -> void:
 			hauled = true
 	check(hauled, "без подсобных шахтёр сам несёт дерево на крепь")
 	check(colony.mine_meters_done(mine) >= 2, "и шахта идёт: готово %d м" % colony.mine_meters_done(mine))
+
+
+func test_tunnel_from_mine() -> void:
+	# Тоннель вверх от конца шахты: житель из шахты начал срез у потолка шахты, над ним
+	# порода, сверху не прокопано — стройка не должна вставать навсегда («Нет доступа»).
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var w := colony.world
+	var x := room.rect.position.x - 1
+	var s := w.gen.surface_y(x)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s + 6, 1, 4))
+	colony.advance_offline(20000.0)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	var mine := colony.create_project(Project.Kind.MINE, Rect2i(x - 12, s + 7, 12, 3))
+	colony.advance_offline(30000.0)
+	check(mine != null and mine.phase == Project.Phase.DONE, "шахта для проверки готова")
+	if mine == null:
+		return
+	var tx := mine.rect.position.x - 1
+	var ts := w.gen.surface_y(tx)
+	# Клетка у потолка шахты — вторая в своём срезе (как в игре): над ней порода того же среза.
+	if (mine.rect.position.y - ts) % 2 == 0:
+		ts += 1
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(tx, ts, 1, mine.rect.end.y - ts))
+	check(t != null, "тоннель у конца шахты заложен")
+	if t == null:
+		return
+	# Как в игре: первой выкопана клетка у потолка шахты — срез начат снизу.
+	var c0 := Vector2i(tx, mine.rect.position.y)
+	colony._complete_dig(c0, t, null)
+	check(t.slice_of(c0) == t.slice_of(c0 + Vector2i.UP), "над начатой клеткой — порода того же среза")
+	for u in colony.units:
+		u.satiety = 100.0
+		u.energy = 100.0
+		colony._drop(u)
+	var t0 := 0.0
+	while t0 < 1500.0 and t.phase == Project.Phase.DIG:
+		colony.update(0.5)
+		t0 += 0.5
+	check(t.phase != Project.Phase.DIG, "тоннель от шахты докопан (%.0f с, %s)" % [t0, t.blocked])
+	# Комната в готовой шахте — без крепи.
+	var m2 := colony.projects.filter(func(q: Project) -> bool: return q.kind == Project.Kind.MINE and q.phase == Project.Phase.DONE)
+	if not m2.is_empty():
+		var mm: Project = m2[0]
+		var rr := Rect2i(mm.rect.position.x, mm.rect.position.y, 3, 3)
+		var nr := colony.create_project(Project.Kind.ROOM, rr, -1, "wood")
+		check(nr != null and nr.needs_support.is_empty() and nr.support_wood == 0, "комната в готовой шахте не требует крепи")
