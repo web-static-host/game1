@@ -432,12 +432,12 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 
 
 const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone"]
-## Полки высокого стеллажа: высота переднего края доски над полом (м, по картинке rack_tall —
-## ящик стоит на верхней грани полки), по два ящика на полку: между толстыми стойками 1,37 м.
-const RACK_LEVELS := [0.18, 0.945]
-const RACK_SLOTS := 2
-const RACK_SLOT_DX := 0.33
-const CRATE_SCALE := 1.1
+## Полки стеллажа: верх планок над полом (м, печатает art_src/rooms/cut_sheets.py для rack_tall),
+## по три ящика на полку — между стойками 1,83 м. Всё нарисовано строго спереди, как комната.
+const RACK_LEVELS := [0.133, 0.68]
+const RACK_SLOTS := 3
+const RACK_SLOT_DX := 0.6
+const CRATE_SCALE := 1.0
 
 
 ## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
@@ -464,7 +464,7 @@ func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> v
 				break
 			var level := slot / (racks * RACK_SLOTS)
 			var j := slot % (racks * RACK_SLOTS)
-			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + ((j % RACK_SLOTS) * 2 - 1) * RACK_SLOT_DX * TILE
+			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + (j % RACK_SLOTS - (RACK_SLOTS - 1) * 0.5) * RACK_SLOT_DX * TILE
 			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha, 0, CRATE_SCALE)
 			slot += 1
 	if w - racks * 2 >= 1:
@@ -498,7 +498,8 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 		draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
 		x += seg
 	draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
-	draw_line(Vector2(block_x + 20 * k, top + 37 * k), Vector2(winch_x + 12 * k, top + 44 * k), Color(0.35, 0.37, 0.4, alpha), maxf(1.0, 3 * k))
+	# Трос: от шкива каретки (правый край) к барабану лебёдки (координаты в пикселях спрайтов).
+	draw_line(Vector2(block_x + 25 * k, top + 38 * k), Vector2(winch_x + 12 * k, top + 46 * k), Color(0.55, 0.5, 0.45, alpha), maxf(1.0, 3 * k))
 	draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
 	draw_texture_rect(block, Rect2(block_x - block.get_width() * k * 0.5, top, block.get_width() * k, block.get_height() * k), false, mod)
 
