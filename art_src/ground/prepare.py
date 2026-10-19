@@ -61,7 +61,8 @@ def edge(name, y0, y1, line):
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
-    for n in ('rock_1', 'rock_2', 'rock_3', 'fog'):
+    # rock_1..3 (полосатые пласты) в игре не используются — автору не понравились.
+    for n in ('fog',):
         if os.path.exists(os.path.join(HERE, n + '.png')):
             rock(n)
     for e in EDGES:

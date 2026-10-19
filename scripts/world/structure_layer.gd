@@ -342,8 +342,8 @@ static func furniture(room: String, item: String) -> Texture2D:
 
 ## Предмет низом на bottom, по центру cx (размер — из картинки, 128 px на метр).
 ## shadow: 1 — мягкая тень на полу под предметом, 2 — тень на стене за ним (вниз-вправо).
-func _furn_at(t: Texture2D, cx: float, bottom: float, alpha: float, shadow := 0) -> void:
-	var sz := t.get_size() / FURN_PX_PER_M * TILE
+func _furn_at(t: Texture2D, cx: float, bottom: float, alpha: float, shadow := 0, scale := 1.0) -> void:
+	var sz := t.get_size() / FURN_PX_PER_M * TILE * scale
 	var rect := Rect2(cx - sz.x * 0.5, bottom - sz.y, sz.x, sz.y)
 	if shadow == 1:
 		_soft_ellipse(Vector2(cx, bottom - 1.0), sz.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
@@ -432,9 +432,12 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 
 
 const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone"]
-## Полки высокого стеллажа (высота над полом, м) и места для ящиков на полке.
-const RACK_LEVELS := [0.31, 1.05]
-const RACK_SLOTS := 3
+## Полки высокого стеллажа: высота переднего края доски над полом (м, по картинке rack_tall —
+## ящик стоит на верхней грани полки), по два ящика на полку: между толстыми стойками 1,37 м.
+const RACK_LEVELS := [0.18, 0.945]
+const RACK_SLOTS := 2
+const RACK_SLOT_DX := 0.33
+const CRATE_SCALE := 1.1
 
 
 ## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
@@ -446,24 +449,23 @@ func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> v
 	var rack := furniture("storage", "rack_tall")
 	for k in racks:
 		_furn_at(rack, x0 + k * TILE * 2 + TILE, fy, alpha, 1)
-	# Ящики: сколько каждого ресурса лежит именно в этой комнате.
+	# Ящики: сколько каждого ресурса лежит именно в этой комнате (Colony.held_in).
 	var slots := racks * RACK_SLOTS * RACK_LEVELS.size()
 	var per := float(RoomType.CAPACITY_PER_CELL * w) / slots
 	var slot := 0
-	var keys: Array = colony.inventory.keys()
+	var keys: Array = p.held.keys()
 	keys.sort()
 	for key in keys:
-		if RoomType.BULK.has(key) or not RoomType.stores(p, key):
-			continue
-		var mine := float(colony.held_in(p, key)) * RoomType.CAPACITY_PER_CELL * w / maxf(1.0, colony.room_cap(p, key))
-		var tex := furniture("storage", "crate_" + key) if CRATES.has(key) else furniture("storage", "crate")
-		for i in ceili(mine / per):
+		if not CRATES.has(key):
+			continue    # нефть, метан и прочее — без ящиков
+		var tex := furniture("storage", "crate_" + key)
+		for i in ceili(colony.held_in(p, key) / per):
 			if slot >= slots:
 				break
 			var level := slot / (racks * RACK_SLOTS)
 			var j := slot % (racks * RACK_SLOTS)
-			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + (j % RACK_SLOTS - 1) * TILE * 0.62
-			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha)
+			var cx := x0 + (j / RACK_SLOTS) * TILE * 2 + TILE + ((j % RACK_SLOTS) * 2 - 1) * RACK_SLOT_DX * TILE
+			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha, 0, CRATE_SCALE)
 			slot += 1
 	if w - racks * 2 >= 1:
 		var extra := furniture("storage", "barrel" if p.id % 2 == 0 else "logs")
