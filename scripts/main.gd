@@ -4,7 +4,7 @@ extends Node2D
 
 const AUTOSAVE_SEC := 30.0
 ## Сколько времени отсутствия засчитывается (стимул заходить регулярно).
-const OFFLINE_CAP_SEC := 3.0 * 3600.0
+const OFFLINE_CAP_SEC := 1.0 * 3600.0
 const SPEEDS := [1.0, 2.0, 10.0, 20.0]
 const STATUS_INTERVAL := 0.2
 
@@ -419,7 +419,7 @@ func _pick_workplace(u: Unit) -> void:
 	_info_target = []
 	var items := []
 	for role in [[Unit.Prof.BUILDER, "в первую очередь идёт на стройки: копает, строит, обустраивает, чинит; носит только то, без чего его работа стоит прямо сейчас"],
-			[Unit.Prof.MINER, "только копает: сначала шахты (руда и ископаемые), потом копку на других стройках — ничего не носит"],
+			[Unit.Prof.MINER, "сначала шахты: копает и крепит, дерево на крепь носит сам, если нет свободных подсобных; на других стройках только копает"],
 			[Unit.Prof.HAULER, "в первую очередь носит: материалы на стройки, сырьё в мастерские, добычу и продукцию на склад"],
 			[Unit.Prof.ANY, "стройка, если есть место, иначе переноска"]]:
 		var prof: int = role[0]
@@ -706,7 +706,9 @@ func _storage_targets(p: Project) -> Dictionary:
 		items.append([k, colony.held_in(p, k), int(p.targets.get(k, 0)), colony.room_cap(p, k),
 			Colony.GATHER_SOURCES.has(k)])
 	return {"type": "targets", "label": "Лежит в этом складе и норма (работники этого склада добывают до нормы):", "items": items,
-		"changed": func(key: String, v: int) -> void: p.targets[key] = v}
+		"changed": func(key: String, v: int) -> void:
+			p.targets[key] = v
+			colony.wake_idle()}
 
 
 ## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.
@@ -786,7 +788,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			else:
 				var done := colony.mine_meters_done(p)
 				rows.append(_progress("Готово", float(done) / maxf(1.0, p.slice_count()), "%d из %d м" % [done, p.slice_count()]))
-				rows.append({"type": "text", "text": "Шахта строится по метру: метр выкопан и закреплён — готов. «Остановить» — готовая часть остаётся шахтой. Шахтёры только копают, крепь ставят строители, дерево на крепь и добытое носят работники складов (шахта у них в первую очередь) и подсобные."})
+				rows.append({"type": "text", "text": "Шахта строится по метру: метр выкопан и закреплён — готов. «Остановить» — готовая часть остаётся шахтой. Шахтёры копают и ставят крепь; дерево на крепь носят работники складов (шахта у них в первую очередь) и подсобные, а если свободных подсобных нет — сами шахтёры. Добытое уносят склады и подсобные."})
 		_:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
@@ -996,7 +998,7 @@ func _people_spec() -> Dictionary:
 		chips.append(["", "%s: %d" % [d, counts[d]]])
 	return {"title": "Жители", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
 		"rows": [{"type": "chips", "label": "Сейчас", "items": chips},
-			{"type": "text", "text": "В шахты первыми идут шахтёры, на остальные стройки — строители, потом свободные. Шахтёры не носят ничего, строители — только то, без чего их работа стоит прямо сейчас; добытое и материалы носят работники складов, подсобные и свободные."}]}
+			{"type": "text", "text": "В шахты первыми идут шахтёры, на остальные стройки — строители, потом свободные. Шахтёры носят только дерево на крепь своей шахты (если нет свободных подсобных), строители — только то, без чего их работа стоит прямо сейчас; добытое и материалы носят работники складов, подсобные и свободные."}]}
 
 
 func _show_people() -> void:
@@ -1220,6 +1222,15 @@ func _on_room_options(width: int, material: String) -> void:
 ## Возвращает [рамка, ошибка (пусто — можно)].
 func _room_rect(c: Vector2i) -> Array:
 	var base := Rect2i(c.x - _room_w / 2, c.y - 1, _room_w, Project.ROOM_HEIGHT)
+	# Касание в готовой шахте: комната встаёт ровно по её высоте и в её пределах,
+	# а ошибка — настоящая причина (например, вес сверху), а не «сдвиг по высоте».
+	var m := colony.project_at(c)
+	if m != null and m.kind == Project.Kind.MINE and m.phase == Project.Phase.DONE:
+		var x := base.position.x
+		if _room_w <= m.rect.size.x:
+			x = clampi(x, m.rect.position.x, m.rect.end.x - _room_w)
+		var snapped := Rect2i(x, m.rect.position.y, _room_w, Project.ROOM_HEIGHT)
+		return [snapped, colony.validate(Project.Kind.ROOM, snapped, hud.room_material())]
 	for dy in [0, 1, -1, 2, -2, 3, -3]:
 		var r := Rect2i(base.position + Vector2i(0, dy), base.size)
 		if colony.validate(Project.Kind.ROOM, r, hud.room_material()).is_empty():

@@ -57,6 +57,9 @@ func _initialize() -> void:
 	test_mine_meters()
 	test_lights()
 	test_builders_dont_carry()
+	test_bridge_and_pier()
+	test_miner_alone()
+	test_tunnel_from_mine()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2337,21 +2340,27 @@ func test_mine_meters() -> void:
 	check(mine != null, "шахта заложена")
 	if mine == null:
 		return
-	check(colony.mine_hauler(keeper) and not colony.mine_hauler(miner), "носят работники склада, шахтёр — нет")
-	var miner_carried := false
+	check(colony.mine_hauler(keeper) and not colony.mine_hauler(miner), "добытое из шахты носят склады, шахтёр — нет")
+	var miner_to_store := false
+	var miner_supported := false
 	var keeper_hauled := false
 	var t := 0.0
 	while t < 6000.0 and colony.mine_meters_done(mine) < 3 and mine.phase == Project.Phase.DIG:
 		colony.update(0.5)
 		t += 0.5
-		if miner.task in [Unit.Task.HAUL, Unit.Task.SUPPORT, Unit.Task.BUILD]:
-			miner_carried = true
+		if miner.task == Unit.Task.HAUL and (miner.to_store or miner.gather_room != 0):
+			miner_to_store = true
+		if miner.task == Unit.Task.SUPPORT:
+			miner_supported = true
 		if keeper.task == Unit.Task.HAUL and keeper.project_id == mine.id:
 			keeper_hauled = true
 	var done := colony.mine_meters_done(mine)
 	check(done >= 3, "шахта копается по метру: готово %d м за %.0f с" % [done, t])
-	check(not miner_carried, "шахтёр не носил и не крепил — только копал")
+	check(not miner_to_store, "шахтёр не уносил добытое на склад")
+	check(miner_supported, "шахтёр сам ставит крепь в шахте")
 	check(keeper_hauled, "работник склада носил в шахту дерево на крепь")
+	# Подсобных нет, склад не работает — шахтёр сам несёт дерево на крепь.
+	check(not colony.free_hauler_exists(), "свободных подсобных нет")
 	colony.cancel_project(mine)
 	check(colony.projects.has(mine) and mine.phase == Project.Phase.DONE and mine.rect.size.x >= 3 and mine.rect.size.x < 9,
 		"остановили: готовая часть осталась шахтой (%d м)" % mine.rect.size.x)
@@ -2466,3 +2475,124 @@ func test_builders_dont_carry() -> void:
 			check(builder.carry_amount <= int(colony._needed_now(hut).get(builder.carry_key, 999)), "берёт не больше, чем нужно сейчас")
 			break
 	check(self_carry, "носить некому — строитель сам принёс то, без чего стоит его стройка")
+
+
+func test_bridge_and_pier() -> void:
+	# Мост и пристань на одном озере не мешают друг другу; жители берутся за дело сразу.
+	var colony := _new_colony(31)
+	var w := colony.world
+	_start(colony, 0)
+	var lake := w.gen.lake_at(55)
+	if lake.is_empty():
+		for x in range(0, 200):
+			lake = w.gen.lake_at(x)
+			if not lake.is_empty():
+				break
+	check(not lake.is_empty(), "у базы есть пруд")
+	if lake.is_empty():
+		return
+	var span := w.gen.lake_water_span(lake)
+	var rects := colony.water_rects(span.x, span.y)
+	var br: Rect2i = rects["bridge"]
+	var pr: Rect2i = colony.water_rects(span.x, span.x + 4)["pier"]
+	check(colony.validate(Project.Kind.BRIDGE, br).is_empty(), "мост можно: " + colony.validate(Project.Kind.BRIDGE, br))
+	var bridge := colony.create_project(Project.Kind.BRIDGE, br)
+	bridge.phase = Project.Phase.DONE
+	colony._register_deck(bridge)
+	check(colony.validate(Project.Kind.PIER, pr).is_empty(), "при мосте пристань ставится: " + colony.validate(Project.Kind.PIER, pr))
+	var pier := colony.create_project(Project.Kind.PIER, pr)
+	check(pier != null, "пристань заложена рядом с мостом")
+	check(colony.project_at(pr.position) == pier, "нажатие на пристань выбирает пристань")
+	colony.cancel_project(pier)
+	check(colony.deck.has(pr.position) and colony.deck[pr.position] == bridge.id, "отменили пристань — мост цел")
+	# И наоборот: сначала пристань, потом мост.
+	var colony2 := _new_colony(31)
+	_start(colony2, 0)
+	var pier2 := colony2.create_project(Project.Kind.PIER, pr)
+	pier2.phase = Project.Phase.DONE
+	colony2._register_deck(pier2)
+	check(colony2.validate(Project.Kind.BRIDGE, br).is_empty(), "при пристани мост ставится: " + colony2.validate(Project.Kind.BRIDGE, br))
+	# Жители без дела берутся за новую стройку сразу.
+	var u: Unit = colony2.units[0]
+	colony2._drop(u)
+	u.retry = 5.0
+	colony2.create_project(Project.Kind.BRIDGE, br)
+	check(u.retry <= 0.0, "новое поручение будит бездельников сразу")
+
+
+func test_miner_alone() -> void:
+	# Ни склада, ни подсобных: шахтёр сам копает, сам несёт дерево на крепь и сам крепит.
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var x := room.rect.position.x - 1
+	var s := colony.world.gen.surface_y(x)
+	var miner: Unit = colony.units[0]
+	for u in colony.units:
+		u.workplace = 0
+		u.satiety = 100.0
+		u.energy = 100.0
+	colony.set_profession(miner, Unit.Prof.MINER)
+	colony.inventory = {"wood": 40, "food": 50}
+	var mine := colony.create_project(Project.Kind.MINE, Rect2i(x - 9, s + 3, 9, 3))
+	check(mine != null, "шахта для одиночки заложена")
+	if mine == null:
+		return
+	var hauled := false
+	var t := 0.0
+	while t < 6000.0 and colony.mine_meters_done(mine) < 2:
+		colony.update(0.5)
+		t += 0.5
+		if miner.task == Unit.Task.HAUL and miner.project_id == mine.id and not miner.to_store:
+			hauled = true
+	check(hauled, "без подсобных шахтёр сам несёт дерево на крепь")
+	check(colony.mine_meters_done(mine) >= 2, "и шахта идёт: готово %d м" % colony.mine_meters_done(mine))
+
+
+func test_tunnel_from_mine() -> void:
+	# Тоннель вверх от конца шахты: житель из шахты начал срез у потолка шахты, над ним
+	# порода, сверху не прокопано — стройка не должна вставать навсегда («Нет доступа»).
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var w := colony.world
+	var x := room.rect.position.x - 1
+	var s := w.gen.surface_y(x)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s + 6, 1, 4))
+	colony.advance_offline(20000.0)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	var mine := colony.create_project(Project.Kind.MINE, Rect2i(x - 12, s + 7, 12, 3))
+	colony.advance_offline(30000.0)
+	check(mine != null and mine.phase == Project.Phase.DONE, "шахта для проверки готова")
+	if mine == null:
+		return
+	var tx := mine.rect.position.x - 1
+	var ts := w.gen.surface_y(tx)
+	# Клетка у потолка шахты — вторая в своём срезе (как в игре): над ней порода того же среза.
+	if (mine.rect.position.y - ts) % 2 == 0:
+		ts += 1
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(tx, ts, 1, mine.rect.end.y - ts))
+	check(t != null, "тоннель у конца шахты заложен")
+	if t == null:
+		return
+	# Как в игре: первой выкопана клетка у потолка шахты — срез начат снизу.
+	var c0 := Vector2i(tx, mine.rect.position.y)
+	colony._complete_dig(c0, t, null)
+	check(t.slice_of(c0) == t.slice_of(c0 + Vector2i.UP), "над начатой клеткой — порода того же среза")
+	for u in colony.units:
+		u.satiety = 100.0
+		u.energy = 100.0
+		colony._drop(u)
+	var t0 := 0.0
+	while t0 < 1500.0 and t.phase == Project.Phase.DIG:
+		colony.update(0.5)
+		t0 += 0.5
+	check(t.phase != Project.Phase.DIG, "тоннель от шахты докопан (%.0f с, %s)" % [t0, t.blocked])
+	# Комната в готовой шахте — без крепи.
+	var m2 := colony.projects.filter(func(q: Project) -> bool: return q.kind == Project.Kind.MINE and q.phase == Project.Phase.DONE)
+	if not m2.is_empty():
+		var mm: Project = m2[0]
+		var rr := Rect2i(mm.rect.position.x, mm.rect.position.y, 3, 3)
+		var nr := colony.create_project(Project.Kind.ROOM, rr, -1, "wood")
+		check(nr != null and nr.needs_support.is_empty() and nr.support_wood == 0, "комната в готовой шахте не требует крепи")

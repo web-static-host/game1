@@ -827,6 +827,12 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 ## Крепь тоннеля: рамы поперёк, в шахте — лестница.
 func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 	var col := Color(BEAM, alpha)
+	# Готовая шахта — крепь на каждом метре, как ставили при проходке, и рельсы.
+	if p.kind == Project.Kind.MINE:
+		for i in p.slice_count():
+			_draw_slice_support(p, i, alpha)
+		_draw_rails(r, alpha)
+		return
 	if p.rect.size.y > p.rect.size.x:
 		_ladder(r.get_center().x, r.position.y, r.end.y, alpha)
 	else:
@@ -839,15 +845,18 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 			draw_line(Vector2(x - 13, r.position.y + 5), Vector2(x + 13, r.position.y + 5), dark, 6.0)
 			draw_line(Vector2(x - 13, r.position.y + 3), Vector2(x + 13, r.position.y + 3), col, 6.0)
 			x += TILE * 3.0
-		# Шахта — рельсы для вагонеток по полу.
-		if p.kind == Project.Kind.MINE:
-			var rail := Color(0.42, 0.42, 0.46, alpha)
-			var y := r.end.y - 4
-			var sx := r.position.x + 4
-			while sx < r.end.x - 4:
-				draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
-				sx += 10
-			draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
+
+
+
+## Рельсы для вагонеток по полу шахты: шпалы и рельс.
+func _draw_rails(r: Rect2, alpha: float) -> void:
+	var rail := Color(0.42, 0.42, 0.46, alpha)
+	var y := r.end.y - 4
+	var sx := r.position.x + 4
+	while sx < r.end.x - 4:
+		draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
+		sx += 10
+	draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
 
 
 func _draw_site(p: Project, font: Font) -> void:
