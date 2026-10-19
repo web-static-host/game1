@@ -434,8 +434,8 @@ func _pick_workplace(u: Unit) -> void:
 		var taken := colony.assigned_to(p).size()
 		var here := u.workplace == p.id
 		items.append({"name": colony.workplace_name(p) + (" — здесь" if here else ""),
-			"info": "мест %d/%d · подходит на %d%% (%s)" % [taken, colony.work_slots(p), roundi(colony.suitability(u, p) * 100),
-				Genetics.STAT_NAMES[colony.work_stat(p)].to_lower()],
+			"info": "мест %d/%d · подходит на %d%% · %s%s" % [taken, colony.work_slots(p), roundi(colony.suitability(u, p) * 100),
+				_fit_text(u, colony.work_task(p)), _calling_text(u, colony.work_task(p))],
 			"button": "Сюда", "pick": func() -> void:
 				var err := colony.assign_work(u, p)
 				if not err.is_empty():
@@ -485,6 +485,10 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
 		tags.append(["Занятие: " + colony.role_name(u).to_lower(), Hud.MUTED])
+		if u.calling > 0:
+			tags.append(["Работа по призванию: навык растёт быстрее, настроение лучше", Color(0.6, 0.9, 0.6)])
+		elif u.calling < 0:
+			tags.append(["Работа не по душе: навык растёт медленнее, настроение хуже", Color(1.0, 0.7, 0.45)])
 		rows.append({"type": "portrait", "looks": Genetics.looks(g), "tags": tags})
 	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
@@ -654,12 +658,38 @@ func _show_project(p: Project) -> void:
 	hud.show_panel(spec)
 
 
+## Нужные для работы характеристики жителя: «сила 130% + выносливость 90%».
+func _fit_text(u: Unit, task: int) -> String:
+	var st: Array = Colony.JOB_STATS.get(task, [])
+	if st.is_empty():
+		return ""
+	return "%s %d%% + %s %d%%" % [Genetics.STAT_NAMES[st[0]].to_lower(), roundi(u.stat(st[0]) * 100),
+		Genetics.STAT_NAMES[st[1]].to_lower(), roundi(u.stat(st[1]) * 100)]
+
+
+func _calling_text(u: Unit, task: int) -> String:
+	match colony.calling_of(u, task):
+		1:
+			return " · по призванию"
+		-1:
+			return " · не по душе"
+	return ""
+
+
+## «сила, выносливость (вполовину)».
+func _job_stats_text(task: int) -> String:
+	var st: Array = Colony.JOB_STATS.get(task, [])
+	if st.is_empty():
+		return ""
+	return "%s, %s (вполовину)" % [Genetics.STAT_NAMES[st[0]].to_lower(), Genetics.STAT_NAMES[st[1]].to_lower()]
+
+
 ## Кто работает в комнате (назначенные игроком).
 func _workers_list(p: Project) -> Dictionary:
 	var items := []
 	for u in colony.assigned_to(p):
 		items.append({"looks": Genetics.looks(u.genome), "name": u.name,
-			"info": "подходит на %d%% · %s" % [roundi(colony.suitability(u, p) * 100), Unit.TASK_NAMES[u.task]],
+			"info": "подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
 				_show_project(p)})
@@ -678,10 +708,10 @@ func _pick_worker(p: Project) -> void:
 		if colony.is_free(a) != colony.is_free(b):
 			return colony.is_free(a)
 		return colony.suitability(a, p) > colony.suitability(b, p))
-	var stat := colony.work_stat(p)
+	var task := colony.work_task(p)
 	for u: Unit in cands:
-		var info := "подходит на %d%% · %s %d%% · навык %d" % [roundi(colony.suitability(u, p) * 100),
-			Genetics.STAT_NAMES[stat].to_lower(), roundi(u.stat(stat) * 100), u.level(colony.work_skill(p))]
+		var info := "подходит на %d%% · %s · навык %d%s" % [roundi(colony.suitability(u, p) * 100),
+			_fit_text(u, task), u.level(colony.work_skill(p)), _calling_text(u, task)]
 		var busy := not colony.is_free(u)
 		if busy:
 			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
@@ -693,8 +723,8 @@ func _pick_worker(p: Project) -> void:
 					hud.log_event(err, "warning")
 				_show_project(p)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
-		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), Genetics.STAT_NAMES[stat].to_lower()],
-		"controls": [{"type": "people", "label": "Лучшие для этой работы — сверху:", "items": items, "empty": "Все взрослые уже здесь."}],
+		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
+		"controls": [{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items, "empty": "Все взрослые уже здесь."}],
 		"actions": [["Назад", func() -> void: _show_project(p)]]})
 
 
@@ -1052,19 +1082,19 @@ func _show_people() -> void:
 ## Кого назначить строителем или подсобным: сначала свободные, лучшие — сверху.
 func _pick_role(prof: int) -> void:
 	_info_target = []
-	var stat := "agility" if prof == Unit.Prof.BUILDER else "strength"
+	var task: int = {Unit.Prof.BUILDER: Unit.Task.BUILD, Unit.Prof.MINER: Unit.Task.DIG}.get(prof, Unit.Task.HARVEST)
 	var skill := "build" if prof == Unit.Prof.BUILDER else ("dig" if prof == Unit.Prof.MINER else "gather")
 	var cands := colony.units.filter(func(o: Unit) -> bool:
 		return not o.child and not (o.workplace == 0 and o.profession == prof))
 	var score := func(o: Unit) -> float:
-		return Colony.soft(o.stat(stat)) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
+		return colony.stat_fit(o, task) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
 	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
 		items.append({"looks": Genetics.looks(o.genome), "name": o.name,
-			"info": "%s%s · %s %d%% · навык %d" % ["ЗАНЯТ: " if busy else "", colony.role_name(o).to_lower(), Genetics.STAT_NAMES[stat].to_lower(),
-				roundi(o.stat(stat) * 100), o.level(skill)],
+			"info": "%s%s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", colony.role_name(o).to_lower(), _fit_text(o, task),
+				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof)
 				_show_people()})

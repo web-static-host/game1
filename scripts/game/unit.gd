@@ -53,6 +53,8 @@ var satiety := 100.0
 ## Здоровье 0..100: травмы от обвалов, восстанавливается отдыхом.
 var health := 100.0
 var profession := Prof.ANY
+## Своя работа по призванию (1), не по душе (-1) или обычно (0). Не сохраняется: пересчитывается.
+var calling := 0
 ## Возраст в секундах игры; дети не работают.
 var child := false
 var age := 0.0
@@ -175,7 +177,8 @@ static func skill_for(t: int) -> String:
 
 ## Настроение 0..100 из сытости, бодрости и наличия кровати.
 func mood() -> float:
-	var m := 50.0 + (satiety - 50.0) * 0.4 + (energy - 50.0) * 0.3 + (10.0 if bed_room != 0 else -10.0)
+	var m := 50.0 + (satiety - 50.0) * 0.4 + (energy - 50.0) * 0.3 + (10.0 if bed_room != 0 else -10.0) \
+		+ Colony.CALLING_MOOD * calling
 	return clampf(m, 0.0, 100.0)
 
 

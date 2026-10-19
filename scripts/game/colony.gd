@@ -1919,6 +1919,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 
 func _social() -> void:
 	_meet(SOCIAL_TICK)
+	for u in units:
+		u.calling = calling_of(u)
 	if beds_total() == 0:
 		return
 	# Пары складываются только у знакомых — кто подолгу бывал рядом, — и когда есть где жить.
@@ -2026,6 +2028,7 @@ func assign_work(u: Unit, p: Project) -> String:
 		return "Все места заняты (%d)" % work_slots(p)
 	u.workplace = p.id
 	u.profession = Unit.Prof.ANY
+	u.calling = calling_of(u)
 	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 		_drop(u)
 	_log("%s теперь работает: %s" % [u.name, workplace_name(p)], "info")
@@ -2041,6 +2044,7 @@ func set_profession(u: Unit, prof: int) -> String:
 		return ""
 	unassign_work(u)
 	u.profession = prof
+	u.calling = calling_of(u)
 	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 		_drop(u)
 	if prof != Unit.Prof.ANY:
@@ -2066,6 +2070,7 @@ func unassign_work(u: Unit) -> void:
 	if u.workplace == 0:
 		return
 	u.workplace = 0
+	u.calling = calling_of(u)
 	if u.state == Unit.State.WORK and u.task in [Unit.Task.FARM, Unit.Task.RESEARCH, Unit.Task.CRAFT, Unit.Task.FISH]:
 		_drop(u)
 
@@ -2079,15 +2084,52 @@ func workplace_name(p: Project) -> String:
 
 
 ## Какая характеристика и навык важны на этом месте.
-func work_stat(p: Project) -> String:
+## Какие характеристики важны для работы: [главная, вторая]. Главная влияет полностью
+## (150% — в полтора раза быстрее), вторая — наполовину.
+const JOB_STATS := {
+	Unit.Task.DIG: ["strength", "stamina"],
+	Unit.Task.BUILD: ["agility", "strength"],
+	Unit.Task.EQUIP: ["agility", "strength"],
+	Unit.Task.SUPPORT: ["agility", "strength"],
+	Unit.Task.REPAIR: ["agility", "strength"],
+	Unit.Task.HARVEST: ["strength", "speed"],
+	Unit.Task.FARM: ["agility", "stamina"],
+	Unit.Task.FISH: ["agility", "vision"],
+	Unit.Task.CRAFT: ["strength", "heat"],
+	Unit.Task.RESEARCH: ["intellect", "learning"],
+}
+## Работа «по призванию» (характеристики подходят) и «не по душе»: навык растёт
+## в 1,5 раза быстрее или вдвое медленнее, настроение лучше или хуже.
+const CALLING_HI := 1.25
+const CALLING_LO := 0.8
+const CALLING_MOOD := 10.0
+
+
+## Какую работу делают на этом месте (по ней — нужные характеристики).
+func work_task(p: Project) -> int:
 	if p.is_water_structure():
-		return "agility"
+		return Unit.Task.FISH
 	match p.purpose:
+		RoomType.FARM:
+			return Unit.Task.FARM
 		RoomType.LAB:
-			return "intellect"
-		RoomType.FORGE, RoomType.STORAGE:
-			return "strength"
-	return "agility"
+			return Unit.Task.RESEARCH
+		RoomType.KILN, RoomType.FORGE:
+			return Unit.Task.CRAFT
+		RoomType.STORAGE:
+			return Unit.Task.HARVEST
+		RoomType.GRANARY:
+			return Unit.Task.FISH
+	return Unit.Task.BUILD
+
+
+## Главная и вторая характеристики для места.
+func work_stats(p: Project) -> Array:
+	return JOB_STATS[work_task(p)]
+
+
+func work_stat(p: Project) -> String:
+	return work_stats(p)[0]
 
 
 func work_skill(p: Project) -> String:
@@ -2101,9 +2143,43 @@ func work_skill(p: Project) -> String:
 	return "build"
 
 
+## Насколько характеристики жителя подходят для работы (1.0 — обычный).
+func stat_fit(u: Unit, task: int) -> float:
+	if u.genome.is_empty() or not JOB_STATS.has(task):
+		return 1.0
+	var st: Array = JOB_STATS[task]
+	return maxf(0.3, u.stat(st[0]) * (1.0 + 0.5 * (u.stat(st[1]) - 1.0)))
+
+
+## Основная работа жителя: место работы или роль (строитель, шахтёр, подсобный); -1 — нет.
+func job_task(u: Unit) -> int:
+	if u.workplace != 0:
+		var p := project_by_id(u.workplace)
+		if p != null:
+			return work_task(p)
+	match u.profession:
+		Unit.Prof.BUILDER:
+			return Unit.Task.BUILD
+		Unit.Prof.MINER:
+			return Unit.Task.DIG
+		Unit.Prof.HAULER:
+			return Unit.Task.HARVEST
+	return -1
+
+
+## 1 — работа по призванию, -1 — не по душе, 0 — обычно (или нет своей работы).
+func calling_of(u: Unit, task := -2) -> int:
+	if task == -2:
+		task = job_task(u)
+	if task < 0 or u.child:
+		return 0
+	var f := stat_fit(u, task)
+	return 1 if f >= CALLING_HI else (-1 if f <= CALLING_LO else 0)
+
+
 ## Насколько житель хорош на этом месте (1.0 — обычный).
 func suitability(u: Unit, p: Project) -> float:
-	return soft(u.stat(work_stat(p))) * u.speed(work_skill(p)) * float(u.ability("work"))
+	return stat_fit(u, work_task(p)) * u.speed(work_skill(p)) * float(u.ability("work"))
 
 
 ## Работа на своём месте.
@@ -2158,8 +2234,13 @@ func acquaintance(a: Unit, b: Unit) -> float:
 	return acquaint.get(_acq_key(a.id, b.id), 0.0)
 
 
-## Знакомство растёт, когда жители рядом: живут, работают, едят вместе.
-## Общительные знакомятся быстрее.
+## Знакомство растёт, когда жители рядом. Быстро — у тех, кто работает на одном месте
+## или на соседних, на одной стройке или живёт в одной комнате: так игрок сводит пары.
+## Просто встречаясь где-то ещё, знакомятся медленно. Общительные — быстрее.
+const ACQUAINT_TOGETHER := 1.5
+const ACQUAINT_STRANGERS := 0.3
+
+
 func _meet(dt: float) -> void:
 	var adults := units.filter(func(u: Unit) -> bool: return not u.child)
 	for i in adults.size():
@@ -2167,9 +2248,28 @@ func _meet(dt: float) -> void:
 		for j in range(i + 1, adults.size()):
 			var b: Unit = adults[j]
 			var d := a.cell() - b.cell()
-			if absi(d.x) <= ACQUAINT_NEAR and absi(d.y) <= 2:
+			var together := works_together(a, b)
+			var near := absi(d.x) <= ACQUAINT_NEAR + 3 and absi(d.y) <= 4 if together \
+				else absi(d.x) <= ACQUAINT_NEAR and absi(d.y) <= 2
+			if near:
 				var key := _acq_key(a.id, b.id)
-				acquaint[key] = acquaint.get(key, 0.0) + dt * (a.stat("charm") + b.stat("charm")) * 0.5
+				acquaint[key] = acquaint.get(key, 0.0) + dt * (a.stat("charm") + b.stat("charm")) * 0.5 \
+					* (ACQUAINT_TOGETHER if together else ACQUAINT_STRANGERS)
+
+
+## Работают вместе (одно место или соседние комнаты, одна стройка) или живут в одной комнате.
+func works_together(a: Unit, b: Unit) -> bool:
+	if a.bed_room != 0 and a.bed_room == b.bed_room:
+		return true
+	if a.project_id != 0 and a.project_id == b.project_id and a.state == Unit.State.WORK and b.state == Unit.State.WORK:
+		return true
+	if a.workplace == 0 or b.workplace == 0:
+		return false
+	if a.workplace == b.workplace:
+		return true
+	var pa := project_by_id(a.workplace)
+	var pb := project_by_id(b.workplace)
+	return pa != null and pb != null and pa.rect.grow(1).intersects(pb.rect)
 
 
 ## Лучшие знакомые жителя: [[житель, знакомство]].
@@ -2603,24 +2703,18 @@ func work_factor(u: Unit, task: int, c: Vector2i) -> float:
 	if u.genome.is_empty():
 		return 1.0
 	var work: float = u.ability("work")
+	var fit := stat_fit(u, task)
 	match task:
 		Unit.Task.DIG:
 			var deep := c.y - world.gen.surface_y(c.x) > 10
 			if deep and Mat.is_ore(world.get_mat(c.x, c.y)):
 				work = maxf(work, 1.0) * u.ability("deep_mining")
-			return soft(u.stat("strength")) * u.ability("dig") * work
+			return fit * u.ability("dig") * work
 		Unit.Task.BUILD, Unit.Task.EQUIP, Unit.Task.SUPPORT:
-			return soft(u.stat("agility")) * u.ability("build") * work
+			return fit * u.ability("build") * work
 		Unit.Task.REPAIR:
-			return soft(u.stat("agility")) * u.ability("repair") * work
-		Unit.Task.HARVEST:
-			return soft(u.stat("strength")) * work
-		Unit.Task.RESEARCH:
-			# Наука — прямо от интеллекта: вдвое умнее — вдвое быстрее.
-			return u.stat("intellect") * work
-		Unit.Task.FARM, Unit.Task.CRAFT, Unit.Task.FISH:
-			return soft(u.stat("agility")) * work
-	return work
+			return fit * u.ability("repair") * work
+	return fit * work
 
 
 func _work(u: Unit, dt: float) -> void:
@@ -2628,7 +2722,9 @@ func _work(u: Unit, dt: float) -> void:
 	var rate := dt
 	if not skill.is_empty():
 		var before := u.level(skill)
-		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning")
+		# По призванию навык растёт быстрее, не по душе — медленнее.
+		var grow: float = [0.5, 1.0, 1.5][calling_of(u, u.task) + 1]
+		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning") * grow
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
 		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor() * light_factor(u)
@@ -2761,6 +2857,10 @@ func _task_valid(u: Unit) -> bool:
 				var hp := project_by_id(u.project_id)
 				if hp == null or hp.paused:
 					return false
+				# Расчистка стройки: убирают всё, что стоит на месте, даже не отмеченное
+				# (деревце, выросшее из пня уже после закладки).
+				if hp.clear_x.has(u.target.x):
+					return harvestable(u.target.x)
 			if u.gather_room != 0:
 				var room := project_by_id(u.gather_room)
 				return room != null and RoomType.is_store(room.purpose) and harvestable(u.target.x)

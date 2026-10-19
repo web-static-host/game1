@@ -58,6 +58,9 @@ func _initialize() -> void:
 	test_mine_meters()
 	test_lights()
 	test_two_generators()
+	test_job_stats()
+	test_pairs_at_work()
+	test_clearing_regrown()
 	test_builders_dont_carry()
 	test_bridge_and_pier()
 	test_miner_alone()
@@ -874,8 +877,10 @@ func test_roles() -> void:
 	# Наука: только назначенные, скорость — прямо от интеллекта.
 	var smart: Unit = colony.units[0]
 	smart.stats["intellect"] = 2.0
+	smart.stats["learning"] = 1.0
 	var plain: Unit = colony.units[1]
 	plain.stats["intellect"] = 1.0
+	plain.stats["learning"] = 1.0
 	var k := colony.work_factor(smart, Unit.Task.RESEARCH, Vector2i.ZERO) / colony.work_factor(plain, Unit.Task.RESEARCH, Vector2i.ZERO)
 	check(absf(k - 2.0 * float(smart.ability("work")) / float(plain.ability("work"))) < 0.01,
 		"вдвое умнее — изучает вдвое быстрее (%.2f)" % k)
@@ -2393,6 +2398,108 @@ func test_mine_meters() -> void:
 		"остановили: готовая часть осталась шахтой (%d м)" % mine.rect.size.x)
 	for i in mine.slice_count():
 		check(colony.slice_dug(mine, i), "метр %d остановленной шахты выкопан" % i)
+
+
+func test_job_stats() -> void:
+	# Характеристики влияют полностью: главная — целиком, вторая — наполовину.
+	var colony := _new_colony(27)
+	_start(colony, 0)
+	var a := colony.units[0]
+	var b := colony.units[1]
+	for k in a.stats:
+		a.stats[k] = 1.0
+		b.stats[k] = 1.0
+	a.stats["strength"] = 1.5
+	check(absf(colony.stat_fit(a, Unit.Task.DIG) - 1.5) < 0.01, "сила 150% — копает в 1,5 раза быстрее")
+	a.stats["stamina"] = 1.4
+	check(absf(colony.stat_fit(a, Unit.Task.DIG) - 1.5 * 1.2) < 0.01, "выносливость 140% добавляет ещё 20%")
+	b.stats["strength"] = 0.7
+	check(absf(colony.stat_fit(b, Unit.Task.DIG) - 0.7) < 0.01, "сила 70% — на 30% медленнее")
+	var ka := colony.work_factor(a, Unit.Task.DIG, Vector2i.ZERO) / float(a.ability("work")) / float(a.ability("dig"))
+	check(absf(ka - colony.stat_fit(a, Unit.Task.DIG)) < 0.01, "скорость копки — от силы и выносливости")
+	# Призвание: сильный шахтёр — по призванию, слабый — не по душе.
+	colony.set_profession(a, Unit.Prof.MINER)
+	colony.set_profession(b, Unit.Prof.MINER)
+	check(a.calling == 1 and b.calling == -1, "сильный в шахте — по призванию, слабый — не по душе")
+	var ma := a.mood()
+	a.calling = 0
+	check(absf(ma - a.mood() - Colony.CALLING_MOOD) < 0.01, "по призванию — настроение лучше")
+	a.calling = 1
+	# Навык по призванию растёт в 1,5 раза быстрее, не по душе — вдвое медленнее.
+	for u in [a, b]:
+		u.skills["dig"] = 0.0
+		u.task = Unit.Task.DIG
+		u.target = Vector2i(0, 9999)
+		u.stats["learning"] = 1.0
+	colony.dig_progress.clear()
+	var before_a: float = a.skills["dig"]
+	colony._work(a, 1.0)
+	colony._work(b, 1.0)
+	colony.dig_progress.clear()
+	check(absf(a.skills["dig"] - before_a - 1.5 * (2.0 if colony.research.has("education") else 1.0)) < 0.01, "по призванию навык растёт в 1,5 раза быстрее")
+	check(absf(b.skills["dig"] - 0.5) < 0.01, "не по душе — вдвое медленнее")
+	a.task = Unit.Task.NONE
+	b.task = Unit.Task.NONE
+	colony.set_profession(b, Unit.Prof.ANY)
+	check(b.calling == 0, "без своей работы — ни призвания, ни «не по душе»")
+
+
+func test_pairs_at_work() -> void:
+	# Знакомство: на одном месте и на соседних — быстро, просто рядом — медленно.
+	var colony := _new_colony(28)
+	_start(colony, 0)
+	var a := colony.units[0]
+	var b := colony.units[1]
+	var c := colony.units[2]
+	for u in colony.units:
+		u.stats["charm"] = 1.0
+		u.bed_room = 0
+		u.pos = Vector2(500 + u.id * 50, 0)
+	var farm := _fake_room(colony, RoomType.FARM, 10, 6)
+	var lab := _fake_room(colony, RoomType.LAB, 16, 6)
+	check(colony.assign_work(a, farm).is_empty() and colony.assign_work(b, farm).is_empty(), "двое на ферме")
+	a.pos = Vector2(11, 0)
+	b.pos = Vector2(13, 0)
+	c.pos = Vector2(15, 0)
+	colony.acquaint.clear()
+	colony._meet(10.0)
+	check(absf(colony.acquaintance(a, b) - 10.0 * Colony.ACQUAINT_TOGETHER) < 0.01, "на одном месте знакомятся быстро")
+	check(absf(colony.acquaintance(b, c) - 10.0 * Colony.ACQUAINT_STRANGERS) < 0.01, "просто рядом — медленно")
+	check(colony.assign_work(c, lab).is_empty() and colony.works_together(b, c), "ферма и лаборатория рядом — работают по соседству")
+	colony.acquaint.clear()
+	c.pos = Vector2(19, -2)
+	colony._meet(10.0)
+	check(absf(colony.acquaintance(b, c) - 10.0 * Colony.ACQUAINT_TOGETHER) < 0.01, "на соседних местах — тоже быстро")
+	lab.rect.position.x += 20
+	check(not colony.works_together(b, c), "лабораторию отодвинули — уже не соседи")
+
+
+func test_clearing_regrown() -> void:
+	# Деревце, выросшее из пня на месте стройки после закладки, всё равно срубают.
+	var colony := _new_colony(29)
+	_start(colony, 0)
+	var x := -1
+	for dx in range(4, 60):
+		if colony.world.feature_at(colony.home.x + dx) == WorldGen.FEATURE_TREE:
+			x = colony.home.x + dx
+			break
+	check(x >= 0, "нашли дерево у базы")
+	var p := Project.new()
+	p.id = 980
+	p.kind = Project.Kind.ROOM
+	p.phase = Project.Phase.DIG
+	p.rect = Rect2i(x, colony.world.gen.surface_y(x) - 3, 3, 3)
+	p.clear_x.append(x)
+	colony.projects.append(p)
+	colony.world.set_feature_mark(x, false)
+	var u := colony.units[0]
+	u.task = Unit.Task.HARVEST
+	u.project_id = p.id
+	u.gather_room = 0
+	u.target = Vector2i(x, colony.world.gen.surface_y(x) - 1)
+	check(colony._task_valid(u), "рубка на месте стройки не отменяется без отметки")
+	u.task = Unit.Task.NONE
+	u.project_id = 0
 
 
 func test_two_generators() -> void:
