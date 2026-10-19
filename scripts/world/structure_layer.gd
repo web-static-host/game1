@@ -637,6 +637,134 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_furn_at(bed, cx, fy, alpha, 1, sc)
 
 
+## Очаг: печь на каждые 3 м (каменная, кирпичная; с газом — отопительный котёл вместо печи),
+## горит, когда топится; от печи труба в потолок, рядом её топливо (дрова, у кирпичной — уголь).
+## Котлы соединены трубами отопления с вентилями. На стене между печами — кочерга и совок.
+func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.stoves(p)
+	var lay := _inside(p, r, n * 3.0)
+	var done := p.phase == Project.Phase.DONE
+	var gas := p.gas_boiler and done
+	var kind := "gas" if gas else ("brick" if p.brick_stoves and done else "stone")
+	var stove := furniture("hearth", kind + ("_on" if p.burning else "_off"))
+	var fuel := null if gas else furniture("hearth", "coal" if kind == "brick" else "logs")
+	var k := TILE / FURN_PX_PER_M
+	var mod := Color(1, 1, 1, alpha)
+	var xs: Array[float] = []
+	for i in n:
+		xs.append(lay.x + (i * 3 + 1.5) * lay.unit - (TILE * 0.35 if fuel != null else 0.0))
+	var sh := stove.get_height() * k
+	if gas:
+		# Трубы отопления — за котлами, от первого котла до правой стены, на уровне патрубков.
+		var right: float = lay.x + n * 3 * lay.unit
+		for pipe in [["pipe_red", 0.32], ["pipe_blue", 0.68]]:
+			var t := furniture("hearth", pipe[0])
+			_tile_h(t, xs[0], right, fy - sh * (1.0 - pipe[1]) - t.get_height() * k * 0.5, alpha)
+		var valve := furniture("hearth", "valve")
+		for i in n:
+			var vx: float = (xs[i] + xs[i + 1]) * 0.5 if i + 1 < n else (xs[i] + right) * 0.5 + TILE * 0.2
+			var vs := valve.get_size() * k
+			draw_texture_rect(valve, Rect2(vx - vs.x * 0.5, fy - sh * 0.68 - vs.y * 0.5, vs.x, vs.y), false, mod)
+	var chimney := furniture("hearth", "chimney")
+	var tools := furniture("hearth", "tools")
+	var posts := wall_posts(p.rect.size.x)
+	for i in n:
+		var cw := chimney.get_width() * k
+		_tile_v(chimney, xs[i] - cw * 0.5, fy - TILE * 2.62, fy - sh + 4 * k, alpha)
+		if p.burning and alpha >= 1.0:
+			_glow(Vector2(xs[i], fy - sh * 0.4), TILE * 2.2, Color(0.3, 0.55, 1.0, 0.18) if gas else Color(1.0, 0.6, 0.25, 0.22))
+		_furn_at(stove, xs[i], fy, alpha, 1)
+		if fuel != null:
+			_furn_at(fuel, xs[i] + stove.get_width() * k * 0.5 + fuel.get_width() * k * 0.5 + TILE * 0.05, fy, alpha, 1)
+		if i + 1 < n and not gas:
+			var a: float = (xs[i] - r.position.x) / TILE + 1.1
+			var dx := _decor_x(a, (xs[i + 1] - r.position.x) / TILE - 0.6, tools.get_width() / FURN_PX_PER_M, posts)
+			if not is_nan(dx):
+				_furn_hang(tools, r.position.x + dx * TILE, fy, alpha)
+
+
+## Столовая: стол с лавкой на каждые 3 м, на столе — свой набор посуды; на стене — полки и меню.
+const DINING_WALL := ["shelf_vine", "menu", "shelf_plates"]
+const DINING_TABLEWARE := ["bowl", "jug_blue", "mug_red", "fruit", "mug_blue", "jug_red", "bowl", "mug_green"]
+func _draw_dining_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := maxi(1, p.rect.size.x / 3)
+	var lay := _inside(p, r, n * 3.0)
+	var table := furniture("dining", "table")
+	var k := TILE / FURN_PX_PER_M
+	var first := int(WorldGen.hash01(p.id, 0, 93) * DINING_TABLEWARE.size())
+	for i in n:
+		var cx: float = lay.x + (i * 3 + 1.5) * lay.unit
+		_wall_item(p, r, "dining", DINING_WALL[i % DINING_WALL.size()], cx, lay.unit * 3, fy, alpha)
+		var sc := _fit(table, lay.unit * 3)
+		_furn_at(table, cx, fy, alpha, 1, sc)
+		var ware: Array[Texture2D] = []
+		for j in 4:
+			ware.append(furniture("dining", DINING_TABLEWARE[(first + i * 3 + j) % DINING_TABLEWARE.size()]))
+		_place_row(ware, cx, table.get_width() * k * sc * 0.8, fy - (table.get_height() - 3) * k * sc, alpha)
+		var bench := furniture("dining", "bench")
+		_furn_at(bench, cx, fy + TILE * 0.06, alpha, 1, sc)
+
+
+## Лаборатория: стол-тумба на каждые 3 м, на столах — свои приборы (прибор с экраном светится,
+## когда есть энергия); на стене — доска, чертёж и полка с книгами.
+const LAB_WALL := ["board", "poster", "shelf_books"]
+const LAB_SETS := [["tubes", "still"], ["microscope", "crystal", "rock", "gold"], ["flask", "device"]]
+func _draw_lab_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := maxi(1, p.rect.size.x / 3)
+	var lay := _inside(p, r, n * 3.0)
+	var desk := furniture("lab", "desk")
+	var k := TILE / FURN_PX_PER_M
+	for i in n:
+		var cx: float = lay.x + (i * 3 + 1.5) * lay.unit
+		_wall_item(p, r, "lab", LAB_WALL[i % LAB_WALL.size()], cx, lay.unit * 3, fy, alpha)
+		var sc := _fit(desk, lay.unit * 3)
+		_furn_at(desk, cx, fy, alpha, 1, sc)
+		var tools: Array[Texture2D] = []
+		for name in LAB_SETS[i % LAB_SETS.size()]:
+			if name == "device":
+				name = "device_on" if colony.powered() else "device_off"
+			tools.append(furniture("lab", name))
+		_place_row(tools, cx, desk.get_width() * k * sc * 0.85, fy - (desk.get_height() - 3) * k * sc, alpha)
+
+
+## Настенный предмет над местом шириной width с центром cx: на линии подвеса, не на стойке.
+func _wall_item(p: Project, r: Rect2, room: String, name: String, cx: float, width: float, fy: float, alpha: float) -> void:
+	var t := furniture(room, name)
+	var a := (cx - width * 0.5 - r.position.x) / TILE
+	var dx := _decor_x(a, a + width / TILE, t.get_width() / FURN_PX_PER_M, wall_posts(p.rect.size.x))
+	if not is_nan(dx):
+		_furn_hang(t, r.position.x + dx * TILE, fy, alpha)
+
+
+## Предметы в ряд на поверхности (стол): поровну по ширине width с центром cx, низом на bottom.
+func _place_row(items: Array[Texture2D], cx: float, width: float, bottom: float, alpha: float) -> void:
+	for j in items.size():
+		_furn_at(items[j], cx - width * 0.5 + (j + 0.5) * width / items.size(), bottom, alpha)
+
+
+## Повторяющийся по горизонтали предмет (трубы) от left до right, верхом на top.
+func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float) -> void:
+	var k := TILE / FURN_PX_PER_M
+	var x := left
+	while x < right - 0.5:
+		var seg := minf(t.get_width() * k, right - x)
+		draw_texture_rect_region(t, Rect2(x, top, seg, t.get_height() * k), Rect2(0, 0, seg / k, t.get_height()), Color(1, 1, 1, alpha))
+		x += seg
+
+
+## Повторяющийся по вертикали предмет (труба дымохода) с левым краем x от top до bottom.
+func _tile_v(t: Texture2D, x: float, top: float, bottom: float, alpha: float) -> void:
+	var k := TILE / FURN_PX_PER_M
+	var y := top
+	while y < bottom - 0.5:
+		var seg := minf(t.get_height() * k, bottom - y)
+		draw_texture_rect_region(t, Rect2(x, y, t.get_width() * k, seg), Rect2(0, 0, t.get_width(), seg / k), Color(1, 1, 1, alpha))
+		y += seg
+
+
 ## Стеллаж шириной width: стойки как на спрайте, середина (полки) сжата.
 func _draw_rack(t: Texture2D, cx: float, bottom: float, width: float, post_px: float, alpha: float) -> void:
 	var k := TILE / FURN_PX_PER_M
@@ -691,6 +819,15 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 		return
 	if purpose == RoomType.FARM and furniture("farm", "bed") != null:
 		_draw_farm_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.HEARTH and furniture("hearth", "stone_on") != null:
+		_draw_hearth_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.DINING and furniture("dining", "table") != null:
+		_draw_dining_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.LAB and furniture("lab", "desk") != null:
+		_draw_lab_furniture(p, r, alpha)
 		return
 	match purpose:
 		RoomType.HOME:

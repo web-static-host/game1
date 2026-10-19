@@ -1,16 +1,19 @@
 extends SceneTree
 ## Снимки комнат из разных материалов: жилые, склады, амбары, фермы — новые картинки и как было.
-##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка>
+##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка> [2]
+## С «2» — второй набор: очаги (камень, кирпич, газ), столовые, лаборатории.
 
 var _main: Node
 var _frame := 0
 var _out := "user://"
+var _set2 := false
 
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() > 0:
 		_out = args[0]
+	_set2 = args.size() > 1 and args[1] == "2"
 	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
 	_main = load("res://scenes/main.tscn").instantiate()
@@ -58,6 +61,9 @@ func _process(_delta: float) -> bool:
 				var left := pr.rect.position.x == x0 + 1
 				pr.purpose = {2: RoomType.HOME, 5: RoomType.STORAGE if left else RoomType.HOME,
 					8: RoomType.STORAGE if left else RoomType.FARM, 11: RoomType.FARM if left else RoomType.GRANARY}[row]
+				if _set2:
+					pr.purpose = {2: RoomType.HEARTH, 5: RoomType.DINING if left else RoomType.LAB,
+						8: RoomType.LAB if left else RoomType.HEARTH, 11: RoomType.HEARTH if left else RoomType.DINING}[row]
 				# Склады одной ширины: кирпичный с лестницей, каменный без — должны выглядеть одинаково.
 				if pr.material == "stone":
 					pr.ladder = false
@@ -107,3 +113,10 @@ func _stage() -> void:
 		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.FARM:
 			pr.farm_progress = RoomType.FARM_CYCLE * (0.9 if pr.rect.size.x == 6 else 0.5)
 	_main.colony.power_made = 10    # лампы на фермах горят
+	# Очаги: 9 м — каменный, 3 м — кирпичный, 6 м — газовые котлы; горят все, кроме 3 м.
+	for pr in _main.colony.projects:
+		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.HEARTH:
+			pr.brick_stoves = pr.rect.size.x != 9
+			pr.gas_boiler = pr.rect.size.x == 6
+			pr.on_gas = pr.gas_boiler
+			pr.burning = pr.rect.size.x != 3
