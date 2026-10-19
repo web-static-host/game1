@@ -4,7 +4,7 @@ extends Node2D
 
 const AUTOSAVE_SEC := 30.0
 ## Сколько времени отсутствия засчитывается (стимул заходить регулярно).
-const OFFLINE_CAP_SEC := 3.0 * 3600.0
+const OFFLINE_CAP_SEC := 1.0 * 3600.0
 const SPEEDS := [1.0, 2.0, 10.0, 20.0]
 const STATUS_INTERVAL := 0.2
 

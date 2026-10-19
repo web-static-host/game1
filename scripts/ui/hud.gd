@@ -1012,7 +1012,7 @@ func _build_menu(center: CenterContainer) -> void:
 	_background.add_theme_font_size_override("font_size", 22)
 	_background.toggled.connect(func(on: bool) -> void: background_toggled.emit(on))
 	v.add_child(_background)
-	var bg_hint := _label("Включено — пока вас нет, жители работают (до 3 часов). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
+	var bg_hint := _label("Включено — пока вас нет, жители работают (до 1 часа). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
 	bg_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bg_hint.custom_minimum_size = Vector2(380, 0)
 	v.add_child(bg_hint)
