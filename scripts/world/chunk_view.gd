@@ -32,7 +32,7 @@ const FOG_HOT := Color(0.4, 0.22, 0.15)
 ## Задняя стенка выработки — тёплая тёмная.
 const BACK := Color(0.23, 0.16, 0.16)
 
-## Текстуры земли (assets/ground/, из art_src/ground/prepare.py): серые пласты,
+## Текстуры земли (assets/ground/, из art_src/ground/prepare.py): серая фактура почвы,
 ## красим цветом породы. Средняя яркость текстуры — ROCK_MEAN, поэтому цвет делим на неё.
 const ROCK_MEAN := 0.7
 ## Период текстуры породы в пикселях мира; чанк (1024 px) — ровно 2 периода,
@@ -42,9 +42,7 @@ const ROCK_PERIOD := 512.0
 const EDGE_PERIOD := 1024.0 / 3.0
 const GRASS_LINE := 0.51
 const SNOW_LINE := 0.45
-## Мягкая земля (почва, глина, песок), слоистые осадочные породы, плотные кристаллические.
-enum RockTex { SOFT, DENSE, LAYERED }
-
+## Фактура земли (assets/ground/fog.png): и неразведанная, и открытая порода — разным цветом.
 static var _rock_tex: Array = []
 static var _grass_tex: Texture2D
 static var _snow_tex: Texture2D
@@ -59,7 +57,7 @@ func setup(p_world: WorldData, p_chunk: ChunkData) -> void:
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	if _rock_tex.is_empty():
-		for n in ["rock_1", "rock_2", "rock_3", "fog"]:
+		for n in ["fog"]:
 			_rock_tex.append(_load("res://assets/ground/%s.png" % n))
 		_grass_tex = _load("res://assets/ground/grass_edge.png")
 		_snow_tex = _load("res://assets/ground/snow_edge.png")
@@ -69,20 +67,16 @@ static func _load(path: String) -> Texture2D:
 	return load(path) if ResourceLoader.exists(path) else null
 
 
-## Какой текстурой рисовать породу m.
-static func rock_tex_of(m: int) -> int:
-	match m:
-		Mat.TOPSOIL, Mat.CLAY, Mat.SAND, Mat.GRAVEL, Mat.RUBBLE:
-			return RockTex.SOFT
-		Mat.GRANITE, Mat.GNEISS, Mat.BASALT, Mat.PERIDOTITE, Mat.KIMBERLITE, Mat.MAGMA:
-			return RockTex.DENSE
-	return RockTex.LAYERED
+## Какой текстурой рисовать породу m. Полосатые пласты автору не понравились — открытая порода
+## той же мягкой фактурой, что и неразведанная земля, только своим цветом.
+static func rock_tex_of(_m: int) -> int:
+	return FOG
 
 
 ## Неразведанная земля («туман»): одна фактура на весь мир (assets/ground/fog.png),
 ## не зависит от того, что внутри, — по ней ничего не угадать. Пока картинки нет — заливка.
 ## Пласты пород рисуем только на открытой породе (кайма, выработки).
-const FOG := 3
+const FOG := 0
 
 
 static func _tinted(col: Color) -> Color:
@@ -189,7 +183,8 @@ func _draw() -> void:
 		# Плавный рельеф: верх земли — ломаная через центры столбцов, а не ступеньки.
 		var line := _surface_line(x, surf)
 		var band_to := ceili(maxf(line.x, line.z) + SOIL_BAND) if not line.is_zero_approx() else surf
-		var soil := rock_color(Mat.TOPSOIL, gen.tint(x, surf))
+		# Почва под травой — тем же тоном, что и земля ниже: первый блок не отличается от остальных.
+		var soil := fog_color(0, gen.tint(x, surf))
 		for ly in SIZE:
 			var y := y0 + ly
 			if y < surf:
@@ -199,7 +194,7 @@ func _draw() -> void:
 					var sr := Rect2(lx * TILE, ly * TILE, TILE, TILE)
 					_draw_clipped(lx, ly, line, fog_color(0, gen.tint(x, y)), FOG)
 					for poly in Geometry2D.intersect_polygons(_band_poly(lx, ly, line), _rect_poly(sr)):
-						_fill_poly(poly, soil, RockTex.SOFT)
+						_fill_poly(poly, soil, FOG)
 				continue # небо рисует фон
 			var i := ChunkData.idx(lx, ly)
 			var f := chunk.flags[i]
@@ -212,14 +207,14 @@ func _draw() -> void:
 				_draw_clipped(lx, ly, line, fog_color(depth, v), FOG)
 				var band := _band_poly(lx, ly, line)
 				for poly in Geometry2D.intersect_polygons(band, _rect_poly(r)):
-					_fill_poly(poly, soil, RockTex.SOFT)
+					_fill_poly(poly, soil, FOG)
 				if f & ChunkData.F_REVEALED:
 					# Вскрытая порода — тоже только ниже линии земли, иначе торчат углы.
 					var clip := clip_below(lx * TILE, ly * TILE, TILE, _line_px(ly, line))
 					if clip.is_empty():
 						clip = PackedVector2Array([Vector2.ZERO]) # клетка целиком над землёй — каймы нет
-					_half_strips(lx, ly, r, rock_color(m, v), _is_hole(lx - 1, ly), _is_hole(lx + 1, ly),
-						_is_hole(lx, ly - 1), _is_hole(lx, ly + 1), clip, rock_tex_of(m))
+					if clip.size() >= 3:
+						_fill_poly(clip, rock_color(m, v), rock_tex_of(m))
 				if y == surf:
 					if gen.water_level(x) >= surf:
 						_draw_smooth_grass(lx, ly, line, x)
@@ -312,23 +307,11 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 		mask |= 4
 	if open_d and open_l:
 		mask |= 8
-	# Под землёй порода видна только у самой выработки и плавно уходит в темноту.
-	var faded := mask == 0
-	var fog := fog_color(y - surf, v)
-	# Разведано геологией (вдали от выработки, ни одной открытой соседней клетки):
-	# порода видна целиком, чуть приглушённая.
-	var far := faded and not (open_l or open_r or open_u or open_d or _is_open(lx - 1, ly - 1) \
-		or _is_open(lx + 1, ly - 1) or _is_open(lx - 1, ly + 1) or _is_open(lx + 1, ly + 1))
-	if far:
-		_fill_rect(r, base.lerp(fog, 0.35), ti)
-	elif faded:
-		_fill_rect(r, fog, FOG)
-		_half_strips(lx, ly, r, base, open_l, open_r, open_u, open_d, PackedVector2Array(), ti)
-	elif mask == 0:
+	# Открытая порода — целым блоком и одинаково, у выработки и дальше (геологоразведка);
+	# выступ между выработками, открытый с двух сторон, — со скруглёнными углами.
+	if mask == 0:
 		_fill_rect(r, base, ti)
 	else:
-		# Выступ между выработками: приглушённый, как и остальная порода у края.
-		# Выступ, открытый с двух сторон, виден целиком.
 		_fill_poly(_rounded_rect(r, mask), base, ti)
 
 	# Тени по краям, обращённым к пустоте.
@@ -757,60 +740,6 @@ func _band_poly(lx: int, ly: int, line: Vector3) -> PackedVector2Array:
 
 static func _rect_poly(r: Rect2) -> PackedVector2Array:
 	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
-
-
-## Полоса породы в полблока у открытых сторон, дальше — неразведанная земля.
-func _half_strips(lx: int, ly: int, r: Rect2, base: Color, l: bool, rt: bool, u: bool, d: bool, clip := PackedVector2Array(), ti := 0) -> void:
-	var f := FADE * TILE
-	var p := r.position
-	var e := r.end
-	if l:
-		_strip(Rect2(p.x, p.y, f, TILE), base, clip, ti)
-	if rt:
-		_strip(Rect2(e.x - f, p.y, f, TILE), base, clip, ti)
-	if u:
-		_strip(Rect2(p.x, p.y, TILE, f), base, clip, ti)
-	if d:
-		_strip(Rect2(p.x, e.y - f, TILE, f), base, clip, ti)
-	# Камешки во вскрытой кайме.
-	var x := chunk.cx * SIZE + lx
-	var y := chunk.cy * SIZE + ly
-	for k in 2:
-		var hx := WorldGen.hash01(x, y, 600 + k)
-		var hy := WorldGen.hash01(x, y, 610 + k)
-		var q := Vector2(-1, -1)
-		if l and k == 0:
-			q = p + Vector2(f * 0.5, 6 + hy * (TILE - 12))
-		elif rt and k == 0:
-			q = Vector2(e.x - f * 0.5, p.y + 6 + hy * (TILE - 12))
-		elif u:
-			q = p + Vector2(6 + hx * (TILE - 12), f * 0.5)
-		elif d:
-			q = Vector2(p.x + 6 + hx * (TILE - 12), e.y - f * 0.5)
-		if q.x < 0 or (not clip.is_empty() and (clip.size() < 3 or not Geometry2D.is_point_in_polygon(q, clip))):
-			continue
-		var rad := 2.5 + WorldGen.hash01(x, y, 620 + k) * 3.0
-		draw_circle(q + Vector2(0, 1.5), rad, base.darkened(0.3))
-		draw_circle(q, rad, base.lightened(0.15))
-	# Открыт только угол по диагонали — четверть клетки.
-	for c: Vector2i in CORNERS:
-		var side_x := l if c.x < 0 else rt
-		var side_y := u if c.y < 0 else d
-		if side_x or side_y or not _is_open(lx + c.x, ly + c.y):
-			continue
-		var corner := Vector2(p.x if c.x < 0 else e.x - f, p.y if c.y < 0 else e.y - f)
-		_strip(Rect2(corner, Vector2(f, f)), base, clip, ti)
-
-
-## Полоса каймы; если задан clip — только её часть внутри него (под линией земли).
-func _strip(r: Rect2, col: Color, clip: PackedVector2Array, ti: int) -> void:
-	if clip.is_empty():
-		_fill_rect(r, col, ti)
-		return
-	if clip.size() < 3:
-		return
-	for poly in Geometry2D.intersect_polygons(_rect_poly(r), clip):
-		_fill_poly(poly, col, ti)
 
 
 ## Выработка или пещера (не небо).

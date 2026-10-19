@@ -26,6 +26,9 @@ func _process(_delta: float) -> bool:
 		var s := world.gen.surface_y(x0)
 		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "metal": 300}
 		colony.known_resources = {"wood": true, "stone": true}
+		# Геологоразведка II: порода видна на 3 клетки от выработок — проверить, что все открытые
+		# клетки рисуются одинаково.
+		colony.research.done.append_array(["geology", "geology2"])
 		var T := Project.Kind.TUNNEL
 		var R := Project.Kind.ROOM
 		colony.create_project(T, Rect2i(x0, s, 1, 12))
