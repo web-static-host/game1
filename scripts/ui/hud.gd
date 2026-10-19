@@ -970,7 +970,7 @@ func info_visible() -> bool:
 ## Касание в списке сначала ничего не нажимает: сдвинул палец больше чем на DRAG_DEADZONE —
 ## это прокрутка (с инерцией), отпустил на месте — обычное нажатие (кнопка срабатывает).
 ## Так список листается и там, где под пальцем кнопка.
-const DRAG_DEADZONE := 12.0
+const DRAG_DEADZONE := 20.0
 var _press_event: InputEventMouseButton = null
 var _press_region := ""
 var _dragging := false
@@ -1055,11 +1055,13 @@ func _release_velocity() -> Vector2:
 	return (-((last[0] as Vector2) - (first[0] as Vector2)) / dt).limit_length(2500.0)
 
 
-## Нажатие без сдвига — передаём кнопкам как обычно.
+## Нажатие без сдвига — передаём кнопкам как обычно. Координаты события уже пересчитаны
+## под масштаб экрана — второй раз не пересчитываем (in_local_coords), иначе на телефоне
+## нажатие уходит мимо кнопки.
 func _replay_tap(press: InputEventMouseButton, release: InputEventMouseButton) -> void:
 	_replaying = true
-	get_viewport().push_input(press)
-	get_viewport().push_input(release)
+	get_viewport().push_input(press, true)
+	get_viewport().push_input(release, true)
 	_replaying = false
 
 
@@ -1211,10 +1213,25 @@ func _fill_tree(spec: Dictionary) -> void:
 				(node as Label).custom_minimum_size = Vector2.ZERO
 			_tree_rows.add_child(node)
 	_tree_items = spec.get("items", [])
-	_build_tree_nodes()
+	# Узлы и кнопку «Изучать» пересобираем, только если что-то поменялось: иначе нажатие,
+	# пришедшееся на ежесекундное обновление, теряется.
+	var sig := _tree_signature()
+	if sig != _tree_sig:
+		_build_tree_nodes()
+
+
+var _tree_sig := ""
+
+
+func _tree_signature() -> String:
+	var parts: PackedStringArray = [_tree_selected]
+	for it in _tree_items:
+		parts.append("%s:%s" % [it["id"], it["state"]])
+	return ",".join(parts)
 
 
 func _build_tree_nodes() -> void:
+	_tree_sig = _tree_signature()
 	# Ступень узла — длиннейшая цепочка требований до него.
 	var by_id := {}
 	for it in _tree_items:
