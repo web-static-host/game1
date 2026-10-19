@@ -397,11 +397,9 @@ func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var tex := furniture("home", item)
 			if used.has(item) or tex == null:
 				continue
-			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, tex.get_width() / FURN_PX_PER_M, posts)
-			if is_nan(dx):
+			if not _hang_fit(tex, r, slot_l, slot_l + lay.unit * 2 / TILE, posts, fy, alpha):
 				continue
 			used[item] = true
-			_furn_hang(tex, r.position.x + dx * TILE, fy, alpha)
 			break
 		var bed := furniture("home", "bed_" + BED_COLORS[(p.id + i) % BED_COLORS.size()])
 		_furn_at(bed, cx, fy, alpha, 1, _fit(bed, lay.unit * 2))
@@ -425,12 +423,38 @@ func _inside(p: Project, r: Rect2, units: float) -> Dictionary:
 ## верхом на высоте HANG_TOP (м над полом), полки — доской на SHELF_BOARD.
 const HANG_TOP := 1.95
 const SHELF_BOARD := 1.5
-func _furn_hang(t: Texture2D, cx: float, fy: float, alpha: float) -> void:
-	var h := t.get_height() / FURN_PX_PER_M * TILE
+func _furn_hang(t: Texture2D, cx: float, fy: float, alpha: float, scale := 1.0) -> void:
+	var h := t.get_height() / FURN_PX_PER_M * TILE * scale
 	var top := fy - TILE * HANG_TOP
 	if t.resource_path.get_file().begins_with("shelf_"):
 		top = fy - TILE * SHELF_BOARD - _board_row(t) * h
-	_furn_at(t, cx, top + h, alpha, 2)
+	_furn_at(t, cx, top + h, alpha, 2, scale)
+
+
+## Повесить предмет на стену над местом [a, b] (м от левого края комнаты): как _decor_x, а если
+## между стойками он не помещается — уменьшить под самый широкий свободный промежуток. В любой
+## комнате, даже маленькой, на стене что-то висит. Возвращает false, если места нет совсем.
+func _hang_fit(t: Texture2D, r: Rect2, a: float, b: float, posts: Array[float], fy: float, alpha: float) -> bool:
+	var wm := t.get_width() / FURN_PX_PER_M
+	var dx := _decor_x(a, b, wm, posts)
+	if not is_nan(dx):
+		_furn_hang(t, r.position.x + dx * TILE, fy, alpha)
+		return true
+	# Свободные промежутки между стойками внутри [a, b].
+	var cuts: Array[float] = [a + 0.05]
+	for pst in posts:
+		if pst > a and pst < b:
+			cuts.append_array([pst - 0.14, pst + 0.14])
+	cuts.append(b - 0.05)
+	var best := Vector2(0, 0)    # (центр, ширина)
+	for i in range(0, cuts.size() - 1, 2):
+		var gw := cuts[i + 1] - cuts[i]
+		if gw > best.y:
+			best = Vector2((cuts[i] + cuts[i + 1]) * 0.5, gw)
+	if best.y < 0.3:
+		return false
+	_furn_hang(t, r.position.x + best.x * TILE, fy, alpha, minf(1.0, best.y / wm))
+	return true
 
 
 ## Доля высоты, на которой у полки доска (самая широкая строка картинки).
@@ -506,11 +530,11 @@ func _draw_storage_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		if CRATES.has(key):    # нефть, метан и прочее — без ящиков
 			crates.append_array(_boxes_of(p, key, rk, [furniture("storage", "crate_" + key)]))
 	_fill_racks(rk, crates, RACK_LEVELS, fy, alpha)
-	if p.rect.size.x >= 6:
-		# Брус — между лестницами (если есть), блок с крюком — в проходе за первым стеллажом.
-		var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
-		var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
-		_draw_hoist(left, right, rk.start + rk.rw + rk.gap * 0.5, fy - TILE * 2.34, alpha)
+	# Брус тали — между лестницами (если есть), блок с крюком — в проходе за первым стеллажом;
+	# в маленьком складе прохода нет — только брус с лебёдкой.
+	var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
+	var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
+	_draw_hoist(left, right, rk.start + rk.rw + rk.gap * 0.5 if rk.racks > 1 else NAN, fy - TILE * 2.34, alpha)
 
 
 ## Стеллажи у задней стены, как на складе и в амбаре: на каждый блок в 3 м — один; справа
@@ -625,9 +649,7 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var slot_l: float = (cx - lay.unit - r.position.x) / TILE
 		if i < FARM_DECOR.size():
 			var deco := furniture("farm", FARM_DECOR[(first + i) % FARM_DECOR.size()])
-			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, deco.get_width() / FURN_PX_PER_M, posts)
-			if not is_nan(dx):
-				_furn_hang(deco, r.position.x + dx * TILE, fy, alpha)
+			_hang_fit(deco, r, slot_l, slot_l + lay.unit * 2 / TILE, posts, fy, alpha)
 		if lamp != null:
 			# Лампа на настенных креплениях — прямо над грибами, как на прототипе.
 			var lsz := lamp.get_size() * k
@@ -679,9 +701,13 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			_furn_at(fuel, xs[i] + stove.get_width() * k * 0.5 + fuel.get_width() * k * 0.5 + TILE * 0.05, fy, alpha, 1)
 		if i + 1 < n and not gas:
 			var a: float = (xs[i] - r.position.x) / TILE + 1.1
-			var dx := _decor_x(a, (xs[i + 1] - r.position.x) / TILE - 0.6, tools.get_width() / FURN_PX_PER_M, posts)
-			if not is_nan(dx):
-				_furn_hang(tools, r.position.x + dx * TILE, fy, alpha)
+			_hang_fit(tools, r, a, (xs[i + 1] - r.position.x) / TILE - 0.6, posts, fy, alpha)
+		elif n == 1 and not gas:
+			# Одна печь — инструменты где есть место на стене, мимо стоек и трубы.
+			var around: Array[float] = posts.duplicate()
+			around.append((xs[0] - r.position.x) / TILE)
+			around.sort()
+			_hang_fit(tools, r, (lay.x - r.position.x) / TILE, (lay.x + 3 * lay.unit - r.position.x) / TILE, around, fy, alpha)
 
 
 ## Столовая: стол с лавкой на каждые 3 м, на столе — свой набор посуды; на стене — полки и меню.
@@ -734,9 +760,7 @@ func _draw_lab_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _wall_item(p: Project, r: Rect2, room: String, name: String, cx: float, width: float, fy: float, alpha: float) -> void:
 	var t := furniture(room, name)
 	var a := (cx - width * 0.5 - r.position.x) / TILE
-	var dx := _decor_x(a, a + width / TILE, t.get_width() / FURN_PX_PER_M, wall_posts(p.rect.size.x))
-	if not is_nan(dx):
-		_furn_hang(t, r.position.x + dx * TILE, fy, alpha)
+	_hang_fit(t, r, a, a + width / TILE, wall_posts(p.rect.size.x), fy, alpha)
 
 
 ## Предметы в ряд на поверхности (стол): поровну по ширине width с центром cx, низом на bottom.
@@ -780,7 +804,7 @@ func _draw_rack(t: Texture2D, cx: float, bottom: float, width: float, post_px: f
 
 
 ## Таль: брус от left до right (торец, повторяющийся кусок, лебёдка справа), блок с цепью
-## и крюком на block_x, между ними трос. top — верх бруса. Детали крупнее листа в HOIST_K раз.
+## и крюком на block_x (NAN — без блока), между ними трос. top — верх бруса. Детали крупнее листа в HOIST_K раз.
 const HOIST_K := 1.25
 func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: float) -> void:
 	var cap := furniture("storage", "hoist_cap")
@@ -799,6 +823,9 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 		draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
 		x += seg
 	draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
+	if is_nan(block_x):
+		draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
+		return
 	# Трос: от шкива каретки (правый край) к барабану лебёдки (координаты в пикселях спрайтов).
 	draw_line(Vector2(block_x + 25 * k, top + 38 * k), Vector2(winch_x + 12 * k, top + 46 * k), Color(0.55, 0.5, 0.45, alpha), maxf(1.0, 3 * k))
 	draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
