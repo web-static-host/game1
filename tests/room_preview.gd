@@ -1,5 +1,5 @@
 extends SceneTree
-## Снимки комнат из разных материалов (дерево, кирпич-склад, металл, камень) — новые картинки и как было.
+## Снимки комнат из разных материалов: жилые, склады, амбары, фермы — новые картинки и как было.
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка>
 
 var _main: Node
@@ -29,14 +29,17 @@ func _process(_delta: float) -> bool:
 		colony.known_resources = {"wood": true, "stone": true}
 		# Геологоразведка II: порода видна на 3 клетки от выработок — проверить, что все открытые
 		# клетки рисуются одинаково.
-		colony.research.done.append_array(["geology", "geology2"])
+		colony.research.done.append_array(["geology", "geology2", "electricity"])
 		var T := Project.Kind.TUNNEL
 		var R := Project.Kind.ROOM
-		colony.create_project(T, Rect2i(x0, s, 1, 12))
+		colony.create_project(T, Rect2i(x0, s, 1, 15))
 		colony.create_project(R, Rect2i(x0 + 1, s + 2, 9, 3), -1, "wood")
 		colony.create_project(R, Rect2i(x0 + 1, s + 5, 6, 3), -1, "brick")
 		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "metal")
 		colony.create_project(R, Rect2i(x0 + 1, s + 8, 6, 3), -1, "stone")
+		colony.create_project(R, Rect2i(x0 + 7, s + 8, 3, 3), -1, "wood")
+		colony.create_project(R, Rect2i(x0 + 1, s + 11, 6, 3), -1, "wood")
+		colony.create_project(R, Rect2i(x0 + 7, s + 11, 3, 3), -1, "brick")
 		for u in colony.units:
 			u.lifespan = 0.0
 		colony.advance_offline(60000.0)
@@ -49,9 +52,12 @@ func _process(_delta: float) -> bool:
 		colony.drops.clear()    # кучки на полу мешают разглядеть обстановку
 		for pr in colony.projects:
 			pr.wear = 0.0
-			# Обстановка-картинки: дерево и металл — жилые, кирпич и камень — склады.
+			# Обстановка-картинки по месту комнаты: (ряд, слева?) → назначение.
 			if pr.kind == R:
-				pr.purpose = RoomType.STORAGE if pr.material in ["brick", "stone"] else RoomType.HOME
+				var row := pr.rect.position.y - s
+				var left := pr.rect.position.x == x0 + 1
+				pr.purpose = {2: RoomType.HOME, 5: RoomType.STORAGE if left else RoomType.HOME,
+					8: RoomType.STORAGE if left else RoomType.FARM, 11: RoomType.FARM if left else RoomType.GRANARY}[row]
 				# Склады одной ширины: кирпичный с лестницей, каменный без — должны выглядеть одинаково.
 				if pr.material == "stone":
 					pr.ladder = false
@@ -65,19 +71,20 @@ func _process(_delta: float) -> bool:
 			u.state = Unit.State.IDLE
 		for i in 3:
 			colony.update(0.1)
-		# Запасы — после обновлений колонии (иначе ресурсов, которых нет на складе, не станет).
-		for pr in colony.projects:
-			if pr.kind == R and pr.purpose == RoomType.STORAGE:
-				pr.held = {"brick": 30, "metal": 25, "stone": 20, "wood": 25, "coal": 15, "gold": 10, "copper": 10, "salt": 10} \
-					if pr.material == "brick" else {"iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10}
+		_stage()
 		_main.hud._log.visible = false    # сообщения закрывают комнаты
 		_main.world_view.focus_cell(Vector2i(x0 + 5, s + 7))
 		_main.camera.zoom = Vector2(2.2, 2.2)
+	if _frame in [38, 44]:
+		_stage()
 	if _frame == 40:
 		_shot("room_new")
+		_main.world_view.focus_cell(Vector2i(_main._home.x + 7, _main.world.gen.surface_y(_main._home.x + 2) + 11))
+	if _frame == 46:
+		_shot("room_low")
 		for k in StructureLayer._room_tex.keys():
 			StructureLayer._room_tex[k] = null
-	if _frame == 44:
+	if _frame == 50:
 		_shot("room_old")
 		return true
 	return false
@@ -87,3 +94,16 @@ func _shot(name: String) -> void:
 	var path := _out.path_join(name + ".png")
 	root.get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+## Запасы, рост грибов и энергия — игра идёт и меняет их, поэтому ставим перед каждым снимком.
+func _stage() -> void:
+	for pr in _main.colony.projects:
+		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.STORAGE:
+			pr.held = {"brick": 30, "metal": 25, "stone": 20, "wood": 25, "coal": 15, "gold": 10, "copper": 10, "salt": 10} \
+				if pr.material == "brick" else {"iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10}
+		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.GRANARY:
+			pr.held = {"food": 30, "berries": 20}
+		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.FARM:
+			pr.farm_progress = RoomType.FARM_CYCLE * (0.9 if pr.rect.size.x == 6 else 0.5)
+	_main.colony.power_made = 10    # лампы на фермах горят
