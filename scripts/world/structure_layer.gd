@@ -519,8 +519,8 @@ func _fill_racks(rk: Dictionary, boxes: Array[Texture2D], levels: Array, fy: flo
 		_furn_at(boxes[slot], cx, fy - levels[slot / row] * TILE, alpha, 0, CRATE_SCALE)
 
 
-## Амбар: стеллажи как на складе, корзины с едой (рыба и грибы — «food», ягоды), под потолком —
-## жердь во всю комнату с подвешенными связками.
+## Амбар: стеллажи как на складе, корзины с едой (рыба и грибы — «food», ягоды), над стеллажами —
+## жердь с подвешенными связками.
 const GRANARY_LEVELS := [0.227, 0.828]
 const GRANARY_POST := 21.0
 const BASKETS := {"food": ["basket_fish", "basket_mushroom"], "berries": ["basket_berries"]}
@@ -535,9 +535,10 @@ func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			kinds.append(furniture("granary", b))
 		baskets.append_array(_boxes_of(p, key, rk, kinds))
 	_fill_racks(rk, baskets, GRANARY_LEVELS, fy, alpha)
-	var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
-	var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
-	var top := fy - TILE * 2.62
+	# Жердь — над стеллажами, как на прототипе.
+	var left: float = rk.start - TILE * 0.1
+	var right: float = rk.start + rk.racks * rk.rw + (rk.racks - 1) * rk.gap + TILE * 0.1
+	var top := fy - TILE * 2.5
 	_draw_span("granary", "rod", left, right, top, alpha)
 	# Связки — по одной на 0,6 м, не над верёвками, без повторов подряд.
 	var k := TILE / FURN_PX_PER_M
@@ -567,7 +568,7 @@ func _draw_span(room: String, name: String, left: float, right: float, top: floa
 
 
 ## Ферма: грядка на каждые 2 м, на ней грибы трёх стадий роста (в холоде — блёклые); с
-## электричеством низко над грибами лампы роста на тросах — горят, когда есть энергия. На стене — по предмету
+## электричеством над грибами лампы роста на стене — горят, когда есть энергия. Выше на стене — по предмету
 ## над грядкой, без повторов и не на стойках.
 const FARM_DECOR := ["tools", "can", "gauge", "hose"]
 func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
@@ -592,15 +593,11 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var deco := furniture("farm", FARM_DECOR[(first + i) % FARM_DECOR.size()])
 			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, deco.get_width() / FURN_PX_PER_M, posts)
 			if not is_nan(dx):
-				_furn_at(deco, r.position.x + dx * TILE, fy - TILE * 1.8, alpha, 2)
+				_furn_at(deco, r.position.x + dx * TILE, fy - TILE * 1.6, alpha, 2)
 		if lamp != null:
-			# Лампа — низко над грибами (над взрослыми с запасом), к потолку от неё тросы.
-			var lw := lamp.get_width() * k
-			var ly := fy - TILE * 1.1 - lamp.get_height() * k
-			for f in [0.083, 0.93]:
-				var tx: float = cx + (f - 0.5) * lw
-				draw_line(Vector2(tx, fy - TILE * 2.62), Vector2(tx, ly + 2), Color(0.3, 0.27, 0.25, alpha), maxf(1.0, 2.0 * k))
-			draw_texture_rect(lamp, Rect2(cx - lw * 0.5, ly, lw, lamp.get_height() * k), false, Color(1, 1, 1, alpha))
+			# Лампа на настенных креплениях — прямо над грибами, как на прототипе.
+			var lsz := lamp.get_size() * k
+			draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.95 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
 		var sz := shoots.get_size() * k
 		draw_texture_rect(shoots, Rect2(cx - sz.x * 0.5, fy - (bed.get_height() - 7) * k - sz.y, sz.x, sz.y), false, tint)
 		_furn_at(bed, cx, fy, alpha, 1, sc)
