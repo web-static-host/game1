@@ -1709,9 +1709,9 @@ func test_elements() -> void:
 	vent.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
 	check(RoomType.effect_radius(vent) == 10, "малая дегазация (3 м) — радиус 10")
 	vent.rect = Rect2i(o.x + 12, o.y + 5, 6, 3)
-	check(RoomType.effect_radius(vent) == 15, "средняя (6 м) — радиус 15")
+	check(RoomType.effect_radius(vent) == 20, "средняя (6 м) — радиус 20")
 	vent.rect = Rect2i(o.x + 12, o.y + 5, 9, 3)
-	check(RoomType.effect_radius(vent) == 20, "большая (9 м) — радиус 20")
+	check(RoomType.effect_radius(vent) == 40, "большая (9 м) — радиус 40")
 	colony.projects.append(vent)
 	for i in 20:
 		el.update(1.0)

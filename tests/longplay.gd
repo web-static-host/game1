@@ -389,7 +389,7 @@ func _fix_gas() -> bool:
 		var covered := false
 		for q in colony.projects.duplicate():
 			var degas: bool = q.purpose == RoomType.DEGAS or _pending_purpose.get(q.id, -1) == RoomType.DEGAS
-			if not degas or maxi(absi(q.rect.get_center().x - c.x), absi(q.rect.get_center().y - c.y)) > (19 if q.rect.size.x >= 9 else 14):
+			if not degas or maxi(absi(q.rect.get_center().x - c.x), absi(q.rect.get_center().y - c.y)) > [10, 20, 40][clampi(RoomType.blocks(q), 1, 3) - 1] - 1:
 				continue
 			# Недостроенную дегазацию, которую саму остановил газ, переносят в чистое место.
 			if q.phase != Project.Phase.DONE and q.hazard_pending == "methane":
