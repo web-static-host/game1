@@ -438,22 +438,26 @@ const RACK_LEVELS := [0.219, 0.836]
 const RACK_SLOTS := 3
 const RACK_SLOT_DX := 0.545
 const CRATE_SCALE := 0.9
+const RACK_INSET := 0.35  # отступ стеллажей от боковой стены, м (задняя стена уже пола)
 const RACK_POST := 23.0    # толщина стойки стеллажа в пикселях спрайта (rack_tall.png)
 
 
-## Склад из картинок: стеллаж на каждые 2 м, ящики с ресурсами по запасам (снизу вверх),
-## стеллажи по центру свободного места, под потолком большой комнаты — таль.
+## Склад из картинок: стеллаж на каждые 3 м, ящики с ресурсами по запасам (снизу вверх),
+## у задней стены, под потолком большой комнаты — таль.
 func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var w := RoomType.usable_width(p)
-	# Стеллажей — по ширине комнаты (как без лестницы): одинаковые комнаты выглядят одинаково.
-	# Лестница отнимает метр — стеллажи уже, на полке помещается меньше ящиков.
-	var racks := maxi(1, p.rect.size.x / 2)
-	var rw := minf(TILE * 2, w * TILE / racks)
-	var start := x0 + (w * TILE - racks * rw) * 0.5
+	# Стеллаж на каждый блок в 3 м, у задней стены: от боковых стен отступ, у лестницы — чуть-чуть.
+	# Крайние стеллажи — к краям, между ними проходы (в первом висит крюк тали).
+	var racks := maxi(1, p.rect.size.x / 3)
+	var lo := x0 + TILE * (0.1 if p.ladder else RACK_INSET)
+	var hi := x0 + w * TILE - TILE * RACK_INSET
+	var rw := minf(TILE * 2, (hi - lo) / racks)
+	var gap := (hi - lo - racks * rw) / maxi(1, racks - 1)
+	var start := lo if racks > 1 else (lo + hi - rw) * 0.5
 	var rack := furniture("storage", "rack_tall")
 	for k in racks:
-		_draw_rack(rack, start + (k + 0.5) * rw, fy, rw, alpha)
+		_draw_rack(rack, start + k * (rw + gap) + rw * 0.5, fy, rw, alpha)
 	var inner := rw / TILE - 2 * RACK_POST / FURN_PX_PER_M
 	var per_shelf := clampi(int(inner / RACK_SLOT_DX + 0.01), 1, RACK_SLOTS)
 	# Ящики: сколько каждого ресурса лежит именно в этой комнате (Colony.held_in).
@@ -471,14 +475,14 @@ func _draw_storage_furniture(p: Project, r: Rect2, x0: float, alpha: float) -> v
 				break
 			var level := slot / (racks * per_shelf)
 			var j := slot % (racks * per_shelf)
-			var cx := start + (j / per_shelf + 0.5) * rw + (j % per_shelf - (per_shelf - 1) * 0.5) * RACK_SLOT_DX * TILE
+			var cx := start + (j / per_shelf) * (rw + gap) + rw * 0.5 + (j % per_shelf - (per_shelf - 1) * 0.5) * RACK_SLOT_DX * TILE
 			_furn_at(tex, cx, fy - RACK_LEVELS[level] * TILE, alpha, 0, CRATE_SCALE)
 			slot += 1
 	if p.rect.size.x >= 6:
-		# Брус — между лестницами (если есть), блок с крюком — над первым стеллажом.
+		# Брус — между лестницами (если есть), блок с крюком — в проходе за первым стеллажом.
 		var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
 		var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
-		_draw_hoist(left, right, start + rw * 0.6, fy - TILE * 2.34, alpha)
+		_draw_hoist(left, right, start + rw + gap * 0.5, fy - TILE * 2.34, alpha)
 
 
 ## Стеллаж шириной width: стойки как на спрайте, середина (полки) сжата.
