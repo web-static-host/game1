@@ -1466,13 +1466,19 @@ func test_seasons() -> void:
 	cold_home.purpose = RoomType.STORAGE
 	check(not colony.home_freezing(cold_home), "значок мороза — только у жилых домов")
 	var hearth := _hearth(colony, farm)
-	# Очаг топят сначала углём: 1 уголь — как два полена.
+	# Каменные печи углём не топят — только дрова.
 	colony.inventory["coal"] = 3
 	colony.inventory["wood"] = 5
+	check(colony._hearth_fuel(hearth, 1) == 1 and colony.inventory["coal"] == 3 and colony.inventory["wood"] == 4,
+		"каменные печи угля не берут — жгут дрова")
+	colony.inventory["wood"] = 5
+	# Кирпичные топят сначала углём: 1 уголь — как два полена.
+	hearth.brick_stoves = true
 	check(colony._hearth_fuel(hearth, 1) == 2 and colony.inventory["coal"] == 2 and colony.inventory["wood"] == 5,
-		"очаг взял уголь (за два полена), дрова не тронул")
+		"кирпичные печи взяли уголь (за два полена), дрова не тронули")
 	colony.inventory["coal"] = 0
 	check(colony._hearth_fuel(hearth, 1) == 1 and colony.inventory["wood"] == 4, "угля нет — горят дрова")
+	hearth.brick_stoves = false
 	# Печь сама метан не жжёт (даже после «Газового отопления»); с газовым котлом — первым и греет дальше.
 	colony.inventory["methane"] = 2
 	colony.research.done.append("gas_heating")

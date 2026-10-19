@@ -4401,11 +4401,12 @@ func carry_cap() -> int:
 ## Генераторы жгут уголь (или дрова) и дают энергию потребителям.
 ## Есть ли очаг, которому не хватает дров (тогда свободные идут рубить).
 func _hearth_starving() -> bool:
-	if _have_any("wood") > 0 or _have_any("coal") > 0:
+	if _have_any("wood") > 0:
 		return false
 	var gas: bool = inventory.get("methane", 0) > 0
+	var coal: bool = _have_any("coal") > 0
 	for p in rooms_of(RoomType.HEARTH):
-		if not p.paused and p.blocked.begins_with("Нет дров") and not (p.gas_boiler and gas):
+		if not p.paused and p.blocked.begins_with("Нет дров") and not (p.gas_boiler and gas) and not (p.brick_stoves and coal):
 			return true
 	return false
 
@@ -4415,7 +4416,8 @@ func _hearth_starving() -> bool:
 func _hearth_fuel(p: Project, need: int) -> int:
 	var got := 0
 	p.on_gas = false
-	var kinds := ["coal", "wood"]
+	# Уголь жгут только кирпичные печи; каменные — только дрова.
+	var kinds := ["coal", "wood"] if p.brick_stoves else ["wood"]
 	# Газовый котёл: сначала метан от дегазации (печь сама метан не жжёт).
 	if p.gas_boiler:
 		kinds.push_front("methane")
