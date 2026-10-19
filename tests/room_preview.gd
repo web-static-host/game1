@@ -1,12 +1,14 @@
 extends SceneTree
 ## Снимки комнат из разных материалов: жилые, склады, амбары, фермы — новые картинки и как было.
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка> [2]
-## С «2» — второй набор: очаги (камень, кирпич, газ), столовые, лаборатории.
+## С «2» — второй набор: очаги (камень, кирпич, газ), столовые, лаборатории; с «3» — генераторы
+## (уголь, метан), обжиговые, насосные, дегазация.
 
 var _main: Node
 var _frame := 0
 var _out := "user://"
 var _set2 := false
+var _set3 := false
 
 
 func _initialize() -> void:
@@ -14,6 +16,7 @@ func _initialize() -> void:
 	if args.size() > 0:
 		_out = args[0]
 	_set2 = args.size() > 1 and args[1] == "2"
+	_set3 = args.size() > 1 and args[1] == "3"
 	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
 	_main = load("res://scenes/main.tscn").instantiate()
@@ -28,7 +31,7 @@ func _process(_delta: float) -> bool:
 		var x0: int = _main._home.x + 2
 		var s := world.gen.surface_y(x0)
 		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "metal": 300, "coal": 15, "gold": 10, "copper": 10,
-			"salt": 10, "iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10}
+			"salt": 10, "iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10, "methane": 60}
 		colony.known_resources = {"wood": true, "stone": true}
 		# Геологоразведка II: порода видна на 3 клетки от выработок — проверить, что все открытые
 		# клетки рисуются одинаково.
@@ -64,6 +67,9 @@ func _process(_delta: float) -> bool:
 				if _set2:
 					pr.purpose = {2: RoomType.HEARTH, 5: RoomType.DINING if left else RoomType.LAB,
 						8: RoomType.LAB if left else RoomType.HEARTH, 11: RoomType.HEARTH if left else RoomType.DINING}[row]
+				if _set3:
+					pr.purpose = {2: RoomType.GENERATOR, 5: RoomType.KILN if left else RoomType.PUMP,
+						8: RoomType.GAS_GEN if left else RoomType.DEGAS, 11: RoomType.DEGAS if left else RoomType.KILN}[row]
 				# Склады одной ширины: кирпичный с лестницей, каменный без — должны выглядеть одинаково.
 				if pr.material == "stone":
 					pr.ladder = false
@@ -120,3 +126,5 @@ func _stage() -> void:
 			pr.gas_boiler = pr.rect.size.x == 6
 			pr.on_gas = pr.gas_boiler
 			pr.burning = pr.rect.size.x != 3
+		if pr.kind == Project.Kind.ROOM and pr.purpose in RoomType.GENERATORS:
+			pr.burning = true
