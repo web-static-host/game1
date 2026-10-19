@@ -1334,6 +1334,14 @@ func rooms_of(t: int) -> Array[Project]:
 	return out
 
 
+## Все готовые генераторы: на дровах и угле и газовые.
+func generators() -> Array[Project]:
+	var out: Array[Project] = []
+	for t in RoomType.GENERATORS:
+		out.append_array(rooms_of(t))
+	return out
+
+
 func capacity(key: String) -> int:
 	if RoomType.BULK.has(key):
 		return 1 << 30
@@ -2557,7 +2565,7 @@ func _lights_tick() -> void:
 				power_used += 1
 				break
 	# Остальные комнаты — от ближних к генератору, пока хватает энергии (комната целиком).
-	var gens := rooms_of(RoomType.GENERATOR)
+	var gens := generators()
 	var dist_of := func(p: Project) -> int:
 		var best := 1 << 30
 		for g in gens:
@@ -4476,12 +4484,17 @@ func _hearth_tick(dt: float) -> void:
 func _power_tick(dt: float) -> void:
 	power_made = 0
 	power_used = 0
-	for p in rooms_of(RoomType.GENERATOR):
+	for p in generators():
 		p.burning = false
 		if p.paused:
 			continue
+		# Газовый жжёт только метан из баков дегазации, обычный — уголь, а без него дрова.
+		var gas := p.purpose == RoomType.GAS_GEN
 		if p.farm_progress <= 0.0:
-			if _remove("methane", 1) >= 1 or _remove("coal", 1) >= 1:
+			if gas:
+				if _remove("methane", 1) >= 1:
+					p.farm_progress += RoomType.FUEL_TIME
+			elif _remove("coal", 1) >= 1:
 				p.farm_progress += RoomType.FUEL_TIME
 			elif inventory.get("wood", 0) >= 2:
 				_remove("wood", 2)
@@ -4490,10 +4503,10 @@ func _power_tick(dt: float) -> void:
 			p.farm_progress -= dt
 			p.burning = true
 			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0))
-			if p.blocked.begins_with("Нет топлива"):
+			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
-			p.blocked = "Нет топлива: нужен метан, уголь или дрова"
+			p.blocked = "Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 	_hearth_tick(dt)
 	for t in RoomType.POWER_USE:

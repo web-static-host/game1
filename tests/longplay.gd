@@ -467,7 +467,7 @@ func _finish_purposes() -> void:
 				_act("назначение")
 				var names := {RoomType.HOME: "дом", RoomType.STORAGE: "склад", RoomType.FARM: "ферма",
 					RoomType.LAB: "лаборатория", RoomType.DINING: "столовая", RoomType.KILN: "печь",
-					RoomType.GENERATOR: "генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация",
+					RoomType.GENERATOR: "генератор", RoomType.GAS_GEN: "газовый генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация",
 					RoomType.GRANARY: "амбар", RoomType.HEARTH: "очаг"}
 				_milestone("purpose%d" % _pending_purpose[p.id], "Первая комната: %s" % names.get(_pending_purpose[p.id], "?"))
 			_pending_purpose.erase(p.id)
@@ -706,6 +706,10 @@ func _next_underground() -> int:
 		return RoomType.GENERATOR
 	if not colony.elements.gas.is_empty() and not has.call(RoomType.DEGAS):
 		return RoomType.DEGAS
+	if colony.research.has("electricity") and has.call(RoomType.DEGAS) and not has.call(RoomType.GAS_GEN) \
+			and colony.inventory.get("methane", 0) >= 20 \
+			and colony.inventory.get("copper", 0) >= 4 and colony.inventory.get("iron", 0) >= 4:
+		return RoomType.GAS_GEN
 	return -1
 
 

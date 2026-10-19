@@ -56,6 +56,7 @@ func _initialize() -> void:
 	test_separate_stores()
 	test_mine_meters()
 	test_lights()
+	test_two_generators()
 	test_builders_dont_carry()
 	test_bridge_and_pier()
 	test_miner_alone()
@@ -2372,6 +2373,48 @@ func test_mine_meters() -> void:
 		"остановили: готовая часть осталась шахтой (%d м)" % mine.rect.size.x)
 	for i in mine.slice_count():
 		check(colony.slice_dug(mine, i), "метр %d остановленной шахты выкопан" % i)
+
+
+func test_two_generators() -> void:
+	# Два генератора: обычный жжёт уголь и дрова, газовый — только метан из баков дегазации.
+	check(RoomType.HINTS.size() == RoomType.NAMES.size(), "у каждого назначения есть подсказка")
+	var res := _colony_with_room(25, RoomType.DEGAS)
+	var colony: Colony = res[0]
+	var degas: Project = res[1]
+	check(degas.purpose == RoomType.DEGAS, "дегазация готова")
+	colony.research.done.append("electricity")
+	var gens := []
+	for i in 2:
+		var g := Project.new()
+		g.id = 960 + i
+		g.kind = Project.Kind.ROOM
+		g.phase = Project.Phase.DONE
+		g.purpose = [RoomType.GENERATOR, RoomType.GAS_GEN][i]
+		g.rect = Rect2i(degas.rect.end.x + 30 + i * 10, degas.rect.position.y, 3, 3)
+		colony.projects.append(g)
+		gens.append(g)
+	var solid: Project = gens[0]
+	var gas: Project = gens[1]
+	colony.inventory = {}
+	colony._sync_held()
+	colony._add("methane", 5, degas)
+	colony._power_tick(0.1)
+	check(gas.burning and not solid.burning, "есть только метан — работает газовый, обычный стоит")
+	check(colony.held_in(degas, "methane") == 4, "газовый взял 1 метан из бака")
+	check(solid.blocked.contains("уголь"), "обычному нужен уголь или дрова: %s" % solid.blocked)
+	colony._add("coal", 3)
+	colony._power_tick(0.1)
+	check(solid.burning and colony.inventory.get("coal", 0) == 2, "обычный жжёт уголь")
+	check(colony.held_in(degas, "methane") == 4, "метан обычный генератор не трогает")
+	colony._remove("methane", 99)
+	colony._add("wood", 10)
+	gas.farm_progress = 0.0
+	solid.farm_progress = 0.0
+	colony._remove("coal", 99)
+	colony._power_tick(0.1)
+	check(not gas.burning and gas.blocked.contains("метан"), "без метана газовый стоит, дрова не берёт: %s" % gas.blocked)
+	check(solid.burning and colony.inventory.get("wood", 0) == 8, "обычный без угля жжёт 2 дерева")
+	check(colony.generators().size() == 2, "оба генератора дают свет и энергию в одну сеть")
 
 
 func test_lights() -> void:

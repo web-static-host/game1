@@ -2,10 +2,10 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор"]
 ## Еда хранится в амбаре, всё остальное — на складе.
 const FOOD_KEYS := ["food", "berries"]
 const HINTS := [
@@ -19,13 +19,14 @@ const HINTS := [
 	"учёные открывают технологии",
 	"обжиг: 2 глины + топливо (1 дерево или ½ угля) → 2 кирпича",
 	"плавка: 2 железа + 1 уголь → 1 сталь",
-	"энергия: сжигает метан, уголь или дрова",
-	"собирает метан вокруг (10, 20 или 40 м — чем больше комната, тем дальше) в свой бак — топливо для генератора",
+	"энергия: сжигает уголь или дрова",
+	"собирает метан вокруг (10, 20 или 40 м — чем больше комната, тем дальше) в свой бак — топливо для газового генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
 	"отопление: печи (по одной на 3 м) жгут дрова (кирпичные — и уголь) и греют от стен на 6–10 м",
+	"энергия: сжигает метан из баков дегазации",
 ]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
@@ -44,6 +45,8 @@ const RECIPES := {
 	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
 	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
 }
+## Генераторы: на дровах и угле или на метане.
+const GENERATORS := [GENERATOR, GAS_GEN]
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
 const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
 const POWER_MAKE := 20
@@ -78,7 +81,7 @@ static func stoves(p: Project) -> int:
 
 
 ## Очаг греет от стен комнаты: полное тепло в пределах full клеток, дальше слабеет до reach.
-## Больше печей — греет дальше. Генератор греет как одна печь.
+## Больше печей — греет дальше. Генератор (любой) греет как одна печь.
 static func heat_zone(p: Project) -> Vector2i:
 	var n := stoves(p) if p.purpose == HEARTH else 1
 	var z := Vector2i(2 + n, 4 + 2 * n)
@@ -172,7 +175,7 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 12, "clay": 6}
 		FORGE:
 			return {"stone": 10, "brick": 8}
-		GENERATOR:
+		GENERATOR, GAS_GEN:
 			return {"stone": 6, "copper": 4, "iron": 4}
 		DEGAS:
 			return {"wood": 8, "stone": 8}

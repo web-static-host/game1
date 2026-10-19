@@ -607,8 +607,13 @@ func _show_project(p: Project) -> void:
 		# Готовая комната: выбор назначения (только изученные).
 		var purposes := []
 		for t in range(1, RoomType.NAMES.size()):
+			# Газовый генератор — в списке сразу за обычным.
+			if t == RoomType.GAS_GEN:
+				continue
 			if colony.research.has(RoomType.REQUIRES.get(t, "")):
 				purposes.append(t)
+			if t == RoomType.GENERATOR and colony.research.has(RoomType.REQUIRES[RoomType.GAS_GEN]):
+				purposes.append(RoomType.GAS_GEN)
 			# Очаг — с каменными или (после обжига кирпича) кирпичными печами.
 			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
 				purposes.append(RoomType.HEARTH_BRICK)
@@ -885,17 +890,24 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
 				else:
 					rows.append(_progress(Research.tech_name(cur), colony.research.progress / colony.research.cost(cur)))
-			RoomType.GENERATOR:
+			RoomType.GENERATOR, RoomType.GAS_GEN:
+				var gas := p.purpose == RoomType.GAS_GEN
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
-					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.95, 0.6, 0.2)))
-				rows.append({"type": "text", "text": "Жжёт 1 метан, 1 уголь или 2 дерева за %d с (сначала метан — из баков дегазации). Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
+					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.45, 0.7, 1.0) if gas else Color(0.95, 0.6, 0.2)))
+				if gas:
+					chips.append(["", "метан в баках: %d" % colony.inventory.get("methane", 0)])
+					rows.append({"type": "text", "text": "Жжёт 1 метан за %d с — по трубам из баков дегазации, носить ничего не надо. Уголь и дрова не берёт. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
+					if colony.rooms_of(RoomType.DEGAS).is_empty():
+						rows.append({"type": "warning", "text": "Нет дегазации — метана для генератора не будет."})
+				else:
+					rows.append({"type": "text", "text": "Жжёт 1 уголь или 2 дерева за %d с (сначала уголь). Метан не жжёт — для него нужен газовый генератор. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
 				rows.append({"type": "text", "text": "Свет: лампочка на каждые 3 м комнаты, 1 ед. энергии каждая. Сам свет включается в комнатах ближе к генератору, пока хватает энергии; в любой комнате его можно включить или выключить (всю сразу). На стройке и в шахте — одна лампа там, где сейчас работают."})
 			RoomType.DEGAS:
 				var cap := colony.room_cap(p, "methane")
 				rows.append(_progress("Метан в баке", float(colony.held_in(p, "methane")) / maxf(1.0, cap),
 					"%d из %d" % [colony.held_in(p, "methane"), cap], Color(0.45, 0.7, 1.0)))
-				rows.append({"type": "text", "text": "Газ хранится только здесь, в баке. По трубам его берут генераторы и газовые котлы очагов. Бак полон — откачка останавливается: поставьте ещё одну дегазацию или жгите газ."})
+				rows.append({"type": "text", "text": "Газ хранится только здесь, в баке. По трубам его берут газовые генераторы и газовые котлы очагов. Бак полон — откачка останавливается: поставьте ещё одну дегазацию или жгите газ."})
 			RoomType.HEARTH:
 				chips.append(["", "горит" if p.burning else "не горит"])
 				var n := RoomType.stoves(p)

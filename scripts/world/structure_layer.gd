@@ -163,7 +163,7 @@ func _draw_zone(p: Project) -> void:
 		draw_rect(zr, Color(col, 0.13))
 		_dashed_rect(zr, Color(col, 0.85), 3.0)
 		return
-	if p.purpose == RoomType.HEARTH or p.purpose == RoomType.GENERATOR:
+	if p.purpose == RoomType.HEARTH or p.purpose in RoomType.GENERATORS:
 		var zone := RoomType.heat_zone(p)
 		var reach := _rect_px(p.rect.grow(zone.y))
 		var full := _rect_px(p.rect.grow(zone.x))

@@ -347,7 +347,7 @@ func _gas_tick() -> void:
 		next[c] = next.get(c, 0.0) + keep
 		for t in targets:
 			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
-	# Дегазация собирает метан — это топливо для генератора.
+	# Дегазация собирает метан — это топливо для газового генератора и котлов.
 	for p in colony.rooms_of(RoomType.DEGAS):
 		# Бак полон — газ больше не откачивают.
 		if p.paused or colony.room_free(p, "methane") <= 0:
