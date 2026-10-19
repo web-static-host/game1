@@ -51,6 +51,9 @@ func _process(_delta: float) -> bool:
 			# Обстановка-картинки: дерево и металл — жилые, кирпич и камень — склады.
 			if pr.kind == R:
 				pr.purpose = RoomType.STORAGE if pr.material in ["brick", "stone"] else RoomType.HOME
+				if pr.purpose == RoomType.STORAGE:
+					pr.held = {"brick": 30, "metal": 25, "stone": 20, "wood": 25, "coal": 15, "gold": 10, "copper": 10, "salt": 10} \
+						if pr.material == "brick" else {"iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10}
 		_main.world_view.light.visible = false
 		var spots := [Vector2(x0 + 3, s + 4), Vector2(x0 + 7, s + 4), Vector2(x0 + 3, s + 7), Vector2(x0 + 8, s + 7), Vector2(x0 + 4, s + 10)]
 		for i in colony.units.size():
