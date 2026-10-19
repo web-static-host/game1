@@ -2923,9 +2923,15 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
 		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)):
 			continue
-		# Шахтёр только копает: крепь ставят строители, носят — склады и подсобные.
+		# Шахтёр в шахте копает и ставит крепь, а дерево на крепь носит сам, только если
+		# нет свободных подсобных. На других стройках — только копает.
 		if u.profession == Unit.Prof.MINER and u.workplace == 0:
-			if p.phase == Project.Phase.DIG and _try_dig(u, p, parents, dist):
+			if p.phase == Project.Phase.DIG:
+				if mine and _try_support(u, p, parents, dist):
+					return true
+				if _try_dig(u, p, parents, dist):
+					return true
+			if mine and not free_hauler_exists() and _try_haul(u, p, parents, dist, true):
 				return true
 			continue
 		if p.phase == Project.Phase.DIG:
@@ -2956,6 +2962,15 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 ## Строитель или шахтёр (без места работы): только строят и копают, ничего не носят.
 func builder_or_miner(u: Unit) -> bool:
 	return u.workplace == 0 and (u.profession == Unit.Prof.BUILDER or u.profession == Unit.Prof.MINER)
+
+
+## Есть ли подсобный рабочий без дела (тогда шахтёр сам не носит).
+func free_hauler_exists() -> bool:
+	for o in units:
+		if o.workplace == 0 and o.profession == Unit.Prof.HAULER \
+				and (o.task == Unit.Task.NONE or o.task == Unit.Task.STROLL):
+			return true
+	return false
 
 
 ## Кто носит в шахту и из шахты: работники складов и подсобные рабочие.

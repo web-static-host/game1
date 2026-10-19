@@ -58,6 +58,7 @@ func _initialize() -> void:
 	test_lights()
 	test_builders_dont_carry()
 	test_bridge_and_pier()
+	test_miner_alone()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -2338,21 +2339,27 @@ func test_mine_meters() -> void:
 	check(mine != null, "шахта заложена")
 	if mine == null:
 		return
-	check(colony.mine_hauler(keeper) and not colony.mine_hauler(miner), "носят работники склада, шахтёр — нет")
-	var miner_carried := false
+	check(colony.mine_hauler(keeper) and not colony.mine_hauler(miner), "добытое из шахты носят склады, шахтёр — нет")
+	var miner_to_store := false
+	var miner_supported := false
 	var keeper_hauled := false
 	var t := 0.0
 	while t < 6000.0 and colony.mine_meters_done(mine) < 3 and mine.phase == Project.Phase.DIG:
 		colony.update(0.5)
 		t += 0.5
-		if miner.task in [Unit.Task.HAUL, Unit.Task.SUPPORT, Unit.Task.BUILD]:
-			miner_carried = true
+		if miner.task == Unit.Task.HAUL and (miner.to_store or miner.gather_room != 0):
+			miner_to_store = true
+		if miner.task == Unit.Task.SUPPORT:
+			miner_supported = true
 		if keeper.task == Unit.Task.HAUL and keeper.project_id == mine.id:
 			keeper_hauled = true
 	var done := colony.mine_meters_done(mine)
 	check(done >= 3, "шахта копается по метру: готово %d м за %.0f с" % [done, t])
-	check(not miner_carried, "шахтёр не носил и не крепил — только копал")
+	check(not miner_to_store, "шахтёр не уносил добытое на склад")
+	check(miner_supported, "шахтёр сам ставит крепь в шахте")
 	check(keeper_hauled, "работник склада носил в шахту дерево на крепь")
+	# Подсобных нет, склад не работает — шахтёр сам несёт дерево на крепь.
+	check(not colony.free_hauler_exists(), "свободных подсобных нет")
 	colony.cancel_project(mine)
 	check(colony.projects.has(mine) and mine.phase == Project.Phase.DONE and mine.rect.size.x >= 3 and mine.rect.size.x < 9,
 		"остановили: готовая часть осталась шахтой (%d м)" % mine.rect.size.x)
@@ -2510,3 +2517,32 @@ func test_bridge_and_pier() -> void:
 	u.retry = 5.0
 	colony2.create_project(Project.Kind.BRIDGE, br)
 	check(u.retry <= 0.0, "новое поручение будит бездельников сразу")
+
+
+func test_miner_alone() -> void:
+	# Ни склада, ни подсобных: шахтёр сам копает, сам несёт дерево на крепь и сам крепит.
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var x := room.rect.position.x - 1
+	var s := colony.world.gen.surface_y(x)
+	var miner: Unit = colony.units[0]
+	for u in colony.units:
+		u.workplace = 0
+		u.satiety = 100.0
+		u.energy = 100.0
+	colony.set_profession(miner, Unit.Prof.MINER)
+	colony.inventory = {"wood": 40, "food": 50}
+	var mine := colony.create_project(Project.Kind.MINE, Rect2i(x - 9, s + 3, 9, 3))
+	check(mine != null, "шахта для одиночки заложена")
+	if mine == null:
+		return
+	var hauled := false
+	var t := 0.0
+	while t < 6000.0 and colony.mine_meters_done(mine) < 2:
+		colony.update(0.5)
+		t += 0.5
+		if miner.task == Unit.Task.HAUL and miner.project_id == mine.id and not miner.to_store:
+			hauled = true
+	check(hauled, "без подсобных шахтёр сам несёт дерево на крепь")
+	check(colony.mine_meters_done(mine) >= 2, "и шахта идёт: готово %d м" % colony.mine_meters_done(mine))
