@@ -125,6 +125,7 @@ func _ready() -> void:
 	_log.size = Vector2(PANEL_WIDTH, 0)
 	_build_hint()
 	_build_panel()
+	_build_tree_panel()
 	_build_dialog()
 
 
@@ -612,10 +613,15 @@ func show_panel(spec: Dictionary) -> void:
 
 
 ## Обновляет заголовок и строки, не трогая кнопки и переключатели.
+## Пока палец листает список — не обновляем (иначе прокрутку сбивает); место прокрутки сохраняем.
 func refresh_panel(spec: Dictionary) -> void:
+	if _scrolling():
+		return
+	var keep := _scroll.scroll_vertical
 	_fill_header(spec)
 	_fill_body(spec.get("rows", []))
 	_fit_scroll.call_deferred()
+	_scroll.set_deferred("scroll_vertical", keep)
 
 
 func _fit_scroll() -> void:
@@ -952,10 +958,447 @@ func show_info(text: String, actions: Array = [], controls: Array = []) -> void:
 
 func hide_info() -> void:
 	_info_panel.visible = false
+	if _tree_panel != null:
+		_tree_panel.visible = false
 
 
 func info_visible() -> bool:
-	return _info_panel.visible
+	return _info_panel.visible or (_tree_panel != null and _tree_panel.visible)
+
+
+# --- Прокрутка пальцем -----------------------------------------------------------------
+## Касание в списке сначала ничего не нажимает: сдвинул палец больше чем на DRAG_DEADZONE —
+## это прокрутка (с инерцией), отпустил на месте — обычное нажатие (кнопка срабатывает).
+## Так список листается и там, где под пальцем кнопка.
+const DRAG_DEADZONE := 12.0
+var _press_event: InputEventMouseButton = null
+var _press_region := ""
+var _dragging := false
+var _drag_prev := Vector2.ZERO
+var _drag_t := 0
+var _drag_vel := Vector2.ZERO
+var _inertia_region := ""
+var _replaying := false
+var _panel_scroll_f := 0.0
+## Последние точки пальца [позиция, мс] — по ним скорость для инерции.
+var _drag_samples: Array = []
+
+
+func _scrolling() -> bool:
+	return _press_event != null or not _inertia_region.is_empty()
+
+
+func _scroll_region_at(pos: Vector2) -> String:
+	if _tree_panel != null and _tree_panel.visible and _tree_clip.get_global_rect().has_point(pos):
+		return "tree"
+	if _info_panel.visible and _scroll.get_global_rect().has_point(pos) \
+			and _scroll.get_v_scroll_bar().max_value > _scroll.size.y + 1.0:
+		return "panel"
+	return ""
+
+
+func _input(event: InputEvent) -> void:
+	if _replaying:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			var region := _scroll_region_at(event.position)
+			_inertia_region = ""
+			if region.is_empty():
+				return
+			_press_event = event.duplicate()
+			_press_region = region
+			_dragging = false
+			_drag_prev = event.position
+			_drag_t = Time.get_ticks_msec()
+			_drag_vel = Vector2.ZERO
+			_drag_samples = [[event.position, Time.get_ticks_msec()]]
+			_panel_scroll_f = _scroll.scroll_vertical
+			get_viewport().set_input_as_handled()
+		elif _press_event != null:
+			var press := _press_event
+			_press_event = null
+			get_viewport().set_input_as_handled()
+			if _dragging:
+				_drag_vel = _release_velocity()
+				_inertia_region = _press_region if _drag_vel.length() > 30.0 else ""
+			else:
+				_replay_tap.call_deferred(press, event.duplicate())
+	elif event is InputEventMouseMotion and _press_event != null:
+		get_viewport().set_input_as_handled()
+		if not _dragging and (event.position - _press_event.position).length() > DRAG_DEADZONE:
+			_dragging = true
+			_drag_prev = _press_event.position
+		if _dragging:
+			var d: Vector2 = event.position - _drag_prev
+			_drag_prev = event.position
+			_drag_samples.append([event.position, Time.get_ticks_msec()])
+			if _drag_samples.size() > 12:
+				_drag_samples.pop_front()
+			_scroll_by(_press_region, -d)
+
+
+## Скорость броска: по пути пальца за последние ~80 мс. Палец остановился — без инерции.
+func _release_velocity() -> Vector2:
+	if _drag_samples.size() < 2:
+		return Vector2.ZERO
+	var now := Time.get_ticks_msec()
+	var last: Array = _drag_samples[-1]
+	if now - int(last[1]) > 100:
+		return Vector2.ZERO
+	var first: Array = _drag_samples[0]
+	for s in _drag_samples:
+		if int(last[1]) - int(s[1]) <= 80:
+			first = s
+			break
+	var dt := maxf(1.0 / 60.0, (int(last[1]) - int(first[1])) / 1000.0)
+	return (-((last[0] as Vector2) - (first[0] as Vector2)) / dt).limit_length(2500.0)
+
+
+## Нажатие без сдвига — передаём кнопкам как обычно.
+func _replay_tap(press: InputEventMouseButton, release: InputEventMouseButton) -> void:
+	_replaying = true
+	get_viewport().push_input(press)
+	get_viewport().push_input(release)
+	_replaying = false
+
+
+func _scroll_by(region: String, d: Vector2) -> void:
+	if region == "panel":
+		_panel_scroll_f = clampf(_panel_scroll_f + d.y, 0.0, maxf(0.0, _scroll.get_v_scroll_bar().max_value - _scroll.size.y))
+		_scroll.scroll_vertical = int(_panel_scroll_f)
+	elif region == "tree":
+		_tree_pan -= d
+		_clamp_tree_pan()
+
+
+func _process(delta: float) -> void:
+	if _inertia_region.is_empty():
+		return
+	if _drag_vel.length() < 30.0 or (_inertia_region == "panel" and not _info_panel.visible) \
+			or (_inertia_region == "tree" and not _tree_panel.visible):
+		_inertia_region = ""
+		return
+	_scroll_by(_inertia_region, _drag_vel * delta)
+	_drag_vel *= pow(0.03, delta)
+
+
+# --- Дерево исследований (горизонтальное) ------------------------------------------------
+## Столбцы — ступени: слева то, что можно изучать сразу, правее — то, что требует изученного
+## левее. Линии — что из чего следует. Нажатие на узел — описание и кнопка «Изучать».
+const NODE_W := 220.0
+const NODE_H := 64.0
+const COL_GAP := 60.0
+const ROW_GAP := 12.0
+var _tree_panel: PanelContainer
+var _tree_title: Label
+var _tree_sub: Label
+var _tree_rows: VBoxContainer
+var _tree_clip: Control
+var _tree_canvas: TreeCanvas
+var _tree_detail: VBoxContainer
+var _tree_pan := Vector2.ZERO
+var _tree_items: Array = []
+var _tree_selected := ""
+
+
+class TreeCanvas extends Control:
+	## [[от, до, цвет]] в координатах холста.
+	var edges: Array = []
+
+	func _draw() -> void:
+		for e in edges:
+			var a: Vector2 = e[0]
+			var b: Vector2 = e[1]
+			var mx := (a.x + b.x) * 0.5
+			var pts := PackedVector2Array()
+			for i in 17:
+				var t := i / 16.0
+				# Плавная «S»: горизонтально выходит из узла и горизонтально входит в следующий.
+				var p := a.bezier_interpolate(Vector2(mx, a.y), Vector2(mx, b.y), b, t)
+				pts.append(p)
+			draw_polyline(pts, e[2], 3.0, true)
+
+
+func _build_tree_panel() -> void:
+	_tree_panel = PanelContainer.new()
+	_tree_panel.visible = false
+	# Непрозрачный фон — карта под деревом не мешает читать.
+	var bg := _box(Color(PANEL_BG, 1.0), 18, 14)
+	_tree_panel.add_theme_stylebox_override("panel", bg)
+	add_child(_tree_panel)
+	_tree_panel.visibility_changed.connect(func() -> void:
+		if _log != null:
+			_log.visible = not _tree_panel.visible and not _info_panel.visible)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_tree_panel.add_child(v)
+	var head := HBoxContainer.new()
+	v.add_child(head)
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_theme_constant_override("separation", 0)
+	head.add_child(titles)
+	_tree_title = _label("", 26, Color.WHITE)
+	_tree_title.add_theme_font_override("font", Fonts.black())
+	_tree_sub = _label("", 18, ACCENT)
+	titles.add_child(_tree_title)
+	titles.add_child(_tree_sub)
+	var close := IconButton.make("close", "", 52, 52)
+	close.pressed.connect(hide_info)
+	head.add_child(close)
+	_tree_rows = VBoxContainer.new()
+	_tree_rows.add_theme_constant_override("separation", 4)
+	v.add_child(_tree_rows)
+	# Дерево слева, описание выбранного — справа (экран телефона невысокий).
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 12)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(body)
+	_tree_clip = Control.new()
+	_tree_clip.clip_contents = true
+	_tree_clip.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tree_clip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tree_clip.custom_minimum_size = Vector2(0, 120)
+	body.add_child(_tree_clip)
+	_tree_canvas = TreeCanvas.new()
+	_tree_canvas.mouse_filter = Control.MOUSE_FILTER_PASS
+	_tree_clip.add_child(_tree_canvas)
+	_tree_detail = VBoxContainer.new()
+	_tree_detail.add_theme_constant_override("separation", 8)
+	# Постоянная ширина: при выборе узла дерево не сжимается.
+	_tree_detail.custom_minimum_size = Vector2(320, 0)
+	body.add_child(_tree_detail)
+
+
+## Дерево исследований: {"title", "subtitle", "rows", "items": [{"id", "name", "desc", "cost",
+## "state": done|current|available|locked, "needs": [id], "pick": Callable}]}.
+func show_tech_tree(spec: Dictionary) -> void:
+	_menu.visible = false
+	_new_game.visible = false
+	_info_panel.visible = false
+	var first := not _tree_panel.visible
+	_tree_panel.visible = true
+	_fill_tree(spec)
+	_layout_tree_panel()
+	if first:
+		_focus_tree.call_deferred()
+
+
+func refresh_tech_tree(spec: Dictionary) -> void:
+	if _scrolling() or not _tree_panel.visible:
+		return
+	_fill_tree(spec)
+
+
+func _layout_tree_panel() -> void:
+	# Поверх строки ресурсов: на экране науки она не нужна, а место дереву нужно.
+	var top := EDGE_TOP
+	_tree_panel.position = Vector2(SIDE, top)
+	_tree_panel.size = Vector2(size.x - SIDE * 2.0, size.y - BAR_H - top - 4.0)
+
+
+func _fill_tree(spec: Dictionary) -> void:
+	_tree_title.text = spec.get("title", "")
+	_tree_sub.text = spec.get("subtitle", "")
+	for c in _tree_rows.get_children():
+		_tree_rows.remove_child(c)
+		c.queue_free()
+	for row in spec.get("rows", []):
+		var node := _row(row)
+		if node != null:
+			if node is Label:
+				(node as Label).custom_minimum_size = Vector2.ZERO
+			_tree_rows.add_child(node)
+	_tree_items = spec.get("items", [])
+	_build_tree_nodes()
+
+
+func _build_tree_nodes() -> void:
+	# Ступень узла — длиннейшая цепочка требований до него.
+	var by_id := {}
+	for it in _tree_items:
+		by_id[it["id"]] = it
+	var tier := {}
+	var tier_of := func(id: String, self_ref: Callable) -> int:
+		if tier.has(id):
+			return tier[id]
+		var t := 0
+		for n in by_id[id]["needs"]:
+			if by_id.has(n):
+				t = maxi(t, self_ref.call(n, self_ref) + 1)
+		tier[id] = t
+		return t
+	var cols: Array = []
+	for it in _tree_items:
+		var t: int = tier_of.call(it["id"], tier_of)
+		while cols.size() <= t:
+			cols.append([])
+		cols[t].append(it["id"])
+	# В столбце — ближе к тем, из кого вырастает (по среднему ряду требований).
+	var row_of := {}
+	for ci in cols.size():
+		var col: Array = cols[ci]
+		if ci > 0:
+			col.sort_custom(func(a: String, b: String) -> bool:
+				return _avg_row(by_id[a]["needs"], row_of) < _avg_row(by_id[b]["needs"], row_of))
+		for ri in col.size():
+			row_of[col[ri]] = ri
+	var pos := {}
+	var max_rows := 0
+	for ci in cols.size():
+		max_rows = maxi(max_rows, cols[ci].size())
+	for ci in cols.size():
+		var col: Array = cols[ci]
+		for ri in col.size():
+			pos[col[ri]] = Vector2(ci * (NODE_W + COL_GAP), ri * (NODE_H + ROW_GAP))
+	for c in _tree_canvas.get_children():
+		_tree_canvas.remove_child(c)
+		c.queue_free()
+	var edges := []
+	for it in _tree_items:
+		var p: Vector2 = pos[it["id"]]
+		for n in it["needs"]:
+			if pos.has(n):
+				var from: Vector2 = pos[n] + Vector2(NODE_W, NODE_H * 0.5)
+				var done: bool = by_id[n]["state"] == "done"
+				# Связи выбранного узла — ярко, остальные приглушены.
+				var col := Color(0.45, 0.8, 0.5, 0.55) if done else Color(1, 1, 1, 0.14)
+				if not _tree_selected.is_empty() and (it["id"] == _tree_selected or n == _tree_selected):
+					col = ACCENT
+				edges.append([from, p + Vector2(0, NODE_H * 0.5), col])
+		_tree_canvas.add_child(_tree_node(it, p))
+	_tree_canvas.edges = edges
+	_tree_canvas.custom_minimum_size = Vector2(cols.size() * (NODE_W + COL_GAP) - COL_GAP, max_rows * (NODE_H + ROW_GAP) - ROW_GAP)
+	_tree_canvas.size = _tree_canvas.custom_minimum_size
+	_tree_canvas.queue_redraw()
+	_clamp_tree_pan()
+	_fill_tree_detail()
+
+
+static func _avg_row(needs: Array, row_of: Dictionary) -> float:
+	var s := 0.0
+	var n := 0
+	for id in needs:
+		if row_of.has(id):
+			s += row_of[id]
+			n += 1
+	return s / n if n > 0 else 0.0
+
+
+func _tree_node(it: Dictionary, p: Vector2) -> Control:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.position = p
+	b.size = Vector2(NODE_W, NODE_H)
+	b.custom_minimum_size = b.size
+	b.clip_text = true
+	b.text = "%s\n%d очков" % [it["name"], it["cost"]]
+	b.add_theme_font_size_override("font_size", 16)
+	# Узлы непрозрачные — линии под ними не просвечивают.
+	var bg := Color(0.26, 0.22, 0.25)
+	var fg := MUTED
+	match it["state"]:
+		"done":
+			bg = Color(0.2, 0.42, 0.24)
+			fg = Color.WHITE
+		"current":
+			bg = Color(0.2, 0.33, 0.6)
+			fg = Color.WHITE
+		"available":
+			bg = Color(0.42, 0.31, 0.14)
+			fg = Color.WHITE
+	var sb := _box(bg, 12, 8)
+	if it["id"] == _tree_selected:
+		sb.border_color = ACCENT
+		sb.set_border_width_all(3)
+	elif it["state"] == "available":
+		sb.border_color = ACCENT.darkened(0.3)
+		sb.set_border_width_all(2)
+	for st in ["normal", "hover", "pressed", "disabled"]:
+		b.add_theme_stylebox_override(st, sb)
+	for st in ["font_color", "font_hover_color", "font_pressed_color"]:
+		b.add_theme_color_override(st, fg)
+	var id: String = it["id"]
+	b.set_meta("id", id)
+	b.pressed.connect(func() -> void:
+		_tree_selected = id
+		_build_tree_nodes.call_deferred())
+	return b
+
+
+func _fill_tree_detail() -> void:
+	for c in _tree_detail.get_children():
+		_tree_detail.remove_child(c)
+		c.queue_free()
+	var sel = null
+	for it in _tree_items:
+		if it["id"] == _tree_selected:
+			sel = it
+	if sel == null:
+		var hint := _label("Нажмите на исследование, чтобы прочитать и начать.\n\nЛистайте дерево пальцем: левее — основы, правее — то, что открывается после них.\n\nЗелёное — изучено, синее — изучается, с оранжевой рамкой — можно начать.", 16, MUTED)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.custom_minimum_size = Vector2(320, 0)
+		_tree_detail.add_child(hint)
+		return
+	var t := _label("%s · %d очков" % [sel["name"], sel["cost"]], 20, Color.WHITE)
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.custom_minimum_size = Vector2(320, 0)
+	_tree_detail.add_child(t)
+	var d := _label(sel["desc"], 16, MUTED)
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	d.custom_minimum_size = Vector2(320, 0)
+	_tree_detail.add_child(d)
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(320, 54)
+	b.add_theme_font_size_override("font_size", 18)
+	match sel["state"]:
+		"done":
+			b.text = "Изучено"
+			b.disabled = true
+		"current":
+			b.text = "Изучается"
+			b.disabled = true
+		"available":
+			b.text = "Изучать"
+			b.add_theme_stylebox_override("normal", btn_box(ACCENT))
+			b.pressed.connect(sel["pick"])
+		_:
+			b.text = "Недоступно"
+			b.disabled = true
+	_tree_detail.add_child(b)
+
+
+func _clamp_tree_pan() -> void:
+	if _tree_canvas == null:
+		return
+	var view := _tree_clip.size
+	var cs := _tree_canvas.size
+	_tree_pan.x = clampf(_tree_pan.x, minf(0.0, view.x - cs.x - 20.0), 20.0)
+	_tree_pan.y = clampf(_tree_pan.y, minf(0.0, view.y - cs.y - 20.0), 20.0)
+	_tree_canvas.position = _tree_pan
+
+
+## При открытии — показать «передний край»: что изучается или доступно, ближе к левому краю.
+func _focus_tree() -> void:
+	_layout_tree_panel()
+	var target := Vector2(20, 20)
+	var want := ""
+	for it in _tree_items:
+		if it["state"] == "current":
+			want = it["id"]
+	if want.is_empty():
+		for it in _tree_items:
+			if it["state"] == "available":
+				want = it["id"]
+				break
+	for c in _tree_canvas.get_children():
+		if c.get_meta("id", "") == want:
+			# Столбец с ним — у левого края, сам узел — в верхней части видимого.
+			target = Vector2(20, 12) - Vector2(c.position.x, maxf(0.0, c.position.y - NODE_H - ROW_GAP))
+	_tree_pan = target
+	_clamp_tree_pan()
 
 
 # --- Окна: сообщение и меню ---------------------------------------------------------------

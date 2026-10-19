@@ -1066,12 +1066,20 @@ func _show_science() -> void:
 	_select(null, null)
 	hud.close_overlays()
 	_info_target = ["science"]
+	hud.show_tech_tree(_science_tree_spec())
+
+
+## Наука для дерева: шапка, прогресс и все исследования с требованиями.
+func _science_tree_spec() -> Dictionary:
 	var spec := _science_spec()
-	var techs := []
+	var items := []
 	for id in Research.TECHS:
-		techs.append(id)
-	spec["controls"] = [{"type": "techs", "items": techs.map(func(id: String) -> Dictionary: return _tech_item(id))}]
-	hud.show_panel(spec)
+		var it := _tech_item(id)
+		it["id"] = id
+		it["needs"] = Research.TECHS[id][3]
+		items.append(it)
+	spec["items"] = items
+	return spec
 
 
 func _tech_item(id: String) -> Dictionary:
@@ -1086,7 +1094,7 @@ func _tech_item(id: String) -> Dictionary:
 	var needs: Array = Research.TECHS[id][3]
 	var desc: String = Research.TECHS[id][1]
 	if state == "locked":
-		desc = "Сначала: " + ", ".join(needs.map(func(n: String) -> String: return Research.tech_name(n))) + ". " + desc
+		desc = "Сначала: " + ", ".join(needs.map(func(n: String) -> String: return Research.tech_name(n))) + ".\n" + desc
 	return {"name": Research.tech_name(id), "desc": desc, "cost": int(r.cost(id)), "state": state,
 		"pick": func() -> void:
 			r.start(id)
@@ -1105,10 +1113,10 @@ func _science_spec() -> Dictionary:
 	var scientists := 0
 	for p in labs:
 		scientists += colony.workers_on(p)
-	rows.append({"type": "chips", "items": [["", "лабораторий: %d" % labs.size()], ["people", "учёных за работой: %d" % scientists]]})
 	if labs.is_empty():
 		rows.append({"type": "warning", "text": "Нет лаборатории — постройте комнату и выберите назначение «Лаборатория»."})
-	return {"title": "Наука", "subtitle": "изучено %d из %d" % [r.done.size(), Research.TECHS.size()], "rows": rows}
+	return {"title": "Наука", "subtitle": "изучено %d из %d · лабораторий %d · учёных за работой %d" % [
+		r.done.size(), Research.TECHS.size(), labs.size(), scientists], "rows": rows}
 
 
 func _refresh_info() -> void:
@@ -1119,7 +1127,7 @@ func _refresh_info() -> void:
 		if u != null:
 			hud.refresh_panel(_unit_spec(u))
 	elif _info_target[0] == "science":
-		hud.refresh_panel(_science_spec())
+		hud.refresh_tech_tree(_science_tree_spec())
 	elif _info_target[0] == "people":
 		hud.refresh_panel(_people_spec())
 	elif _info_target[0] == "project":
