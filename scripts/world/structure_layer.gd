@@ -401,7 +401,7 @@ func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			if is_nan(dx):
 				continue
 			used[item] = true
-			_furn_at(tex, r.position.x + dx * TILE, fy - TILE * 1.15, alpha, 2)
+			_furn_hang(tex, r.position.x + dx * TILE, fy, alpha)
 			break
 		var bed := furniture("home", "bed_" + BED_COLORS[(p.id + i) % BED_COLORS.size()])
 		_furn_at(bed, cx, fy, alpha, 1, _fit(bed, lay.unit * 2))
@@ -419,6 +419,39 @@ func _inside(p: Project, r: Rect2, units: float) -> Dictionary:
 	var hi := r.end.x - TILE * RACK_INSET
 	var unit := minf(TILE, (hi - lo) / units)
 	return {"x": (lo + hi - unit * units) * 0.5, "unit": unit}
+
+
+## Настенные предметы висят на одной линии, заметно ниже потолка: картинки и инструменты —
+## верхом на высоте HANG_TOP (м над полом), полки — доской на SHELF_BOARD.
+const HANG_TOP := 1.95
+const SHELF_BOARD := 1.5
+func _furn_hang(t: Texture2D, cx: float, fy: float, alpha: float) -> void:
+	var h := t.get_height() / FURN_PX_PER_M * TILE
+	var top := fy - TILE * HANG_TOP
+	if t.resource_path.get_file().begins_with("shelf_"):
+		top = fy - TILE * SHELF_BOARD - _board_row(t) * h
+	_furn_at(t, cx, top + h, alpha, 2)
+
+
+## Доля высоты, на которой у полки доска (самая широкая строка картинки).
+static var _boards := {}
+func _board_row(t: Texture2D) -> float:
+	if not _boards.has(t):
+		var img := t.get_image()
+		if img.is_compressed():
+			img.decompress()
+		var best := 0
+		var best_n := -1
+		for y in img.get_height():
+			var n := 0
+			for x in range(0, img.get_width(), 2):
+				if img.get_pixel(x, y).a > 0.5:
+					n += 1
+			if n > best_n:
+				best_n = n
+				best = y
+		_boards[t] = float(best) / img.get_height()
+	return _boards[t]
 
 
 ## Масштаб, при котором предмет помещается в ширину width (px) с зазором; крупнее не делаем.
@@ -538,7 +571,7 @@ func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	# Жердь — над стеллажами, как на прототипе.
 	var left: float = rk.start - TILE * 0.1
 	var right: float = rk.start + rk.racks * rk.rw + (rk.racks - 1) * rk.gap + TILE * 0.1
-	var top := fy - TILE * 2.5
+	var top := fy - TILE * 2.3
 	_draw_span("granary", "rod", left, right, top, alpha)
 	# Связки — по одной на 0,6 м, не над верёвками, без повторов подряд.
 	var k := TILE / FURN_PX_PER_M
@@ -547,7 +580,8 @@ func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	for i in n:
 		var t := furniture("granary", HANGERS[(first + i) % HANGERS.size()])
 		var cx := left + TILE * 0.25 + (i + 0.5) * (right - left - TILE * 0.5) / n
-		draw_texture_rect(t, Rect2(cx - t.get_width() * k * 0.5, top + 47 * k, t.get_width() * k, t.get_height() * k), false, Color(1, 1, 1, alpha))
+		var hs := t.get_size() * k * 0.85
+		draw_texture_rect(t, Rect2(cx - hs.x * 0.5, top + 47 * k, hs.x, hs.y), false, Color(1, 1, 1, alpha))
 
 
 ## Предмет, растянутый от left до right: торцы <name>_l, <name>_r и повторяющийся <name>_mid.
@@ -593,11 +627,11 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var deco := furniture("farm", FARM_DECOR[(first + i) % FARM_DECOR.size()])
 			var dx := _decor_x(slot_l, slot_l + lay.unit * 2 / TILE, deco.get_width() / FURN_PX_PER_M, posts)
 			if not is_nan(dx):
-				_furn_at(deco, r.position.x + dx * TILE, fy - TILE * 1.6, alpha, 2)
+				_furn_hang(deco, r.position.x + dx * TILE, fy, alpha)
 		if lamp != null:
 			# Лампа на настенных креплениях — прямо над грибами, как на прототипе.
 			var lsz := lamp.get_size() * k
-			draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.95 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
+			draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.9 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
 		var sz := shoots.get_size() * k
 		draw_texture_rect(shoots, Rect2(cx - sz.x * 0.5, fy - (bed.get_height() - 7) * k - sz.y, sz.x, sz.y), false, tint)
 		_furn_at(bed, cx, fy, alpha, 1, sc)
