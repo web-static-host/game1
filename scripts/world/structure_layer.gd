@@ -26,8 +26,34 @@ var preview_text := ""
 var selected_project := 0
 
 
+## Значки (износ, нет работника, мороз) — отдельным слоем поверх темноты, чтобы их было видно
+## и в неосвещённых комнатах.
+var _signs: Node2D
+
+
+func _ready() -> void:
+	_signs = Node2D.new()
+	_signs.z_index = 11
+	_signs.draw.connect(_draw_signs)
+	add_child(_signs)
+
+
 func _process(_delta: float) -> void:
 	queue_redraw()
+	if _signs != null:
+		_signs.queue_redraw()
+
+
+func _draw_signs() -> void:
+	if colony == null:
+		return
+	for p in colony.projects:
+		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
+			_draw_wear_sign(p)
+		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE and not p.paused and colony.assigned_to(p).is_empty():
+			_draw_no_worker_sign(p)
+		if colony.home_freezing(p):
+			_draw_frost_sign(p)
 
 
 func _rect_px(r: Rect2i) -> Rect2:
@@ -50,12 +76,6 @@ func _draw() -> void:
 	_draw_gas()
 	for p in colony.projects:
 		_draw_supply(p, font)
-		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
-			_draw_wear_sign(p)
-		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE and not p.paused and colony.assigned_to(p).is_empty():
-			_draw_no_worker_sign(p)
-		if colony.home_freezing(p):
-			_draw_frost_sign(p)
 	# Падающая порода.
 	for f in colony.physics.fx:
 		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
@@ -823,31 +843,32 @@ func _draw_wear_sign(p: Project) -> void:
 	if p.wear >= Colony.WEAR_WARN[1] and int(Time.get_ticks_msec() / 400) % 2 == 0:
 		col = col.lightened(0.4)
 	var c := Vector2(r.end.x - 14, r.position.y - 16)
-	draw_circle(c, 15, Color(0, 0, 0, 0.55))
-	ResIcon.draw_glyph(self, "warning", c, 12, col)
+	_signs.draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(_signs, "warning", c, 12, col)
 
 
-## Рабочая комната без работника: перечёркнутый человечек над левым углом.
+## Рабочая комната без работника: перечёркнутый человечек внутри, в левом верхнем углу.
 func _draw_no_worker_sign(p: Project) -> void:
 	var r := _rect_px(p.rect)
-	var c := Vector2(r.position.x + 16, r.position.y - 16)
+	# У пристани (настил в 1 клетку) — над ней.
+	var c := Vector2(r.position.x + 22, r.position.y + 22) if p.rect.size.y >= 3 else Vector2(r.position.x + 16, r.position.y - 16)
 	var col := Color(1.0, 0.45, 0.4)
 	if int(Time.get_ticks_msec() / 600) % 2 == 0:
 		col = col.lightened(0.3)
-	draw_circle(c, 15, Color(0, 0, 0, 0.55))
-	ResIcon.draw_glyph(self, "people", c, 11, col)
-	draw_line(c + Vector2(-9, 9), c + Vector2(9, -9), col, 2.5)
+	_signs.draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(_signs, "people", c, 11, col)
+	_signs.draw_line(c + Vector2(-9, 9), c + Vector2(9, -9), col, 2.5)
 
 
-## Жилой дом с морозом внутри: снежинка над серединой крыши.
+## Жилой дом с морозом внутри: снежинка внутри комнаты, в правом верхнем углу.
 func _draw_frost_sign(p: Project) -> void:
 	var r := _rect_px(p.rect)
-	var c := Vector2(r.get_center().x, r.position.y - 16)
+	var c := Vector2(r.end.x - 22, r.position.y + 22)
 	var col := Color(0.6, 0.85, 1.0)
 	if int(Time.get_ticks_msec() / 600) % 2 == 0:
 		col = col.lightened(0.35)
-	draw_circle(c, 15, Color(0, 0, 0, 0.55))
-	ResIcon.draw_glyph(self, "frost", c, 11, col)
+	_signs.draw_circle(c, 15, Color(0, 0, 0, 0.55))
+	ResIcon.draw_glyph(_signs, "frost", c, 11, col)
 
 
 func _ground_y(x: float) -> float:
