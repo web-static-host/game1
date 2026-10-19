@@ -2128,15 +2128,18 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 			return _try_supply(u, p, parents, dist)
 		RoomType.STORAGE, RoomType.GRANARY:
 			# Работники склада и амбара: сначала шахты (крепь туда, добытое оттуда),
-			# потом рубят отмеченное игроком, добывают до нормы, относят добытое на хранение.
+			# потом уносят на хранение то, что уже лежит (улов, урожай ферм, добытое),
+			# рубят отмеченное игроком и только потом добывают новое до нормы.
 			if p.purpose == RoomType.STORAGE and _try_mine_logistics(u, p, parents, dist):
+				return true
+			if _try_cleanup(u, parents, dist, p):
 				return true
 			if p.purpose == RoomType.STORAGE and _try_harvest(u, parents, dist):
 				return true
 			for k in storage_deficit(p):
 				if _try_gather(u, k, p, parents, dist):
 					return true
-			return _try_cleanup(u, parents, dist, p)
+			return false
 	return false
 
 

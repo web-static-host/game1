@@ -53,6 +53,7 @@ func _initialize() -> void:
 	test_build_priority()
 	test_idle_spread()
 	test_buried_drop()
+	test_store_takes_drops_first()
 	test_separate_stores()
 	test_mine_meters()
 	test_lights()
@@ -2233,6 +2234,25 @@ func test_idle_spread() -> void:
 		if a.task != Unit.Task.STROLL:
 			break
 	check(a.cell() != b.cell() and not colony._crowded(b), "разошлись: %s и %s" % [a.cell(), b.cell()])
+
+
+func test_store_takes_drops_first() -> void:
+	# Работник амбара сперва уносит лежащую рядом еду (улов, урожай ферм), а не идёт ловить новую.
+	var colony := _new_colony(26)
+	_start(colony, 0)
+	var hx := colony.home.x
+	var gr := _fake_room(colony, RoomType.GRANARY, hx + 3, 6)
+	gr.targets = {"food": 30, "berries": 30}
+	colony.inventory = {}
+	colony._sync_held()
+	var worker := colony.units[0]
+	check(colony.assign_work(worker, gr).is_empty(), "житель назначен в амбар")
+	colony.drop_item(colony._ground_cell(hx - 2), "food", 12)
+	colony._drop(worker)
+	var reach := colony.pathing.explore(worker.cell())
+	check(colony._try_workplace(worker, reach[0], reach[1]), "работник амбара нашёл дело")
+	check(worker.task == Unit.Task.HAUL and worker.carry_key == "food",
+		"несёт лежащую еду в амбар, а не ловит и не собирает новую (%s)" % Unit.TASK_NAMES[worker.task])
 
 
 func test_buried_drop() -> void:
