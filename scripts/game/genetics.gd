@@ -15,8 +15,10 @@ extends RefCounted
 ## Сверхюнит — цвет рядом с градиентом лого: все характеристики 200%.
 
 const MUTATION_CHANCE := 0.1
-## Насколько близко к цвету лого нужно попасть, чтобы родился сверхюнит (≈1 на 110 рождений).
-const SUPER_RADIUS := 0.07
+## Насколько близко к цвету лого нужно попасть, чтобы родился сверхюнит (оттенок примерно 162°–202°).
+const SUPER_RADIUS := 0.10
+## Стартовые цвета основателей держатся подальше от бирюзы (сверхюниты только выводятся).
+const FOUNDER_GAP := 0.175
 
 const SHAPE_NAMES := ["треугольник", "квадрат", "круг"]
 ## Цвета волос: тёмные доминируют над светлыми (видна копия с меньшим номером).
@@ -64,7 +66,7 @@ const PINK := Color(1, 0.2, 0.6)
 static func bright_color(rng: RandomNumberGenerator) -> Color:
 	while true:
 		var c := Color.from_hsv(rng.randf(), rng.randf_range(0.85, 1.0), 1.0)
-		if CreatureArt.super_distance(c) > SUPER_RADIUS * 2.5:
+		if CreatureArt.super_distance(c) > FOUNDER_GAP:
 			return c
 	return Color.RED
 
