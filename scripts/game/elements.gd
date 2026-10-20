@@ -485,6 +485,9 @@ func _temperature(c: Vector2i) -> float:
 
 ## Воздействие стихий на жителя за dt секунд.
 func affect_unit(u: Unit, dt: float) -> void:
+	# Сверхюниту стихии не страшны — умирает только от старости.
+	if u.invulnerable():
+		return
 	var c := u.cell()
 	var head := c + UP
 	if world.get_mat(head.x, head.y) == Mat.WATER:

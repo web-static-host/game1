@@ -480,7 +480,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])
 		if Genetics.is_super(g):
-			tags.append(["СВЕРХЮНИТ — все характеристики ×2", Color(0.3, 0.9, 0.85)])
+			tags.append(["СВЕРХЮНИТ — все характеристики ×2, неуязвим: умирает только от старости", Color(0.3, 0.9, 0.85)])
 		var mt := Genetics.mutation_text(g)
 		if not mt.is_empty():
 			var rarity_cols := [Color(0.6, 0.85, 0.6), Color(0.5, 0.75, 1.0), Color(0.8, 0.6, 1.0), Color(1.0, 0.8, 0.3)]

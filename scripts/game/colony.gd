@@ -1811,6 +1811,9 @@ func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 
 
 func injure(u: Unit, dmg: float, why: String) -> void:
+	if u.invulnerable():
+		u.health = maxf(u.health, 1.0)
+		return
 	if u.ability("collapse_proof") == true and (why.contains("обвал") or why.contains("обломк") or why.contains("засыпало") or why.contains("обрушен")):
 		_log("%s: %s — панцирь выдержал!" % [u.name, why], "good")
 		return
@@ -2014,7 +2017,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 		var asleep := u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK
 		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0) * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
-		if u.satiety <= 0.0:
+		if u.satiety <= 0.0 and not u.invulnerable():
 			u.health -= dt * 100.0 / STARVE_TIME / maxf(0.3, u.stat("fasting"))
 			if u.health < 50.0 and not u.starving_warned:
 				u.starving_warned = true
@@ -4467,12 +4470,24 @@ func _cancel_repair(p: Project) -> void:
 	_log("%s: ремонт отменён" % p.title(), "info")
 
 
-## Постройка рухнула: обломки, травмы, падают верхние этажи, порода может обвалиться.
+## Постройка рухнула: всё, что в ней лежало, пропадает, кто был внутри — гибнет (кроме
+## сверхюнитов), падают верхние этажи, порода может обвалиться. Дегазация взрывается.
 func collapse(p: Project, why: String) -> void:
 	if not projects.has(p):
 		return
 	_log("ОБРУШЕНИЕ: %s (%s)" % [p.title(), why], "danger")
-	_return_delivered(p)
+	# Запасы, сырьё мастерской и привезённые материалы гибнут вместе с постройкой.
+	var lost: PackedStringArray = []
+	for k in p.held:
+		var n := int(p.held[k])
+		if n > 0:
+			inventory[k] = maxi(0, int(inventory.get(k, 0)) - n)
+			lost.append("%s %d" % [Mat.resource_name(k).to_lower(), n])
+	p.held.clear()
+	p.stock.clear()
+	p.delivered.clear()
+	if not lost.is_empty():
+		_log("Под обломками пропало: %s" % ", ".join(lost), "danger")
 	_release_beds(p)
 	projects.erase(p)
 	for c in p.cells():
@@ -4481,20 +4496,27 @@ func collapse(p: Project, why: String) -> void:
 		deck.erase(c)
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_restore_water_overlaps(p)
-	for u in units:
-		if u.project_id == p.id:
-			_drop(u)
+	_rebuild_climb()
 	for u: Unit in units.duplicate():
 		var c := u.cell()
-		if not (p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1))):
+		if p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1)):
+			if p.is_water_structure():
+				# Настил рухнул в воду — житель выбирается на берег.
+				_drop(u)
+				u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
+				u.state = Unit.State.IDLE
+				injure(u, 10.0, "упал в воду с рухнувшего настила")
+			else:
+				injure(u, 100000.0, "погиб(ла) под обломками")
 			continue
-		if p.is_water_structure():
-			# Настил рухнул в воду — житель выбирается на берег.
-			u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
-			u.state = Unit.State.IDLE
-			injure(u, 10.0, "упал в воду с рухнувшего настила")
-			continue
-		injure(u, 40.0, "завалило обломками")
+		# Кто работал здесь или шёл через рухнувшее — останавливается и ищет путь заново.
+		var through := u.project_id == p.id
+		for i in range(u.path_i, u.path.size()):
+			if through:
+				break
+			through = p.rect.has_point(u.path[i])
+		if through:
+			_drop(u)
 	if p.kind == Project.Kind.ROOM:
 		# Стены и перекрытия ложатся обломками на пол.
 		var floor_y := p.rect.end.y - 1
@@ -4504,6 +4526,8 @@ func collapse(p: Project, why: String) -> void:
 		for u in units:
 			if u.cell().y == floor_y and p.rect.has_point(u.cell()):
 				u.pos.y = floor_y - 1
+	if p.kind == Project.Kind.ROOM and RoomType.EXPLOSIVE.has(p.purpose):
+		_explode(p)
 	# Этажи сверху теряют опору и тоже рушатся.
 	for q: Project in projects.duplicate():
 		if q.kind != Project.Kind.ROOM or q.rect.end.y != p.rect.position.y:
@@ -4515,6 +4539,31 @@ func collapse(p: Project, why: String) -> void:
 	for c in p.cells():
 		elements.on_opened(c)
 	physics.check_area(p.cells())
+
+
+## Взрыв рухнувшей дегазации: всё вокруг на 3, 6 или 9 м (по размеру комнаты) рушится,
+## порода трескается в обломки, кто рядом — гибнет (кроме сверхюнитов).
+func _explode(p: Project) -> void:
+	var rad: int = [3, 6, 9][clampi(RoomType.blocks(p), 1, 3) - 1]
+	var area := p.rect.grow(rad)
+	_log("ВЗРЫВ: %s — разрушено всё вокруг на %d м" % [p.title(), rad], "danger")
+	for u: Unit in units.duplicate():
+		if area.has_point(u.cell()):
+			injure(u, 100000.0, "погиб(ла) при взрыве")
+	var cells: Array[Vector2i] = []
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
+			var c := Vector2i(x, y)
+			if p.rect.has_point(c) or y < world.gen.surface_y(x):
+				continue
+			var m := world.get_mat(x, y)
+			if Mat.is_solid(m) and m != Mat.RUBBLE:
+				world.set_material(x, y, Mat.RUBBLE)
+				cells.append(c)
+	for q: Project in projects.duplicate():
+		if q.rect.intersects(area):
+			collapse(q, "взрыв рядом")
+	physics.check_area(cells)
 
 
 func _room_supported(q: Project) -> bool:

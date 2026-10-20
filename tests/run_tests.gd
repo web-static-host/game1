@@ -61,6 +61,7 @@ func _initialize() -> void:
 	test_store_limits()
 	test_change_material()
 	test_walk_floor_only()
+	test_collapse_losses()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2584,6 +2585,64 @@ func test_store_limits() -> void:
 	var gr := _fake_room(colony, RoomType.GRANARY, colony.home.x + 40, 6)
 	colony.set_store_on(gr, "berries", false)
 	check(RoomType.stores(gr, "food") and not RoomType.stores(gr, "berries"), "в амбаре тоже галочки: ягоды не хранить")
+
+
+func test_collapse_losses() -> void:
+	# Рухнул склад: запасы пропали, кто внутри — погиб; сверхюнит выжил.
+	var res := _colony_with_room(34, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var st: Project = res[1]
+	colony.inventory = {}
+	colony._sync_held()
+	colony._add("wood", 30, st)
+	check(colony.held_in(st, "wood") == 30, "в складе 30 дерева")
+	var a := colony.units[0]
+	var b := colony.units[1]
+	var floor_c := Vector2i(st.rect.position.x + 2, st.rect.end.y - 1)
+	for u in [a, b]:
+		colony._drop(u)
+		u.pos = Vector2(floor_c)
+	var g := b.genome.duplicate(true)
+	b.genome["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_A]
+	var b_super := Genetics.is_super(b.genome)
+	check(b_super, "бирюзовый — сверхюнит")
+	var n0 := colony.units.size()
+	colony.collapse(st, "тест")
+	check(colony.inventory.get("wood", 0) == 0, "дерево из рухнувшего склада пропало")
+	check(not colony.units.has(a), "кто был внутри — погиб")
+	if b_super:
+		check(colony.units.has(b), "сверхюнит выжил под обломками")
+	check(colony.units.size() == n0 - (1 if b_super else 2), "погибли только те, кто внутри")
+	# Сверхюнит неуязвим: не мёрзнет, не голодает, не гибнет от ран.
+	if b_super:
+		b.satiety = 0.0
+		b.health = 50.0
+		colony._life_tick(5000.0, false)
+		colony.injure(b, 1000.0, "тест")
+		check(colony.units.has(b) and b.health > 0.0, "сверхюнита не убить ни голодом, ни ранами")
+	b.genome = g
+	# Взрыв дегазации: всё вокруг на 3 м (малая комната) рушится, порода — в обломки.
+	var res2 := _colony_with_room(35, RoomType.DEGAS, 3)
+	var c2: Colony = res2[0]
+	var dg: Project = res2[1]
+	check(dg.purpose == RoomType.DEGAS, "малая дегазация готова")
+	var near := Project.new()
+	near.id = 996
+	near.kind = Project.Kind.TUNNEL
+	near.phase = Project.Phase.DONE
+	near.rect = Rect2i(dg.rect.end.x + 2, dg.rect.position.y, 1, 3)
+	c2.projects.append(near)
+	var far := Project.new()
+	far.id = 997
+	far.kind = Project.Kind.TUNNEL
+	far.phase = Project.Phase.DONE
+	far.rect = Rect2i(dg.rect.end.x + 10, dg.rect.position.y, 1, 3)
+	c2.projects.append(far)
+	var rock := Vector2i(dg.rect.position.x + 1, dg.rect.end.y + 2)
+	var was_solid := Mat.is_solid(c2.world.get_mat(rock.x, rock.y))
+	c2.collapse(dg, "тест")
+	check(not c2.projects.has(near) and c2.projects.has(far), "в 3 м всё рухнуло, дальше — цело")
+	check(not was_solid or c2.world.get_mat(rock.x, rock.y) == Mat.RUBBLE, "порода рядом треснула в обломки")
 
 
 func test_walk_floor_only() -> void:

@@ -125,6 +125,11 @@ func age_text() -> String:
 	return "%d г. %d мес." % [months / 12, months % 12]
 
 
+## Бирюзовый сверхюнит неуязвим: умирает только от старости.
+func invulnerable() -> bool:
+	return not genome.is_empty() and Genetics.is_super(genome)
+
+
 ## Характеристика (1.0 = 100%).
 func stat(key: String) -> float:
 	return stats.get(key, 1.0)
