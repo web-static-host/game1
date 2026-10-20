@@ -68,6 +68,7 @@ func _initialize() -> void:
 	test_extend()
 	test_stacked_mines()
 	test_lift_merge()
+	test_planet_balance()
 	test_priority()
 	test_oil()
 	test_space()
@@ -641,16 +642,17 @@ func test_needs_realtime() -> void:
 		colony.update(0.5)
 		t += 0.5
 	check(u.satiety >= 50.0 and colony.inventory["food"] < 10, "голодный житель поел (%.0f с)" % t)
-	u.energy = 5.0
+	# Сна нет: жители не устают и не уходят спать, старый «спящий» сразу встаёт.
+	var slept := false
+	u.task = Unit.Task.SLEEP
+	u.state = Unit.State.WORK
 	t = 0.0
-	var slept_in_bed := false
-	while t < 900.0 and u.energy < 99.0:
+	while t < 600.0:
 		colony.update(0.5)
 		t += 0.5
-		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK and u.project_id != 0:
-			slept_in_bed = true
-	check(u.energy >= 99.0, "уставший житель выспался (%.0f с)" % t)
-	check(slept_in_bed, "спал в кровати")
+		if u.task == Unit.Task.SLEEP:
+			slept = true
+	check(u.energy == 100.0 and not slept, "сна нет: жители не устают и не спят")
 
 
 func test_family() -> void:
@@ -2646,7 +2648,7 @@ func test_space() -> void:
 			trees += 1
 	check(trees == 0 and mg.lake_at(50).is_empty(), "на Марсе нет деревьев и озёр")
 	var ms := mg.surface_y(0)
-	check(mg.temperature(ms - 1, ms) < -50.0 and mg.temperature(ms + 20, ms) > -16.0, "Марс: на поверхности −60, в недрах около −12")
+	check(mg.temperature(ms - 1, ms) < -25.0 and mg.temperature(ms + 20, ms) > -16.0, "Марс: на поверхности −30, в недрах около −12")
 	check(mg.oxygen_ratio(ms - 1, ms) == 0.0 and mg.oxygen_ratio(ms + 5, ms) == 1.0, "на поверхности Марса дышать нечем")
 	check(WorldGen.new(5, WorldGen.LATEST, "earth").temperature(ms + 20, ms) == Env.temperature(ms + 20, ms), "на Земле климат прежний")
 	# Ракета: собирают на космодроме, топливо — по трубам.
@@ -2934,6 +2936,52 @@ func test_extend() -> void:
 	var lq := colony.extend_project(lift, Vector2i.DOWN, 4)
 	check(lq != null and lq.cost() == Project.lift_cost(lq.rect, false, false) and lq.cost()["iron"] < Project.lift_cost(lq.rect, false)["iron"],
 		"продолжение лифта без новой кабины")
+
+
+## Баланс для планет: очаги складываются (не выше +30 °C), крепь из стали без дерева,
+## в новых мирах золото и алмазы досягаемы, но реже железа и меди.
+func test_planet_balance() -> void:
+	var colony := _new_colony(32)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var cell := Vector2i(x + 4, s + 20)
+	var base := colony.elements.temperature(cell)
+	var h1 := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 18, 3, 3), 950)
+	h1.purpose = RoomType.HEARTH
+	h1.burning = true
+	colony.elements._temp_memo.clear()
+	var one := colony.elements.temperature(cell)
+	var h2 := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 6, s + 18, 3, 3), 951)
+	h2.purpose = RoomType.HEARTH
+	h2.burning = true
+	colony.elements._temp_memo.clear()
+	var two := colony.elements.temperature(cell)
+	check(one > base and two > one and two <= maxf(base, Elements.FIRE_MAX_TEMP) + 0.01,
+		"два очага греют сильнее одного, но не выше +30 (%.1f → %.1f → %.1f)" % [base, one, two])
+	# Крепь из стали.
+	colony.inventory = {"metal": 10}
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	check(t != null and colony.support_key(t) == "metal" and colony.required(t).has("metal") and not colony.required(t).has("wood"),
+		"нет дерева — крепь из стали (%s, %s, дерева на земле %d)" % [colony.support_key(t) if t else "-", colony.required(t) if t else {}, colony.drop_total("wood")])
+	if t != null:
+		t.delivered = {"metal": 1}
+		check(colony._pay_support(t, t.needs_support[0]) and t.support_mat == "metal", "срез закреплён сталью (1 сталь за 2 дерева)")
+	# Редкие металлы: в новых мирах золото есть на 80–300 м, но его меньше, чем железа.
+	var g := WorldData.new(WorldGen.new(7))
+	var gold := 0
+	var iron := 0
+	for d in range(80, 300, 2):
+		for dx in range(-100, 101, 2):
+			var m := g.get_mat(dx, g.gen.surface_y(dx) + d)
+			if m == Mat.GOLD_ORE:
+				gold += 1
+			elif m == Mat.IRON_ORE:
+				iron += 1
+	check(gold > 0 and gold * 3 < iron, "золото есть, но реже железа (%d против %d)" % [gold, iron])
+	var old := WorldData.new(WorldGen.new(7, 4))
+	check(old.gen._diamond_share == 0.04 and WorldGen.new(7).version == WorldGen.LATEST, "старые миры не меняются")
 
 
 ## Лифты встык одного вида соединяются в один.

@@ -24,14 +24,18 @@ var planet_id := "earth"
 var planet: Dictionary = {}
 ## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
 ## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше;
-## 4 — озёра ещё чаще и одно — недалеко от базы.
-const LATEST := 4
+## 4 — озёра ещё чаще и одно — недалеко от базы; 5 — серебро, золото и алмазы чаще
+## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди.
+const LATEST := 5
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
 var _tree_share := 0.12
 var _lake_chance := 0.75
 var _home_clear := 60
+## Насколько ниже порог кимберлитовых трубок и какая доля алмазов в них (версия 5 — чаще).
+var _kimb_shift := 0.0
+var _diamond_share := 0.04
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -70,6 +74,9 @@ func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
 		_lake_segment = 160
 		_lake_chance = 0.85
 		_home_clear = 30
+	if version >= 5:
+		_kimb_shift = 0.22
+		_diamond_share = 0.08
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -282,7 +289,7 @@ func sed_base(x: int) -> int:
 
 
 func _kimberlite_column(x: int) -> bool:
-	return _n_kimberlite.get_noise_1d(x) > float(planet["kimberlite"])
+	return _n_kimberlite.get_noise_1d(x) > float(planet["kimberlite"]) - _kimb_shift
 
 
 ## Температура клетки, °C: на Земле — по Env (времена года, высота); на других планетах
@@ -369,7 +376,7 @@ func _rock(x: int, y: int, d: int, sed: int, kimb: bool) -> int:
 
 	if kimb and d > 120:
 		# На Уране алмазные дожди: в трубках алмазов куда больше.
-		var share := 0.04 if float(planet["kimberlite"]) >= 0.5 else 0.3
+		var share := _diamond_share if float(planet["kimberlite"]) >= 0.5 else 0.3
 		return Mat.DIAMOND if hash01(x, y, world_seed + 5) < share else Mat.KIMBERLITE
 
 	var ore := _ore(x, y, d)
@@ -420,6 +427,8 @@ func _ore(x: int, y: int, d: int) -> int:
 	var r := (_n_ore_type.get_noise_2d(x, y) + 1.0) * 0.5
 	r = clampf(r + (hash01(x, y, world_seed + 3) - 0.5) * 0.1, 0.0, 0.999)
 	var table: Array = planet["ores"]
+	if table.is_empty() and version >= 5:
+		return _ore_v5(x, y, d, r)
 	if not table.is_empty():
 		pass
 	elif d < 80:
@@ -434,6 +443,25 @@ func _ore(x: int, y: int, d: int) -> int:
 		if r < entry[0]:
 			return entry[1]
 	return Mat.IRON_ORE
+
+
+## Версия 5: редкие металлы — участками жилы по 8×8 м с заданной долей (шум типа руды
+## почти не доходит до краёв, и золото раньше почти не встречалось). Остальное — железо и медь.
+func _ore_v5(x: int, y: int, d: int, r: float) -> int:
+	var h := hash01(x >> 3, y >> 3, world_seed + 31)
+	var rare: Array
+	if d < 80:
+		rare = [[0.04, Mat.SILVER_ORE]]
+	elif d < 300:
+		rare = [[0.08, Mat.GOLD_ORE], [0.2, Mat.SILVER_ORE]]
+	elif d < 1000:
+		rare = [[0.08, Mat.URANIUM_ORE], [0.19, Mat.GOLD_ORE], [0.33, Mat.SILVER_ORE]]
+	else:
+		rare = [[0.12, Mat.URANIUM_ORE], [0.25, Mat.GOLD_ORE], [0.4, Mat.SILVER_ORE]]
+	for e in rare:
+		if h < e[0]:
+			return e[1]
+	return Mat.IRON_ORE if r < (0.78 if d < 80 else 0.55) else Mat.COPPER_ORE
 
 
 func _is_magma(x: int, y: int, d: int) -> bool:

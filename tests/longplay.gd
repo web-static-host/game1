@@ -23,6 +23,12 @@ func _initialize() -> void:
 	universe.add_world("earth", world, colony)
 	universe.arrived.connect(_on_arrived)
 	bots["earth"] = BotPlayer.new(colony)
+	# Куда бот отправит ракету (TARGET=mars и т. п.).
+	var target := OS.get_environment("TARGET")
+	bots["earth"].target_planet = target if not target.is_empty() else "mars"
+	bots["earth"].on_launch = func(f: Dictionary) -> void:
+		universe.send(f)
+		print("%s: ракета улетела на %s" % [bots["earth"]._time(), Planet.planet_name(f["planet"])])
 	var next_slice := 600.0
 	var think := 0.0
 	print("=== Мир %d, %d минут игры ===" % [seed_value, minutes])

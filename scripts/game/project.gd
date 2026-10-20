@@ -111,6 +111,8 @@ var supported: Array[int] = []
 var support_slice := -1
 var support_paid := false
 var support_progress := 0.0
+## Из чего оплачена крепь текущего среза ("wood" или "metal").
+var support_mat := ""
 ## Материалы, уже принесённые на стройку: ключ -> количество.
 var delivered := {}
 ## Сырьё, которое подсобные рабочие уже принесли в мастерскую.
@@ -432,6 +434,7 @@ func to_dict() -> Dictionary:
 		"support_slice": support_slice,
 		"support_paid": support_paid,
 		"support_progress": support_progress,
+		"support_mat": support_mat,
 		"delivered": delivered,
 		"stock": stock,
 		"wear": wear,
@@ -522,6 +525,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_slice = int(d.get("support_slice", -1))
 	p.support_paid = bool(d.get("support_paid", false))
 	p.support_progress = float(d.get("support_progress", 0.0))
+	p.support_mat = str(d.get("support_mat", ""))
 	p.delivered = _int_dict(d.get("delivered", {}))
 	p.stock = _int_dict(d.get("stock", {}))
 	p.wear = float(d.get("wear", 0.0))

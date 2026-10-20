@@ -187,9 +187,9 @@ static func skill_for(t: int) -> String:
 	return ""
 
 
-## Настроение 0..100 из сытости, бодрости и наличия кровати.
+## Настроение 0..100 из сытости и наличия кровати.
 func mood() -> float:
-	var m := 50.0 + (satiety - 50.0) * 0.4 + (energy - 50.0) * 0.3 + (10.0 if bed_room != 0 else -10.0) \
+	var m := 50.0 + (satiety - 50.0) * 0.4 + (10.0 if bed_room != 0 else -10.0) \
 		+ Colony.CALLING_MOOD * calling
 	return clampf(m, 0.0, 100.0)
 
@@ -201,8 +201,6 @@ func need_factor() -> float:
 		f *= 0.5
 	elif satiety < 30.0:
 		f *= 0.75
-	if energy < 10.0:
-		f *= 0.6
 	if mood() < 30.0:
 		f *= 0.85
 	if health < 50.0:
@@ -231,7 +229,7 @@ func status_text() -> String:
 		who = "%s, вырастет через %s, ест вдвое больше" % [
 			"малыш" if age < CHILD_TIME * 0.5 else "подросток", Fmt.duration(CHILD_TIME - age)]
 	var lines: PackedStringArray = ["%s (%s) — %s" % [name, who, TASK_NAMES[task]]]
-	var needs := "Сытость %d%% · бодрость %d%% · настроение %d%%" % [roundi(satiety), roundi(energy), roundi(mood())]
+	var needs := "Сытость %d%% · настроение %d%%" % [roundi(satiety), roundi(mood())]
 	if health < 99.5:
 		needs += " · здоровье %d%%" % roundi(health)
 	lines.append(needs)

@@ -269,7 +269,8 @@ func _slice() -> void:
 func _busy() -> int:
 	var n := 0
 	for p in colony.projects:
-		if p.phase != Project.Phase.DONE or p.repairing:
+		# Шахты копают шахтёры — стройкам они не мешают.
+		if p.kind != Project.Kind.MINE and (p.phase != Project.Phase.DONE or p.repairing):
 			n += 1
 	return n
 
@@ -301,6 +302,9 @@ func _play() -> void:
 	# Тепло ферме — важнее остальных строек.
 	if _heat_farms():
 		return
+	if _space_program():
+		return
+	_mine_program()
 	if _busy() >= 2:
 		return
 	if _need_home():
@@ -567,7 +571,8 @@ func _marks() -> void:
 func _science() -> void:
 	if colony.rooms_of(RoomType.LAB).is_empty() or not colony.research.current.is_empty():
 		return
-	for id in Research.TECHS:
+	# Сначала — цепочка к ракете, потом остальное.
+	for id in ROCKET_PATH + Research.TECHS.keys():
 		if colony.research.start(id):
 			_act("наука")
 			return
@@ -579,8 +584,10 @@ func _professions() -> void:
 	var adults := colony.units.filter(func(u: Unit) -> bool: return not u.child)
 	var free := adults.filter(func(u: Unit) -> bool: return colony.is_free(u))
 	# Роли — в первую очередь, иначе все уйдут на места работы.
+	var mining := colony.projects.any(func(q: Project) -> bool: return q.kind == Project.Kind.MINE and q.phase == Project.Phase.DIG)
 	var want_roles := {Unit.Prof.BUILDER: maxi(1, adults.size() / 5),
-		Unit.Prof.HAULER: (adults.size() / 6) if not colony.store_rooms().is_empty() else 0}
+		Unit.Prof.HAULER: (adults.size() / 6) if not colony.store_rooms().is_empty() else 0,
+		Unit.Prof.MINER: (2 if adults.size() < 15 else 3) if mining else 0}
 	for prof in want_roles:
 		var have := adults.filter(func(u: Unit) -> bool: return u.workplace == 0 and u.profession == prof).size()
 		while have < want_roles[prof] and free.size() > 1:
@@ -589,10 +596,16 @@ func _professions() -> void:
 			_act("роль")
 	# Места работы: еда — в первую очередь.
 	# Еда, наука, хранение; рыбалка с мостков — когда людей хватает (зимой подо льдом).
-	var order := [RoomType.FARM, RoomType.LAB, RoomType.GRANARY, RoomType.STORAGE, RoomType.KILN, RoomType.FORGE]
+	var order := [RoomType.FARM, RoomType.LAB, RoomType.GRANARY, RoomType.STORAGE, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY]
 	var places: Array[Project] = []
 	for t in order:
 		places.append_array(colony.rooms_of(t))
+	# Кузница переводит железо в сталь, пока стали меньше нужного (железо нужно и само).
+	for f in colony.rooms_of(RoomType.FORGE):
+		if colony.inventory.get("metal", 0) >= 55 or colony.inventory.get("iron", 0) < 20:
+			for u in colony.assigned_to(f):
+				colony.unassign_work(u)
+			places.erase(f)
 	for p in colony.projects:
 		if p.is_water_structure() and p.phase == Project.Phase.DONE and (colony.can_fish_from(p) or p.kind == Project.Kind.PIER):
 			places.append(p)
@@ -634,12 +647,16 @@ func _heat_rooms(rooms: Array, need: float) -> bool:
 	for farm in rooms:
 		if colony.room_temp(farm) >= need:
 			continue
-		var has_hearth := false
+		# Очаги рядом складываются: если готовые горят, а всё ещё холодно — ещё один (до трёх).
+		var near := 0
+		var waiting := false
 		for p in colony.projects:
 			var hearth := _is_hearth(p)
 			if hearth and absi(p.rect.get_center().x - farm.rect.get_center().x) <= 6 and absi(p.rect.get_center().y - farm.rect.get_center().y) <= 3:
-				has_hearth = true
-		if has_hearth:
+				near += 1
+				if p.phase != Project.Phase.DONE or not p.burning:
+					waiting = true
+		if waiting or near >= (3 if planet != "earth" else 1):
 			continue
 		var spots: Array[Rect2i] = []
 		for dy in [0, -3, 3]:
@@ -729,7 +746,8 @@ func _surface_room(purpose: int) -> bool:
 func _shaft() -> bool:
 	var s := world.gen.surface_y(shaft_x)
 	var want := _next_underground()
-	if want < 0 and (shaft_bottom - s > 200 or planet != "earth"):
+	# Ствол на Земле — до 230 м (нефть лежит глубже 200 м).
+	if want < 0 and (shaft_bottom - s > 230 or planet != "earth"):
 		return false
 	var top := shaft_bottom
 	var r := Rect2i(shaft_x, top, 1, 10)
@@ -739,8 +757,10 @@ func _shaft() -> bool:
 			_act("шахта")
 	if want >= 0:
 		var floor_y := shaft_bottom - 1
-		var rx := shaft_x + 1 if side > 0 else shaft_x - 6
-		var room := Rect2i(rx, floor_y - 2, 6, 3)
+		# Нефтекачалка — 9 м (качает на 40 м вокруг), остальное — 6 м.
+		var rw := 9 if want == RoomType.OIL_PUMP else 6
+		var rx := shaft_x + 1 if side > 0 else shaft_x - rw
+		var room := Rect2i(rx, floor_y - 2, rw, 3)
 		var mat := _best_material()
 		if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
 			var p := colony.create_project(Project.Kind.ROOM, room, -1, mat)
@@ -785,13 +805,17 @@ func _next_underground() -> int:
 	for p in colony.projects:
 		if p.purpose == RoomType.LAB or _pending_purpose.get(p.id, -1) == RoomType.LAB:
 			labs += 1
-	if colony.units.size() >= 9 and labs < 2 and not colony.research.current.is_empty():
+	if colony.units.size() >= 9 and labs < clampi(colony.units.size() / 5, 2, 4) and not colony.research.current.is_empty():
 		return RoomType.LAB
 	if colony.research.has("bricks") and not has.call(RoomType.KILN) and colony.known_resources.has("clay"):
 		return RoomType.KILN
 	if colony.research.has("electricity") and not has.call(RoomType.GENERATOR) \
 			and colony.inventory.get("copper", 0) >= 4 and colony.inventory.get("iron", 0) >= 4:
 		return RoomType.GENERATOR
+	if planet == "earth":
+		var prod := _production_room(has)
+		if prod >= 0:
+			return prod
 	if not colony.elements.gas.is_empty() and not has.call(RoomType.DEGAS):
 		return RoomType.DEGAS
 	if colony.research.has("electricity") and has.call(RoomType.DEGAS) and not has.call(RoomType.GAS_GEN) \
@@ -824,3 +848,229 @@ func _more_storage() -> void:
 			_milestone("full", "Склад впервые забит (%s)" % k)
 			_surface_room(RoomType.GRANARY if k == "food" else RoomType.STORAGE)
 			return
+
+
+# --- Путь к ракете (Земля) ------------------------------------------------------------
+## Цепочка исследований до ракетостроения — в первую очередь.
+const ROCKET_PATH := ["agronomy", "electricity", "bricks", "geology", "carts", "metallurgy", "medicine", "geology2",
+	"drilling", "education", "steam", "drill_rig", "automation", "oil_drilling", "refining", "combustion", "rocketry"]
+## Уровни разведочных шахт (м от поверхности): по 40 м в обе стороны от ствола.
+const EXPLORE_LEVELS := [30, 55, 80, 105, 130, 155, 185, 215]
+## Куда лететь (задаёт запускающий скрипт) и как отправить ракету: on_launch(flight).
+var target_planet := "mars"
+var on_launch: Callable
+var launched := 0
+var _scan_t := -1000.0
+var _explored := {}
+var _ext := {}
+
+
+## Чего ещё не хватает на ракету, космодром и мастерские (сверх того, что на складе).
+func rocket_need() -> Dictionary:
+	var want := {"iron": 80 + 30, "metal": 30 + 20, "copper": 40 + 12, "gold": 10, "silver": 10, "diamond": 4, "brick": 36}
+	var out := {}
+	for k in want:
+		var left: int = int(want[k]) - int(colony.inventory.get(k, 0))
+		if left > 0:
+			out[k] = left
+	# Сталь куют из железа: на нехватку стали — вдвое больше железа.
+	if out.has("metal"):
+		out["iron"] = int(out.get("iron", 0)) + 2 * int(out["metal"])
+	return out
+
+
+## Мастерские на пути к ракете: печь, кузница, нефть, завод, генераторы.
+func _production_room(has: Callable) -> int:
+	if colony.research.has("metallurgy") and has.call(RoomType.KILN) and not has.call(RoomType.FORGE) \
+			and colony.inventory.get("brick", 0) >= 8:
+		return RoomType.FORGE
+	if colony.research.has("electricity") and colony.power_used > colony.power_made \
+			and colony.rooms_of(RoomType.GENERATOR).size() < 4 and colony.inventory.get("copper", 0) >= 4 \
+			and colony.inventory.get("iron", 0) >= 4 and not _pending_purpose.values().has(RoomType.GENERATOR):
+		return RoomType.GENERATOR
+	var depth := shaft_bottom - world.gen.surface_y(shaft_x)
+	if colony.research.has("oil_drilling") and depth >= 205 and not has.call(RoomType.OIL_PUMP):
+		return RoomType.OIL_PUMP
+	if has.call(RoomType.OIL_PUMP) and not has.call(RoomType.OIL_TANK):
+		return RoomType.OIL_TANK
+	if colony.research.has("refining") and has.call(RoomType.OIL_TANK) and not has.call(RoomType.REFINERY):
+		return RoomType.REFINERY
+	return -1
+
+
+## Шахты за рудой: видимая жила нужного металла (или кимберлит, если нужны алмазы) —
+## шахта от ствола к ней; не видно — разведочные шахты на уровнях ствола.
+func _mine_program() -> bool:
+	if colony.units.size() < 8 or t - _scan_t < 30.0:
+		return false
+	_scan_t = t
+	var active := colony.projects.filter(func(q: Project) -> bool: return q.kind == Project.Kind.MINE and q.phase == Project.Phase.DIG)
+	if active.size() >= 2:
+		return false
+	var need := rocket_need()
+	if need.is_empty():
+		return false
+	var target = _find_ore(need)
+	if target != null and _mine_to(target):
+		return true
+	return _explore_mine(need.has("diamond"))
+
+
+func _find_ore(need: Dictionary) -> Variant:
+	var want := []
+	for k in ["diamond", "gold", "silver", "copper", "iron"]:
+		if need.has(k):
+			want.append(k)
+	var best = null
+	var best_score := 1 << 30
+	for x in range(shaft_x - 100, shaft_x + 101):
+		var s := world.gen.surface_y(x)
+		for y in range(s + 20, shaft_bottom - 1):
+			if not world.is_revealed(x, y) or world.is_dug(x, y):
+				continue
+			var m := world.get_mat(x, y)
+			var key := Mat.resource(m)
+			if m == Mat.KIMBERLITE:
+				key = "diamond"
+			var rank := want.find(key)
+			if rank < 0:
+				continue
+			var score := absi(x - shaft_x) + rank * 30
+			if score < best_score:
+				best_score = score
+				best = Vector2i(x, y)
+	return best
+
+
+## Шахта от ствола до клетки c (не длиннее 64 м за раз).
+func _mine_to(c: Vector2i) -> bool:
+	for y0 in [c.y - 1, c.y - 2, c.y]:
+		if y0 + 3 > shaft_bottom:
+			continue
+		var r: Rect2i
+		if c.x > shaft_x:
+			r = Rect2i(shaft_x + 1, y0, mini(c.x - shaft_x, 64), 3)
+		else:
+			var len := mini(shaft_x - c.x, 64)
+			r = Rect2i(shaft_x - len, y0, len, 3)
+		if r.size.x < 2:
+			continue
+		if colony.validate(Project.Kind.MINE, r).is_empty() and colony.create_project(Project.Kind.MINE, r, 3) != null:
+			_act("шахта к руде")
+			return true
+	return false
+
+
+## Разведочные шахты по 40 м в обе стороны; когда уровни пройдены, а алмазов нет —
+## глубокие разведочные шахты продлевают дальше в стороны (до 250 м).
+func _explore_mine(diamonds: bool) -> bool:
+	var s := world.gen.surface_y(shaft_x)
+	for d in EXPLORE_LEVELS:
+		for sd in [1, -1]:
+			var key := "%d:%d" % [d, sd]
+			if _explored.has(key):
+				continue
+			if s + d + 3 > shaft_bottom:
+				return false
+			_explored[key] = true
+			for dy in [0, 3, -3, 5]:
+				var y0: int = s + d + dy
+				var r := Rect2i(shaft_x + 1, y0, 40, 3) if sd > 0 else Rect2i(shaft_x - 40, y0, 40, 3)
+				if colony.validate(Project.Kind.MINE, r).is_empty() and colony.create_project(Project.Kind.MINE, r, 3) != null:
+					_act("разведочная шахта")
+					return true
+	if not diamonds:
+		return false
+	for m in colony.projects:
+		if m.kind != Project.Kind.MINE or m.phase != Project.Phase.DONE or m.rect.position.y < s + 120:
+			continue
+		var far := m.rect.end.x - shaft_x if m.rect.position.x > shaft_x else shaft_x - m.rect.position.x
+		if far >= 250 or int(_ext.get(m.id, 0)) >= 8:
+			continue
+		var dir := Vector2i.RIGHT if m.rect.position.x > shaft_x else Vector2i.LEFT
+		if colony.extend_error(m, dir, 30).is_empty() and colony.extend_project(m, dir, 30) != null:
+			_ext[m.id] = int(_ext.get(m.id, 0)) + 1
+			_act("разведка дальше")
+			return true
+	return false
+
+
+## Космодром на поверхности, сборка ракеты, запуск экспедиции.
+func _space_program() -> bool:
+	if planet != "earth" or not colony.research.has("rocketry"):
+		return false
+	var pad: Project = null
+	for p in colony.projects:
+		if p.purpose == RoomType.LAUNCHPAD or _pending_purpose.get(p.id, -1) == RoomType.LAUNCHPAD \
+				or (p.phase == Project.Phase.EQUIP and p.equip_target == RoomType.LAUNCHPAD):
+			pad = p
+	if pad == null:
+		return _launchpad()
+	if pad.purpose != RoomType.LAUNCHPAD or pad.phase != Project.Phase.DONE:
+		return false
+	if pad.rocket.is_empty():
+		if pad.equip_rocket.is_empty() and pad.phase == Project.Phase.DONE:
+			var err := colony.start_rocket(pad, "chem")
+			if err.is_empty():
+				_milestone("rocket_start", "Начали собирать ракету")
+				_act("ракета")
+			return err.is_empty()
+		return false
+	return _launch(pad)
+
+
+func _launchpad() -> bool:
+	var mat := _best_material()
+	for d in range(0, 80):
+		for sx in [colony.home.x - 12 - d, colony.home.x + 10 + d]:
+			var s := world.gen.surface_y(sx)
+			var r := Rect2i(sx, s - 3, 6, 3)
+			var sky := true
+			for x in range(r.position.x, r.end.x):
+				for y in range(r.position.y - 14, r.position.y):
+					if not world.is_open(x, y) or colony.project_at(Vector2i(x, y)) != null:
+						sky = false
+			if sky and colony.validate(Project.Kind.ROOM, r, mat).is_empty():
+				var p := colony.create_project(Project.Kind.ROOM, r, -1, mat)
+				if p != null:
+					_pending_purpose[p.id] = RoomType.LAUNCHPAD
+					_milestone("pad", "Заложен космодром")
+					_act("космодром")
+					return true
+	return false
+
+
+## Экипаж — до 10 взрослых, лучше всего переносящих планету (парами), груз — что нужно там.
+func _launch(pad: Project) -> bool:
+	var temp: float = Planet.data(target_planet)["under"]
+	var stat := "cold" if temp < 5.0 else "heat"
+	var adults := colony.units.filter(func(u: Unit) -> bool: return not u.child and not u.is_elder())
+	if adults.size() < 12:
+		return false
+	adults.sort_custom(func(a: Unit, b: Unit) -> bool: return a.stat(stat) > b.stat(stat))
+	var crew: Array = []
+	for u in adults:
+		if crew.size() >= RoomType.SHIP_BEDS:
+			break
+		if crew.has(u):
+			continue
+		crew.append(u)
+		var partner := colony.unit_by_id(u.partner_id)
+		if partner != null and not partner.child and crew.size() < RoomType.SHIP_BEDS and not crew.has(partner):
+			crew.append(partner)
+	var cargo := {}
+	var total := 0
+	for pair in [["wood", 100], ["food", 60], ["metal", 30], ["coal", 10]]:
+		var n := mini(int(pair[1]), int(colony.inventory.get(pair[0], 0)))
+		n = mini(n, RoomType.SHIP_HOLD - total)
+		if n > 0:
+			cargo[pair[0]] = n
+			total += n
+	var flight := colony.launch(pad, target_planet, crew, cargo)
+	if flight.has("error"):
+		return false
+	launched += 1
+	_milestone("launch%d" % launched, "СТАРТ ракеты на %s: жителей %d, груз %s" % [Planet.planet_name(target_planet), crew.size(), cargo])
+	if on_launch.is_valid():
+		on_launch.call(flight)
+	return true

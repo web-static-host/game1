@@ -747,7 +747,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		elif u.calling < 0:
 			tags.append(["Работа не по душе: навык растёт медленнее, настроение хуже", Color(1.0, 0.7, 0.45)])
 		rows.append({"type": "portrait", "looks": Genetics.looks(g), "tags": tags})
-	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())])
+	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
 		rows.append(_need_bar("Здоровье", u.health))
 	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
@@ -1836,7 +1836,12 @@ func _pending_spec() -> Dictionary:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
 		if sw > 0:
-			rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
+			# Нет дерева — крепь из стали (её вдвое меньше).
+			var steel: int = colony.inventory.get("metal", 0)
+			if have < sw and steel > 0:
+				rows.append({"type": "resources", "label": "Укрепление", "items": [["metal", steel, ceili(sw / 2.0), steel >= ceili(sw / 2.0)]]})
+			else:
+				rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
 	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)

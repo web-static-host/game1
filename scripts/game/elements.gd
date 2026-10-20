@@ -42,6 +42,8 @@ const VENT_COOLING := 18.0
 const HOT := 50.0
 ## Температура внутри корабля.
 const SHIP_TEMP := 20.0
+## Выше этой температуры огонь (сколько бы очагов ни было) не греет.
+const FIRE_MAX_TEMP := 30.0
 
 var colony: Colony
 var world: WorldData
@@ -459,8 +461,8 @@ func _temperature(c: Vector2i) -> float:
 	if colony.ship_at(c) != null:
 		return SHIP_TEMP
 	var t := world.gen.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
-	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг.
-	# Несколько очагов рядом не складываются в жару — греет самый сильный.
+	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг. Несколько очагов
+	# рядом складываются (два — вдвое теплее), но в жару не нагреют: огонь греет не выше +30 °C.
 	var fire := 0.0
 	for p in colony.projects:
 		if not p.burning or p.phase != Project.Phase.DONE:
@@ -472,8 +474,9 @@ func _temperature(c: Vector2i) -> float:
 		var d := maxi(dx, dy)
 		var zone := RoomType.heat_zone(p)
 		if d <= zone.y:
-			fire = maxf(fire, Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0))
-	t += fire
+			fire += Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0)
+	if fire > 0.0:
+		t = minf(t + fire, maxf(t, FIRE_MAX_TEMP))
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):

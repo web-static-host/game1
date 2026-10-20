@@ -32,21 +32,15 @@ const HAZARD_TEXT := {
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
 
-# Потребности (сек. реального времени): сытости хватает минут на 10, бодрости — тоже;
-# спят по усталости (смена дня и ночи пока выключена). Во сне голод растёт медленнее.
-const SATIETY_DECAY := 100.0 / 600.0
-const ENERGY_DECAY := 100.0 / 600.0
-const SLEEP_BED := 100.0 / 150.0
-const SLEEP_FLOOR := 100.0 / 240.0
-## Ночью ложатся спать, если бодрость ниже этого (при смене дня и ночи).
-const NIGHT_SLEEP := 85.0
-## Просыпаются, выспавшись до этого.
-const WAKE := 100.0
+# Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — жители не
+# устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
+const SATIETY_DECAY := 100.0 / 600.0 * 0.85
+## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее).
+const HEAL_TIME := 2400.0
 ## За сколько секунд полный голод убивает здорового жителя (5 минут).
 const STARVE_TIME := 300.0
 const EAT_TIME := 6.0
 const HUNGRY := 35.0
-const TIRED := 25.0
 ## Как долго фермер работает, прежде чем пересмотреть занятия.
 const FARM_SHIFT := 60.0
 # Семьи.
@@ -80,7 +74,7 @@ const CARRY := 5
 const OFFLINE_HAUL_TIME := 20.0
 # Игровое время: сутки — 20 секунд, месяц — 10 минут, год — 2 часа игры.
 const DAY := 20.0
-## Смена дня и ночи (пока выключена: спят по усталости).
+## Смена дня и ночи (выключена; сна у жителей нет).
 const DAY_NIGHT := false
 ## Ночь: с 22:00 до 6:00.
 const NIGHT_FROM := 22.0
@@ -912,7 +906,28 @@ func _return_delivered(p: Project) -> void:
 
 # --- Доставка материалов ------------------------------------------------------------
 
-## Сколько дерева ещё уйдёт на крепь незакреплённых срезов.
+## Крепь — из дерева, а нет его — из стали: она прочнее, на срез её вдвое меньше.
+## Чем крепят следующий срез: что уже принесли, иначе дерево, если его хватает, иначе сталь.
+func support_key(p: Project) -> String:
+	var wood := p.slice_wood()
+	var metal := support_amount(p, "metal")
+	if int(p.delivered.get("wood", 0)) >= wood:
+		return "wood"
+	if int(p.delivered.get("metal", 0)) >= metal:
+		return "metal"
+	if int(inventory.get("wood", 0)) + drop_total("wood") + int(p.delivered.get("wood", 0)) >= wood:
+		return "wood"
+	if int(inventory.get("metal", 0)) + int(p.delivered.get("metal", 0)) >= metal:
+		return "metal"
+	return "wood"
+
+
+## Сколько материала key на крепь одного среза.
+static func support_amount(p: Project, key: String) -> int:
+	return ceili(p.slice_wood() / 2.0) if key == "metal" else p.slice_wood()
+
+
+## Сколько дерева ещё уйдёт на крепь незакреплённых срезов (в «деревянных» единицах).
 func support_wood_left(p: Project) -> int:
 	if p.phase != Project.Phase.DIG:
 		return 0
@@ -933,7 +948,9 @@ func required(p: Project) -> Dictionary:
 				out = p.cost().duplicate()
 			var sw := support_wood_left(p)
 			if sw > 0:
-				out["wood"] = out.get("wood", 0) + sw
+				var key := support_key(p)
+				var n := sw if key == "wood" else ceili(sw / 2.0)
+				out[key] = out.get(key, 0) + n
 		Project.Phase.BUILD:
 			if not p.paid:
 				out = p.cost().duplicate()
@@ -989,7 +1006,8 @@ func _needed_now(p: Project) -> Dictionary:
 		Project.Phase.DIG:
 			var i := slice_to_support(p)
 			if i >= 0 and not (p.support_paid and p.support_slice == i):
-				return {"wood": p.slice_wood()}
+				var key := support_key(p)
+				return {key: support_amount(p, key)}
 			return {}
 		Project.Phase.BUILD:
 			return p.cost() if not p.paid else {}
@@ -1856,7 +1874,8 @@ func stop_mine(p: Project) -> void:
 			_drop(u)
 	# Крепь, за которую уже заплатили, но не поставили, — дерево обратно.
 	if p.support_paid and not p.supported.has(p.support_slice):
-		p.delivered["wood"] = int(p.delivered.get("wood", 0)) + p.slice_wood()
+		var mat := p.support_mat if not p.support_mat.is_empty() else "wood"
+		p.delivered[mat] = int(p.delivered.get(mat, 0)) + support_amount(p, mat)
 	p.support_slice = -1
 	p.support_paid = false
 	var old := p.cells()
@@ -1941,10 +1960,17 @@ func slice_to_support(p: Project) -> int:
 func _pay_support(p: Project, i: int) -> bool:
 	if p.support_paid and p.support_slice == i:
 		return true
-	var need := p.slice_wood()
-	if p.delivered.get("wood", 0) < need:
+	var mat := ""
+	for k in ["wood", "metal"]:
+		if int(p.delivered.get(k, 0)) >= support_amount(p, k):
+			mat = k
+			break
+	if mat.is_empty():
 		return false
-	p.delivered["wood"] -= need
+	p.delivered[mat] -= support_amount(p, mat)
+	if p.delivered[mat] <= 0:
+		p.delivered.erase(mat)
+	p.support_mat = mat
 	p.support_slice = i
 	p.support_paid = true
 	p.support_progress = 0.0
@@ -3102,8 +3128,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			elements.affect_unit(u, dt)
 			if not units.has(u):
 				continue
-		var asleep := u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK
-		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0) * u.stat("appetite"))
+		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
 		if u.satiety <= 0.0 and not u.invulnerable():
 			u.health -= dt * 100.0 / STARVE_TIME / maxf(0.3, u.stat("fasting"))
@@ -3118,9 +3143,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 					continue
 		elif u.satiety > 30.0:
 			u.starving_warned = false
-		if u.task != Unit.Task.SLEEP:
-			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt / maxf(0.3, u.stat("stamina")))
-		var heal := (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0) * (2.0 if research.has("medicine") else 1.0)
+		u.energy = 100.0
+		var heal := 100.0 / HEAL_TIME * (2.0 if research.has("medicine") else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
@@ -3774,7 +3798,7 @@ func on_flooded(p: Project, _c: Vector2i) -> void:
 func _needs_interrupt(u: Unit) -> bool:
 	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT:
 		return false
-	return u.energy < 10.0 or (u.satiety < 15.0 and has_food())
+	return u.satiety < 15.0 and has_food()
 
 
 ## Замедление в тесном тоннеле: поток ограничен его шириной.
@@ -4046,10 +4070,8 @@ func _work(u: Unit, dt: float) -> void:
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
 		Unit.Task.SLEEP:
-			u.energy = minf(100.0, u.energy + dt * (SLEEP_BED if u.project_id != 0 else SLEEP_FLOOR))
-			# Ночью спят до утра, днём — пока не отдохнут.
-			if not is_night() and u.energy >= WAKE:
-				_drop(u)
+			# Сна больше нет (старые сохранения): спящий сразу встаёт.
+			_drop(u)
 		Unit.Task.EAT:
 			u.work_t += dt
 			if u.work_t >= EAT_TIME:
@@ -4218,9 +4240,6 @@ func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
-	if u.energy < TIRED or (is_night() and u.energy < NIGHT_SLEEP):
-		_start_sleep(u, parents, dist)
-		return true
 	if u.satiety < HUNGRY:
 		if has_food():
 			_start_eat(u, parents, dist)
@@ -4431,18 +4450,6 @@ func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, par
 	var key = _reserve_key(u)
 	if key != null:
 		reserved[key] = u.id
-
-
-func _start_sleep(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
-	_claim_bed(u)
-	var room := project_by_id(u.bed_room)
-	if room != null:
-		var bed := bed_cell(room, u.bed_index)
-		if dist.has(bed):
-			_start(u, Unit.Task.SLEEP, bed, bed, room.id, parents)
-			return
-	# Кровати нет или до неё не добраться — спит где стоит.
-	_start(u, Unit.Task.SLEEP, u.cell(), u.cell(), 0, parents)
 
 
 func _start_eat(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
