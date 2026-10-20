@@ -748,7 +748,14 @@ func _storage_control(p: Project) -> Dictionary:
 		items.append({"key": k, "on": on, "held": colony.held_in(p, k), "cap": cap,
 			"limit": mini(cap, int(p.limits.get(k, cap))),
 			"target": int(p.targets.get(k, 0)) if Colony.GATHER_SOURCES.has(k) else -1})
-	return {"type": "store", "label": "Что хранить и сколько (больше предела сюда не носят). Работники этого склада добывают до нормы:",
+	var total := 0
+	for k in p.held:
+		total += int(p.held[k])
+	var cap0 := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	if colony.research.has("shelving"):
+		cap0 = roundi(cap0 * 1.5)
+	return {"type": "store", "label": "Вместимость: по %s каждого %s. Сейчас лежит всего %s.\nГалочка — хранить ли здесь этот ресурс:" % [
+		Fmt.int_spaced(cap0), "вида еды" if p.purpose == RoomType.GRANARY else "ресурса", Fmt.int_spaced(total)],
 		"items": items,
 		"toggled": func(key: String, on: bool) -> void:
 			colony.set_store_on(p, key, on)
@@ -866,7 +873,11 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["people", "мест для детей в колонии: %d" % maxi(0, free)])
 			RoomType.STORAGE, RoomType.GRANARY:
 				chips.append(["people", "работников %d/%d" % [colony.assigned_to(p).size(), colony.work_slots(p)]])
-				chips.append(["", "по %d места каждому %s" % [colony.room_cap(p, "food" if p.purpose == RoomType.GRANARY else "wood"),
+				var held_total := 0
+				for k in p.held:
+					held_total += int(p.held[k])
+				chips.append(["", "лежит всего %s · по %s мест каждому %s" % [Fmt.int_spaced(held_total),
+					Fmt.int_spaced(roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * (1.5 if colony.research.has("shelving") else 1.0))),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				if colony.assigned_to(p).is_empty():
 					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у жителя)."})

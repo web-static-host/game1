@@ -948,23 +948,30 @@ func _build_store(st: Dictionary) -> void:
 			row.add_child(_label("не хранить", 16, MUTED))
 			continue
 		var cap: int = item["cap"]
-		row.add_child(_label("лежит %s · до" % Fmt.int_spaced(item["held"]), 16, MUTED))
+		row.add_child(_label("сейчас %s из %s" % [Fmt.int_spaced(item["held"]), Fmt.int_spaced(cap)], 17, Color.WHITE))
 		var set_target := Callable()
-		_stepper_widgets(row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
+		var lim_row := _store_line(col, "Хранить не больше")
+		_stepper_widgets(lim_row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
 			st["limit"].call(key, v)
 			if set_target.is_valid():
 				set_target.call(mini(v, int(item["target"]))))
 		if int(item["target"]) >= 0:
-			var row2 := HBoxContainer.new()
-			row2.add_theme_constant_override("separation", 8)
-			col.add_child(row2)
-			var l := _label("работники склада добывают до", 16, MUTED)
-			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-			row2.add_child(l)
-			set_target = _stepper_widgets(row2, int(item["target"]), 0, cap, 10, [], func(v: int) -> void:
-				item["target"] = v
-				st["target"].call(key, v))
+			set_target = _stepper_widgets(_store_line(col, "Работники склада добывают, пока меньше"), int(item["target"]), 0, cap, 10, [],
+				func(v: int) -> void:
+					item["target"] = v
+					st["target"].call(key, v))
+
+
+## Строка настройки ресурса на складе: подпись справа и место под переключатель.
+func _store_line(col: VBoxContainer, text: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	col.add_child(row)
+	var l := _label(text, 16, MUTED)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(l)
+	return row
 
 
 func _build_stepper(st: Dictionary) -> void:
