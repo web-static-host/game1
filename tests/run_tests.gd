@@ -2535,6 +2535,21 @@ func test_change_material() -> void:
 	colony.advance_offline(6000.0)
 	check(room.phase == Project.Phase.DONE and room.material == "stone", "стены каменные")
 	check(room.purpose == RoomType.HOME and room.wear < 0.1, "дом остался домом, износ с нуля")
+	# Комната, заложенная из меню под назначение, после постройки сразу обустраивается.
+	var r2 := Rect2i(room.rect.end.x + 1, room.rect.position.y, 3, 3)
+	colony.inventory = {"wood": 80, "stone": 80, "food": 80}
+	colony._sync_held()
+	var planned := Project.new()
+	planned.id = 995
+	planned.kind = Project.Kind.ROOM
+	planned.phase = Project.Phase.BUILD
+	planned.rect = r2
+	planned.plan_purpose = RoomType.STORAGE
+	colony.projects.append(planned)
+	colony._finish_project(planned)
+	check(planned.phase == Project.Phase.EQUIP and planned.equip_target == RoomType.STORAGE and planned.plan_purpose == 0,
+		"заложили склад — после постройки сразу обустраивают")
+	colony.projects.erase(planned)
 	check(colony.change_material(room, "wood"), "обратно на дерево тоже можно")
 	colony.cancel_equip(room)
 	check(room.material == "stone" and room.purpose == RoomType.HOME and room.equip_material.is_empty(), "отмена — всё как было")

@@ -8,6 +8,8 @@ signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
 signal home_pressed
+## Открыли меню стройки — main присылает плитки комнат (set_build_rooms).
+signal build_opened
 ## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
 signal speed_selected(index: int)
 signal science_pressed
@@ -25,9 +27,10 @@ enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE }
 const TOOLS := [
 	[Mode.TUNNEL, "tunnel", "Тоннель"],
 	[Mode.MINE, "mine", "Шахта"],
-	[Mode.ROOM, "room", "Комната"],
 	[Mode.BRIDGE, "bridge", "Мост"],
 ]
+## Плиток комнат в ряду меню стройки.
+const ROOM_COLS := 8
 const TOOL_HINTS := {
 	Mode.TUNNEL: "Проведите пальцем рамку тоннеля. Карта — двумя пальцами",
 	Mode.MINE: "Проведите пальцем вдоль шахты (всегда 3 м высотой). Карта — двумя пальцами",
@@ -67,7 +70,10 @@ var _weather_name := ""
 var _res_box: HBoxContainer
 var _res_sig := ""
 var _build_btn: IconButton
-var _build_row: HBoxContainer
+var _build_row: PanelContainer
+var _room_grid: GridContainer
+## Под что строится комната из меню (0 — пустая, назначение потом).
+var _room_purpose := 0
 var _menu: PanelContainer
 var _menu_new: Button
 var _models_hint: Label
@@ -298,20 +304,35 @@ func set_status(text: String) -> void:
 # --- Низ: карточка, подменю стройки, кнопки ------------------------------------------------
 
 func _build_bottom(box: VBoxContainer) -> void:
-	_build_row = HBoxContainer.new()
-	_build_row.add_theme_constant_override("separation", 8)
+	# Меню «Стройки»: проходы сверху, ниже — все виды комнат (недоступные — серые).
+	_build_row = PanelContainer.new()
+	_build_row.add_theme_stylebox_override("panel", _box(Color(0.1, 0.11, 0.14, 0.94), 16, 12))
 	_build_row.visible = false
 	add_child(_build_row)
 	_build_row.resized.connect(_place_build_row)
 	resized.connect(_place_build_row)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	_build_row.add_child(col)
+	col.add_child(_label("Проходы", 16, MUTED))
+	var tools := HBoxContainer.new()
+	tools.add_theme_constant_override("separation", 8)
+	col.add_child(tools)
+	for t in TOOLS:
+		var b := IconButton.make(t[1], t[2], 108, 76)
+		b.pressed.connect(func() -> void:
+			_room_purpose = 0
+			_pick_tool(t[0], t[1], t[2]))
+		tools.add_child(b)
+	col.add_child(_label("Комнаты — выберите, что построить (сразу обустроят). Серые — ещё не изучены:", 16, MUTED))
+	_room_grid = GridContainer.new()
+	_room_grid.columns = ROOM_COLS
+	_room_grid.add_theme_constant_override("h_separation", 8)
+	_room_grid.add_theme_constant_override("v_separation", 8)
+	col.add_child(_room_grid)
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
-	# Подменю «Стройки»: инструменты; после выбора — разовый режим установки.
-	for t in TOOLS:
-		var b := IconButton.make(t[1], t[2], 108, 80)
-		b.pressed.connect(func() -> void: _pick_tool(t[0], t[1], t[2]))
-		_build_row.add_child(b)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
 	# Главная кнопка — оранжевая.
@@ -383,6 +404,7 @@ func _on_build_toggled(on: bool) -> void:
 		return
 	if on:
 		close_overlays()
+		build_opened.emit()
 	_build_row.visible = on
 
 
@@ -406,6 +428,61 @@ func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 	set_hint(TOOL_HINTS.get(mode, ""))
 	_show_room_strip(mode == Mode.ROOM)
 	mode_changed.emit(mode, _room_w if mode == Mode.ROOM else 0)
+
+
+## Плитки комнат в меню стройки: [{"id", "name", "tex" (путь картинки) или "glyph", "ok", "why"}].
+func set_build_rooms(items: Array) -> void:
+	for c in _room_grid.get_children():
+		_room_grid.remove_child(c)
+		c.queue_free()
+	for it in items:
+		var ok: bool = it["ok"]
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(104, 104)
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_stylebox_override("normal", btn_box(Color(0.22, 0.24, 0.3) if ok else Color(0.15, 0.16, 0.19)))
+		var v := VBoxContainer.new()
+		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(v)
+		var pic: Control
+		var path: String = it.get("tex", "")
+		if not path.is_empty() and ResourceLoader.exists(path):
+			var tr := TextureRect.new()
+			tr.texture = load(path)
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.custom_minimum_size = Vector2(88, 54)
+			pic = tr
+		else:
+			pic = IconView.make("", 44, it.get("glyph", "room"), Color.WHITE)
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pic.modulate = Color.WHITE if ok else Color(0.4, 0.4, 0.45, 0.8)
+		v.add_child(pic)
+		var l := _label(it["name"], 14, Color.WHITE if ok else MUTED)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(96, 0)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(l)
+		var id: int = it["id"]
+		var nm: String = it["name"]
+		var why: String = it.get("why", "")
+		b.pressed.connect(func() -> void:
+			if not ok:
+				log_event(why, "warning")
+				return
+			_room_purpose = id
+			_pick_tool(Mode.ROOM, "room", nm))
+		_room_grid.add_child(b)
+
+
+## Под что строят комнату (0 — пустая).
+func room_purpose() -> int:
+	return _room_purpose
 
 
 ## Материалы стен, доступные колонии (для полоски выбора комнаты).

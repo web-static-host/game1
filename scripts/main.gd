@@ -128,6 +128,7 @@ func _build_scene() -> void:
 	camera.paint_ended.connect(_on_paint_end)
 	camera.paint_cancelled.connect(_clear_preview)
 	hud.mode_changed.connect(_set_mode)
+	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items()))
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.save_pressed.connect(func() -> void:
@@ -831,6 +832,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	var supply := colony.supply_status(p)
 	if not supply.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
+	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
+		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
 	var wall: String = _wall_choice.get(p.id, p.material)
 	if p.phase == Project.Phase.DONE and wall != p.material:
 		var wc := RoomType.material_cost(p, wall)
@@ -1428,6 +1431,15 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "warning", "text": "Жители не могут сюда дойти — стройка не начнётся."})
 	var title := "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
+		var plan := hud.room_purpose()
+		if plan > 0:
+			title = "%s %d×%d" % [RoomType.purpose_name(plan), r.size.x, r.size.y]
+			var tmp2 := Project.new()
+			tmp2.kind = kind
+			tmp2.rect = r
+			var ec := RoomType.equip_cost(plan, tmp2)
+			if not ec.is_empty():
+				rows.insert(1 if not rows.is_empty() else 0, {"type": "resources", "label": "Обустройство (после постройки)", "items": _cost_items(ec)})
 		title += " · " + Project.MATERIALS[_pending_material][0].to_lower()
 	return {"title": title, "rows": rows}
 
@@ -1448,12 +1460,42 @@ func _support_estimate(kind: int, r: Rect2i) -> int:
 	return tmp.slice_wood() * n
 
 
+## Картинки плиток меню стройки: назначение -> мебель.
+const ROOM_PICS := {
+	RoomType.NONE: "", RoomType.HOME: "home/bed_blue", RoomType.STORAGE: "storage/crate_wood",
+	RoomType.GRANARY: "granary/basket_fish", RoomType.FARM: "farm/shoots_3", RoomType.DINING: "dining/table",
+	RoomType.HEARTH: "hearth/stone_on", RoomType.HEARTH_BRICK: "hearth/brick_on", RoomType.LAB: "lab/microscope",
+	RoomType.PUMP: "pump/pump_on", RoomType.VENT: "degas/compressor", RoomType.DEGAS: "degas/tank_2",
+	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
+	RoomType.GAS_GEN: "generator/gas_on",
+}
+
+
+## Плитки комнат для меню стройки: все виды, неизученные — неактивные с подсказкой.
+func _build_room_items() -> Array:
+	var order := [RoomType.NONE, RoomType.HOME, RoomType.STORAGE, RoomType.GRANARY, RoomType.FARM, RoomType.DINING,
+		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
+		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN]
+	var out := []
+	for t in order:
+		var need: String = RoomType.REQUIRES.get(t, "")
+		var ok := colony.research.has(need)
+		var nm := "Пустая" if t == RoomType.NONE else RoomType.purpose_name(t).replace("Очаг (каменные печи)", "Очаг").replace(
+			"Очаг (кирпичные печи)", "Очаг кирпичный")
+		var pic: String = ROOM_PICS.get(t, "")
+		out.append({"id": t, "name": nm, "tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "",
+			"glyph": "room", "ok": ok, "why": "%s: сначала изучите «%s» (Наука)" % [nm, Research.tech_name(need)] if not ok else ""})
+	return out
+
+
 func _confirm_pending() -> bool:
 	var err := colony.validate(_pending_kind, _pending, _pending_material)
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		return false
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
+	if p != null and _pending_kind == Project.Kind.ROOM:
+		p.plan_purpose = hud.room_purpose()
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")

@@ -57,6 +57,8 @@ var farm_progress := 0.0
 var equip_ladder := false
 ## Перестройка стен из другого материала (пусто — не перестраивают).
 var equip_material := ""
+## Под что строят комнату (выбрано в меню стройки): после постройки сразу обустраивается.
+var plan_purpose := 0
 ## Очаг с кирпичными печами (иначе — каменные).
 var brick_stoves := false
 ## Очаг сейчас горит на метане (газовое отопление).
@@ -316,6 +318,7 @@ func to_dict() -> Dictionary:
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
 		"equip_material": equip_material,
+		"plan_purpose": plan_purpose,
 		"brick_stoves": brick_stoves,
 		"gas_boiler": gas_boiler,
 		"light": light,
@@ -375,6 +378,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.equip_material = str(d.get("equip_material", ""))
+	p.plan_purpose = int(d.get("plan_purpose", 0))
 	p.brick_stoves = bool(d.get("brick_stoves", false))
 	p.gas_boiler = bool(d.get("gas_boiler", false))
 	p.light = int(d.get("light", -1))

@@ -1224,7 +1224,13 @@ func _finish_project(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
-	if p.kind == Project.Kind.ROOM:
+	if p.kind == Project.Kind.ROOM and p.plan_purpose > 0:
+		# Комнату строили под назначение — сразу обустраивают.
+		var t := p.plan_purpose
+		p.plan_purpose = 0
+		_log("Построено: %s — обустраиваем: %s" % [p.title(), RoomType.purpose_name(t)], "good")
+		set_purpose(p, t)
+	elif p.kind == Project.Kind.ROOM:
 		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
 	else:
 		_log("Построено: %s" % p.title(), "good")
