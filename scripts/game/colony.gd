@@ -926,6 +926,8 @@ func required(p: Project) -> Dictionary:
 		Project.Phase.EQUIP:
 			if not p.equip_paid:
 				out = RoomType.job_cost(p).duplicate()
+				for k in RoomType.PIPED:
+					out.erase(k)
 		Project.Phase.DONE:
 			if p.repairing and not p.repair_paid:
 				out = p.repair_need.duplicate()
@@ -1831,11 +1833,16 @@ func _try_pay(p: Project) -> void:
 	else:
 		_check_supply(p)
 		return
+	# Топливо (дизель, метан, нефть) не носят — берут по трубам прямо из баков.
 	for k in cost:
-		if p.delivered.get(k, 0) < cost[k]:
+		var have: int = inventory.get(k, 0) if RoomType.PIPED.has(k) else p.delivered.get(k, 0)
+		if have < cost[k]:
 			_check_supply(p)
 			return
 	for k in cost:
+		if RoomType.PIPED.has(k):
+			_remove(k, cost[k])
+			continue
 		p.delivered[k] -= cost[k]
 		if p.delivered[k] <= 0:
 			p.delivered.erase(k)
@@ -1922,6 +1929,11 @@ func set_purpose(p: Project, t: int) -> bool:
 		return false
 	if not research.has(RoomType.REQUIRES.get(t, "")):
 		return false
+	if p.purpose == RoomType.SHIP:
+		return false
+	if t == RoomType.LAUNCHPAD and not launchpad_error(p).is_empty():
+		_log(launchpad_error(p), "warning")
+		return false
 	if is_hearth_upgrade(p, t):
 		# Печи перекладывают кирпичом или ставят котлы: очаг остаётся очагом.
 		p.equip_ladder = false
@@ -1951,6 +1963,190 @@ func is_hearth_upgrade(p: Project, t: int) -> bool:
 	if p.purpose != RoomType.HEARTH:
 		return false
 	return (t == RoomType.HEARTH_BRICK and not p.brick_stoves) or (t == RoomType.HEARTH_GAS and not p.gas_boiler)
+
+
+# --- Космос: космодром, ракета, экспедиции -----------------------------------------------
+
+## Почему здесь нельзя космодром (пусто — можно): над ним должно быть открытое небо.
+func launchpad_error(p: Project) -> String:
+	if p.kind != Project.Kind.ROOM:
+		return "Космодром — это комната на поверхности"
+	for x in range(p.rect.position.x, p.rect.end.x):
+		if p.rect.end.y - 1 >= world.gen.surface_y(x):
+			return "Космодром — только на поверхности: пол выше земли"
+		for y in range(p.rect.position.y - 14, p.rect.position.y):
+			if not world.is_open(x, y) or project_at(Vector2i(x, y)) != null:
+				return "Над космодромом нужно открытое небо (14 м) — для ракеты"
+	return ""
+
+
+## Начать сборку ракеты на космодроме (engine: "chem" или "nuclear"). Пусто — началась.
+func start_rocket(p: Project, engine: String) -> String:
+	wake_idle()
+	if p.purpose != RoomType.LAUNCHPAD or p.phase != Project.Phase.DONE:
+		return "Ракету собирают на готовом космодроме"
+	if not p.rocket.is_empty():
+		return "Ракета уже стоит на столе"
+	if engine == "nuclear" and not research.has("nuclear_engine"):
+		return "Сначала изучите «%s»" % Research.tech_name("nuclear_engine")
+	var err := launchpad_error(p)
+	if not err.is_empty():
+		return err
+	p.equip_rocket = engine
+	p.equip_target = p.purpose
+	p.equip_ladder = false
+	p.equip_paid = false
+	p.equip_done = 0.0
+	p.phase = Project.Phase.EQUIP
+	_log("%s: собираем ракету (%s двигатель)" % [p.title(), Planet.engine_name(engine)], "info")
+	_try_pay(p)
+	return ""
+
+
+## Куда долетит ракета с этим двигателем.
+static func rocket_reaches(engine: String, planet_id: String) -> bool:
+	var need: String = Planet.data(planet_id)["engine"]
+	return engine == "nuclear" or need == engine
+
+
+## Отправить экспедицию: до 10 жителей и до 200 груза (не топливо — его не возят).
+## Возвращает полёт (словарь для Universe) или ошибку {"error": текст}.
+func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Dictionary:
+	if p.rocket.is_empty():
+		return {"error": "Ракеты на столе нет"}
+	if not rocket_reaches(p.rocket, planet_id):
+		return {"error": "Для полёта на %s нужен %s двигатель" % [Planet.planet_name(planet_id), Planet.engine_name(Planet.data(planet_id)["engine"])]}
+	if crew.size() > RoomType.SHIP_BEDS:
+		return {"error": "В ракете — до %d жителей" % RoomType.SHIP_BEDS}
+	var total := 0
+	for k in cargo:
+		total += int(cargo[k])
+		if RoomType.PIPED.has(k) or RoomType.BULK.has(k):
+			return {"error": "%s в ракете не возят" % Mat.resource_name(k)}
+		if int(inventory.get(k, 0)) < int(cargo[k]):
+			return {"error": "Не хватает: %s" % Mat.resource_name(k).to_lower()}
+	if total > RoomType.SHIP_HOLD:
+		return {"error": "Груза — до %d" % RoomType.SHIP_HOLD}
+	if crew.is_empty() and total == 0:
+		return {"error": "Ракета пустая"}
+	var crew_data := []
+	for u: Unit in crew:
+		if not units.has(u) or u.child:
+			return {"error": "Лететь могут только взрослые жители колонии"}
+	for u: Unit in crew:
+		_drop(u)
+		u.workplace = 0
+		u.bed_room = 0
+		crew_data.append(u.to_dict())
+		units.erase(u)
+	for o in units:
+		if not units.has(unit_by_id(o.partner_id)):
+			o.partner_id = 0
+	for k in cargo:
+		_remove(k, int(cargo[k]))
+	p.rocket = ""
+	_log("Старт! Экспедиция на %s: жителей %d, груза %d. Лететь %d мес." % [Planet.planet_name(planet_id), crew_data.size(), total,
+		int(Planet.data(planet_id)["travel"])], "good")
+	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
+		"left": float(Planet.data(planet_id)["travel"]) * MONTH}
+
+
+## Новая колония на планете: корабль садится на поверхность, экипаж и груз — в нём.
+func start_planet(x: int, flight: Dictionary) -> void:
+	home = Vector2i(x, world.gen.surface_y(x))
+	explored_min = x - START_VIEW
+	explored_max = x + START_VIEW
+	deepest_y = home.y
+	highest_y = home.y
+	for k in flight.get("research", []):
+		if not research.done.has(str(k)):
+			research.done.append(str(k))
+	receive_flight(flight)
+
+
+## Прилетела ракета: корабль садится рядом с колонией (или на месте первой высадки),
+## жители и груз — в корабле.
+func receive_flight(flight: Dictionary) -> void:
+	var ship := _land_ship()
+	var ids := {}
+	var arrived: Array[Unit] = []
+	for d in flight.get("crew", []):
+		var u := Unit.from_dict(d)
+		ids[u.id] = next_unit_id
+		u.id = next_unit_id
+		next_unit_id += 1
+		u.mother_id = 0
+		u.father_id = 0
+		u.task = Unit.Task.NONE
+		u.state = Unit.State.IDLE
+		u.path.clear()
+		u.project_id = 0
+		u.workplace = 0
+		u.bed_room = 0
+		u.pos = Vector2(RoomType.floor_start(ship) + arrived.size() % RoomType.usable_width(ship), ship.rect.end.y - 1)
+		units.append(u)
+		arrived.append(u)
+	for u in arrived:
+		u.partner_id = ids.get(u.partner_id, 0)
+	for k in flight.get("cargo", {}):
+		var n := int(flight["cargo"][k])
+		var put := _add(k, n, ship)
+		if put < n:
+			_add(k, n - put)
+	_log("Посадка на %s! Корабль — жильё на %d человек; прибыло жителей %d. Копайте вниз прямо из корабля." % [
+		Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good")
+
+
+## Корабль садится на ровное место у базы: комната 9×3 на поверхности.
+func _land_ship() -> Project:
+	var x0 = null
+	for k in 40:
+		for sgn in [1, -1]:
+			var x: int = home.x - 4 + sgn * k * 10
+			var sx := world.gen.surface_y(x)
+			var free := true
+			for q in projects:
+				if q.rect.intersects(Rect2i(x - 1, sx - 4, 11, 5)):
+					free = false
+			if free and _flat_at(x):
+				x0 = x
+				break
+		if x0 != null:
+			break
+	if x0 == null:
+		x0 = home.x - 4
+	var s0 := world.gen.surface_y(x0)
+	var p := Project.new()
+	p.id = next_project_id
+	next_project_id += 1
+	p.kind = Project.Kind.ROOM
+	p.rect = Rect2i(x0, s0 - 3, 9, 3)
+	p.material = "metal"
+	p.purpose = RoomType.SHIP
+	p.phase = Project.Phase.DONE
+	p.paid = true
+	projects.append(p)
+	# Под кораблём земля ровная: подсыпаем, где ниже.
+	for x in range(p.rect.position.x, p.rect.end.x):
+		var below := Vector2i(x, p.rect.end.y)
+		if world.is_open(below.x, below.y):
+			world.set_material(below.x, below.y, Mat.GRAVEL)
+	for c in p.cells():
+		if not world.is_open(c.x, c.y):
+			world.set_material(c.x, c.y, Mat.AIR)
+		interior[c] = p.id
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	_register_room(p)
+	_rebuild_climb()
+	return p
+
+
+func _flat_at(x: int) -> bool:
+	var s := world.gen.surface_y(x)
+	for dx in 9:
+		if world.gen.surface_y(x + dx) != s:
+			return false
+	return true
 
 
 ## Почему нельзя перестроить стены комнаты из mat (пусто — можно).
@@ -2014,10 +2210,11 @@ func cancel_equip(p: Project) -> void:
 		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
-	if not p.equip_ladder and p.equip_material.is_empty() and not is_hearth_upgrade(p, p.equip_target):
+	if not p.equip_ladder and p.equip_material.is_empty() and p.equip_rocket.is_empty() and not is_hearth_upgrade(p, p.equip_target):
 		p.purpose = RoomType.NONE
 	p.equip_ladder = false
 	p.equip_material = ""
+	p.equip_rocket = ""
 	p.blocked = ""
 	for u in units:
 		if u.project_id == p.id:
@@ -2029,6 +2226,14 @@ func _finish_equip(p: Project) -> void:
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	p.blocked = ""
+	if not p.equip_rocket.is_empty():
+		p.rocket = p.equip_rocket
+		p.equip_rocket = ""
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("Ракета собрана (%s двигатель) — готова к старту! Нажмите на космодром → «Запустить»" % Planet.engine_name(p.rocket), "good")
+		return
 	if not p.equip_material.is_empty():
 		p.material = p.equip_material
 		p.equip_material = ""
@@ -2111,6 +2316,7 @@ func capacity(key: String) -> int:
 func store_rooms() -> Array[Project]:
 	var out := rooms_of(RoomType.STORAGE)
 	out.append_array(rooms_of(RoomType.GRANARY))
+	out.append_array(rooms_of(RoomType.SHIP))
 	return out
 
 
@@ -2166,9 +2372,24 @@ func room_limit(p: Project, key: String) -> int:
 
 func beds_total() -> int:
 	var n := 0
-	for p in rooms_of(RoomType.HOME):
+	for p in bed_rooms():
 		n += RoomType.beds(p)
 	return n
+
+
+## Где спят: жилые комнаты и корабли.
+func bed_rooms() -> Array[Project]:
+	var out := rooms_of(RoomType.HOME)
+	out.append_array(rooms_of(RoomType.SHIP))
+	return out
+
+
+## Корабль, внутри которого клетка c (там воздух, тепло и свет), или null.
+func ship_at(c: Vector2i) -> Project:
+	for p in projects:
+		if p.purpose == RoomType.SHIP and p.kind == Project.Kind.ROOM and p.rect.has_point(c):
+			return p
+	return null
 
 
 func pregnant_count() -> int:
@@ -2181,7 +2402,8 @@ func pregnant_count() -> int:
 
 ## Клетка пола, где стоит кровать (index с 1).
 static func bed_cell(p: Project, index: int) -> Vector2i:
-	return Vector2i(RoomType.floor_start(p) + (index - 1) * 2, p.rect.end.y - 1)
+	# В корабле койки в два яруса — места на полу повторяются.
+	return Vector2i(RoomType.floor_start(p) + ((index - 1) * 2) % maxi(1, RoomType.usable_width(p)), p.rect.end.y - 1)
 
 
 func _claim_bed(u: Unit) -> void:
@@ -2192,7 +2414,7 @@ func _claim_bed(u: Unit) -> void:
 	for o in units:
 		if o.bed_room != 0:
 			taken["%d:%d" % [o.bed_room, o.bed_index]] = true
-	for p in rooms_of(RoomType.HOME):
+	for p in bed_rooms():
 		for i in range(1, RoomType.beds(p) + 1):
 			if not taken.has("%d:%d" % [p.id, i]):
 				u.bed_room = p.id
@@ -3452,13 +3674,13 @@ func relight() -> void:
 func _lights_tick() -> void:
 	work_lamps.clear()
 	for p in projects:
-		p.lit = false
+		p.lit = p.purpose == RoomType.SHIP and p.phase == Project.Phase.DONE
 	if not powered():
 		return
 	# Включённые вручную горят всегда.
 	var auto: Array[Project] = []
 	for p in projects:
-		if not lightable(p):
+		if not lightable(p) or p.purpose == RoomType.SHIP:
 			continue
 		if p.light == 1:
 			p.lit = true
@@ -4492,6 +4714,9 @@ func _room_stand(room: Project, dist: Dictionary) -> Variant:
 
 ## Склад (амбар) принимает добро, только когда на него назначен работник.
 func store_staffed(room: Project) -> bool:
+	# Трюм корабля принимает всегда — экипаж на месте.
+	if room.purpose == RoomType.SHIP:
+		return true
 	return not room.paused and not assigned_to(room).is_empty()
 
 
@@ -5073,6 +5298,8 @@ func _wear_tick(dt: float) -> void:
 	for p: Project in projects.duplicate():
 		if not projects.has(p) or (p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP):
 			continue
+		if p.purpose == RoomType.SHIP:
+			continue
 		p.wear = minf(1.0, p.wear + dt / (service_years(p) * YEAR))
 		for i in WEAR_WARN.size():
 			if p.wear < WEAR_WARN[i] or p.wear_warned > i:
@@ -5517,6 +5744,10 @@ func _power_tick(dt: float) -> void:
 	for p in lifts():
 		if not p.paused:
 			power_used += LIFT_POWER
+	# Реактор корабля: свой ток, тепло, воздух и свет внутри.
+	for p in rooms_of(RoomType.SHIP):
+		power_made += RoomType.SHIP_POWER
+		p.burning = true
 	for p in projects:
 		if _drill_active(p):
 			power_used += DRILL_POWER
@@ -5585,7 +5816,7 @@ func season() -> int:
 
 
 func is_winter() -> bool:
-	return season() == Season.WINTER
+	return season() == Season.WINTER and world.gen.planet_id == "earth"
 
 
 ## Отклонение температуры на поверхности от Env.SURFACE_TEMP: холоднее всего в середине января.
@@ -5603,6 +5834,9 @@ var _last_month := -1
 
 ## Смена времён года — в журнал, с подсказкой, к чему готовиться.
 func _season_tick() -> void:
+	# На других планетах времён года нет.
+	if world.gen.planet_id != "earth":
+		return
 	var m := month()
 	if m == _last_month:
 		return
@@ -6091,6 +6325,8 @@ func room_cap(p: Project, key: String) -> int:
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
 	if key == "oil" or key == "diesel":
 		return RoomType.OIL_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.OIL_TANK else 0
+	if p.purpose == RoomType.SHIP:
+		return 0 if RoomType.BULK.has(key) else RoomType.SHIP_HOLD
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
 		return 0
 	var c := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)

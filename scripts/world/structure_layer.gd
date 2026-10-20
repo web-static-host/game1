@@ -152,6 +152,87 @@ func _draw_done(p: Project) -> void:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
 
+## Корабль: койки в два яруса, пульт, иллюминаторы; снаружи — нос, стабилизаторы, опоры.
+const HULL := Color(0.78, 0.8, 0.84)
+const HULL_DARK := Color(0.45, 0.48, 0.55)
+
+
+func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
+	# Нос справа, стабилизаторы слева, опоры снизу — вокруг комнаты.
+	var mid := r.get_center().y
+	draw_colored_polygon(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+		Vector2(r.end.x, r.end.y - 4)]), Color(HULL, alpha))
+	draw_polyline(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+		Vector2(r.end.x, r.end.y - 4)]), Color(HULL_DARK, alpha), 3.0)
+	for sgn in [-1.0, 1.0]:
+		var base: Vector2 = Vector2(r.position.x, mid + sgn * r.size.y * 0.35)
+		draw_colored_polygon(PackedVector2Array([base, base + Vector2(-TILE * 1.4, sgn * TILE * 1.2),
+			base + Vector2(TILE * 0.8, 0)]), Color(0.85, 0.35, 0.3, alpha))
+	for k in 3:
+		var lx := r.position.x + r.size.x * (0.2 + 0.3 * k)
+		draw_line(Vector2(lx, r.end.y), Vector2(lx - 6, r.end.y + 10), Color(HULL_DARK, alpha), 3.0)
+	# Иллюминаторы под потолком.
+	for k in 4:
+		var wc := Vector2(r.position.x + r.size.x * (0.15 + 0.23 * k), r.position.y + 14)
+		draw_circle(wc, 7, Color(HULL_DARK, alpha))
+		draw_circle(wc, 5, Color(0.55, 0.8, 1.0, alpha))
+	# Койки в два яруса вдоль стены.
+	var n := 5
+	for i in n:
+		var bx := r.position.x + 8 + i * (r.size.x - 70) / n
+		var bw := (r.size.x - 70) / n - 6
+		for lvl in 2:
+			var by := r.end.y - 14 - lvl * 22
+			_rbox(Rect2(bx, by, bw, 9), 3, Color(0.5, 0.55, 0.65, alpha))
+			_rbox(Rect2(bx + 2, by - 4, bw * 0.35, 5), 2, Color(0.95, 0.95, 0.92, alpha))
+	# Пульт с огоньками.
+	var cx := r.end.x - 52
+	_rbox(Rect2(cx, r.end.y - 34, 44, 28), 5, Color(0.3, 0.33, 0.4, alpha), Color(0.15, 0.16, 0.2, alpha), 2)
+	var blink := int(Time.get_ticks_msec() / 500) % 3
+	for k in 3:
+		draw_circle(Vector2(cx + 9 + k * 13, r.end.y - 25), 3.5,
+			Color(0.4, 1.0, 0.5, alpha) if k == blink else Color(0.25, 0.45, 0.3, alpha))
+
+
+## Космодром: бетонный стол, башня обслуживания; ракета на столе (во время сборки — в лесах).
+func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
+	_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
+	var tx := r.end.x - TILE * 0.8
+	for y in range(int(r.position.y - TILE * 12), int(r.end.y - 16), 18):
+		draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+		draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+	draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	var t := 0.0
+	if not p.rocket.is_empty():
+		t = 1.0
+	elif not p.equip_rocket.is_empty():
+		t = clampf(p.equip_done / RoomType.ROCKET_WORK, 0.0, 1.0) if p.equip_paid else 0.0
+	else:
+		return
+	var nuclear := p.rocket == "nuclear" or p.equip_rocket == "nuclear"
+	var cx := r.get_center().x - TILE * 0.6
+	var w := TILE * 2.4
+	var top := r.end.y - 16 - TILE * 14
+	var body := Rect2(cx - w * 0.5, top + TILE * 2.5, w, r.end.y - 16 - top - TILE * 2.5)
+	var a := alpha * (0.35 + 0.65 * t)
+	# Корпус растёт снизу вверх по мере сборки.
+	var built := Rect2(body.position.x, body.end.y - body.size.y * maxf(t, 0.05), body.size.x, body.size.y * maxf(t, 0.05))
+	_rbox(body, 6, Color(HULL, alpha * 0.18), Color(HULL_DARK, alpha * 0.4), 1)
+	_rbox(built, 6, Color(HULL, a), Color(HULL_DARK, a), 2)
+	if t >= 0.999:
+		draw_colored_polygon(PackedVector2Array([Vector2(body.position.x, body.position.y), Vector2(cx, top),
+			Vector2(body.end.x, body.position.y)]), Color(0.85, 0.3, 0.28, alpha) if not nuclear else Color(0.3, 0.75, 0.4, alpha))
+		for sgn in [-1.0, 1.0]:
+			var fx: float = cx + sgn * w * 0.5
+			draw_colored_polygon(PackedVector2Array([Vector2(fx, body.end.y - TILE * 2.5), Vector2(fx + sgn * TILE, body.end.y),
+				Vector2(fx, body.end.y)]), Color(0.85, 0.3, 0.28, alpha))
+		draw_circle(Vector2(cx, body.position.y + TILE * 2), 9, Color(HULL_DARK, alpha))
+		draw_circle(Vector2(cx, body.position.y + TILE * 2), 6.5, Color(0.55, 0.8, 1.0, alpha))
+		if nuclear:
+			draw_circle(Vector2(cx, body.end.y - TILE * 3), 8, Color(1.0, 0.85, 0.2, alpha))
+
+
 ## Бур у забоя: корпус и вращающееся сверло, смотрит туда, куда идёт.
 func _draw_drill(p: Project, r: Rect2) -> void:
 	var front := colony.drill_front(p)
@@ -1091,6 +1172,12 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 	var floor_y := r.end.y - 6
 	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
+	if purpose == RoomType.SHIP:
+		_draw_ship(p, r, alpha)
+		return
+	if purpose == RoomType.LAUNCHPAD:
+		_draw_launchpad(p, r, alpha)
+		return
 	if purpose == RoomType.HOME and furniture("home", "bed_blue") != null:
 		_draw_home_furniture(p, r, alpha)
 		return

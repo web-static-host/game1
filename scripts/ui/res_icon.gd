@@ -184,6 +184,18 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 					var tip: Vector2 = c + dir * r * 0.55 * s
 					ci.draw_line(tip, tip + (dir * s).rotated(0.8) * r * 0.3, col, w * 0.8)
 					ci.draw_line(tip, tip + (dir * s).rotated(-0.8) * r * 0.3, col, w * 0.8)
+		"planet":
+			# Планета с кольцом.
+			ci.draw_circle(c, r * 0.55, col)
+			ci.draw_arc(c, r * 0.95, -0.35, PI - 0.35, 20, col, w)
+			ci.draw_arc(c, r * 0.95, PI + 0.25, TAU - 0.55, 20, Color(col, 0.6), w * 0.8)
+		"rocket":
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0, -r * 0.95), c + Vector2(r * 0.35, -r * 0.3),
+				c + Vector2(r * 0.35, r * 0.55), c + Vector2(-r * 0.35, r * 0.55), c + Vector2(-r * 0.35, -r * 0.3)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.35, r * 0.15), c + Vector2(-r * 0.7, r * 0.8),
+				c + Vector2(-r * 0.35, r * 0.55)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.35, r * 0.15), c + Vector2(r * 0.7, r * 0.8),
+				c + Vector2(r * 0.35, r * 0.55)]), col)
 		"drill":
 			# Бур: корпус и винтовое сверло вниз.
 			ci.draw_rect(Rect2(c + Vector2(-r * 0.6, -r * 0.9), Vector2(r * 1.2, r * 0.7)), col)

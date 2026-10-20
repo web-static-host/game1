@@ -66,6 +66,7 @@ func _initialize() -> void:
 	test_stop_by_meter()
 	test_drill()
 	test_oil()
+	test_space()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2617,6 +2618,99 @@ func _power_up(colony: Colony, x: int) -> void:
 	colony.projects.append(gen)
 	colony.inventory["coal"] = 50
 	colony._power_tick(0.1)
+
+
+func test_space() -> void:
+	# Планеты: ни деревьев, ни озёр, свой климат; на поверхности без воздуха не ходят.
+	var mg := WorldGen.new(5, WorldGen.LATEST, "mars")
+	var trees := 0
+	for x in range(-200, 200):
+		if mg.feature_at(x) != WorldGen.FEATURE_NONE:
+			trees += 1
+	check(trees == 0 and mg.lake_at(50).is_empty(), "на Марсе нет деревьев и озёр")
+	var ms := mg.surface_y(0)
+	check(mg.temperature(ms - 1, ms) < -50.0 and mg.temperature(ms + 20, ms) > -16.0, "Марс: на поверхности −60, в недрах около −12")
+	check(mg.oxygen_ratio(ms - 1, ms) == 0.0 and mg.oxygen_ratio(ms + 5, ms) == 1.0, "на поверхности Марса дышать нечем")
+	check(WorldGen.new(5, WorldGen.LATEST, "earth").temperature(ms + 20, ms) == Env.temperature(ms + 20, ms), "на Земле климат прежний")
+	# Ракета: собирают на космодроме, топливо — по трубам.
+	var colony := _new_colony(40)
+	var w := colony.world
+	var x := _flat_x(w, 80)
+	_start(colony, x - 10)
+	colony.research.done.append_array(["electricity", "metallurgy", "rocketry", "oil_drilling", "refining", "combustion", "automation"])
+	var s := w.gen.surface_y(x)
+	var pad := Project.new()
+	pad.id = 920
+	pad.kind = Project.Kind.ROOM
+	pad.phase = Project.Phase.DONE
+	pad.rect = Rect2i(x, s - 3, 6, 3)
+	colony.projects.append(pad)
+	check(colony.launchpad_error(pad).is_empty(), "космодром на поверхности под открытым небом: " + colony.launchpad_error(pad))
+	pad.purpose = RoomType.LAUNCHPAD
+	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 6, 6, 3), 921)
+	tank.purpose = RoomType.OIL_TANK
+	check(colony.start_rocket(pad, "nuclear") != "", "ядерную без технологии не собрать")
+	check(colony.start_rocket(pad, "chem").is_empty() and pad.phase == Project.Phase.EQUIP, "сборка ракеты началась")
+	check(not colony.required(pad).has("diesel"), "дизель на ракету не носят — он по трубам")
+	pad.delivered = RoomType.ROCKET_COST["chem"].duplicate()
+	pad.delivered.erase("diesel")
+	colony._add("diesel", 60)
+	colony._try_pay(pad)
+	check(pad.equip_paid and colony.inventory.get("diesel", 0) == 0, "оплатили: материалы привезли, дизель взяли из бака")
+	pad.equip_done = RoomType.ROCKET_WORK
+	colony._finish_equip(pad)
+	check(pad.rocket == "chem" and pad.purpose == RoomType.LAUNCHPAD, "ракета готова")
+	# Старт: химический до Юпитера не долетит; на Марс — да.
+	colony.inventory["food"] = 120
+	colony.inventory["wood"] = 60
+	colony._sync_held()
+	var crew: Array = [colony.units[0], colony.units[1], colony.units[2]]
+	crew[0].partner_id = crew[1].id
+	crew[1].partner_id = crew[0].id
+	check(colony.launch(pad, "jupiter", crew, {}).has("error"), "на химическом до Юпитера не долететь")
+	check(colony.launch(pad, "mars", crew, {"food": 300}).has("error"), "больше 200 груза не взять")
+	var n0 := colony.units.size()
+	var flight := colony.launch(pad, "mars", crew, {"food": 100, "wood": 50})
+	check(not flight.has("error") and colony.units.size() == n0 - 3 and pad.rocket.is_empty(), "экспедиция улетела: 3 жителя, 150 груза")
+	check(colony.inventory.get("food", 0) <= 20, "груз списан со склада")
+	var uni := Universe.new()
+	uni.base_seed = 40
+	uni.add_world("earth", w, colony)
+	uni.send(flight)
+	uni.update(Colony.MONTH * 2.0)
+	check(uni.worlds.size() == 1 and uni.flights.size() == 1, "летят — ещё не долетели")
+	uni.update(Colony.MONTH * 1.5)
+	var e := uni.entry("mars")
+	check(not e.is_empty(), "долетели — появился мир Марса")
+	if e.is_empty():
+		return
+	var mc: Colony = e["colony"]
+	check(mc.units.size() == 3 and mc.research.has("rocketry"), "на Марсе 3 жителя, знания с Земли")
+	var ship := mc.rooms_of(RoomType.SHIP)
+	check(ship.size() == 1 and mc.held_in(ship[0], "food") == 100 and mc.held_in(ship[0], "wood") == 50, "корабль сел, груз в трюме")
+	check(mc.beds_total() == RoomType.SHIP_BEDS, "в корабле 10 спальных мест")
+	var pair := mc.units.filter(func(u: Unit) -> bool: return u.partner_id != 0)
+	check(pair.size() == 2 and mc.unit_by_id(pair[0].partner_id) == pair[1], "пара прилетела парой")
+	var inside: Vector2i = ship[0].rect.position + Vector2i(3, 1)
+	check(mc.elements.temperature(inside) == Elements.SHIP_TEMP, "в корабле тепло (+20)")
+	var outside := Vector2i(ship[0].rect.end.x + 3, mc.world.gen.surface_y(ship[0].rect.end.x + 3) - 1)
+	check(not mc.pathing.node(outside), "наружу на поверхность Марса не выйти")
+	# Живут в корабле: месяц — все живы (еда есть, тепло, воздух).
+	var t := 0.0
+	while t < Colony.MONTH:
+		mc.update(1.0)
+		t += 1.0
+	check(mc.units.size() == 3, "за месяц на Марсе все живы в корабле (%d)" % mc.units.size())
+	# Вторая ракета — в ту же колонию, корабль рядом.
+	var f2 := {"planet": "mars", "crew": [], "cargo": {"stone": 30}, "research": [], "left": 1.0}
+	uni.send(f2)
+	uni.update(2.0)
+	check(uni.worlds.size() == 2 and mc.rooms_of(RoomType.SHIP).size() == 2, "вторая ракета села рядом с колонией")
+	# Сохранение миров и полётов.
+	var saved := uni.to_dict({})
+	var uni2 := Universe.new()
+	uni2.load_dict(saved)
+	check(uni2.worlds.size() == 1 and (uni2.worlds[0]["colony"] as Colony).units.size() == 3, "мир Марса сохраняется и загружается")
 
 
 func test_oil() -> void:

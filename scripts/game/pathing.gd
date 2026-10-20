@@ -86,6 +86,9 @@ func standable(c: Vector2i) -> bool:
 
 ## Узел графа: можно стоять, голова не упирается и над водой.
 func node(c: Vector2i) -> bool:
+	# На безвоздушной планете на поверхность не выходят — только внутри построек.
+	if world.gen.airless() and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c):
+		return false
 	var h := c + UP
 	return standable(c) and world.is_open(h.x, h.y)
 

@@ -8,6 +8,8 @@ signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
 signal home_pressed
+## «Миры»: Земля, колонии на планетах, ракеты в полёте.
+signal worlds_pressed
 ## Открыли меню стройки — main присылает плитки комнат (set_build_rooms).
 signal build_opened
 ## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
@@ -365,6 +367,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var science := IconButton.make("flask", "Наука")
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
+	var worlds := IconButton.make("planet", "Миры")
+	worlds.pressed.connect(func() -> void: worlds_pressed.emit())
+	bar.add_child(worlds)
 	var home := IconButton.make("home", "К базе")
 	bar.add_child(home)
 	# Скорость — переключатель в одной панели.
@@ -924,7 +929,7 @@ func _build_people(st: Dictionary) -> void:
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.custom_minimum_size = Vector2(PANEL_WIDTH - 300, 0)
 		col.add_child(info)
-		if not item.has("button"):
+		if not item.has("button") or str(item["button"]).is_empty():
 			continue
 		var b := Button.new()
 		b.text = item["button"]
