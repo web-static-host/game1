@@ -6,7 +6,7 @@ import bmesh
 from mathutils import Vector
 
 VOXEL = 0.025        # шаг пересборки сетки, м (пальцы ~0,1 м толщиной — остаются)
-ARM_GROW = 0.045     # на сколько толще руки (по нормали), м
+ARM_GROW = 0.05     # на сколько толще руки (по нормали), м
 LEG_GROW = 0.04      # ноги
 FOOT_SCALE = 1.35    # ступни крупнее
 EYE_SCALE = 1.15     # глаз крупнее (вокруг центра белка)
@@ -53,24 +53,13 @@ def smooth_body(body, rig):
     # Веса с исходного тела (ближайшая грань) — чтобы знать, где руки, ноги, пальцы.
     _transfer(body, src)
     keep = _weights(body, ['Hand.L', 'Hand.R'] + ['Finger%d.%s' % (i, s) for i in range(1, 5) for s in 'LR'])
-    # 3) Сгладить всё, кроме кистей (пальцы бы растаяли).
-    vg = body.vertex_groups.new(name='_smooth')
-    for v in body.data.vertices:
-        vg.add([v.index], max(0.0, 1.0 - keep[v.index] * 1.5), 'REPLACE')
-    sm = body.modifiers.new('Lap', 'LAPLACIANSMOOTH')
-    sm.iterations = 12
-    sm.lambda_factor = 1.2
-    sm.use_volume_preserve = True
-    sm.vertex_group = '_smooth'
-    _apply(body, sm)
-    print('smoothed', flush=True)
-    # 4) Толще руки и ноги, крупнее ступни.
-    arms = _weights(body, ['UpperArm.L', 'UpperArm.R', 'Forearm.L', 'Forearm.R'])
-    legs = _weights(body, ['Thigh.L', 'Thigh.R', 'Shin.L', 'Shin.R'])
-    feet = {s: _weights(body, ['Foot.' + s]) for s in 'LR'}
     me = body.data
+    nbr = _neighbours(me)
+    # 3) Толще руки и ноги, крупнее ступни (веса сглажены — без ступенек на стыках).
+    arms = _blur(_weights(body, ['UpperArm.L', 'UpperArm.R', 'Forearm.L', 'Forearm.R']), nbr, 6)
+    legs = _blur(_weights(body, ['Thigh.L', 'Thigh.R', 'Shin.L', 'Shin.R']), nbr, 6)
+    feet = {s: _blur(_weights(body, ['Foot.' + s]), nbr, 4) for s in 'LR'}
     me.update()
-    print('grow', flush=True)
     for v in me.vertices:
         grow = ARM_GROW * min(1.0, arms[v.index]) + LEG_GROW * min(1.0, legs[v.index])
         v.co += v.normal * grow
@@ -82,10 +71,24 @@ def smooth_body(body, rig):
             k = min(1.0, w[v.index])
             if k > 0.0:
                 v.co = v.co.lerp(c + (v.co - c) * FOOT_SCALE, k)
+    print('grow', flush=True)
+    # 4) Сгладить всё, кроме кистей (пальцы бы растаяли): бугры исходника и следы утолщения.
+    vg = body.vertex_groups.new(name='_smooth')
+    soft = _blur([max(0.0, 1.0 - k * 1.5) for k in keep], nbr, 3)
+    for v in me.vertices:
+        vg.add([v.index], soft[v.index], 'REPLACE')
+    sm = body.modifiers.new('Lap', 'LAPLACIANSMOOTH')
+    sm.iterations = 25
+    sm.lambda_factor = 1.5
+    sm.use_volume_preserve = True
+    sm.vertex_group = '_smooth'
+    _apply(body, sm)
+    print('smoothed', flush=True)
     # Мягкий финальный проход — стыки после утолщения.
     sm2 = body.modifiers.new('Sm', 'SMOOTH')
     sm2.factor = 0.5
-    sm2.iterations = 4
+    sm2.iterations = 6
+    sm2.vertex_group = '_smooth'
     _apply(body, sm2)
     print('smooth2', flush=True)
     # Сетка та же, что при переносе весов (вершины только сдвинулись) — веса верны. Служебная
@@ -94,6 +97,22 @@ def smooth_body(body, rig):
         body.modifiers.new(name, 'ARMATURE').object = rig_obj
     print('weights', flush=True)
     bpy.data.objects.remove(src)
+
+
+def _neighbours(me):
+    nbr = [[] for _ in me.vertices]
+    for e in me.edges:
+        a, b = e.vertices
+        nbr[a].append(b)
+        nbr[b].append(a)
+    return nbr
+
+
+def _blur(w, nbr, n):
+    """Размыть веса по соседям n раз."""
+    for _ in range(n):
+        w = [(w[i] + sum(w[j] for j in nbr[i])) / (1 + len(nbr[i])) for i in range(len(w))]
+    return w
 
 
 def _transfer(dst, src):
