@@ -21,7 +21,9 @@ HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
 PROFILE = 4.0          # как резко толщина упирается в DEPTH: больше — площе перед, туже края
-FEET = ((0.29, -0.08, 0.10), (0.18, 0.26, 0.11))   # центр (x — по модулю) и полуоси ступни
+ANKLE = 0.3            # ниже — голень и ступня (силуэт ног книзу расширяется)
+SHIN_R = 0.15          # толщина голени, м
+FEET = ((0.29, -0.09, 0.12), (0.18, 0.27, 0.13))   # центр (x — по модулю) и полуоси ступни
 
 
 def silhouette():
@@ -79,16 +81,31 @@ def build_mesh():
     g = (np.maximum(g, 1e-6) ** -PROFILE + DEPTH ** -PROFILE) ** (-1.0 / PROFILE)   # толще DEPTH не бывает — плоский перед
     Y = ys[None, :, None]
     F = np.maximum(np.abs(Y) - g[:, None, :], d2[:, None, :])
-    # Ступни — вытянутые вперёд эллипсоиды, плавно слиты с ногами.
+    # Ступни с картинки плоские (вид спереди) и расширяются книзу — ноги плавно обрезаем выше
+    # щиколоток (скруглённый торец), ступни ставим объёмные.
     X3, Y3, Z3 = np.meshgrid(xs, ys, zs, indexing='ij')
+    cut = ANKLE - Z3
+    k = 0.06
+    h = np.clip(0.5 + 0.5 * (cut - F) / k, 0.0, 1.0)
+    F = F * (1 - h) + cut * h + k * h * (1 - h)
+    # Голень от обреза до ступни — ровная, той же толщины, что нога на картинке.
+    for sx in (1, -1):
+        a = np.array([sx * FEET[0][0], 0.0, ANKLE + 0.15])
+        ba = np.array([0.0, FEET[0][1] * 0.3, FEET[0][2] - ANKLE - 0.15])
+        pa = np.stack([X3 - a[0], Y3 - a[1], Z3 - a[2]], -1)
+        t = np.clip((pa @ ba) / (ba @ ba), 0.0, 1.0)
+        shin = np.linalg.norm(pa - t[..., None] * ba, axis=-1) - SHIN_R
+        h = np.clip(0.5 + 0.5 * (shin - F) / 0.05, 0.0, 1.0)
+        F = shin * (1 - h) + F * h - 0.05 * h * (1 - h)
+    # Ступни — вытянутые вперёд эллипсоиды, плавно слиты с ногами.
     for sx in (1, -1):
         c, r = FEET
         q = np.stack([(X3 - sx * c[0]) / r[0], (Y3 - c[1]) / r[1], (Z3 - c[2]) / r[2]], -1)
         k0 = np.linalg.norm(q, axis=-1)
         k1 = np.linalg.norm(q / np.array(r), axis=-1)
         foot = k0 * (k0 - 1.0) / np.maximum(k1, 1e-6)
-        h = np.clip(0.5 + 0.5 * (foot - F) / 0.06, 0.0, 1.0)
-        F = foot * (1 - h) + F * h - 0.06 * h * (1 - h)
+        h = np.clip(0.5 + 0.5 * (foot - F) / 0.1, 0.0, 1.0)
+        F = foot * (1 - h) + F * h - 0.1 * h * (1 - h)
     verts, faces, _, _ = measure.marching_cubes(F, 0.0, spacing=(STEP, STEP, STEP))
     verts += np.array([xs[0], ys[0], zs[0]])
     return verts.astype(np.float32), faces
