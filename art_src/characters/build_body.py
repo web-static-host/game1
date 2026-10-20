@@ -23,11 +23,12 @@ DEPTH = 0.385          # полутолщина туловища (лицо — �
 HIP_Z = (0.7, 1.1)     # между этими высотами туловище сужается в толщину к ногам
 HIP_DEPTH = 0.17
 PROFILE = 4.0          # как резко толщина упирается в DEPTH: больше — площе перед, туже края
-CROTCH = 0.78          # ниже — ноги не с картинки, а ровные трубки до ступней
+CROTCH = 0.74          # ниже — ноги не с картинки, а ровные трубки до ступней
 LEG_R = 0.162          # толщина ноги (как на картинке), м
 LEG_TOP_X = 0.25       # ось ноги вверху, внутри туловища (книзу чуть наружу — до FOOT_X)
 LEG_TOP_Z = 0.95
 LEG_END_Z = 0.1        # полоса ноги — до ступни
+CROTCH_ROUND = 0.12    # скругление стыка ног с туловищем (снаружи и арка паха), м
 FOOT_X = 0.31          # ось ноги, м от середины
 FOOT_R = (0.2, 0.32, 0.23)    # полуоси ступни: в стороны, вперёд-назад, вверх (центр чуть над полом)
 FOOT_OUT = 0.02        # ступня смещена наружу
@@ -53,15 +54,22 @@ def silhouette():
     # Ноги с картинки не берём (ниже паха): их строим ровными трубками, ступни — объёмными.
     mid = int(0.75 / scale)    # только середина — кисти рук висят ниже паха
     sym[int(ys.max() - CROTCH / scale):, w - mid:w + mid + 1] = False
-    # Ноги — ровные полосы в том же силуэте (надуваются вместе с туловищем — без шва, сечение круглое).
+    # Ноги — ровные полосы в том же силуэте (надуваются вместе с туловищем — без шва, сечение
+    # круглое). С туловищем сливаются плавно (smin по расстояниям): снаружи — мягкий переход,
+    # между ногами — полукруглая арка паха.
     H, W = sym.shape
     rr, cc = np.mgrid[0:H, 0:W]
     zz = (ys.max() - rr) * scale
     xx = np.abs(cc - w) * scale
-    t = np.clip((LEG_TOP_Z - zz) / (LEG_TOP_Z - LEG_END_Z), 0.0, 1.0)
-    xc = LEG_TOP_X + (FOOT_X - LEG_TOP_X) * t
-    sym |= (np.abs(xx - xc) < LEG_R) & (zz > LEG_END_Z) & (zz < LEG_TOP_Z)
-    sym = ndimage.gaussian_filter(sym.astype(np.float32), 5.0) > 0.5
+    a = np.array([LEG_TOP_X, LEG_TOP_Z])
+    ba = np.array([FOOT_X - LEG_TOP_X, LEG_END_Z - LEG_TOP_Z])
+    t = np.clip(((xx - a[0]) * ba[0] + (zz - a[1]) * ba[1]) / (ba @ ba), 0.0, 1.0)
+    legs = np.hypot(xx - a[0] - t * ba[0], zz - a[1] - t * ba[1]) - LEG_R
+    torso = (ndimage.distance_transform_edt(~sym) - ndimage.distance_transform_edt(sym)) * scale
+    k = CROTCH_ROUND
+    h = np.clip(0.5 + 0.5 * (legs - torso) / k, 0.0, 1.0)
+    d = legs * (1 - h) + torso * h - k * h * (1 - h)
+    sym = ndimage.gaussian_filter((d < 0).astype(np.float32), 2.0) > 0.5
     return sym, scale, w, ys.max()
 
 
