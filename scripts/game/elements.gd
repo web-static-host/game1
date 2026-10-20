@@ -453,7 +453,7 @@ func temperature(c: Vector2i) -> float:
 
 
 func _temperature(c: Vector2i) -> float:
-	var t := Env.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
+	var t := world.gen.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
 	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг.
 	# Несколько очагов рядом не складываются в жару — греет самый сильный.
 	var fire := 0.0
@@ -512,7 +512,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= minf(2.0, (cold - t) / 40.0) * dt
 		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "замёрз(ла)")
-	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
+	var o2 := world.gen.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:
 		u.health -= (0.55 - o2) * 10.0 * dt
 		_hurt_check(u, "задохнулся(лась) на высоте")

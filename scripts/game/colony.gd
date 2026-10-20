@@ -1767,7 +1767,7 @@ func remaining_dig(p: Project) -> Array[Vector2i]:
 ## Базовое время копки клетки (для жителя с навыком 1).
 func dig_time(c: Vector2i) -> float:
 	var m := world.get_mat(c.x, c.y)
-	var t := Mat.hardness(m) * Env.heat_work_factor(Env.temperature(c.y, world.gen.surface_y(c.x)))
+	var t := Mat.hardness(m) * Env.heat_work_factor(world.gen.temperature(c.y, world.gen.surface_y(c.x)))
 	# Порода с полезными ископаемыми добывается аккуратнее — дольше.
 	if NOTABLE.has(Mat.resource(m)):
 		t *= 1.4
@@ -2404,7 +2404,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 func _report_hazard(m: int, c: Vector2i) -> void:
 	if m == Mat.MAGMA:
 		_log("КАТАСТРОФА: прорыв к магме на глубине %s! Температура %d °C." % [
-			_depth_text(c), int(Env.temperature(c.y, world.gen.surface_y(c.x)))], "danger")
+			_depth_text(c), int(world.gen.temperature(c.y, world.gen.surface_y(c.x)))], "danger")
 	else:
 		_log("Вскрыта подземная полость с водой (глубина %s)." % _depth_text(c), "warning")
 
@@ -5053,7 +5053,7 @@ func service_years(p: Project) -> float:
 		years *= WEAR_UNDERGROUND.get(m, 1.0)
 		# В жаре глубоких шахт дерево и металл портятся ещё быстрее.
 		var c := p.rect.get_center()
-		var t := Env.temperature(c.y, world.gen.surface_y(c.x))
+		var t := world.gen.temperature(c.y, world.gen.surface_y(c.x))
 		if m != "stone" and t > 40.0:
 			years /= 1.0 + (t - 40.0) / 60.0
 	if research.has("maintenance"):
@@ -5457,7 +5457,7 @@ func _hearth_tick(dt: float) -> void:
 			continue
 		# Холодно ли без огня (своё тепло не считаем).
 		var c := p.rect.get_center()
-		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
+		var cold := world.gen.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
 		if not cold:
 			# Потеплело — топить не нужно: «нет дров» больше не тревога (иначе все рубят лес).
 			if p.blocked.begins_with("Нет дров"):
