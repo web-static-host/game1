@@ -2960,6 +2960,10 @@ func test_planet_balance() -> void:
 	var two := colony.elements.temperature(cell)
 	check(one > base and two > one and two <= maxf(base, Elements.FIRE_MAX_TEMP) + 0.01,
 		"два очага греют сильнее одного, но не выше +30 (%.1f → %.1f → %.1f)" % [base, one, two])
+	# Пустую комнату сразу под очаг с кирпичными печами (раньше падало).
+	var hb := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 12, s + 18, 3, 3), 952)
+	colony.research.done.append("bricks")
+	check(colony.set_purpose(hb, RoomType.HEARTH_BRICK) and hb.equip_target == RoomType.HEARTH_BRICK, "комнату сразу под кирпичный очаг")
 	# Крепь из стали.
 	colony.inventory = {"metal": 10}
 	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
@@ -2969,6 +2973,12 @@ func test_planet_balance() -> void:
 		t.delivered = {"metal": 1}
 		check(colony._pay_support(t, t.needs_support[0]) and t.support_mat == "metal", "срез закреплён сталью (1 сталь за 2 дерева)")
 	# Редкие металлы: в новых мирах золото есть на 80–300 м, но его меньше, чем железа.
+	# Ствол через пещеру: по её пустым клеткам на стройке лазят (раньше стройка вставала).
+	var cave := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 30, s + 20, 1, 10))
+	if cave != null:
+		w.set_material(x + 30, s + 24, Mat.AIR)
+		colony._rebuild_climb()
+		check(colony.pathing.climbable(Vector2i(x + 30, s + 24)), "по пещере на пути ствола лазят")
 	var g := WorldData.new(WorldGen.new(7))
 	var gold := 0
 	var iron := 0

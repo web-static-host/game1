@@ -448,7 +448,8 @@ func _fix_gas() -> bool:
 			continue
 		var mat := _best_material()
 		# Большая дегазация (радиус 20 м) на земле над выработкой: наверху газа нет, стройке не мешает.
-		for d in [0, 6, -6, 12, -12]:
+		# На безвоздушной планете на поверхность не выйти — только под землёй.
+		for d in ([] if world.gen.airless() else [0, 6, -6, 12, -12]):
 			var sx: int = c.x + d - 4
 			var top := Rect2i(sx, world.gen.surface_y(sx) - 3, 9, 3)
 			if maxi(absi(top.get_center().x - c.x), absi(top.get_center().y - c.y)) > 19:
@@ -512,7 +513,9 @@ func _finish_purposes() -> void:
 				var names := {RoomType.HOME: "дом", RoomType.STORAGE: "склад", RoomType.FARM: "ферма",
 					RoomType.LAB: "лаборатория", RoomType.DINING: "столовая", RoomType.KILN: "печь",
 					RoomType.GENERATOR: "генератор", RoomType.GAS_GEN: "газовый генератор", RoomType.PUMP: "насосная", RoomType.DEGAS: "дегазация",
-					RoomType.GRANARY: "амбар", RoomType.HEARTH: "очаг"}
+					RoomType.GRANARY: "амбар", RoomType.HEARTH: "очаг", RoomType.HEARTH_BRICK: "очаг с кирпичными печами",
+					RoomType.FORGE: "кузница", RoomType.OIL_PUMP: "нефтекачалка", RoomType.OIL_TANK: "нефтехранилище",
+					RoomType.REFINERY: "нефтезавод", RoomType.LAUNCHPAD: "космодром"}
 				_milestone("purpose%d" % _pending_purpose[p.id], "Первая комната: %s" % names.get(_pending_purpose[p.id], "?"))
 			_pending_purpose.erase(p.id)
 
@@ -536,8 +539,8 @@ func _drop_stuck() -> void:
 
 ## Очаг — готовый, обустраиваемый (пока ставят печи, назначение ещё не задано) или в планах.
 func _is_hearth(p: Project) -> bool:
-	return p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH \
-		or (p.phase == Project.Phase.EQUIP and p.equip_target == RoomType.HEARTH)
+	return p.purpose == RoomType.HEARTH or [RoomType.HEARTH, RoomType.HEARTH_BRICK].has(_pending_purpose.get(p.id, -1)) \
+		or (p.phase == Project.Phase.EQUIP and [RoomType.HEARTH, RoomType.HEARTH_BRICK].has(p.equip_target))
 
 
 func _bad_spot(r: Rect2i) -> bool:
@@ -656,22 +659,26 @@ func _heat_rooms(rooms: Array, need: float) -> bool:
 				near += 1
 				if p.phase != Project.Phase.DONE or not p.burning:
 					waiting = true
-		if waiting or near >= (3 if planet != "earth" else 1):
+		# На планете сразу два очага (одного не хватит), третий — если всё ещё холодно.
+		if near >= (3 if planet != "earth" else 1) or (waiting and not (planet != "earth" and near < 2)):
 			continue
 		var spots: Array[Rect2i] = []
 		for dy in [0, -3, 3]:
-			for rx in [farm.rect.end.x, farm.rect.end.x + 1, farm.rect.position.x - 3, farm.rect.position.x - 4, farm.rect.position.x + 1, farm.rect.end.x - 4]:
+			for rx in [farm.rect.end.x, farm.rect.end.x + 1, farm.rect.position.x - 3, farm.rect.position.x - 4,
+					farm.rect.end.x + 3, farm.rect.position.x - 6, farm.rect.position.x + 1, farm.rect.end.x - 4]:
 				spots.append(Rect2i(rx, farm.rect.position.y + dy, 3, 3))
 		for r in spots:
 			var hc := r.get_center()
 			var fc: Vector2i = farm.rect.get_center()
-			if maxi(absi(hc.x - fc.x), absi(hc.y - fc.y)) > 4 or _bad_spot(r):
+			if maxi(absi(hc.x - fc.x), absi(hc.y - fc.y)) > 7 or _bad_spot(r):
 				continue
 			var hm := "wood" if planet == "earth" else _best_material()
 			if colony.validate(Project.Kind.ROOM, r, hm).is_empty():
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, hm)
 				if p != null:
-					_pending_purpose[p.id] = RoomType.HEARTH
+					# Кирпичные печи жгут и уголь (на планете дров нет — только из груза).
+					var brick: bool = planet != "earth" and colony.research.has("bricks") and colony.inventory.get("brick", 0) >= 6
+					_pending_purpose[p.id] = RoomType.HEARTH_BRICK if brick else RoomType.HEARTH
 					_act("очаг")
 					return true
 	return false
@@ -755,6 +762,9 @@ func _shaft() -> bool:
 		if colony.create_project(Project.Kind.TUNNEL, r, 2) != null:
 			shaft_bottom = top + 10
 			_act("шахта")
+	# На планете верхние метры под кораблём — в холоде или жаре поверхности: комнаты глубже 15 м.
+	if planet != "earth" and shaft_bottom - s < 16:
+		return true
 	if want >= 0:
 		var floor_y := shaft_bottom - 1
 		# Нефтекачалка — 9 м (качает на 40 м вокруг), остальное — 6 м.

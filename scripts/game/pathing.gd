@@ -50,7 +50,7 @@ func passable(c: Vector2i) -> bool:
 
 
 ## Лазают только по лестницам: в вертикальных тоннелях, у стен комнат (ladders) и по лесам
-## идущей стройки (sites — только выкопанное). По готовым шахтам, горизонтальным тоннелям
+## идущей стройки (sites — её пустые клетки, в том числе пещера на пути). По готовым шахтам, горизонтальным тоннелям
 ## и пустотам после обвала — только по полу.
 func climbable(c: Vector2i) -> bool:
 	if room_cells.has(c):
@@ -59,7 +59,8 @@ func climbable(c: Vector2i) -> bool:
 		return true
 	if interior.has(c):
 		return false
-	return sites.has(c) and world.is_dug(c.x, c.y) and world.get_mat(c.x, c.y) == Mat.AIR
+	# Пустая клетка стройки — выкопанная или естественная пещера, через которую идёт ствол.
+	return sites.has(c) and world.get_mat(c.x, c.y) == Mat.AIR
 
 
 func solid(c: Vector2i) -> bool:

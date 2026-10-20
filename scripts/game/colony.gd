@@ -2199,7 +2199,7 @@ func set_purpose(p: Project, t: int) -> bool:
 	if t == RoomType.NONE:
 		_finish_equip(p)
 		return true
-	_log("%s: обустройство под «%s»" % [p.title(), RoomType.NAMES[t]], "info")
+	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info")
 	_try_pay(p)
 	return true
 

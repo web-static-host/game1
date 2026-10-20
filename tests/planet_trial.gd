@@ -9,15 +9,15 @@ const BotPlayer := preload("res://tests/bot_player.gd")
 const RESEARCH := ["agronomy", "carts", "bricks", "geology", "geology2", "electricity", "carpentry", "medicine",
 	"metallurgy", "hydroponics", "education", "drilling", "steam", "drill_rig", "oil_drilling", "refining",
 	"combustion", "automation", "rocketry", "gas_masks", "maintenance", "shelving"]
-## Груз (до 200): дерево, еда и сталь на крепь; на холодную — уголь, на жаркую — железо и медь.
+## Груз (до 200): дерево, еда и сталь на крепь; на холодную — больше еды и кирпич на печи (жгут местный уголь), на жаркую — железо и медь.
 const CARGO := {
-	"mars": {"wood": 100, "food": 60, "metal": 30, "coal": 10},
+	"mars": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
 	"venus": {"wood": 90, "food": 60, "metal": 30, "iron": 10, "copper": 10},
 	"mercury": {"wood": 90, "food": 60, "metal": 30, "iron": 10, "copper": 10},
-	"jupiter": {"wood": 100, "food": 60, "metal": 30, "coal": 10},
-	"saturn": {"wood": 100, "food": 60, "metal": 30, "coal": 10},
-	"uranus": {"wood": 100, "food": 60, "metal": 30, "coal": 10},
-	"neptune": {"wood": 100, "food": 60, "metal": 30, "coal": 10},
+	"jupiter": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
+	"saturn": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
+	"uranus": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
+	"neptune": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
 }
 
 
@@ -67,6 +67,9 @@ func _initialize() -> void:
 		if think >= 5.0:
 			think = 0.0
 			bot.think()
+			var dbg := OS.get_environment("DEBUG_FROM")
+			if not dbg.is_empty() and t >= float(dbg) * 60.0 and int(t) % 60 == 0:
+				bot._debug()
 		if t >= next_slice:
 			next_slice += 600.0
 			bot._slice()
