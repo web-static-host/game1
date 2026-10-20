@@ -20,13 +20,13 @@ PROTO = os.path.join(HERE, 'prototype_chatgpt.png')
 HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
-HIP_Z = (0.7, 1.1)     # между этими высотами туловище сужается в толщину к ногам
+HIP_Z = (0.52, 0.95)    # между этими высотами туловище сужается в толщину к ногам
 HIP_DEPTH = 0.17
 PROFILE = 4.0          # как резко толщина упирается в DEPTH: больше — площе перед, туже края
-CROTCH = 0.74          # ниже — ноги не с картинки, а ровные трубки до ступней
+CROTCH = 0.56          # ниже — ноги не с картинки, а ровные трубки до ступней
 LEG_R = 0.162          # толщина ноги (как на картинке), м
 LEG_TOP_X = 0.25       # ось ноги вверху, внутри туловища (книзу чуть наружу — до FOOT_X)
-LEG_TOP_Z = 0.95
+LEG_TOP_Z = 0.78
 LEG_END_Z = 0.1        # полоса ноги — до ступни
 CROTCH_ROUND = 0.12    # скругление стыка ног с туловищем (снаружи и арка паха), м
 FOOT_X = 0.31          # ось ноги, м от середины
@@ -115,6 +115,12 @@ def build_mesh():
     inside = ndimage.distance_transform_edt(mask) * s
     outside = ndimage.distance_transform_edt(~mask) * s
     sd2 = ndimage.gaussian_filter(outside - inside, 3.0)   # < 0 внутри силуэта; без ступенек пикселей
+    # Верх головы и плечи — без мелких бугорков с картинки: там контур сглаживаем сильнее
+    # (пальцы и лицо ниже — не трогаем).
+    H = sd2.shape[0]
+    zrow = (bottom - np.arange(H)) * s
+    wtop = np.clip((zrow - 1.75) / 0.2, 0.0, 1.0)[:, None]
+    sd2 = sd2 * (1 - wtop) + ndimage.gaussian_filter(outside - inside, 14.0) * wtop
     # 3D-сетка в метрах → координаты в пикселях маски.
     xs = np.arange(-cxp * s, cxp * s, STEP)
     zs = np.arange(-0.02, HEIGHT + 0.06, STEP)
@@ -122,6 +128,10 @@ def build_mesh():
     X2, Z2 = np.meshgrid(xs, zs, indexing='ij')
     d2 = ndimage.map_coordinates(sd2, [bottom - Z2 / s, cxp + X2 / s], order=1, mode='nearest')
     g = _inflate(d2 < 0.0)
+    # Толщина считается по клеточкам — у края ступеньки; над плечами (рука и голова, пальцев нет)
+    # сглаживаем сильнее, иначе по верху головы мелкие бугорки.
+    wtop = np.clip((Z2 - 1.6) / 0.2, 0.0, 1.0)
+    g = g * (1 - wtop) + ndimage.gaussian_filter(g, 4.0) * wtop
     # Толще DEPTH не бывает — плоский перед под лицом; к паху туловище плавно тоньше (до толщины
     # ног), иначе на стыке с ногами — уступ.
     t = np.clip((Z2 - HIP_Z[0]) / (HIP_Z[1] - HIP_Z[0]), 0.0, 1.0)
