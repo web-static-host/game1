@@ -177,6 +177,21 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 					var tip: Vector2 = c + dir * r * 0.55 * s
 					ci.draw_line(tip, tip + (dir * s).rotated(0.8) * r * 0.3, col, w * 0.8)
 					ci.draw_line(tip, tip + (dir * s).rotated(-0.8) * r * 0.3, col, w * 0.8)
+		"check", "check_off":
+			# Квадрат галочки; включённая — с галкой.
+			ci.draw_rect(Rect2(c - Vector2(r, r) * 0.8, Vector2(r, r) * 1.6), col, false, w)
+			if name == "check":
+				ci.draw_polyline(PackedVector2Array([c + Vector2(-r * 0.45, 0), c + Vector2(-r * 0.1, r * 0.4),
+					c + Vector2(r * 0.55, -r * 0.45)]), col, w * 1.3)
+		"repair":
+			# Гаечный ключ: ручка по диагонали, на концах — головки с зевом.
+			var d := Vector2(1, -1).normalized()
+			ci.draw_line(c - d * r * 0.55, c + d * r * 0.45, col, w * 1.9)
+			for s in [1.0, -1.0]:
+				var head: Vector2 = c + d * r * 0.62 * s
+				ci.draw_circle(head, r * 0.36, col)
+				# Зев — вырез в головке, смотрит наружу.
+				ci.draw_circle(head + d * r * 0.26 * s, r * 0.2, Color(0.08, 0.07, 0.06))
 		"warning":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -r * 0.85), c + Vector2(r * 0.9, r * 0.75), c + Vector2(-r * 0.9, r * 0.75)]), col)

@@ -605,9 +605,7 @@ func _show_project(p: Project) -> void:
 	var preview := {"v": maxi(current, 1)}
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		if RoomType.is_store(p.purpose):
-			controls.append(_storage_targets(p))
-			if p.purpose == RoomType.STORAGE:
-				controls.append(_storage_checks(p))
+			controls.append(_storage_control(p))
 		# Готовая комната: выбор назначения (только изученные).
 		var purposes := []
 		for t in range(1, RoomType.NAMES.size()):
@@ -729,42 +727,37 @@ func _pick_worker(p: Project) -> void:
 
 
 ## Нормы запаса склада: сколько держать каждого ресурса.
-func _storage_targets(p: Project) -> Dictionary:
-	var items := []
-	var keys: Array = Colony.GATHER_SOURCES.keys()
-	for k in colony.known_resources:
-		if not keys.has(k) and not RoomType.BULK.has(k):
+## Склад и амбар: что хранить (галочки), сколько держать (предел) и до скольки добывать.
+func _storage_control(p: Project) -> Dictionary:
+	var keys: Array = []
+	for k in Colony.GATHER_SOURCES:
+		if RoomType.same_kind(p, k):
 			keys.append(k)
+	var known: Array = colony.known_resources.keys()
+	known.sort()
+	for k in known:
+		if not keys.has(k) and not RoomType.BULK.has(k) and k != "methane" and RoomType.same_kind(p, k):
+			keys.append(k)
+	var items := []
 	for k in keys:
-		if not RoomType.stores(p, k):
-			continue
-		items.append([k, colony.held_in(p, k), int(p.targets.get(k, 0)), colony.room_cap(p, k),
-			Colony.GATHER_SOURCES.has(k)])
-	return {"type": "targets", "label": "Лежит в этом складе и норма (работники этого склада добывают до нормы):", "items": items,
-		"changed": func(key: String, v: int) -> void:
-			p.targets[key] = v
-			colony.wake_idle()}
-
-
-## Галочки «что хранить на складе». Ничего не выбрано — хранит всё.
-func _storage_checks(p: Project) -> Dictionary:
-	var items := [["*", "Всё", p.store_filter.is_empty()]]
-	var keys: Array = colony.known_resources.keys()
-	keys.sort()
-	for k in keys:
-		if not RoomType.BULK.has(k):
-			items.append([k, Mat.resource_name(k), p.store_filter.has(k)])
-	return {"type": "checks", "label": "Что хранить на складе:", "items": items,
+		var on := RoomType.stores(p, k)
+		# Вместимость без галочки не считается — берём, какой она будет с галочкой.
+		var cap := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+		if colony.research.has("shelving"):
+			cap = roundi(cap * 1.5)
+		items.append({"key": k, "on": on, "held": colony.held_in(p, k), "cap": cap,
+			"limit": mini(cap, int(p.limits.get(k, cap))),
+			"target": int(p.targets.get(k, 0)) if Colony.GATHER_SOURCES.has(k) else -1})
+	return {"type": "store", "label": "Что хранить и сколько (больше предела сюда не носят). Работники этого склада добывают до нормы:",
+		"items": items,
 		"toggled": func(key: String, on: bool) -> void:
-			var f: Array[String] = p.store_filter.duplicate()
-			if key == "*":
-				f.clear()
-			elif on and not f.has(key):
-				f.append(key)
-			elif not on:
-				f.erase(key)
-			colony.set_store_filter(p, f)
-			_show_project(p)}
+			colony.set_store_on(p, key, on)
+			_show_project(p),
+		"limit": func(key: String, v: int) -> void:
+			colony.set_store_limit(p, key, v),
+		"target": func(key: String, v: int) -> void:
+			p.targets[key] = mini(v, colony.room_limit(p, key))
+			colony.wake_idle()}
 
 
 func _workers_stepper(value: int, changed: Callable) -> Dictionary:

@@ -169,6 +169,7 @@ var _plant_t := 0.0
 var fish := {}
 ## Настил мостов и пристаней: Vector2i -> id проекта.
 var deck := {}
+var _climb_t := 0.0
 ## Кусты в полосе вокруг базы (обновляется при росте растений).
 var _bushes: Array[int] = []
 var _shore_progress := {}
@@ -665,6 +666,7 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 			if not lower.ladder:
 				add_ladder(lower)
 	_check_phase(p)
+	_rebuild_climb()
 	return p
 
 
@@ -750,8 +752,15 @@ func cancel_project(p: Project) -> void:
 	for c in p.cells():
 		room_cells.erase(c)
 	_restore_water_overlaps(p)
+	_rebuild_climb()
+	# Кто стоял в рухнувшем или шёл через него — останавливается (и падает, если не на чем стоять).
 	for u in units:
-		if u.project_id == p.id:
+		var through := u.project_id == p.id or p.rect.grow(1).has_point(u.cell())
+		for i in range(u.path_i, u.path.size()):
+			if through:
+				break
+			through = p.rect.has_point(u.path[i])
+		if through:
 			_drop(u)
 	_log("%s отменена" % p.title(), "info")
 	physics.check_area(p.cells())
@@ -918,6 +927,51 @@ func _check_supply(p: Project) -> void:
 	if p.blocked != msg:
 		p.blocked = msg
 		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
+
+
+## Где можно лазить (pathing.ladders, pathing.sites): лестницы готовых построек и леса строек.
+func _rebuild_climb() -> void:
+	var lad := {}
+	var site := {}
+	for p in projects:
+		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
+			for c in p.cells():
+				site[c] = true
+	for p in projects:
+		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
+			continue
+		match p.kind:
+			Project.Kind.TUNNEL, Project.Kind.MINE:
+				# Вертикальный тоннель — с лестницей; горизонтальный и шахта — только по полу.
+				if p.rect.size.y > p.rect.size.x:
+					for c in p.cells():
+						lad[c] = true
+			Project.Kind.ROOM:
+				for side in [-1, 1]:
+					if edge_ladder(p, side, site):
+						var x := p.rect.position.x if side < 0 else p.rect.end.x - 1
+						for y in range(p.rect.position.y, p.rect.end.y):
+							lad[Vector2i(x, y)] = true
+	if lad != pathing.ladders or site != pathing.sites:
+		pathing.ladders.clear()
+		pathing.ladders.merge(lad)
+		pathing.sites.clear()
+		pathing.sites.merge(site)
+		pathing.climb_rev += 1
+
+
+## Лестница у стены комнаты (side -1 — левой, 1 — правой): построенная (или строится),
+## у стены в склоне (снаружи у пола порода, вверху открыто) или к постройке прямо над ней.
+func edge_ladder(p: Project, side: int, site = null) -> bool:
+	if site == null:
+		site = pathing.sites
+	if side < 0 and (p.ladder or p.equip_ladder):
+		return true
+	var xo := p.rect.position.x - 1 if side < 0 else p.rect.end.x
+	if not world.is_open(xo, p.rect.end.y - 1) and world.is_open(xo, p.rect.position.y):
+		return true
+	var above := Vector2i(p.rect.position.x if side < 0 else p.rect.end.x - 1, p.rect.position.y - 1)
+	return interior.has(above) or room_cells.has(above) or site.has(above)
 
 
 ## Пока комнату копают, в ней леса — по ним можно лазить. Потом ходят по полу;
@@ -1166,6 +1220,7 @@ func _finish_project(p: Project) -> void:
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_register_deck(p)
+	_rebuild_climb()
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
@@ -1373,6 +1428,37 @@ func stored_split(key: String) -> Vector2i:
 func set_store_filter(p: Project, keys: Array[String]) -> void:
 	p.store_filter = keys
 	_full_warned.clear()
+
+
+## Галочка «хранить» у ресурса на складе или в амбаре.
+func set_store_on(p: Project, key: String, on: bool) -> void:
+	if on:
+		p.store_off.erase(key)
+		if not p.store_filter.is_empty() and not p.store_filter.has(key):
+			p.store_filter.append(key)
+	elif not p.store_off.has(key):
+		p.store_off.append(key)
+	_full_warned.clear()
+	wake_idle()
+
+
+## Предел хранения ресурса в складе: больше сюда не носят и не добывают.
+## Сколько влезет — предела нет.
+func set_store_limit(p: Project, key: String, n: int) -> void:
+	if n >= room_cap(p, key):
+		p.limits.erase(key)
+	else:
+		p.limits[key] = maxi(0, n)
+		if int(p.targets.get(key, 0)) > n:
+			p.targets[key] = maxi(0, n)
+	_full_warned.clear()
+	wake_idle()
+
+
+## Сколько ресурса можно держать в комнате: вместимость или предел, заданный игроком.
+func room_limit(p: Project, key: String) -> int:
+	var c := room_cap(p, key)
+	return mini(c, int(p.limits.get(key, c)))
 
 
 func beds_total() -> int:
@@ -2293,6 +2379,10 @@ func update(dt: float) -> void:
 		remaining -= step
 		game_time += step
 		pathing.tick(step)
+		_climb_t += step
+		if _climb_t >= 0.5:
+			_climb_t = 0.0
+			_rebuild_climb()
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
@@ -2554,6 +2644,10 @@ func _move(u: Unit, dt: float) -> void:
 	var budget := dt
 	var jam := congestion(u)
 	while budget > 0.0 and u.path_i < u.path.size():
+		# Путь устарел (рухнуло, убрали лестницу) — останавливаемся и ищем заново.
+		if not pathing.node(u.path[u.path_i]):
+			_drop(u)
+			return
 		var next := Vector2(u.path[u.path_i])
 		var delta := next - u.pos
 		var spd := (CLIMB_SPEED if absf(delta.y) > absf(delta.x) else WALK_SPEED) * jam * u.move_factor()
@@ -4047,7 +4141,7 @@ func storage_deficit(p: Project) -> Array[String]:
 	for k in p.targets:
 		if not GATHER_SOURCES.has(k) or not RoomType.stores(p, k):
 			continue
-		if held_in(p, k) < mini(int(p.targets[k]), room_cap(p, k)):
+		if held_in(p, k) < mini(int(p.targets[k]), room_limit(p, k)):
 			out.append(k)
 	# Чего не хватает сильнее (меньшая доля нормы) — в первую очередь: добыча чередуется,
 	# а не идёт подряд одного ресурса.
@@ -5182,7 +5276,7 @@ func held_in(p: Project, key: String) -> int:
 
 ## Сколько ещё влезет в комнату p (с учётом того, что туда уже несут).
 func room_free(p: Project, key: String) -> int:
-	return room_cap(p, key) - held_in(p, key) - _incoming_room(p, key)
+	return room_limit(p, key) - held_in(p, key) - _incoming_room(p, key)
 
 
 func _incoming_room(p: Project, key: String) -> int:
@@ -5300,7 +5394,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 	if RoomType.BULK.has(key):
 		put = amount
 	elif room != null:
-		put = clampi(room_cap(room, key) - held_in(room, key), 0, amount)
+		put = clampi(room_limit(room, key) - held_in(room, key), 0, amount)
 		room.held[key] = held_in(room, key) + put
 	else:
 		# Без работника на склад ничего не носят.
@@ -5309,7 +5403,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 				break
 			if key != "methane" and not store_staffed(p):
 				continue
-			var free := clampi(room_cap(p, key) - held_in(p, key), 0, amount - put)
+			var free := clampi(room_limit(p, key) - held_in(p, key), 0, amount - put)
 			if free > 0:
 				p.held[key] = held_in(p, key) + free
 				put += free
@@ -5420,6 +5514,7 @@ func load_dict(d: Dictionary) -> void:
 			for c in p.cells():
 				interior[c] = p.id
 		_register_deck(p)
+	_rebuild_climb()
 	for ud in d.get("units", []):
 		var u := Unit.from_dict(ud)
 		if u.genome.is_empty():

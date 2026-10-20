@@ -776,6 +776,8 @@ func _build_control(st: Dictionary) -> void:
 			_build_checks(st)
 		"targets":
 			_build_targets(st)
+		"store":
+			_build_store(st)
 		"techs":
 			_build_techs(st)
 		"people":
@@ -905,6 +907,66 @@ func _build_targets(st: Dictionary) -> void:
 		_stepper_widgets(row, int(item[2]), 0, int(item[3]), 10, [], func(v: int) -> void: changed.call(key, v))
 
 
+## Склад: по ресурсу — галочка «хранить», предел «до» и (если его добывают) «добывать до».
+##  {"type": "store", "label", "items": [{"key", "on", "held", "limit", "cap", "target" (-1 — не добывают)}],
+##   "toggled": Callable(ключ, вкл), "limit": Callable(ключ, n), "target": Callable(ключ, n)}
+func _build_store(st: Dictionary) -> void:
+	_controls.add_child(_label(st["label"], 16, MUTED))
+	for item in st["items"]:
+		var key: String = item["key"]
+		var on: bool = item["on"]
+		var p := PanelContainer.new()
+		p.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.06 if on else 0.02), 10, 6))
+		_controls.add_child(p)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 4)
+		p.add_child(col)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		col.add_child(row)
+		# Кнопка-галочка: квадрат с галкой, значок и название ресурса.
+		var b := Button.new()
+		b.toggle_mode = true
+		b.button_pressed = on
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 50)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.toggled.connect(func(v: bool) -> void: st["toggled"].call(key, v))
+		var inner := HBoxContainer.new()
+		inner.add_theme_constant_override("separation", 8)
+		inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 8)
+		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(inner)
+		for c: Control in [IconView.make("", 26, "check" if on else "check_off", Color.WHITE if on else MUTED),
+				IconView.make(key, 28), _label(Mat.resource_name(key), 18, Color.WHITE if on else MUTED)]:
+			c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			inner.add_child(c)
+		b.custom_minimum_size.x = 30 + 26 + 28 + 16 + 12 * Mat.resource_name(key).length()
+		row.add_child(b)
+		if not on:
+			row.add_child(_label("не хранить", 16, MUTED))
+			continue
+		var cap: int = item["cap"]
+		row.add_child(_label("лежит %s · до" % Fmt.int_spaced(item["held"]), 16, MUTED))
+		var set_target := Callable()
+		_stepper_widgets(row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
+			st["limit"].call(key, v)
+			if set_target.is_valid():
+				set_target.call(mini(v, int(item["target"]))))
+		if int(item["target"]) >= 0:
+			var row2 := HBoxContainer.new()
+			row2.add_theme_constant_override("separation", 8)
+			col.add_child(row2)
+			var l := _label("работники склада добывают до", 16, MUTED)
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			row2.add_child(l)
+			set_target = _stepper_widgets(row2, int(item["target"]), 0, cap, 10, [], func(v: int) -> void:
+				item["target"] = v
+				st["target"].call(key, v))
+
+
 func _build_stepper(st: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -916,7 +978,8 @@ func _build_stepper(st: Dictionary) -> void:
 		st.get("options", []), st["changed"])
 
 
-func _stepper_widgets(row: HBoxContainer, start: int, lo: int, hi: int, step: int, options: Array, changed: Callable) -> void:
+## Возвращает, чем выставить значение снаружи (без вызова changed).
+func _stepper_widgets(row: HBoxContainer, start: int, lo: int, hi: int, step: int, options: Array, changed: Callable) -> Callable:
 	var value := _label("", 22 if not options.is_empty() else 26, Color.WHITE)
 	value.custom_minimum_size = Vector2(160 if not options.is_empty() else 64, 0)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -945,6 +1008,9 @@ func _stepper_widgets(row: HBoxContainer, start: int, lo: int, hi: int, step: in
 		state["v"] = mini(hi, state["v"] + step)
 		refresh.call()
 		changed.call(state["v"]))
+	return func(v: int) -> void:
+		state["v"] = clampi(v, lo, hi)
+		refresh.call()
 
 
 ## Простая карточка из текста (первая строка — заголовок).

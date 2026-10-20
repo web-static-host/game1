@@ -180,9 +180,9 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 	else:
 		_draw_room_walls(p, r)
 	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
-	if p.ladder or _wall_outside(p, -1):
+	if colony.edge_ladder(p, -1):
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
-	if _wall_outside(p, 1):
+	if colony.edge_ladder(p, 1):
 		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
 	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет.
 	if colony.research.has("electricity") and colony.is_underground(p):
@@ -532,8 +532,8 @@ func _draw_storage_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	_fill_racks(rk, crates, RACK_LEVELS, fy, alpha)
 	# Брус тали — между лестницами (если есть), блок с крюком — в проходе за первым стеллажом;
 	# в маленьком складе прохода нет — только брус с лебёдкой.
-	var left := r.position.x + TILE * (1.05 if p.ladder or _wall_outside(p, -1) else 0.5)
-	var right := r.end.x - TILE * (1.05 if _wall_outside(p, 1) else 0.5)
+	var left := r.position.x + TILE * (1.05 if colony.edge_ladder(p, -1) else 0.5)
+	var right := r.end.x - TILE * (1.05 if colony.edge_ladder(p, 1) else 0.5)
 	_draw_hoist(left, right, rk.start + rk.rw + rk.gap * 0.5 if rk.racks > 1 else NAN, fy - TILE * 2.34, alpha)
 
 
@@ -1388,12 +1388,16 @@ func _draw_cracks(p: Project, r: Rect2) -> void:
 ## Знак «нужен ремонт» над ветхой постройкой (мигает, если вот-вот рухнет).
 func _draw_wear_sign(p: Project) -> void:
 	var r := _rect_px(p.rect)
+	# Гаечный ключ: износ 70% — оранжевый, 90% — красный и мигает. В комнате — внутри,
+	# вверху посередине; у тоннеля, моста и пристани — над ними.
 	var col := Color(1.0, 0.7, 0.2) if p.wear < Colony.WEAR_WARN[1] else Color(1.0, 0.3, 0.25)
 	if p.wear >= Colony.WEAR_WARN[1] and int(Time.get_ticks_msec() / 400) % 2 == 0:
 		col = col.lightened(0.4)
-	var c := Vector2(r.end.x - 14, r.position.y - 16)
+	var c := Vector2(r.get_center().x, r.position.y + 22) if p.kind == Project.Kind.ROOM and p.rect.size.y >= 3 \
+		else Vector2(r.get_center().x, r.position.y - 16)
 	_signs.draw_circle(c, 15, Color(0, 0, 0, 0.55))
-	ResIcon.draw_glyph(_signs, "warning", c, 12, col)
+	_signs.draw_arc(c, 15, 0, TAU, 24, col, 2.0)
+	ResIcon.draw_glyph(_signs, "repair", c, 11, col)
 
 
 ## Рабочая комната без работника: перечёркнутый человечек внутри, в левом верхнем углу.

@@ -21,6 +21,11 @@ var room_cells: Dictionary
 var deck: Dictionary
 ## Кэш обходов: старт -> [parents, dist]. Сбрасывается, когда меняется порода или постройки,
 ## и раз в CACHE_TIME секунд (вода течёт, это не отслеживаем).
+## Клетки с лестницей и клетки идущих строек (леса) — их ведёт колония.
+var ladders := {}
+var sites := {}
+## Меняется, когда меняются лестницы или леса: старые пути не годятся.
+var climb_rev := 0
 var _cache := {}
 var _cache_key := []
 var _cache_age := 0.0
@@ -42,10 +47,17 @@ func passable(c: Vector2i) -> bool:
 	return world.is_open(c.x, c.y) or (world.get_mat(c.x, c.y) == Mat.WATER and world.is_revealed(c.x, c.y))
 
 
+## Лазают только по лестницам: в вертикальных тоннелях, у стен комнат (ladders) и по лесам
+## идущей стройки (sites — только выкопанное). По готовым шахтам, горизонтальным тоннелям
+## и пустотам после обвала — только по полу.
 func climbable(c: Vector2i) -> bool:
 	if room_cells.has(c):
 		return false
-	return interior.has(c) or (world.is_dug(c.x, c.y) and world.get_mat(c.x, c.y) == Mat.AIR)
+	if ladders.has(c):
+		return true
+	if interior.has(c):
+		return false
+	return sites.has(c) and world.is_dug(c.x, c.y) and world.get_mat(c.x, c.y) == Mat.AIR
 
 
 func solid(c: Vector2i) -> bool:
@@ -124,7 +136,7 @@ func neighbors(c: Vector2i) -> Array[Vector2i]:
 
 ## Обход в ширину от start. Возвращает [parents: Dictionary, dist: Dictionary].
 func explore(start: Vector2i) -> Array:
-	var key := [world.revision, interior.size(), room_cells.size(), deck.size()]
+	var key := [world.revision, interior.size(), room_cells.size(), deck.size(), climb_rev]
 	if key != _cache_key:
 		clear_cache()
 		_cache_key = key
