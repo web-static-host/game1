@@ -5,7 +5,7 @@ import bpy
 import bmesh
 from mathutils import Vector
 
-VOXEL = 0.018        # шаг пересборки сетки, м (пальцы ~0,1 м толщиной — остаются)
+VOXEL = 0.025        # шаг пересборки сетки, м (пальцы ~0,1 м толщиной — остаются)
 ARM_GROW = 0.045     # на сколько толще руки (по нормали), м
 LEG_GROW = 0.04      # ноги
 FOOT_SCALE = 1.35    # ступни крупнее
@@ -48,6 +48,7 @@ def smooth_body(body, rig):
     rm.voxel_size = VOXEL
     rm.adaptivity = 0.0
     _apply(body, rm)
+    print('remesh', len(body.data.vertices), flush=True)
     # Веса с исходного тела (ближайшая грань) — чтобы знать, где руки, ноги, пальцы.
     _transfer(body, src)
     keep = _weights(body, ['Hand.L', 'Hand.R'] + ['Finger%d.%s' % (i, s) for i in range(1, 5) for s in 'LR'])
@@ -56,11 +57,12 @@ def smooth_body(body, rig):
     for v in body.data.vertices:
         vg.add([v.index], max(0.0, 1.0 - keep[v.index] * 1.5), 'REPLACE')
     sm = body.modifiers.new('Lap', 'LAPLACIANSMOOTH')
-    sm.iterations = 30
+    sm.iterations = 12
     sm.lambda_factor = 1.2
     sm.use_volume_preserve = True
     sm.vertex_group = '_smooth'
     _apply(body, sm)
+    print('smoothed', flush=True)
     # 4) Толще руки и ноги, крупнее ступни.
     arms = _weights(body, ['UpperArm.L', 'UpperArm.R', 'Forearm.L', 'Forearm.R'])
     legs = _weights(body, ['Thigh.L', 'Thigh.R', 'Shin.L', 'Shin.R'])
