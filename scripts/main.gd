@@ -679,6 +679,22 @@ func _show_project(p: Project) -> void:
 	hud.show_panel(spec)
 
 
+## Имя с полом: «Анна ♀» — чтобы сразу видеть, кого с кем сводить.
+func _name_sex(u: Unit) -> String:
+	return "%s · %s" % [u.name, "жен." if u.sex == Unit.Sex.FEMALE else "муж."]
+
+
+## Семейное положение: пара или без пары (дети, беременность).
+func _family_text(u: Unit) -> String:
+	if u.child:
+		return "ребёнок"
+	var partner := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
+	var out := ("пара: " + partner.name) if partner != null else ("без пары" if not u.is_elder() else "без пары (пожилой)")
+	if u.pregnancy >= 0.0:
+		out += ", ждёт ребёнка"
+	return out
+
+
 ## Нужные для работы характеристики жителя: «сила 130% + выносливость 90%».
 func _fit_text(u: Unit, task: int) -> String:
 	var st: Array = Colony.JOB_STATS.get(task, [])
@@ -709,8 +725,8 @@ func _job_stats_text(task: int) -> String:
 func _workers_list(p: Project) -> Dictionary:
 	var items := []
 	for u in colony.assigned_to(p):
-		items.append({"looks": Genetics.looks(u.genome), "name": u.name,
-			"info": "подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
+		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
+			"info": _family_text(u) + " · подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
 				_show_project(p)})
@@ -736,7 +752,7 @@ func _pick_worker(p: Project) -> void:
 		var busy := not colony.is_free(u)
 		if busy:
 			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
-		items.append({"looks": Genetics.looks(u.genome), "name": u.name, "info": info,
+		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
 				var err := colony.assign_work(u, p)
@@ -1158,7 +1174,7 @@ func _show_people() -> void:
 		var members := colony.units.filter(g[1])
 		var items := []
 		for u: Unit in members:
-			var item := {"looks": Genetics.looks(u.genome), "name": u.name, "info": _doing(u),
+			var item := {"looks": Genetics.looks(u.genome), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
 				"button": "Карточка", "pick": func() -> void: _select(u, null)}
 			if u.workplace != 0:
 				item["info"] = colony.role_name(u) + " · " + _doing(u)
@@ -1191,8 +1207,8 @@ func _pick_role(prof: int) -> void:
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
-		items.append({"looks": Genetics.looks(o.genome), "name": o.name,
-			"info": "%s%s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", colony.role_name(o).to_lower(), _fit_text(o, task),
+		items.append({"looks": Genetics.looks(o.genome), "name": _name_sex(o),
+			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof)
@@ -1657,7 +1673,7 @@ func _env_text(c: Vector2i) -> String:
 	var t := "%d °C · %d кПа · кислород %d%%" % [
 		roundi(colony.elements.temperature(c)),
 		roundi(Env.pressure(c.y, surf)),
-		roundi(Env.oxygen_ratio(c.y, surf) * 100.0)]
+		roundi(world.gen.oxygen_ratio(c.y, surf) * 100.0)]
 	var g := colony.elements.gas_at(c)
 	if g >= Elements.GAS_MIN:
 		t += " · метан %d%%%s" % [roundi(g * 100.0), " — взрывоопасно!" if g >= Elements.GAS_EXPLOSIVE else ""]
