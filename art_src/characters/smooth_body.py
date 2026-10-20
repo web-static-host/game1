@@ -33,7 +33,7 @@ def smooth_body(body, rig):
     src.modifiers.clear()
     bpy.context.scene.collection.objects.link(src)
     # Скелет — только для перенесённых весов; форма — в позе покоя.
-    arm_mods = [m for m in body.modifiers if m.type == 'ARMATURE']
+    arm_mods = [(m.name, m.object) for m in body.modifiers if m.type == 'ARMATURE']
     for m in list(body.modifiers):
         body.modifiers.remove(m)
     # 1) Симметрия: правая половина (x > 0) отражается на левую.
@@ -89,11 +89,9 @@ def smooth_body(body, rig):
     _apply(body, sm2)
     print('smooth2', flush=True)
     # Сетка та же, что при переносе весов (вершины только сдвинулись) — веса верны. Служебная
-    # группа «_smooth» остаётся: костей с таким именем нет, в игру она не попадает (удаление
-    # группы после модификаторов роняет Blender).
-    for m in arm_mods:
-        nm = body.modifiers.new(m.name, 'ARMATURE')
-        nm.object = m.object
+    # группа «_smooth» остаётся: костей с таким именем нет, в игру она не попадает.
+    for name, rig_obj in arm_mods:
+        body.modifiers.new(name, 'ARMATURE').object = rig_obj
     print('weights', flush=True)
     bpy.data.objects.remove(src)
 
