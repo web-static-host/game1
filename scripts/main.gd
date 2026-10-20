@@ -183,6 +183,12 @@ func _process(delta: float) -> void:
 	_status_timer -= delta
 	if _status_timer <= 0.0:
 		_status_timer = STATUS_INTERVAL
+		# Колония на планете вымерла (и туда никто не летит) — мира больше нет.
+		for gone in universe.prune_dead():
+			hud.log_event("Колония на планете %s погибла. Нужна новая экспедиция и новый корабль." % Planet.planet_name(gone), "danger")
+			if gone == _planet:
+				_planet = "__gone"
+				_switch_world("earth")
 		_update_status()
 		_refresh_info()
 	_autosave += delta
