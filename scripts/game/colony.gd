@@ -308,10 +308,12 @@ func project_at(c: Vector2i) -> Project:
 	var found: Project = null
 	for p in projects:
 		if p.has_cell(c):
-			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань).
-			if found == null or (p.is_water_structure() and found.is_water_structure() and p.area() < found.area()):
+			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань);
+			# тоннели, шахты и лифты пересекаются — берём лифт.
+			if found == null or (p.is_water_structure() and found.is_water_structure() and p.area() < found.area()) \
+					or (p.kind == Project.Kind.LIFT and is_passage(found.kind)):
 				found = p
-			if not p.is_water_structure():
+			if not p.is_water_structure() and not is_passage(p.kind):
 				return p
 	return found
 
@@ -358,9 +360,9 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			if other != null and other.is_water_structure() and (kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER) \
 					and other.kind != kind:
 				continue
-			# Лифт можно провести по готовому тоннелю или шахте: занятая часть станет лифтом.
-			if other != null and kind == Project.Kind.LIFT and other.phase == Project.Phase.DONE \
-					and (other.kind == Project.Kind.TUNNEL or other.kind == Project.Kind.MINE):
+			# Тоннели, шахты и лифты пересекаются свободно; лифт по готовому тоннелю или
+			# шахте забирает занятую часть себе.
+			if other != null and is_passage(kind) and is_passage(other.kind):
 				continue
 			if other != null and not (kind == Project.Kind.ROOM and _room_fits_mine(r, other)):
 				if other.kind == Project.Kind.MINE and kind == Project.Kind.ROOM:
@@ -1665,13 +1667,19 @@ func _finish_project(p: Project) -> void:
 
 ## Убрали мост или пристань — общие с другой водной постройкой клетки снова её.
 func _restore_water_overlaps(gone: Project) -> void:
-	if not gone.is_water_structure():
+	if not gone.is_water_structure() and not is_passage(gone.kind):
 		return
 	for q in projects:
-		if q != gone and q.is_water_structure() and q.phase == Project.Phase.DONE and q.rect.intersects(gone.rect):
+		if q != gone and q.phase == Project.Phase.DONE and q.rect.intersects(gone.rect) \
+				and (q.is_water_structure() or is_passage(q.kind)):
 			for c in q.cells():
 				interior[c] = q.id
 			_register_deck(q)
+
+
+## Проходы — тоннели, шахты и лифты: друг другу не мешают и могут пересекаться.
+static func is_passage(kind: int) -> bool:
+	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT
 
 
 func _register_deck(p: Project) -> void:

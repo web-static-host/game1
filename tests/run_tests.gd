@@ -2646,6 +2646,22 @@ func test_stop_by_meter() -> void:
 					v.supported.append(i)
 			colony.cancel_project(v)
 			check(v.phase == Project.Phase.DONE and v.rect.size.y == 4, "вертикальный: готовые 4 м остались (%d)" % v.rect.size.y)
+	# Тоннели, шахты и лифты пересекаются: крест из двух тоннелей, один снесли — второй цел.
+	var h := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 30, s + 6, 10, 2))
+	check(colony.validate(Project.Kind.TUNNEL, Rect2i(x + 34, s, 1, 12)).is_empty(), "вертикальный тоннель пересекает горизонтальный")
+	check(colony.validate(Project.Kind.MINE, Rect2i(x + 31, s + 5, 6, 3)).is_empty(), "шахта пересекает тоннель")
+	var vv := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 34, s, 1, 12))
+	if h != null and vv != null:
+		for q in [h, vv]:
+			for c in q.cells():
+				w.set_material(c.x, c.y, Mat.AIR)
+			q.phase = Project.Phase.DONE
+			for c in q.cells():
+				colony.interior[c] = q.id
+		var cross := Vector2i(x + 34, s + 6)
+		colony.cancel_project(vv)
+		colony.collapse(vv, "тест")
+		check(colony.interior.has(cross) and colony.interior[cross] == h.id, "сняли вертикальный — перекрёсток остался у горизонтального")
 	# Мост: построено 3 м — остаётся пристанью у берега, дерево за остальное возвращается.
 	var lake := {}
 	for lx in range(x - 200, x + 200):
