@@ -35,8 +35,14 @@ const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamon
 # Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — жители не
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
 const SATIETY_DECAY := 100.0 / 600.0 * 0.85
-## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее).
+## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока житель
+## отогревается в тепле — втрое быстрее (как раньше во сне).
 const HEAL_TIME := 2400.0
+## Ниже этого здоровья житель, которому холодно (или жарко), бросает дела и идёт греться.
+const WARM_HEALTH := 60.0
+## Греется, пока здоровье не станет таким (или не пройдёт WARM_MAX секунд).
+const WARM_UNTIL := 90.0
+const WARM_MAX := 300.0
 ## За сколько секунд полный голод убивает здорового жителя (5 минут).
 const STARVE_TIME := 300.0
 const EAT_TIME := 6.0
@@ -3144,7 +3150,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 		elif u.satiety > 30.0:
 			u.starving_warned = false
 		u.energy = 100.0
-		var heal := 100.0 / HEAL_TIME * (2.0 if research.has("medicine") else 1.0)
+		var heal := 100.0 / HEAL_TIME * (2.0 if research.has("medicine") else 1.0) \
+			* (3.0 if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
@@ -3794,11 +3801,42 @@ func on_flooded(p: Project, _c: Vector2i) -> void:
 	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
 
 
+## Удобно ли жителю в клетке: не холоднее и не жарче, чем он терпит.
+func comfortable(u: Unit, c: Vector2i) -> bool:
+	var t := elements.temperature(c)
+	return t >= cold_limit(u) and t <= elements.heat_limit(u)
+
+
+## Житель мёрзнет (или перегрелся) и уже заметно ослаб — пора в тепло.
+func needs_warmth(u: Unit) -> bool:
+	return u.health < WARM_HEALTH and not u.invulnerable() and not comfortable(u, u.cell())
+
+
+## Ближайшее место, где жителю не холодно и не жарко (с запасом 3 °C), — туда греться.
+func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var best = null
+	var best_d := 1 << 30
+	var lo := cold_limit(u) + 3.0
+	var hi := elements.heat_limit(u) - 3.0
+	for c: Vector2i in dist:
+		if dist[c] >= best_d:
+			continue
+		var t := elements.temperature(c)
+		if t >= lo and t <= hi:
+			best_d = dist[c]
+			best = c
+	if best == null:
+		return false
+	_drop(u)
+	_start(u, Unit.Task.WARM, best, best, 0, parents)
+	return true
+
+
 ## Совсем устал или голоден — бросает работу.
 func _needs_interrupt(u: Unit) -> bool:
-	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT:
+	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT or u.task == Unit.Task.WARM:
 		return false
-	return u.satiety < 15.0 and has_food()
+	return (u.satiety < 15.0 and has_food()) or needs_warmth(u)
 
 
 ## Замедление в тесном тоннеле: поток ограничен его шириной.
@@ -4041,6 +4079,10 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.STROLL:
 			_drop(u)
+		Unit.Task.WARM:
+			u.work_t += dt
+			if u.health >= WARM_UNTIL or u.work_t >= WARM_MAX or not comfortable(u, u.cell()):
+				_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
 			rp.repair_done += rate * build_bonus()
@@ -4168,7 +4210,7 @@ func _task_valid(u: Unit) -> bool:
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
 			return sp != null and not sp.paused and sp.phase == Project.Phase.DIG and sp.support_paid and sp.support_slice >= 0
-		Unit.Task.SLEEP, Unit.Task.GOTO, Unit.Task.STROLL:
+		Unit.Task.SLEEP, Unit.Task.GOTO, Unit.Task.STROLL, Unit.Task.WARM:
 			return true
 	return false
 
@@ -4240,6 +4282,9 @@ func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
+	# Мёрзнет (или перегрелся) и уже ослаб — идёт в тепло (раньше отогревались во сне).
+	if needs_warmth(u) and _start_warm(u, parents, dist):
+		return true
 	if u.satiety < HUNGRY:
 		if has_food():
 			_start_eat(u, parents, dist)

@@ -200,7 +200,7 @@ func _pose(u: Unit) -> String:
 					return "eat"
 				Unit.Task.FISH:
 					return "fish"
-				Unit.Task.GOTO, Unit.Task.NONE, Unit.Task.STROLL:
+				Unit.Task.GOTO, Unit.Task.NONE, Unit.Task.STROLL, Unit.Task.WARM:
 					return "idle"
 				Unit.Task.FARM, Unit.Task.RESEARCH:
 					return "work%d" % (int(u.anim * 4.0) % 4)

@@ -1070,7 +1070,9 @@ func _launch(pad: Project) -> bool:
 			crew.append(partner)
 	var cargo := {}
 	var total := 0
-	for pair in [["wood", 100], ["food", 60], ["metal", 30], ["coal", 10]]:
+	var plan := [["wood", 60], ["food", 90], ["brick", 24], ["metal", 26]] if stat == "cold" \
+		else [["wood", 70], ["food", 100], ["metal", 30]]
+	for pair in plan:
 		var n := mini(int(pair[1]), int(colony.inventory.get(pair[0], 0)))
 		n = mini(n, RoomType.SHIP_HOLD - total)
 		if n > 0:

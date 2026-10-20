@@ -653,6 +653,21 @@ func test_needs_realtime() -> void:
 		if u.task == Unit.Task.SLEEP:
 			slept = true
 	check(u.energy == 100.0 and not slept, "сна нет: жители не устают и не спят")
+	# Без сна мёрзнущий ослабевший житель сам идёт в тепло и там быстрее поправляется.
+	u.health = 40.0
+	u.task = Unit.Task.NONE
+	u.state = Unit.State.IDLE
+	var cold_spot := u.cell()
+	colony.elements._temp_memo[cold_spot] = -30.0
+	check(colony.needs_warmth(u), "замёрзший ослабевший — нужно в тепло")
+	var reach := colony.pathing.explore(u.cell())
+	colony.elements._temp_memo.clear()
+	for c in reach[1]:
+		colony.elements._temp_memo[c] = -30.0
+	var warm_cell: Vector2i = reach[1].keys()[reach[1].size() - 1]
+	colony.elements._temp_memo[warm_cell] = 20.0
+	colony.elements._temp_memo[cold_spot] = -30.0
+	check(colony._start_warm(u, reach[0], reach[1]) and u.task == Unit.Task.WARM and u.target == warm_cell, "идёт греться в тёплое место")
 
 
 func test_family() -> void:

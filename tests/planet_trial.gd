@@ -9,15 +9,16 @@ const BotPlayer := preload("res://tests/bot_player.gd")
 const RESEARCH := ["agronomy", "carts", "bricks", "geology", "geology2", "electricity", "carpentry", "medicine",
 	"metallurgy", "hydroponics", "education", "drilling", "steam", "drill_rig", "oil_drilling", "refining",
 	"combustion", "automation", "rocketry", "gas_masks", "maintenance", "shelving"]
-## Груз (до 200): дерево, еда и сталь на крепь; на холодную — больше еды и кирпич на печи (жгут местный уголь), на жаркую — железо и медь.
+## Груз (до 200): дерево, еда (её хватает, пока не заработает ферма) и сталь на крепь;
+## на холодную — кирпич на печи (они жгут местный уголь).
 const CARGO := {
-	"mars": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
-	"venus": {"wood": 90, "food": 60, "metal": 30, "iron": 10, "copper": 10},
-	"mercury": {"wood": 90, "food": 60, "metal": 30, "iron": 10, "copper": 10},
-	"jupiter": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
-	"saturn": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
-	"uranus": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
-	"neptune": {"wood": 70, "food": 80, "brick": 24, "metal": 26},
+	"mars": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
+	"venus": {"wood": 70, "food": 100, "metal": 30},
+	"mercury": {"wood": 70, "food": 100, "metal": 30},
+	"jupiter": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
+	"saturn": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
+	"uranus": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
+	"neptune": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
 }
 
 

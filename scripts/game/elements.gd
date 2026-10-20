@@ -491,6 +491,11 @@ func _temperature(c: Vector2i) -> float:
 	return t
 
 
+## Выше какой температуры жителю жарко: красным — выше, с кондиционированием — на 15 °C.
+func heat_limit(u: Unit) -> float:
+	return HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
+
+
 ## Воздействие стихий на жителя за dt секунд.
 func affect_unit(u: Unit, dt: float) -> void:
 	# Сверхюниту стихии не страшны — умирает только от старости.
@@ -509,7 +514,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= 3.0 * dt
 		_hurt_check(u, "задохнулся(лась) метаном")
 	var t := temperature(c)
-	var hot := HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
+	var hot := heat_limit(u)
 	if t > hot:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
