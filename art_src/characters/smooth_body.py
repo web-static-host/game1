@@ -47,6 +47,7 @@ def smooth_body(body, rig):
     rm.mode = 'VOXEL'
     rm.voxel_size = VOXEL
     rm.adaptivity = 0.0
+    rm.use_smooth_shade = True
     _apply(body, rm)
     print('remesh', len(body.data.vertices), flush=True)
     # Веса с исходного тела (ближайшая грань) — чтобы знать, где руки, ноги, пальцы.
@@ -87,10 +88,9 @@ def smooth_body(body, rig):
     sm2.iterations = 4
     _apply(body, sm2)
     print('smooth2', flush=True)
-    # Сетка та же, что при переносе весов (вершины только сдвинулись) — веса верны; служебную
-    # группу сглаживания убираем.
-    body.vertex_groups.remove(body.vertex_groups['_smooth'])
-    me.shade_smooth()
+    # Сетка та же, что при переносе весов (вершины только сдвинулись) — веса верны. Служебная
+    # группа «_smooth» остаётся: костей с таким именем нет, в игру она не попадает (удаление
+    # группы после модификаторов роняет Blender).
     for m in arm_mods:
         nm = body.modifiers.new(m.name, 'ARMATURE')
         nm.object = m.object
