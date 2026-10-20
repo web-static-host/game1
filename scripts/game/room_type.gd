@@ -218,6 +218,8 @@ static func same_kind(p: Project, key: String) -> bool:
 
 
 static func stores(p: Project, key: String) -> bool:
+	if p.store_off.has(key):
+		return false
 	if p.purpose == GRANARY:
 		return FOOD_KEYS.has(key)
 	if FOOD_KEYS.has(key):

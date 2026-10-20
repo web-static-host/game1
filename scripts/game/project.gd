@@ -63,8 +63,12 @@ var on_gas := false
 var gas_boiler := false
 ## Объекты поверхности (столбцы x), которые надо убрать на этапе 1.
 var clear_x: Array[int] = []
-## Что хранит склад (пусто — всё).
+## Что хранит склад (пусто — всё; из старых сохранений, теперь — store_off).
 var store_filter: Array[String] = []
+## Что игрок снял галочкой: этого склад (амбар) не хранит.
+var store_off: Array[String] = []
+## Предел хранения по ресурсу (нет ключа — сколько влезет).
+var limits := {}
 ## Сколько секунд выработка простаивает без крепи (пауза, ждёт материалы).
 var exposed_t := 0.0
 ## Дополнительная крепь (дерево), если пролёт шире, чем держит порода.
@@ -315,6 +319,8 @@ func to_dict() -> Dictionary:
 		"fuel": fuel,
 		"clear_x": clear_x,
 		"store_filter": store_filter,
+		"store_off": store_off,
+		"limits": limits,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
 		"needs_support": needs_support,
@@ -376,6 +382,10 @@ static func from_dict(d: Dictionary) -> Project:
 		p.clear_x.clear()
 	for k in d.get("store_filter", []):
 		p.store_filter.append(str(k))
+	for k in d.get("store_off", []):
+		p.store_off.append(str(k))
+	for k in d.get("limits", {}):
+		p.limits[str(k)] = int(d["limits"][k])
 	p.exposed_t = float(d.get("exposed_t", 0.0))
 	p.support_wood = int(d.get("support_wood", 0))
 	for i in d.get("needs_support", []):

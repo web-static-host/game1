@@ -58,6 +58,8 @@ func _initialize() -> void:
 	test_mine_meters()
 	test_lights()
 	test_two_generators()
+	test_store_limits()
+	test_walk_floor_only()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2500,6 +2502,77 @@ func test_clearing_regrown() -> void:
 	check(colony._task_valid(u), "рубка на месте стройки не отменяется без отметки")
 	u.task = Unit.Task.NONE
 	u.project_id = 0
+
+
+func test_store_limits() -> void:
+	# Галочки «хранить» и предел: больше предела в склад не кладут и не добывают.
+	var res := _colony_with_room(31, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var st: Project = res[1]
+	check(st.purpose == RoomType.STORAGE, "склад готов")
+	colony.inventory = {}
+	colony._sync_held()
+	colony.set_store_limit(st, "wood", 10)
+	check(colony.room_limit(st, "wood") == 10 and colony.room_cap(st, "wood") > 10, "предел дерева 10 при большой вместимости")
+	check(colony._add("wood", 50, st) == 10 and colony.held_in(st, "wood") == 10, "в склад легло только 10 дерева")
+	check(colony.room_free(st, "wood") <= 0, "сверх предела сюда не носят")
+	st.targets["wood"] = 40
+	colony.set_store_limit(st, "wood", 10)
+	check(int(st.targets["wood"]) == 10, "норма добычи не больше предела")
+	check(not colony.storage_deficit(st).has("wood"), "до предела набрано — дерево не добывают")
+	colony.set_store_limit(st, "wood", colony.room_cap(st, "wood"))
+	check(not st.limits.has("wood"), "предел на всю вместимость — без ограничения")
+	colony.set_store_on(st, "stone", false)
+	check(not RoomType.stores(st, "stone") and RoomType.stores(st, "wood"), "камень сняли галочкой — его не хранят")
+	check(colony._add("stone", 5, st) == 0, "камень в этот склад не кладут")
+	colony.set_store_on(st, "stone", true)
+	check(RoomType.stores(st, "stone"), "галочку вернули — хранят")
+	colony.set_store_limit(st, "iron", 7)
+	var back := Project.from_dict(st.to_dict())
+	check(int(back.limits.get("iron", 0)) == 7, "предел сохраняется")
+	var gr := _fake_room(colony, RoomType.GRANARY, colony.home.x + 40, 6)
+	colony.set_store_on(gr, "berries", false)
+	check(RoomType.stores(gr, "food") and not RoomType.stores(gr, "berries"), "в амбаре тоже галочки: ягоды не хранить")
+
+
+func test_walk_floor_only() -> void:
+	# Ходят только по полу и лестницам: не по середине комнат, шахт и пустот после обвала.
+	var res := _colony_with_room(32, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var r := room.rect
+	var mid_left := Vector2i(r.position.x, r.position.y + 1)
+	var mid_right := Vector2i(r.end.x - 1, r.position.y + 1)
+	colony._rebuild_climb()
+	check(not colony.edge_ladder(room, 1) and not colony.pathing.climbable(mid_right), "у правой стены лестницы нет — по ней не лазят")
+	check(not colony.pathing.node(mid_right) and not colony.pathing.node(Vector2i(r.position.x + 2, r.position.y + 1)),
+		"в середине комнаты по воздуху не стоят")
+	check(colony.pathing.node(Vector2i(r.position.x + 2, r.end.y - 1)), "по полу ходят")
+	# Шахта: готовая — только по полу.
+	var mine := Project.new()
+	mine.id = 990
+	mine.kind = Project.Kind.MINE
+	mine.phase = Project.Phase.DONE
+	mine.rect = Rect2i(r.end.x + 20, r.position.y, 6, 3)
+	for c in mine.cells():
+		colony.world.set_material(c.x, c.y, Mat.AIR)
+		colony.world.set_dug(c.x, c.y)
+		colony.interior[c] = mine.id
+	colony.projects.append(mine)
+	colony._rebuild_climb()
+	var mm := Vector2i(mine.rect.position.x + 2, mine.rect.position.y + 1)
+	check(not colony.pathing.climbable(mm) and not colony.pathing.node(mm), "по середине готовой шахты не ходят")
+	# Обвал: пустота остаётся, но лазить по ней нельзя; кто там стоял — падает.
+	var u := colony.units[0]
+	colony._drop(u)
+	colony.collapse(room, "тест")
+	colony._rebuild_climb()
+	var c2 := Vector2i(r.position.x + 2, r.position.y + 1)
+	check(not colony.pathing.standable(c2), "после обрушения в пустоте не стоят")
+	u.pos = Vector2(c2)
+	u.state = Unit.State.IDLE
+	colony.update(0.1)
+	check(u.state == Unit.State.FALL or u.cell().y > c2.y, "житель в воздухе падает")
 
 
 func test_two_generators() -> void:
