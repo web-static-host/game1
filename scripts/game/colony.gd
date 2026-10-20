@@ -1957,7 +1957,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0) * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
 		if u.satiety <= 0.0:
-			u.health -= dt * 100.0 / STARVE_TIME
+			u.health -= dt * 100.0 / STARVE_TIME / maxf(0.3, u.stat("fasting"))
 			if u.health < 50.0 and not u.starving_warned:
 				u.starving_warned = true
 				_log("%s %s от голода — срочно нужна еда!" % [u.name, "истощена" if u.sex == Unit.Sex.FEMALE else "истощён"], "danger")
@@ -5389,11 +5389,13 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 		return 0
 	known_resources[key] = true
 	_clamp_held(key)
+	if RoomType.BULK.has(key):
+		# Пустая порода не копится — исчезает.
+		inventory.erase(key)
+		return amount
 	var have: int = inventory.get(key, 0)
 	var put := 0
-	if RoomType.BULK.has(key):
-		put = amount
-	elif room != null:
+	if room != null:
 		put = clampi(room_limit(room, key) - held_in(room, key), 0, amount)
 		room.held[key] = held_in(room, key) + put
 	else:
@@ -5486,7 +5488,8 @@ func load_dict(d: Dictionary) -> void:
 	inventory.clear()
 	var inv: Dictionary = d.get("inventory", {})
 	for k in inv:
-		inventory[k] = int(inv[k])
+		if not RoomType.BULK.has(k):
+			inventory[k] = int(inv[k])
 		known_resources[k] = true
 	for k in d.get("known_resources", []):
 		known_resources[str(k)] = true

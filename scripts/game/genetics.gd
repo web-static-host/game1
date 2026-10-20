@@ -44,9 +44,9 @@ const MUTATION_NAMES := {"color": "цвет", "eyes": "глаза", "fingers": "
 const PERSONALITIES := ["трудоголик", "лентяй", "обжора", "весельчак", "трус", "смельчак", "педант"]
 
 const STATS := ["vision", "strength", "agility", "intellect", "heat", "cold", "stamina", "health",
-	"appetite", "speed", "learning", "fertility", "longevity", "charm"]
+	"appetite", "fasting", "speed", "learning", "fertility", "longevity", "charm"]
 const STAT_NAMES := {"vision": "Зрение", "strength": "Сила", "agility": "Ловкость", "intellect": "Интеллект",
-	"heat": "Жара", "cold": "Холод", "stamina": "Выносливость", "health": "Здоровье", "appetite": "Аппетит",
+	"heat": "Жара", "cold": "Холод", "stamina": "Выносливость", "health": "Здоровье", "appetite": "Аппетит", "fasting": "Голодостойкость",
 	"speed": "Скорость", "learning": "Обучаемость", "fertility": "Плодовитость", "longevity": "Долголетие",
 	"charm": "Общительность"}
 
@@ -294,7 +294,9 @@ static func stats(g: Dictionary) -> Dictionary:
 		s["cold"] += 0.6 * _near(col, BLUE)
 		s["health"] += 0.2 * _near(col, ORANGE)
 		s["stamina"] += 0.25 * _near(col, YELLOW)
+		# Зелёные мало едят и дольше живут без еды.
 		s["appetite"] -= 0.25 * _near(col, GREEN)
+		s["fasting"] += 0.8 * _near(col, GREEN)
 		s["intellect"] += 0.2 * _near(col, PURPLE)
 		s["charm"] += 0.2 * _near(col, PINK)
 	if has(g, "fur"):

@@ -923,9 +923,10 @@ func test_build_rules_v2() -> void:
 	check(house.ladder and top.phase == Project.Phase.DONE, "лестница и второй этаж построены")
 	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree - 1, ts - 9, 4, 3)).is_empty(), "на деревянный дом третий этаж нельзя")
 	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree + 3, ts - 6, 4, 3)).is_empty(), "висящий второй этаж нельзя")
-	# Отвал не ограничен, склад хранит выбранное.
-	colony._add("sand", 5000)
-	check(colony.inventory["sand"] == 5000, "песок уходит в отвал без лимита")
+	# Пустая порода, известняк и соль не копятся — исчезают.
+	check(colony._add("sand", 5000) == 5000 and not colony.inventory.has("sand"), "песок исчезает, не копится")
+	colony.drop_item(Vector2i(tree, ts - 1), "salt", 7)
+	check(colony.drop_total("salt") == 0 and not colony.inventory.has("salt"), "соль не лежит и не хранится")
 	var stone_cap := colony.capacity("stone")
 	colony.inventory["stone"] = 0
 	colony._add("stone", 500)
@@ -2443,6 +2444,19 @@ func test_job_stats() -> void:
 	a.task = Unit.Task.NONE
 	b.task = Unit.Task.NONE
 	colony.set_profession(b, Unit.Prof.ANY)
+	# Голодостойкость: без еды здоровье тает медленнее.
+	a.stats["fasting"] = 2.0
+	b.stats["fasting"] = 1.0
+	for u in [a, b]:
+		u.satiety = 0.0
+		u.health = 100.0
+	colony._life_tick(10.0, false)
+	check(absf((100.0 - b.health) - 2.0 * (100.0 - a.health)) < 0.6, "голодостойкий теряет здоровье от голода вдвое медленнее")
+	var green := Genetics.founder(colony.rng)
+	green["color"] = [Genetics.GREEN, Genetics.GREEN]
+	var gs := Genetics.stats(green)
+	check(Genetics.has(green, "albino") or Genetics.has(green, "melanist") or gs["fasting"] > 1.5,
+		"зелёный — голодостойкий (%.2f)" % gs["fasting"])
 	check(b.calling == 0, "без своей работы — ни призвания, ни «не по душе»")
 
 

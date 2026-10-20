@@ -499,7 +499,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		rows.append({"type": "section", "text": "Характеристики (100% — обычный житель)"})
 		var items := []
 		for k in Genetics.STATS:
-			var v: float = u.stats[k]
+			var v: float = u.stat(k)
 			items.append([Genetics.STAT_NAMES[k], v, v >= 1.0 if k != "appetite" else v <= 1.0])
 		rows.append({"type": "stats", "items": items})
 	if not u.child:
