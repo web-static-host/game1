@@ -1,6 +1,6 @@
 ## Тело жителя заново — по силуэту прототипа ChatGPT (art_src/characters/prototype_chatgpt.png,
 ## вид спереди слева), вместо кривой скульптуры из BlueBuddy.blend.
-## Силуэт берём с картинки, делаем строго симметричным и «надуваем» в объём: тонкие части
+## Силуэт берём с картинки (ноги ниже паха — ровными полосами), делаем строго симметричным и «надуваем» в объём: тонкие части
 ## (руки, ноги, пальцы) получают круглое сечение, широкие (голова-туловище) — плоский перед
 ## с мягко скруглёнными краями, на нём сидит лицо (y = -DEPTH). Ступни — низкие купола с плоской
 ## подошвой, с ногой слиты плавной галтелью. Поверхность снимается marching cubes — гладко и ровно.
@@ -20,15 +20,17 @@ PROTO = os.path.join(HERE, 'prototype_chatgpt.png')
 HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
+HIP_Z = (0.7, 1.1)     # между этими высотами туловище сужается в толщину к ногам
+HIP_DEPTH = 0.17
 PROFILE = 4.0          # как резко толщина упирается в DEPTH: больше — площе перед, туже края
 CROTCH = 0.78          # ниже — ноги не с картинки, а ровные трубки до ступней
 LEG_R = 0.162          # толщина ноги (как на картинке), м
 LEG_TOP_X = 0.25       # ось ноги вверху, внутри туловища (книзу чуть наружу — до FOOT_X)
 LEG_TOP_Z = 0.95
-LEG_BLEND = 0.15       # плавность перехода туловища в ноги (пах — скруглённая арка)
+LEG_END_Z = 0.1        # полоса ноги — до ступни
 FOOT_X = 0.31          # ось ноги, м от середины
-FOOT_R = (0.26, 0.35, 0.26)   # полуоси ступни: в стороны, вперёд-назад, вверх (центр чуть над полом)
-FOOT_OUT = 0.07        # ступня смещена наружу
+FOOT_R = (0.2, 0.32, 0.23)    # полуоси ступни: в стороны, вперёд-назад, вверх (центр чуть над полом)
+FOOT_OUT = 0.02        # ступня смещена наружу
 FOOT_FWD = 0.1         # и вперёд
 FOOT_LIFT = 0.04       # центр ступни над полом — бока круглые, подошва плоская
 SOLE_R = 0.05          # скругление края подошвы
@@ -51,7 +53,15 @@ def silhouette():
     # Ноги с картинки не берём (ниже паха): их строим ровными трубками, ступни — объёмными.
     mid = int(0.75 / scale)    # только середина — кисти рук висят ниже паха
     sym[int(ys.max() - CROTCH / scale):, w - mid:w + mid + 1] = False
-    sym = ndimage.gaussian_filter(sym.astype(np.float32), 3.0) > 0.5
+    # Ноги — ровные полосы в том же силуэте (надуваются вместе с туловищем — без шва, сечение круглое).
+    H, W = sym.shape
+    rr, cc = np.mgrid[0:H, 0:W]
+    zz = (ys.max() - rr) * scale
+    xx = np.abs(cc - w) * scale
+    t = np.clip((LEG_TOP_Z - zz) / (LEG_TOP_Z - LEG_END_Z), 0.0, 1.0)
+    xc = LEG_TOP_X + (FOOT_X - LEG_TOP_X) * t
+    sym |= (np.abs(xx - xc) < LEG_R) & (zz > LEG_END_Z) & (zz < LEG_TOP_Z)
+    sym = ndimage.gaussian_filter(sym.astype(np.float32), 5.0) > 0.5
     return sym, scale, w, ys.max()
 
 
@@ -104,19 +114,14 @@ def build_mesh():
     X2, Z2 = np.meshgrid(xs, zs, indexing='ij')
     d2 = ndimage.map_coordinates(sd2, [bottom - Z2 / s, cxp + X2 / s], order=1, mode='nearest')
     g = _inflate(d2 < 0.0)
-    g = (np.maximum(g, 1e-6) ** -PROFILE + DEPTH ** -PROFILE) ** (-1.0 / PROFILE)   # толще DEPTH не бывает — плоский перед
+    # Толще DEPTH не бывает — плоский перед под лицом; к паху туловище плавно тоньше (до толщины
+    # ног), иначе на стыке с ногами — уступ.
+    t = np.clip((Z2 - HIP_Z[0]) / (HIP_Z[1] - HIP_Z[0]), 0.0, 1.0)
+    depth = HIP_DEPTH + (DEPTH - HIP_DEPTH) * t * t * (3 - 2 * t)
+    g = (np.maximum(g, 1e-6) ** -PROFILE + depth ** -PROFILE) ** (-1.0 / PROFILE)
     Y = ys[None, :, None]
     F = np.maximum(np.abs(Y) - g[:, None, :], d2[:, None, :])
     X3, Y3, Z3 = np.meshgrid(xs, ys, zs, indexing='ij')
-    # Нога — ровная трубка толщиной с ногу на картинке, от туловища до ступни (без стыков).
-    for sx in (1, -1):
-        a = np.array([sx * LEG_TOP_X, 0.0, LEG_TOP_Z])
-        ba = np.array([sx * (FOOT_X - LEG_TOP_X), 0.0, 0.1 - LEG_TOP_Z])
-        pa = np.stack([X3 - a[0], Y3 - a[1], Z3 - a[2]], -1)
-        t = np.clip((pa @ ba) / (ba @ ba), 0.0, 1.0)
-        shin = np.linalg.norm(pa - t[..., None] * ba, axis=-1) - LEG_R
-        h = np.clip(0.5 + 0.5 * (shin - F) / LEG_BLEND, 0.0, 1.0)
-        F = shin * (1 - h) + F * h - LEG_BLEND * h * (1 - h)
     # Ступня — низкий купол с плоской подошвой, шире ноги (в стороны и вперёд), как на прототипе.
     for sx in (1, -1):
         foot = _foot(X3 - sx * FOOT_X, Y3, Z3, sx)
