@@ -130,8 +130,77 @@ func _initialize() -> void:
 		print("\n--- Профиль (мс) ---")
 		for k in keys:
 			print("%-12s %8d" % [k, prof[k] / 1000])
+	_summary()
 	print("\nДействий игрока: %d (%.1f в минуту), рождений: %d" % [actions.size(), actions.size() / (t / 60.0), births])
 	quit()
+
+
+## Подробный итог: что добыто, какие жители, сверхюниты, где колонии.
+func _summary() -> void:
+	print("\n--- Добыто и сделано за игру ---")
+	var keys: Array = colony.produced.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return colony.produced[a] > colony.produced[b])
+	var parts: PackedStringArray = []
+	for k in keys:
+		parts.append("%s %d" % [Mat.resource_name(k).to_lower(), colony.produced[k]])
+	print(", ".join(parts) if not parts.is_empty() else "ничего")
+	var inv: PackedStringArray = []
+	for k in colony.inventory:
+		if int(colony.inventory[k]) > 0:
+			inv.append("%s %d" % [Mat.resource_name(k).to_lower(), colony.inventory[k]])
+	print("В запасе: %s" % (", ".join(inv) if not inv.is_empty() else "пусто"))
+	print("\n--- Жители (%d, детей %d) ---" % [colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size()])
+	var cols := {}
+	var shapes := {}
+	var supers := 0
+	var mutants := 0
+	var shape_names := ["треугольные", "квадратные", "круглые"]
+	for u in colony.units:
+		if u.genome.is_empty():
+			continue
+		var cn := _color_name(u.genome)
+		cols[cn] = int(cols.get(cn, 0)) + 1
+		var sh: String = shape_names[Genetics.shape_of(u.genome)]
+		shapes[sh] = int(shapes.get(sh, 0)) + 1
+		if Genetics.is_super(u.genome):
+			supers += 1
+		if Genetics.is_mutant(u.genome):
+			mutants += 1
+	var cl: PackedStringArray = []
+	var ck: Array = cols.keys()
+	ck.sort_custom(func(a: String, b: String) -> bool: return cols[a] > cols[b])
+	for k in ck:
+		cl.append("%s %d" % [k, cols[k]])
+	print("Цвета: %s" % ", ".join(cl))
+	var sl: PackedStringArray = []
+	for k in shapes:
+		sl.append("%s %d" % [k, shapes[k]])
+	print("Формы: %s" % ", ".join(sl))
+	print("Сверхюниты (бирюзовые): %d · мутанты: %d" % [supers, mutants])
+	print("Планеты: Земля (полёты на другие планеты ещё не сделаны)")
+
+
+## Цвет жителя словами: ближайший из основных.
+func _color_name(g: Dictionary) -> String:
+	if Genetics.has(g, "albino"):
+		return "альбиносы"
+	if Genetics.has(g, "melanist"):
+		return "чёрные"
+	if Genetics.is_super(g):
+		return "бирюзовые"
+	var c := Genetics.color_of(g)
+	var names := {"красные": Genetics.RED, "оранжевые": Genetics.ORANGE, "жёлтые": Genetics.YELLOW,
+		"зелёные": Genetics.GREEN, "синие": Genetics.BLUE, "фиолетовые": Genetics.PURPLE, "розовые": Genetics.PINK,
+		"голубые": Color(0, 0.8, 1)}
+	var best := ""
+	var best_d := INF
+	for n in names:
+		var d := absf(c.h - (names[n] as Color).h)
+		d = minf(d, 1.0 - d)
+		if d < best_d:
+			best_d = d
+			best = n
+	return best
 
 
 func _time() -> String:

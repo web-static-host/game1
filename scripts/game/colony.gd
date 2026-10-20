@@ -199,6 +199,8 @@ var _scout_at := -100.0
 var _offline_progress := {}
 ## Добытое лежит там, где добыто, пока не унесут: клетка -> {ресурс: количество}.
 var drops := {}
+## Сколько всего добыто и сделано за игру: ресурс -> количество (для итогов).
+var produced := {}
 ## Нормы запаса — общие для всех складов и амбаров: ресурс -> сколько держать.
 var store_targets := {}
 
@@ -2493,6 +2495,7 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 			_pick_up(u, _landing(u.cell()), "food")
 	else:
 		_add("food", 2)
+		produced["food"] = int(produced.get("food", 0)) + 2
 	if u != null and left - 1.0 < 1.0:
 		_log("Рыба в озере кончилась — подождите, пока подрастёт новая", "warning")
 
@@ -4267,6 +4270,7 @@ func _claimed_drop(c: Vector2i, key: String) -> int:
 func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if key.is_empty() or n <= 0:
 		return
+	produced[key] = int(produced.get(key, 0)) + n
 	known_resources[key] = true
 	if site != null:
 		var use := mini(n, int(remaining(site).get(key, 0)))
@@ -5684,6 +5688,7 @@ func advance_offline(dt: float) -> int:
 					while p.farm_progress >= RoomType.FARM_CYCLE:
 						p.farm_progress -= RoomType.FARM_CYCLE
 						_add("food", 1)
+						produced["food"] = int(produced.get("food", 0)) + 1
 				Unit.Task.SUPPORT:
 					var p: Project = j[3]
 					p.support_progress += j[1] * step
