@@ -378,11 +378,13 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
 		if r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
-	if kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT:
+	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
+		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
+	if is_passage(kind):
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
-					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
+					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты", Project.Kind.DRILL: "Бур"}.get(kind, "Лифты"))
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -802,6 +804,9 @@ func cancel_project(p: Project) -> void:
 	if p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD and bridge_meters_done(p) > 0:
 		stop_bridge(p)
 		return
+	if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DIG and _drill_done_slices(p) > 0:
+		stop_drill(p)
+		return
 	if p.phase == Project.Phase.EQUIP:
 		cancel_equip(p)
 		return
@@ -908,7 +913,8 @@ func required(p: Project) -> Dictionary:
 	var out := {}
 	match p.phase:
 		Project.Phase.DIG:
-			out = p.cost().duplicate()
+			if not (p.kind == Project.Kind.DRILL and p.paid):
+				out = p.cost().duplicate()
 			var sw := support_wood_left(p)
 			if sw > 0:
 				out["wood"] = out.get("wood", 0) + sw
@@ -992,6 +998,143 @@ func _check_supply(p: Project) -> void:
 	if p.blocked != msg:
 		p.blocked = msg
 		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
+
+
+# --- Бур ------------------------------------------------------------------------------
+## Бур проходит срез (3 клетки поперёк) втрое быстрее, чем житель копает одну клетку.
+const DRILL_POWER := 10
+const DRILL_SPEED := 3.0
+
+
+func drill_speed() -> float:
+	return DRILL_SPEED * dig_bonus() * (1.5 if research.has("diamond_bits") else 1.0) \
+		* (1.5 if research.has("heavy_drill") else 1.0) * clampf(power_ratio, 0.0, 1.0)
+
+
+## Бур работает: материалы привезли, не на паузе, ещё есть что сверлить.
+func _drill_active(p: Project) -> bool:
+	return p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DIG and p.paid and not p.paused
+
+
+## Срезы хода по порядку сверления: [[клетки среза], ...].
+func _drill_slices(p: Project) -> Array:
+	var out := []
+	var vert := p.rect.size.y > p.rect.size.x
+	var n := p.rect.size.y if vert else p.rect.size.x
+	for i in n:
+		var k := n - 1 - i if p.drill_rev else i
+		var cells: Array[Vector2i] = []
+		if vert:
+			for x in range(p.rect.position.x, p.rect.end.x):
+				cells.append(Vector2i(x, p.rect.position.y + k))
+		else:
+			for y in range(p.rect.position.y, p.rect.end.y):
+				cells.append(Vector2i(p.rect.position.x + k, y))
+		out.append(cells)
+	return out
+
+
+## Сколько срезов подряд от начала уже пройдено.
+func _drill_done_slices(p: Project) -> int:
+	var n := 0
+	for cells in _drill_slices(p):
+		for c in cells:
+			if Mat.is_solid(world.get_mat(c.x, c.y)):
+				return n
+		n += 1
+	return n
+
+
+## Следующий срез, который сверлит бур (твёрдые клетки), или пусто.
+func drill_front(p: Project) -> Array[Vector2i]:
+	for cells in _drill_slices(p):
+		var solid: Array[Vector2i] = []
+		for c in cells:
+			if Mat.is_solid(world.get_mat(c.x, c.y)):
+				solid.append(c)
+		if not solid.is_empty():
+			return solid
+	return []
+
+
+func _drills_tick(dt: float) -> void:
+	for p: Project in projects.duplicate():
+		if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DIG or p.paused:
+			continue
+		if not p.paid:
+			var cost := p.cost()
+			var ok := true
+			for k in cost:
+				if int(p.delivered.get(k, 0)) < int(cost[k]):
+					ok = false
+			if not ok:
+				_check_supply(p)
+				continue
+			for k in cost:
+				p.delivered[k] = int(p.delivered[k]) - int(cost[k])
+				if p.delivered[k] <= 0:
+					p.delivered.erase(k)
+			p.paid = true
+			p.blocked = ""
+			_log("%s: материалы на месте — бур пошёл" % p.title(), "info")
+		if not powered() or power_ratio <= 0.0:
+			if p.blocked.is_empty():
+				p.blocked = "Нет энергии — бур стоит"
+			continue
+		if p.blocked.begins_with("Нет энергии"):
+			p.blocked = ""
+		var front := drill_front(p)
+		if front.is_empty():
+			_check_phase(p)
+			continue
+		var stop := false
+		for c in front:
+			if _hazard_stop(p, c):
+				stop = true
+				break
+		if stop:
+			continue
+		p.drill_t += dt * drill_speed()
+		var need := 0.0
+		for c in front:
+			need = maxf(need, dig_time(c))
+		if p.drill_t >= need:
+			p.drill_t = 0.0
+			for c in front:
+				_complete_dig(c, p, null)
+			if not projects.has(p):
+				continue
+			_check_phase(p)
+
+
+## Бур прошёл ход (весь или до остановки) — ход становится тоннелем (вниз) или шахтой (вбок).
+func _finish_drill(p: Project, r: Rect2i) -> void:
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	var total := maxi(p.rect.size.x, p.rect.size.y)
+	p.rect = r
+	p.kind = Project.Kind.TUNNEL if r.size.y > r.size.x else Project.Kind.MINE
+	p.needs_support.clear()
+	p.supported.clear()
+	for i in p.slice_count():
+		p.supported.append(i)
+	p.support_wood = 0
+	_finish_project(p)
+	_log("Бур прошёл %d м из %d — готов %s" % [maxi(r.size.x, r.size.y), total,
+		"тоннель" if p.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good")
+
+
+## Остановить бур: пройденная часть от начала остаётся ходом.
+func stop_drill(p: Project) -> void:
+	var m := _drill_done_slices(p)
+	var vert := p.rect.size.y > p.rect.size.x
+	var r := p.rect
+	if vert:
+		r = Rect2i(r.position.x, r.end.y - m if p.drill_rev else r.position.y, r.size.x, m)
+	else:
+		r = Rect2i(r.end.x - m if p.drill_rev else r.position.x, r.position.y, m, r.size.y)
+	_finish_drill(p, r)
 
 
 # --- Лифты -----------------------------------------------------------------------------
@@ -1571,6 +1714,10 @@ func dig_time(c: Vector2i) -> float:
 func _check_phase(p: Project) -> void:
 	if p.phase != Project.Phase.DIG:
 		return
+	if p.kind == Project.Kind.DRILL:
+		if remaining_dig(p).is_empty():
+			_finish_drill(p, p.rect)
+		return
 	_check_liquids(p)
 	var all_supported := true
 	for i in p.needs_support:
@@ -1679,7 +1826,7 @@ func _restore_water_overlaps(gone: Project) -> void:
 
 ## Проходы — тоннели, шахты и лифты: друг другу не мешают и могут пересекаться.
 static func is_passage(kind: int) -> bool:
-	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT
+	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT or kind == Project.Kind.DRILL
 
 
 func _register_deck(p: Project) -> void:
@@ -2886,6 +3033,7 @@ func update(dt: float) -> void:
 		_wear_tick(step)
 		_power_tick(step)
 		_lifts_tick(step)
+		_drills_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, false)
@@ -3631,6 +3779,11 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 			continue
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
+			continue
+		# Бур сверлит сам: жители только везут ему материалы.
+		if p.kind == Project.Kind.DRILL:
+			if not builder_or_miner(u) and _try_haul(u, p, parents, dist):
+				return true
 			continue
 		var mine := p.kind == Project.Kind.MINE
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
@@ -5279,6 +5432,9 @@ func _power_tick(dt: float) -> void:
 	for p in lifts():
 		if not p.paused:
 			power_used += LIFT_POWER
+	for p in projects:
+		if _drill_active(p):
+			power_used += DRILL_POWER
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
 			continue
@@ -5485,6 +5641,7 @@ func advance_offline(dt: float) -> int:
 		_wear_tick(step)
 		_power_tick(step)
 		_lifts_tick(step)
+		_drills_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, true)
@@ -5699,6 +5856,11 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 					if p.paused or taken.get(slot, 0) >= p.workers:
 						continue
 					if p.phase == Project.Phase.DONE and not p.repairing:
+						continue
+					if p.kind == Project.Kind.DRILL:
+						if kind != "dig" and _offline_can_haul(p):
+							taken[slot] = taken.get(slot, 0) + 1
+							return ["haul%d:%d" % [p.id, u.id], Unit.Task.HAUL, p]
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						for x in uncleared(p):

@@ -64,6 +64,7 @@ func _initialize() -> void:
 	test_collapse_losses()
 	test_lifts()
 	test_stop_by_meter()
+	test_drill()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2615,6 +2616,69 @@ func _power_up(colony: Colony, x: int) -> void:
 	colony.projects.append(gen)
 	colony.inventory["coal"] = 50
 	colony._power_tick(0.1)
+
+
+func test_drill() -> void:
+	# Бур сам сверлит ход 3 м: вниз — тоннель (туда можно лифт), вбок — шахта; останавливается с готовой частью.
+	var colony := _new_colony(38)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	colony.research.done.append_array(["drilling", "drill_rig"])
+	var r := Rect2i(x, s, 3, 12)
+	check(colony.validate(Project.Kind.DRILL, r).is_empty(), "бур вниз можно: " + colony.validate(Project.Kind.DRILL, r))
+	var d := colony.create_project(Project.Kind.DRILL, r)
+	check(d != null, "бур заложен")
+	if d == null:
+		return
+	d.delivered = d.cost().duplicate()
+	var t := 0.0
+	while t < 2000.0 and d.kind == Project.Kind.DRILL:
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+		if d.paused:
+			d.hazard_ack.append(d.hazard_pending)
+			colony.set_paused(d, false)
+	check(d.kind == Project.Kind.TUNNEL and d.phase == Project.Phase.DONE, "бур прошёл — готов тоннель (%.0f с)" % t)
+	var cells := 0
+	for c in d.cells():
+		if Mat.is_solid(w.get_mat(c.x, c.y)):
+			cells += 1
+	check(cells == 0, "весь ход 3×12 выкопан")
+	check(colony.drops.size() > 0 or colony.inventory.size() > 0, "порода выпала — её уносят жители")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x, s, 2, 12), "wood").is_empty(), "по ходу бура можно ставить лифт")
+	# Вбок — как шахта; остановили на полпути — пройденное осталось.
+	var hr := Rect2i(x + 6, s + 8, 10, 3)
+	var dh := colony.create_project(Project.Kind.DRILL, hr)
+	if dh != null:
+		dh.delivered = dh.cost().duplicate()
+		t = 0.0
+		while t < 2000.0 and colony._drill_done_slices(dh) < 4:
+			colony._power_tick(0.5)
+			colony._drills_tick(0.5)
+			t += 0.5
+			if dh.paused:
+				dh.hazard_ack.append(dh.hazard_pending)
+				colony.set_paused(dh, false)
+		colony.cancel_project(dh)
+		check(dh.kind == Project.Kind.MINE and dh.phase == Project.Phase.DONE and dh.rect.size.x >= 4 and dh.rect.size.x < 10,
+			"остановили бур вбок — пройденная часть стала шахтой (%d м)" % dh.rect.size.x)
+	# Без энергии бур стоит.
+	var d2 := colony.create_project(Project.Kind.DRILL, Rect2i(x + 30, s, 3, 8))
+	if d2 != null:
+		d2.delivered = d2.cost().duplicate()
+		colony.inventory["coal"] = 0
+		colony._sync_held()
+		for gp in colony.generators():
+			gp.farm_progress = 0.0
+		colony.inventory.erase("wood")
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		colony._drills_tick(0.5)
+		check(not colony.powered() and d2.blocked.begins_with("Нет энергии"), "без энергии бур стоит")
 
 
 func test_stop_by_meter() -> void:

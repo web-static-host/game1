@@ -290,7 +290,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT]
+	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL]
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -559,7 +559,7 @@ func _show_project(p: Project) -> void:
 		actions.append(["Продолжить" if p.paused else "Пауза", func() -> void:
 			colony.set_paused(p, not p.paused)
 			_show_project(p)])
-		if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and p.phase == Project.Phase.DIG \
+		if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.DRILL) and p.phase == Project.Phase.DIG \
 				or p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD:
 			# Шахту, тоннель и мост можно остановить в любой момент: готовые метры остаются.
 			actions.append(["Остановить", func() -> void:
@@ -863,6 +863,15 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			var bdone := colony.bridge_meters_done(p)
 			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
 			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
+		Project.Kind.DRILL:
+			var dn: int = colony._drill_done_slices(p)
+			var dl := maxi(p.rect.size.x, p.rect.size.y)
+			rows.append(_progress("Пройдено", float(dn) / dl, "%d из %d м" % [dn, dl], Color(0.6, 0.7, 0.8)))
+			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else "нет — бур стоит")])
+			chips.append(["", "скорость ×%.1f от жителя" % colony.drill_speed()])
+			if not p.paid:
+				rows.append({"type": "text", "text": "Ждёт материалы на обсадку хода — их привезут подсобные и свободные жители."})
+			rows.append({"type": "text", "text": "Бур сверлит сам по 3 клетки поперёк, втрое быстрее жителя, на энергии. Породу уносят жители. Перед газом, водой или магмой останавливается с тревогой. «Остановить» — пройденная часть остаётся ходом. Готовый ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты."})
 		Project.Kind.LIFT:
 			chips.append(["", "по вертикали" if p.lift_vertical() else "по горизонтали"])
 			if p.phase == Project.Phase.DONE:
@@ -1290,10 +1299,11 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		# Шахта — всегда 3 м: полоса тянется по горизонтали от места, где коснулись.
 		r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, Project.MINE_HEIGHT)
 		err = colony.validate(kind, r)
-	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
-		# Лифт — строго вертикально (шахта 2 или 3 м) или строго горизонтально (ход 3 м).
+	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT or mode == Hud.Mode.DRILL:
+		# Лифт и бур — строго вертикально или строго горизонтально (ход 3 м).
 		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
-			r = Rect2i(_drag_start.x, r.position.y, 3 if mode == Hud.Mode.CARGO_LIFT else 2, r.size.y)
+			r = Rect2i(_drag_start.x - (1 if mode == Hud.Mode.DRILL else 0), r.position.y,
+				3 if mode != Hud.Mode.LIFT else 2, r.size.y)
 		else:
 			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
 		err = colony.validate(kind, r, _lift_material())
@@ -1376,6 +1386,8 @@ func _mode_kind() -> int:
 			return Project.Kind.MINE
 		Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT:
 			return Project.Kind.LIFT
+		Hud.Mode.DRILL:
+			return Project.Kind.DRILL
 	return Project.Kind.TUNNEL
 
 
@@ -1419,7 +1431,7 @@ func _pending_spec() -> Dictionary:
 	var kind := _pending_kind
 	var rows := []
 	var cost := Project.lift_cost(r, _pending_material == "cargo") if kind == Project.Kind.LIFT \
-		else Project.cost_for(kind, r, _pending_material)
+		else (Project.drill_cost(r) if kind == Project.Kind.DRILL else Project.cost_for(kind, r, _pending_material))
 	if not cost.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
@@ -1520,7 +1532,7 @@ const ROOM_PICS := {
 ## Неизученные инструменты стройки: режим -> почему нельзя.
 func _build_tool_locks() -> Dictionary:
 	var out := {}
-	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"]]:
+	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"]]:
 		if not colony.research.has(pair[1]):
 			out[pair[0]] = "Сначала изучите «%s» (Наука)" % Research.tech_name(pair[1])
 	return out
@@ -1551,6 +1563,10 @@ func _confirm_pending() -> bool:
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()
+	if p != null and _pending_kind == Project.Kind.DRILL:
+		# Бур идёт от того конца, где начали вести пальцем.
+		var vert := p.rect.size.y > p.rect.size.x
+		p.drill_rev = _drag_start.y > p.rect.get_center().y if vert else _drag_start.x > p.rect.get_center().x
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")

@@ -8,7 +8,9 @@ extends RefCounted
 ## на её месте потом можно ставить комнаты.
 ## LIFT — лифт: строго вертикальная шахта (пассажирский — 2 м, грузовой — 3 м шириной)
 ## или горизонтальный ход в 3 м высотой; строится как тоннель, потом ставят кабину.
-enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT }
+## DRILL — бур: сам проходит ход в 3 м шириной строго вниз или вбок; готовый ход
+## становится тоннелем (вниз) или шахтой (вбок).
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT, DRILL }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -62,6 +64,9 @@ var cargo := false
 ## Кабина лифта: где она (координата по оси шахты; -1 — ещё не ставили), груз в ней,
 ## сколько стоит на остановке, грузы, ждущие у концов шахты [начало, конец].
 var lift_pos := -1.0
+## Бур: идёт от конца (низ/право), а не от начала; сколько уже сверлит текущий срез.
+var drill_rev := false
+var drill_t := 0.0
 var lift_load := {}
 var lift_dwell := 0.0
 ## Грузовой лифт едет к концу (0 — начало, 1 — конец; -1 — стоит).
@@ -131,13 +136,15 @@ var hazard_pending := ""
 func title() -> String:
 	if kind == Kind.LIFT:
 		return "%s %d м" % ["Грузовой лифт" if cargo else "Лифт", maxi(rect.size.x, rect.size.y)]
+	if kind == Kind.DRILL:
+		return "Бур %d м" % maxi(rect.size.x, rect.size.y)
 	if kind == Kind.ROOM and purpose != RoomType.NONE:
 		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
 
 
 static func kind_name(k: int) -> String:
-	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт"][k]
+	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт", "Бур"][k]
 
 
 ## Лифт вертикальный (иначе — горизонтальный).
@@ -146,6 +153,11 @@ func lift_vertical() -> bool:
 
 
 ## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
+## Бур: железо на обсадку хода (по 1 на 4 м) и медь на мотор.
+static func drill_cost(r: Rect2i) -> Dictionary:
+	return {"iron": ceili(maxi(r.size.x, r.size.y) / 4.0) + 4, "copper": 2}
+
+
 static func lift_cost(r: Rect2i, is_cargo: bool) -> Dictionary:
 	var n := maxi(r.size.x, r.size.y)
 	return {"iron": n * (2 if is_cargo else 1) + (10 if is_cargo else 6), "copper": ceili(n / 2.0) + 4}
@@ -219,6 +231,8 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 func cost() -> Dictionary:
 	if kind == Kind.LIFT:
 		return lift_cost(rect, cargo)
+	if kind == Kind.DRILL:
+		return drill_cost(rect)
 	return cost_for(kind, rect, material)
 
 
@@ -309,6 +323,15 @@ static func size_error(k: int, r: Rect2i) -> String:
 		if h != ROOM_HEIGHT:
 			return "Комната — %d м в высоту" % ROOM_HEIGHT
 		return ""
+	if k == Kind.DRILL:
+		if h > w:
+			if w != 3 or h < 4:
+				return "Бур вниз проходит ход 3 м шириной, от 4 м"
+		elif h != 3 or w < 4:
+			return "Бур вбок проходит ход 3 м высотой, от 4 м"
+		if maxi(w, h) > TUNNEL_MAX_LEN:
+			return "Бур — не длиннее %d м за раз" % TUNNEL_MAX_LEN
+		return ""
 	if k == Kind.LIFT:
 		# Строго вертикально (2–3 м шириной) или строго горизонтально (3 м высотой).
 		if h > w:
@@ -370,6 +393,8 @@ func to_dict() -> Dictionary:
 		"lift_load": lift_load,
 		"lift_buf": lift_buf,
 		"lift_goal": lift_goal,
+		"drill_rev": drill_rev,
+		"drill_t": drill_t,
 		"limits": limits,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
@@ -425,6 +450,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.cargo = bool(d.get("cargo", false))
 	p.lift_pos = float(d.get("lift_pos", -1.0))
 	p.lift_goal = int(d.get("lift_goal", -1))
+	p.drill_rev = bool(d.get("drill_rev", false))
+	p.drill_t = float(d.get("drill_t", 0.0))
 	for k in d.get("lift_load", {}):
 		p.lift_load[str(k)] = int(d["lift_load"][k])
 	var bufs: Array = d.get("lift_buf", [{}, {}])

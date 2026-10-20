@@ -152,6 +152,36 @@ func _draw_done(p: Project) -> void:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
 
+## Бур у забоя: корпус и вращающееся сверло, смотрит туда, куда идёт.
+func _draw_drill(p: Project, r: Rect2) -> void:
+	var front := colony.drill_front(p)
+	if front.is_empty():
+		return
+	var vert := p.rect.size.y > p.rect.size.x
+	var dir := (1 if not p.drill_rev else -1)
+	var a := view.cell_to_local(front[0])
+	var b := view.cell_to_local(front[front.size() - 1]) + Vector2(TILE, TILE)
+	var face := Rect2(a, b - a)
+	# Корпус — на клетку позади забоя, сверло — в забое.
+	var body := face
+	if vert:
+		body.position.y -= TILE * dir
+	else:
+		body.position.x -= TILE * dir
+	_rbox(body.grow(-3), 5, Color(0.85, 0.6, 0.15), Color(0.45, 0.3, 0.1), 2)
+	draw_circle(body.get_center(), 5, LAMP if colony.powered() else Color(0.35, 0.35, 0.38))
+	var spin := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and colony.powered() else 0.0
+	var tip := face.get_center() + (Vector2(0, TILE * 0.45) if vert else Vector2(TILE * 0.45, 0)) * dir
+	var half := (Vector2(TILE * 1.4, 0) if vert else Vector2(0, TILE * 1.4))
+	var base_c := face.get_center() - (Vector2(0, TILE * 0.45) if vert else Vector2(TILE * 0.45, 0)) * dir
+	draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68))
+	for k in 3:
+		var t := fmod(spin + k / 3.0, 1.0)
+		var m := base_c.lerp(tip, t)
+		var w := half * (1.0 - t)
+		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35), 2.0)
+
+
 ## Лифт: стальные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
 const LIFT_STEEL := Color(0.55, 0.58, 0.64)
 const LIFT_CAB := Color(0.86, 0.62, 0.22)
@@ -1263,6 +1293,8 @@ func _draw_rails(r: Rect2, alpha: float) -> void:
 
 func _draw_site(p: Project, font: Font) -> void:
 	var r := _rect_px(p.rect)
+	if p.kind == Project.Kind.DRILL:
+		_draw_drill(p, r)
 	var edge := DIG_EDGE if p.phase == Project.Phase.DIG else BUILD_EDGE
 	if not p.blocked.is_empty():
 		edge = BLOCKED

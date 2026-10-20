@@ -21,7 +21,7 @@ signal background_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
-enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT }
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT, DRILL }
 
 ## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
@@ -30,6 +30,7 @@ const TOOLS := [
 	[Mode.BRIDGE, "bridge", "Мост"],
 	[Mode.LIFT, "lift", "Лифт"],
 	[Mode.CARGO_LIFT, "cargo_lift", "Грузовой лифт"],
+	[Mode.DRILL, "drill", "Бур"],
 ]
 ## Плиток комнат в ряду меню стройки.
 const ROOM_COLS := 8
@@ -40,6 +41,7 @@ const TOOL_HINTS := {
 	Mode.BRIDGE: "Проведите пальцем над озером",
 	Mode.LIFT: "Проведите строго вверх-вниз (шахта 2 м) или вбок (ход 3 м). Можно по готовому тоннелю",
 	Mode.CARGO_LIFT: "Проведите строго вверх-вниз (шахта 3 м) или вбок. Поставьте склад вплотную к концам",
+	Mode.DRILL: "Проведите строго вниз или вбок от места, откуда бур начнёт (ход 3 м шириной)",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 const SPEED_NAMES := ["×1", "×2", "×10", "×20"]
