@@ -350,8 +350,8 @@ static func tunnel_lanes(r: Rect2i) -> int:
 	return maxi(1, r.size.y - 1)
 
 
-func validate(kind: int, r: Rect2i, material := "wood") -> String:
-	var err := Project.size_error(kind, r)
+func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> String:
+	var err := Project.size_error(kind, r) if check_size else ""
 	if not err.is_empty():
 		return err
 	for y in range(r.position.y, r.end.y):
@@ -382,11 +382,17 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
 		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
-	if is_passage(kind):
+	if is_passage(kind) and kind != Project.Kind.DRILL:
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
-					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты", Project.Kind.DRILL: "Бур"}.get(kind, "Лифты"))
+					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
+	if kind == Project.Kind.DRILL:
+		# Бур ставят на землю, на пол хода или прямо в породу (место выкопают).
+		for x in range(r.position.x, r.end.x):
+			var below := Vector2i(x, r.end.y)
+			if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y))):
+				return "Буру не на что встать — нужен грунт или пол снизу"
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -574,7 +580,7 @@ func _check_access() -> void:
 	for p in projects:
 		var working := p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD \
 			or p.phase == Project.Phase.EQUIP or p.repairing
-		if p.paused or not working or workers_on(p) > 0:
+		if p.paused or not working or workers_on(p) > 0 or p.bored_by > 0:
 			continue
 		var blocked_access := p.blocked.begins_with("Нет доступа")
 		if not p.blocked.is_empty() and not blocked_access:
@@ -689,9 +695,9 @@ func has_access(r: Rect2i) -> bool:
 	return false
 
 
-func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> Project:
+func create_project(kind: int, r: Rect2i, workers := -1, material := "wood", check_size := true) -> Project:
 	wake_idle()
-	if not validate(kind, r, material).is_empty():
+	if not validate(kind, r, material, check_size).is_empty():
 		return null
 	if kind == Project.Kind.ROOM:
 		_carve_mines(r)
@@ -798,6 +804,12 @@ func flee_gas(u: Unit) -> void:
 
 func cancel_project(p: Project) -> void:
 	wake_idle()
+	# Ход, который сверлит бур, отменяют вместе с приказом буру.
+	if p.bored_by > 0:
+		var drill := project_by_id(p.bored_by)
+		if drill != null and drilling(drill) and drill.bore_id == p.id:
+			stop_drill(drill)
+			return
 	# Шахту и тоннель останавливают: готовые метры остаются; мост — построенная часть
 	# остаётся пристанью у берега.
 	if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
@@ -806,7 +818,7 @@ func cancel_project(p: Project) -> void:
 	if p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD and bridge_meters_done(p) > 0:
 		stop_bridge(p)
 		return
-	if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DIG and _drill_done_slices(p) > 0:
+	if drilling(p):
 		stop_drill(p)
 		return
 	if p.phase == Project.Phase.EQUIP:
@@ -840,6 +852,8 @@ func cancel_project(p: Project) -> void:
 
 ## Можно ли снести постройку (сверху ничего не стоит).
 func demolish_error(p: Project) -> String:
+	if drilling(p):
+		return "Бур сверлит — сначала остановите его"
 	if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
 		return "Снести можно только готовую постройку — идущую стройку отмените"
 	for q in projects:
@@ -1005,11 +1019,20 @@ func _check_supply(p: Project) -> void:
 
 
 # --- Бур ------------------------------------------------------------------------------
-## Бур проходит срез (3 клетки поперёк) втрое быстрее, чем житель копает одну клетку.
+## Бур — машина 3×3. Её ставят (место выкапывают), собирают из железа и меди, а потом
+## в карточке велят пройти n м вниз, влево или вправо: бур сам едет и сверлит ход 3 м
+## шириной втрое быстрее жителя (на энергии, после «Двигателей внутреннего сгорания» — и на
+## дизеле). За ним остаётся тоннель (вниз) или ход как шахта (вбок), где можно ставить лифт
+## и комнаты. Дошёл — стоит в конце хода и ждёт нового приказа.
 const DRILL_POWER := 10
 ## На сколько секунд сверления хватает 1 дизеля.
 const DRILL_DIESEL_TIME := 30.0
 const DRILL_SPEED := 3.0
+## Без породы впереди бур проезжает метр за столько секунд.
+const DRILL_MOVE_TIME := 1.0
+const DRILL_MAX := 64
+## Обсадка хода: 1 железо на столько метров (берут со склада при приказе).
+const DRILL_CASING_M := 4
 
 
 func drill_speed(diesel := false) -> float:
@@ -1017,72 +1040,111 @@ func drill_speed(diesel := false) -> float:
 		* (1.5 if research.has("heavy_drill") else 1.0) * (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
 
 
-## Бур работает: материалы привезли, не на паузе, ещё есть что сверлить.
+## Бур сверлит (едет по приказу).
+func drilling(p: Project) -> bool:
+	return p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE and p.drill_left > 0
+
+
+## Бур работает на энергии: сверлит и не на паузе.
 func _drill_active(p: Project) -> bool:
-	return p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DIG and p.paid and not p.paused
+	return drilling(p) and not p.paused
 
 
-## Срезы хода по порядку сверления: [[клетки среза], ...].
-func _drill_slices(p: Project) -> Array:
-	var out := []
-	var vert := p.rect.size.y > p.rect.size.x
-	var n := p.rect.size.y if vert else p.rect.size.x
-	for i in n:
-		var k := n - 1 - i if p.drill_rev else i
-		var cells: Array[Vector2i] = []
-		if vert:
-			for x in range(p.rect.position.x, p.rect.end.x):
-				cells.append(Vector2i(x, p.rect.position.y + k))
-		else:
-			for y in range(p.rect.position.y, p.rect.end.y):
-				cells.append(Vector2i(p.rect.position.x + k, y))
-		out.append(cells)
+## Клетки хода на n м от бура в сторону dir.
+static func drill_path(p: Project, dir: Vector2i, n: int) -> Rect2i:
+	var r := p.rect
+	if dir == Vector2i.DOWN:
+		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.LEFT:
+		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
+	return Rect2i(r.end.x, r.position.y, n, r.size.y)
+
+
+## Следующий срез перед буром (клетки, куда он въедет).
+func drill_front(p: Project) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if not drilling(p):
+		return out
+	var r := drill_path(p, p.drill_dir, 1)
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			out.append(Vector2i(x, y))
 	return out
 
 
-## Сколько срезов подряд от начала уже пройдено.
-func _drill_done_slices(p: Project) -> int:
-	var n := 0
-	for cells in _drill_slices(p):
-		for c in cells:
-			if Mat.is_solid(world.get_mat(c.x, c.y)):
-				return n
-		n += 1
-	return n
+func _underground(r: Rect2i) -> bool:
+	for x in range(r.position.x, r.end.x):
+		if r.position.y < world.gen.surface_y(x):
+			return false
+	return true
 
 
-## Следующий срез, который сверлит бур (твёрдые клетки), или пусто.
-func drill_front(p: Project) -> Array[Vector2i]:
-	for cells in _drill_slices(p):
-		var solid: Array[Vector2i] = []
-		for c in cells:
-			if Mat.is_solid(world.get_mat(c.x, c.y)):
-				solid.append(c)
-		if not solid.is_empty():
-			return solid
-	return []
+## Железо на обсадку хода длиной n.
+static func drill_casing(n: int) -> int:
+	return ceili(n / float(DRILL_CASING_M))
+
+
+func drill_error(p: Project, dir: Vector2i, n: int) -> String:
+	if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DONE:
+		return "Бур ещё не собран"
+	if drilling(p):
+		return "Бур уже сверлит — сначала остановите"
+	if not [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].has(dir):
+		return "Бур сверлит вниз, влево или вправо"
+	if n < 1 or n > DRILL_MAX:
+		return "За раз — от 1 до %d м" % DRILL_MAX
+	var path := drill_path(p, dir, n)
+	if not _underground(path):
+		return "Бурить можно только под землёй"
+	for c in Project.rect_cells(path):
+		var other := project_at(c)
+		if other != null and other != p and not is_passage(other.kind):
+			return "На пути постройка: %s" % other.title()
+		if world.is_revealed(c.x, c.y) and Mat.is_fluid(world.get_mat(c.x, c.y)):
+			return "На пути %s" % Mat.name_of(world.get_mat(c.x, c.y)).to_lower()
+	var iron := drill_casing(n)
+	if int(inventory.get("iron", 0)) < iron:
+		return "Нужно %d железа на обсадку хода (на складе %d)" % [iron, int(inventory.get("iron", 0))]
+	return ""
+
+
+## Приказ буру: пройти n м в сторону dir. Ход сразу размечается тоннелем или шахтой.
+func start_drill(p: Project, dir: Vector2i, n: int) -> String:
+	var err := drill_error(p, dir, n)
+	if not err.is_empty():
+		return err
+	_remove("iron", drill_casing(n))
+	var path := drill_path(p, dir, n)
+	# Бур стоит под землёй — его место тоже становится частью хода.
+	var r := path.merge(p.rect) if _underground(p.rect) else path
+	var q := Project.new()
+	q.id = next_project_id
+	next_project_id += 1
+	q.kind = Project.Kind.TUNNEL if dir == Vector2i.DOWN else Project.Kind.MINE
+	q.rect = r
+	q.workers = 0
+	q.bored_by = p.id
+	q.paid = true
+	for i in q.slice_count():
+		q.supported.append(i)
+	projects.append(q)
+	p.drill_dir = dir
+	p.drill_left = n
+	p.drill_t = 0.0
+	p.bore_id = q.id
+	p.bore_from = p.rect
+	p.hazard_ack.clear()
+	p.blocked = ""
+	_rebuild_climb()
+	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info")
+	return ""
 
 
 func _drills_tick(dt: float) -> void:
 	for p: Project in projects.duplicate():
-		if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DIG or p.paused:
+		if not drilling(p) or p.paused:
 			continue
-		if not p.paid:
-			var cost := p.cost()
-			var ok := true
-			for k in cost:
-				if int(p.delivered.get(k, 0)) < int(cost[k]):
-					ok = false
-			if not ok:
-				_check_supply(p)
-				continue
-			for k in cost:
-				p.delivered[k] = int(p.delivered[k]) - int(cost[k])
-				if p.delivered[k] <= 0:
-					p.delivered.erase(k)
-			p.paid = true
-			p.blocked = ""
-			_log("%s: материалы на месте — бур пошёл" % p.title(), "info")
+		var bore := project_by_id(p.bore_id)
 		# Без энергии дизельный бур идёт на дизеле из нефтехранилища.
 		var on_diesel := false
 		if not powered() or power_ratio <= 0.0:
@@ -1094,14 +1156,22 @@ func _drills_tick(dt: float) -> void:
 				if p.blocked.is_empty():
 					p.blocked = "Нет энергии — бур стоит" + (" (и дизеля нет)" if research.has("combustion") else "")
 				continue
-		if p.blocked.begins_with("Нет энергии"):
+		if p.blocked.begins_with("Нет энергии") or p.blocked.begins_with("Впереди"):
 			p.blocked = ""
 		var front := drill_front(p)
-		if front.is_empty():
-			_check_phase(p)
-			continue
+		var solid: Array[Vector2i] = []
 		var stop := false
 		for c in front:
+			var m := world.get_mat(c.x, c.y)
+			if world.is_revealed(c.x, c.y) and Mat.is_fluid(m):
+				p.blocked = "Впереди %s — бур стоит. Остановите его или откачайте" % Mat.name_of(m).to_lower()
+				stop = true
+				break
+			if Mat.is_solid(m):
+				solid.append(c)
+		if stop:
+			continue
+		for c in solid:
 			if _hazard_stop(p, c):
 				stop = true
 				break
@@ -1110,46 +1180,58 @@ func _drills_tick(dt: float) -> void:
 		if on_diesel:
 			p.fuel = maxf(0.0, p.fuel - dt)
 		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
-		var need := 0.0
-		for c in front:
+		var need := DRILL_MOVE_TIME * DRILL_SPEED
+		for c in solid:
 			need = maxf(need, dig_time(c))
-		if p.drill_t >= need:
-			p.drill_t = 0.0
-			for c in front:
-				_complete_dig(c, p, null)
-			if not projects.has(p):
-				continue
-			_check_phase(p)
+		if p.drill_t < need:
+			continue
+		p.drill_t = 0.0
+		for c in solid:
+			_complete_dig(c, bore, null)
+		p.rect.position += p.drill_dir
+		p.drill_left -= 1
+		if p.drill_left <= 0:
+			_end_bore(p, true)
 
 
-## Бур прошёл ход (весь или до остановки) — ход становится тоннелем (вниз) или шахтой (вбок).
-func _finish_drill(p: Project, r: Rect2i) -> void:
-	for u in units:
-		if u.project_id == p.id:
-			_drop(u)
-	var total := maxi(p.rect.size.x, p.rect.size.y)
-	p.rect = r
-	p.kind = Project.Kind.TUNNEL if r.size.y > r.size.x else Project.Kind.MINE
-	p.needs_support.clear()
-	p.supported.clear()
-	for i in p.slice_count():
-		p.supported.append(i)
-	p.support_wood = 0
-	_finish_project(p)
-	_log("Бур прошёл %d м из %d — готов %s" % [maxi(r.size.x, r.size.y), total,
-		"тоннель" if p.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good")
+## Бур дошёл (или его остановили): пройденная часть хода готова, бур ждёт приказа.
+func _end_bore(p: Project, arrived: bool) -> void:
+	var bore := project_by_id(p.bore_id)
+	var total := p.drill_left + absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
+	var went := total - p.drill_left
+	p.drill_left = 0
+	p.drill_dir = Vector2i.ZERO
+	p.bore_id = 0
+	p.blocked = ""
+	if bore == null:
+		return
+	var r := bore.rect.intersection(p.bore_from.merge(p.rect))
+	var old := bore.cells()
+	if went <= 0 or r.size.x <= 0 or r.size.y <= 0:
+		projects.erase(bore)
+		_rebuild_climb()
+		_log("%s: остановлен, не пройдя ни метра" % p.title(), "info")
+		return
+	if bore.phase != Project.Phase.DONE:
+		bore.rect = r
+		bore.supported.clear()
+		for i in bore.slice_count():
+			bore.supported.append(i)
+		_finish_project(bore)
+	_log("%s %s %d м%s — готов %s" % [p.title(), "прошёл" if arrived else "остановлен:", went,
+		"" if arrived else " из %d" % total,
+		"тоннель (можно ставить лифт)" if bore.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good")
+	var cut: Array[Vector2i] = []
+	for c in old:
+		if not bore.has_cell(c):
+			cut.append(c)
+	physics.check_area(cut)
 
 
-## Остановить бур: пройденная часть от начала остаётся ходом.
+## Остановить бур: пройденная часть остаётся ходом, бур стоит, где остановился.
 func stop_drill(p: Project) -> void:
-	var m := _drill_done_slices(p)
-	var vert := p.rect.size.y > p.rect.size.x
-	var r := p.rect
-	if vert:
-		r = Rect2i(r.position.x, r.end.y - m if p.drill_rev else r.position.y, r.size.x, m)
-	else:
-		r = Rect2i(r.end.x - m if p.drill_rev else r.position.x, r.position.y, m, r.size.y)
-	_finish_drill(p, r)
+	if drilling(p):
+		_end_bore(p, false)
 
 
 # --- Нефть ----------------------------------------------------------------------------
@@ -1547,11 +1629,21 @@ func _rebuild_climb() -> void:
 						var x := p.rect.position.x if side < 0 else p.rect.end.x - 1
 						for y in range(p.rect.position.y, p.rect.end.y):
 							lad[Vector2i(x, y)] = true
-	if lad != pathing.ladders or site != pathing.sites:
+	# Шахта над шахтой: верхний ряд нижней закреплён балками — по ним ходят, как по полу.
+	var fl := {}
+	for p in projects:
+		if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DONE:
+			for x in range(p.rect.position.x, p.rect.end.x):
+				var a := Vector2i(x, p.rect.position.y - 1)
+				if interior.has(a) and interior[a] != p.id:
+					fl[a] = true
+	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors:
 		pathing.ladders.clear()
 		pathing.ladders.merge(lad)
 		pathing.sites.clear()
 		pathing.sites.merge(site)
+		pathing.floors.clear()
+		pathing.floors.merge(fl)
 		pathing.climb_rev += 1
 
 
@@ -1597,6 +1689,92 @@ func active_slices(p: Project) -> Array[int]:
 				out.append(i)
 				break
 	return out
+
+
+## --- Продолжение выработок ------------------------------------------------------------
+## Готовую шахту, тоннель или лифт продлевают на n м: рядом закладывается продолжение
+## (копают, крепят, у лифта — тянут рельсы), а готовое сливается с исходной постройкой.
+const EXTEND_MAX := 64
+
+
+## Куда можно продлить: вертикальное — вниз, горизонтальное — влево и вправо.
+static func extend_dirs(p: Project) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if p.kind != Project.Kind.MINE and p.kind != Project.Kind.TUNNEL and p.kind != Project.Kind.LIFT:
+		return out
+	if p.rect.size.y > p.rect.size.x:
+		out.append(Vector2i.DOWN)
+	else:
+		out.append_array([Vector2i.LEFT, Vector2i.RIGHT])
+	return out
+
+
+static func extend_rect(p: Project, dir: Vector2i, n: int) -> Rect2i:
+	var r := p.rect
+	if dir == Vector2i.DOWN:
+		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.LEFT:
+		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
+	return Rect2i(r.end.x, r.position.y, n, r.size.y)
+
+
+func extension_of(p: Project) -> Project:
+	for q in projects:
+		if q.extends_id == p.id and q.phase != Project.Phase.DONE:
+			return q
+	return null
+
+
+func extend_error(p: Project, dir: Vector2i, n: int) -> String:
+	if not extend_dirs(p).has(dir):
+		return "Эту постройку так не продлить"
+	if p.phase != Project.Phase.DONE:
+		return "Сначала достройте"
+	if extension_of(p) != null:
+		return "Продолжение уже строится"
+	if n < 1 or n > EXTEND_MAX:
+		return "Продлить можно на 1–%d м за раз" % EXTEND_MAX
+	return validate(p.kind, extend_rect(p, dir, n), "cargo" if p.cargo else "wood", false)
+
+
+func extend_project(p: Project, dir: Vector2i, n: int) -> Project:
+	if not extend_error(p, dir, n).is_empty():
+		return null
+	var q := create_project(p.kind, extend_rect(p, dir, n), p.workers, "cargo" if p.cargo else "wood", false)
+	if q == null:
+		return null
+	q.extends_id = p.id
+	_log("%s: продлеваем на %d м" % [p.title(), n], "info")
+	return q
+
+
+## Готовое продолжение сливается с исходной постройкой (если та цела и они вплотную).
+func _merge_extension(q: Project) -> bool:
+	var host := project_by_id(q.extends_id)
+	if host == null or host.kind != q.kind or host.phase != Project.Phase.DONE:
+		return false
+	var merged := host.rect.merge(q.rect)
+	if merged.get_area() != host.rect.get_area() + q.rect.get_area():
+		return false
+	_return_delivered(q)
+	for u in units:
+		if u.project_id == q.id:
+			_drop(u)
+	projects.erase(q)
+	host.rect = merged
+	host.needs_support.clear()
+	host.supported.clear()
+	for i in host.slice_count():
+		host.supported.append(i)
+	for k in q.found:
+		host.found[k] = int(host.found.get(k, 0)) + int(q.found[k])
+	for c in host.cells():
+		interior[c] = host.id
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	highest_y = mini(highest_y, host.rect.position.y)
+	_rebuild_climb()
+	_log("Продлено: %s" % host.title(), "good")
+	return true
 
 
 ## --- Шахта: строится по метру -------------------------------------------------------
@@ -1779,10 +1957,6 @@ func dig_time(c: Vector2i) -> float:
 func _check_phase(p: Project) -> void:
 	if p.phase != Project.Phase.DIG:
 		return
-	if p.kind == Project.Kind.DRILL:
-		if remaining_dig(p).is_empty():
-			_finish_drill(p, p.rect)
-		return
 	_check_liquids(p)
 	var all_supported := true
 	for i in p.needs_support:
@@ -1858,11 +2032,14 @@ func _try_pay(p: Project) -> void:
 
 
 func _finish_project(p: Project) -> void:
+	if p.extends_id > 0 and _merge_extension(p):
+		return
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
-	for c in p.cells():
+	# Бур — машина, а не помещение: сквозь него ходят, он уезжает.
+	for c in ([] as Array[Vector2i]) if p.kind == Project.Kind.DRILL else p.cells():
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_register_deck(p)
@@ -4067,10 +4244,8 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 			continue
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
 			continue
-		# Бур сверлит сам: жители только везут ему материалы.
-		if p.kind == Project.Kind.DRILL:
-			if not builder_or_miner(u) and _try_haul(u, p, parents, dist):
-				return true
+		# Ход, который сверлит бур, жители не копают.
+		if p.bored_by > 0:
 			continue
 		var mine := p.kind == Project.Kind.MINE
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
@@ -4367,6 +4542,11 @@ func _dig_deadlock(now: Array[Vector2i]) -> bool:
 
 
 ## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
+## Вода опасна, только когда до неё клетка-две: о дальней геолог не тревожит (она видна на
+## карте). Магму и газ он чует тем дальше, чем выше уровень геологии.
+const WATER_WARN_RADIUS := 2
+
+
 func _hazard_stop(p: Project, c: Vector2i) -> bool:
 	var r := 2 + 2 * geology_level()
 	for dy in range(-r, r + 1):
@@ -4378,7 +4558,8 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 			var kind := ""
 			match world.get_mat(n.x, n.y):
 				Mat.WATER:
-					kind = "water"
+					if maxi(absi(dx), absi(dy)) <= WATER_WARN_RADIUS:
+						kind = "water"
 				Mat.MAGMA:
 					kind = "magma"
 				Mat.GAS_POCKET:
@@ -6178,10 +6359,7 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 						continue
 					if p.phase == Project.Phase.DONE and not p.repairing:
 						continue
-					if p.kind == Project.Kind.DRILL:
-						if kind != "dig" and _offline_can_haul(p):
-							taken[slot] = taken.get(slot, 0) + 1
-							return ["haul%d:%d" % [p.id, u.id], Unit.Task.HAUL, p]
+					if p.bored_by > 0:
 						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						for x in uncleared(p):
@@ -6576,7 +6754,7 @@ func load_dict(d: Dictionary) -> void:
 			for k in p.targets:
 				store_targets[k] = maxi(int(store_targets.get(k, 0)), int(p.targets[k]))
 		_register_room(p)
-		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
+		if (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP) and p.kind != Project.Kind.DRILL:
 			for c in p.cells():
 				interior[c] = p.id
 		_register_deck(p)
@@ -6622,6 +6800,12 @@ func load_dict(d: Dictionary) -> void:
 	research.load_dict(d.get("research", {}))
 	if int(d.get("stores_v", 0)) < 1:
 		_migrate_stores()
+	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
+	# материалы возвращаются на склад.
+	for p in projects.duplicate():
+		if p.kind == Project.Kind.DRILL and p.rect.size != Vector2i(3, 3):
+			cancel_project(p)
+			_log("Бур переделан: теперь это машина 3×3, которой в карточке велят, куда и сколько сверлить. Старый бур убран, материалы вернулись — поставьте его заново.", "warning")
 	loads.loads = loads.compute()
 	explore()
 	_refresh_bushes()

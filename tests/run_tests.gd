@@ -65,6 +65,8 @@ func _initialize() -> void:
 	test_lifts()
 	test_stop_by_meter()
 	test_drill()
+	test_extend()
+	test_stacked_mines()
 	test_oil()
 	test_space()
 	test_job_stats()
@@ -1770,6 +1772,19 @@ func test_elements() -> void:
 	check(gp.paused and gp.hazard_pending == "water" and gp.blocked.begins_with("Геолог"), "геолог предупредил о воде: " + gp.blocked)
 	gc.set_paused(gp, false)
 	check(not gp.paused and gp.hazard_ack.has("water"), "игрок разрешил копать дальше")
+	# Вода в 4 м от забоя — не тревога: опасно, только когда до неё клетка-две.
+	var fc := _new_colony(62)
+	var fw := fc.world
+	_start(fc, gx)
+	fc.inventory = {"wood": 40}
+	fc.research.done.append_array(["geology", "geology2", "geology3", "geology4"])
+	fw.set_fluid(gx, gs + 6, Mat.WATER)
+	var fp := fc.create_project(Project.Kind.TUNNEL, Rect2i(gx, gs, 1, 2))
+	for i in 400:
+		fc.update(0.5)
+		if fp.paused or fp.phase == Project.Phase.DONE:
+			break
+	check(not fp.paused and fp.hazard_pending.is_empty(), "дальняя вода — без тревоги даже при геологии IV")
 
 
 ## Газовая тревога: метан у стройки останавливает работы, жители уходят из облака,
@@ -2762,25 +2777,28 @@ func test_oil() -> void:
 	# Бур на дизеле без электричества.
 	colony._power_tick(0.5)
 	check(not colony.powered(), "электричества нет")
-	var d := colony.create_project(Project.Kind.DRILL, Rect2i(x + 20, s, 3, 6))
+	var d := colony.create_project(Project.Kind.DRILL, Rect2i(x + 20, s - 3, 3, 3))
 	if d != null:
 		d.delivered = d.cost().duplicate()
+		colony._try_pay(d)
+		colony._finish_project(d)
+		colony.inventory["iron"] = 10
 		var dz: int = colony.inventory.get("diesel", 0)
+		check(colony.start_drill(d, Vector2i.DOWN, 6).is_empty(), "приказ буру на дизеле")
 		var t2 := 0.0
-		while t2 < 400.0 and d.kind == Project.Kind.DRILL:
+		while t2 < 400.0 and colony.drilling(d):
 			colony._power_tick(0.5)
 			colony._drills_tick(0.5)
 			t2 += 0.5
 			if d.paused:
-				d.hazard_ack.append(d.hazard_pending)
 				colony.set_paused(d, false)
-		check(d.kind != Project.Kind.DRILL and colony.inventory.get("diesel", 0) < dz, "бур прошёл на дизеле без электричества")
+		check(not colony.drilling(d) and colony.inventory.get("diesel", 0) < dz, "бур прошёл на дизеле без электричества")
 	# Нефтехранилище взрывается, если рухнет.
 	check(RoomType.EXPLOSIVE.has(RoomType.OIL_TANK), "нефтехранилище взрывоопасно")
 
 
 func test_drill() -> void:
-	# Бур сам сверлит ход 3 м: вниз — тоннель (туда можно лифт), вбок — шахта; останавливается с готовой частью.
+	# Бур — машина 3×3: ставят, собирают, потом велят сверлить n м вниз или вбок.
 	var colony := _new_colony(38)
 	var w := colony.world
 	var x := _find_solid_column(w, 60)
@@ -2788,58 +2806,147 @@ func test_drill() -> void:
 	var s := w.gen.surface_y(x)
 	_power_up(colony, x)
 	colony.research.done.append_array(["drilling", "drill_rig"])
-	var r := Rect2i(x, s, 3, 12)
-	check(colony.validate(Project.Kind.DRILL, r).is_empty(), "бур вниз можно: " + colony.validate(Project.Kind.DRILL, r))
+	# Ровное сухое место под бур.
+	for dx in 60:
+		var xx := x + dx
+		var sx := w.gen.surface_y(xx)
+		if sx == w.gen.surface_y(xx + 1) and sx == w.gen.surface_y(xx + 2) and w.gen.water_level(xx) >= sx + 20 \
+				and colony.validate(Project.Kind.DRILL, Rect2i(xx, sx - 3, 3, 3)).is_empty():
+			x = xx
+			s = sx
+			break
+	check(not colony.validate(Project.Kind.DRILL, Rect2i(x, s - 3, 3, 6)).is_empty(), "бур — только 3×3")
+	var r := Rect2i(x, s - 3, 3, 3)
+	check(colony.validate(Project.Kind.DRILL, r).is_empty(), "бур на земле можно: " + colony.validate(Project.Kind.DRILL, r))
 	var d := colony.create_project(Project.Kind.DRILL, r)
 	check(d != null, "бур заложен")
 	if d == null:
 		return
+	# Деревья на месте бура рубят, копать на земле нечего — сразу сборка.
+	d.clear_x.clear()
+	colony._check_phase(d)
+	check(d.phase == Project.Phase.BUILD and d.cost().has("iron") and d.cost().has("copper"), "на земле копать нечего — сразу сборка из железа и меди")
 	d.delivered = d.cost().duplicate()
+	colony._try_pay(d)
+	colony._finish_project(d)
+	check(d.phase == Project.Phase.DONE and not colony.drilling(d), "бур собран и ждёт приказа")
+	check(not colony.interior.has(r.position), "бур — машина, не помещение")
+	colony.inventory["iron"] = 0
+	check(colony.start_drill(d, Vector2i.DOWN, 12).begins_with("Нужно"), "без железа на обсадку не сверлит")
+	colony.inventory["iron"] = 20
+	check(not colony.drill_error(d, Vector2i.UP, 5).is_empty(), "вверх бур не сверлит")
+	check(colony.start_drill(d, Vector2i.DOWN, 12).is_empty(), "приказ: 12 м вниз")
+	check(colony.inventory.get("iron", 0) == 20 - Colony.drill_casing(12), "обсадка взята со склада")
+	var bore := colony.project_by_id(d.bore_id)
+	check(bore != null and bore.kind == Project.Kind.TUNNEL and bore.bored_by == d.id and bore.rect == Rect2i(x, s, 3, 12),
+		"ход вниз размечен тоннелем 3×12")
 	var t := 0.0
-	while t < 2000.0 and d.kind == Project.Kind.DRILL:
+	while t < 2000.0 and colony.drilling(d):
 		colony._power_tick(0.5)
 		colony._drills_tick(0.5)
 		t += 0.5
 		if d.paused:
-			d.hazard_ack.append(d.hazard_pending)
 			colony.set_paused(d, false)
-	check(d.kind == Project.Kind.TUNNEL and d.phase == Project.Phase.DONE, "бур прошёл — готов тоннель (%.0f с)" % t)
+	check(not colony.drilling(d) and d.rect == Rect2i(x, s + 9, 3, 3), "бур доехал до конца хода (%.0f с)" % t)
+	check(bore.phase == Project.Phase.DONE and bore.kind == Project.Kind.TUNNEL, "готов тоннель")
 	var cells := 0
-	for c in d.cells():
+	for c in bore.cells():
 		if Mat.is_solid(w.get_mat(c.x, c.y)):
 			cells += 1
 	check(cells == 0, "весь ход 3×12 выкопан")
 	check(colony.drops.size() > 0 or colony.inventory.size() > 0, "порода выпала — её уносят жители")
 	check(colony.validate(Project.Kind.LIFT, Rect2i(x, s, 2, 12), "wood").is_empty(), "по ходу бура можно ставить лифт")
-	# Вбок — как шахта; остановили на полпути — пройденное осталось.
-	var hr := Rect2i(x + 6, s + 8, 10, 3)
-	var dh := colony.create_project(Project.Kind.DRILL, hr)
-	if dh != null:
-		dh.delivered = dh.cost().duplicate()
-		t = 0.0
-		while t < 2000.0 and colony._drill_done_slices(dh) < 4:
-			colony._power_tick(0.5)
-			colony._drills_tick(0.5)
-			t += 0.5
-			if dh.paused:
-				dh.hazard_ack.append(dh.hazard_pending)
-				colony.set_paused(dh, false)
-		colony.cancel_project(dh)
-		check(dh.kind == Project.Kind.MINE and dh.phase == Project.Phase.DONE and dh.rect.size.x >= 4 and dh.rect.size.x < 10,
-			"остановили бур вбок — пройденная часть стала шахтой (%d м)" % dh.rect.size.x)
-	# Без энергии бур стоит.
-	var d2 := colony.create_project(Project.Kind.DRILL, Rect2i(x + 30, s, 3, 8))
-	if d2 != null:
-		d2.delivered = d2.cost().duplicate()
-		colony.inventory["coal"] = 0
-		colony._sync_held()
-		for gp in colony.generators():
-			gp.farm_progress = 0.0
-		colony.inventory.erase("wood")
+	# Вбок — ход как шахта (с местом, где стоял бур); остановили на полпути — пройденное осталось.
+	check(colony.start_drill(d, Vector2i.RIGHT, 10).is_empty(), "приказ: 10 м вправо")
+	var side := colony.project_by_id(d.bore_id)
+	t = 0.0
+	while t < 2000.0 and d.rect.position.x < x + 4:
 		colony._power_tick(0.5)
 		colony._drills_tick(0.5)
-		colony._drills_tick(0.5)
-		check(not colony.powered() and d2.blocked.begins_with("Нет энергии"), "без энергии бур стоит")
+		t += 0.5
+		if d.paused:
+			colony.set_paused(d, false)
+	colony.cancel_project(side)
+	check(not colony.drilling(d) and side.kind == Project.Kind.MINE and side.phase == Project.Phase.DONE
+		and side.rect.size.x == 7 and side.rect.position.x == x, "остановили — пройденные 4 м и место бура стали шахтой (%s, x %d, бурит %s)" % [side.rect, x, colony.drilling(d)])
+	check(d.rect.position == Vector2i(x + 4, s + 9), "бур стоит там, где остановили")
+	# Без энергии бур стоит.
+	colony.inventory["coal"] = 0
+	colony._sync_held()
+	for gp in colony.generators():
+		gp.farm_progress = 0.0
+	colony.inventory.erase("wood")
+	colony._power_tick(0.5)
+	var e5 := colony.start_drill(d, Vector2i.DOWN, 5)
+	check(e5.is_empty(), "приказ: 5 м вниз " + e5)
+	colony._drills_tick(0.5)
+	colony._drills_tick(0.5)
+	check(not colony.powered() and d.blocked.begins_with("Нет энергии"), "без энергии бур стоит")
+	check(not colony.demolish_error(d).is_empty(), "сверлящий бур не сносят")
+	colony.stop_drill(d)
+	check(colony.project_by_id(d.bore_id) == null and not colony.drilling(d), "остановили сразу — разметка хода убрана")
+	# Старый бур (ход во всю длину) из сохранения убирается, материалы возвращаются.
+	var data := SaveSystem.serialize(w, colony, Vector2i.ZERO)
+	var old := Project.new()
+	old.id = 990
+	old.kind = Project.Kind.DRILL
+	old.rect = Rect2i(x + 40, s, 3, 8)
+	old.delivered = {"iron": 3}
+	(data["colony"]["projects"] as Array).append(old.to_dict())
+	var w2 := WorldData.new(WorldGen.new(38))
+	var c2 := Colony.new(w2)
+	SaveSystem.apply(JSON.parse_string(JSON.stringify(data)), w2, c2)
+	check(c2.project_by_id(990) == null, "старый бур убран при загрузке")
+
+
+## Продлить готовую шахту, тоннель или лифт: продолжение копают и сливают с исходной.
+func test_extend() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var m := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 6, 6, 3), 920)
+	m.supported.append_array([0, 1, 2, 3, 4, 5])
+	check(Colony.extend_dirs(m) == [Vector2i.LEFT, Vector2i.RIGHT], "шахту продлевают влево и вправо")
+	check(colony.extend_error(m, Vector2i.DOWN, 3) != "", "вниз шахту не продлить")
+	var q := colony.extend_project(m, Vector2i.RIGHT, 1)
+	check(q != null and q.rect == Rect2i(x + 6, s + 6, 1, 3) and q.extends_id == m.id, "продолжение на 1 м заложено")
+	if q == null:
+		return
+	check(colony.extend_error(m, Vector2i.RIGHT, 3) == "Продолжение уже строится", "второе продолжение не закладывают")
+	for c in q.cells():
+		w.set_material(c.x, c.y, Mat.AIR)
+		w.set_dug(c.x, c.y)
+	q.supported = q.needs_support.duplicate()
+	colony._check_phase(q)
+	check(not colony.projects.has(q) and m.rect == Rect2i(x, s + 6, 7, 3) and colony.interior.get(Vector2i(x + 6, s + 7)) == m.id,
+		"готовое продолжение слилось с шахтой (%s)" % m.rect)
+	var tun := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 20, s, 1, 6), 921)
+	check(Colony.extend_dirs(tun) == [Vector2i.DOWN], "вертикальный тоннель продлевают вниз")
+	var tq := colony.extend_project(tun, Vector2i.DOWN, 4)
+	check(tq != null and tq.rect == Rect2i(x + 20, s + 6, 1, 4), "тоннель продлевается вниз")
+	# Продолжение лифта: без кабины — только рельсы и провода за метры.
+	colony.research.done.append_array(["electricity", "lifts"])
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 30, s, 2, 8), 922)
+	var lq := colony.extend_project(lift, Vector2i.DOWN, 4)
+	check(lq != null and lq.cost() == Project.lift_cost(lq.rect, false, false) and lq.cost()["iron"] < Project.lift_cost(lq.rect, false)["iron"],
+		"продолжение лифта без новой кабины")
+
+
+## Шахта над шахтой: по крепи нижней ходят, как по полу.
+func test_stacked_mines() -> void:
+	var colony := _new_colony(35)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var low := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 9, 6, 3), 930)
+	var up := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 6, 6, 3), 931)
+	colony._rebuild_climb()
+	check(colony.pathing.node(Vector2i(x + 1, s + 8)), "в верхней шахте можно стоять на крепи нижней")
+	check(colony.pathing.node(Vector2i(x + 1, s + 11)), "в нижней — на её полу")
+	check(up != null and low != null, "шахты на месте")
 
 
 func test_stop_by_meter() -> void:

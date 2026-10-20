@@ -71,6 +71,10 @@ func _draw() -> void:
 	for p in colony.projects:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
+	# Бур — поверх хода, который сверлит.
+	for p in colony.projects:
+		if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE:
+			_draw_drill(p, _rect_px(p.rect), 1.0)
 	_draw_dig_progress()
 	_draw_drops(font)
 	_draw_gas()
@@ -138,7 +142,7 @@ func _draw_done(p: Project) -> void:
 				_draw_question(r)
 	elif p.kind == Project.Kind.LIFT:
 		_draw_lift(p, r)
-	else:
+	elif p.kind != Project.Kind.DRILL:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
 		_draw_cracks(p, r)
@@ -233,34 +237,45 @@ func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 			draw_circle(Vector2(cx, body.end.y - TILE * 3), 8, Color(1.0, 0.85, 0.2, alpha))
 
 
-## Бур у забоя: корпус и вращающееся сверло, смотрит туда, куда идёт.
-func _draw_drill(p: Project, r: Rect2) -> void:
-	var front := colony.drill_front(p)
-	if front.is_empty():
-		return
-	var vert := p.rect.size.y > p.rect.size.x
-	var dir := (1 if not p.drill_rev else -1)
-	var a := view.cell_to_local(front[0])
-	var b := view.cell_to_local(front[front.size() - 1]) + Vector2(TILE, TILE)
-	var face := Rect2(a, b - a)
-	# Корпус — на клетку позади забоя, сверло — в забое.
-	var body := face
-	if vert:
-		body.position.y -= TILE * dir
+## Бур — машина 3×3: корпус с мотором сзади, сверло спереди (куда едет; стоит — вниз).
+## Сверло крутится, пока бур сверлит.
+func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
+	var dir := p.drill_dir if p.drill_dir != Vector2i.ZERO else Vector2i.DOWN
+	var body := r.grow(-3)
+	var face := r
+	if dir == Vector2i.DOWN:
+		body.size.y = TILE * 2 - 4
+		face = Rect2(r.position.x, r.position.y + TILE * 2, r.size.x, TILE)
+	elif dir == Vector2i.RIGHT:
+		body.size.x = TILE * 2 - 4
+		face = Rect2(r.position.x + TILE * 2, r.position.y, TILE, r.size.y)
 	else:
-		body.position.x -= TILE * dir
-	_rbox(body.grow(-3), 5, Color(0.85, 0.6, 0.15), Color(0.45, 0.3, 0.1), 2)
-	draw_circle(body.get_center(), 5, LAMP if colony.powered() else Color(0.35, 0.35, 0.38))
-	var spin := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and colony.powered() else 0.0
-	var tip := face.get_center() + (Vector2(0, TILE * 0.45) if vert else Vector2(TILE * 0.45, 0)) * dir
-	var half := (Vector2(TILE * 1.4, 0) if vert else Vector2(0, TILE * 1.4))
-	var base_c := face.get_center() - (Vector2(0, TILE * 0.45) if vert else Vector2(TILE * 0.45, 0)) * dir
-	draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68))
+		body.position.x += TILE + 2
+		body.size.x = TILE * 2 - 4
+		face = Rect2(r.position.x, r.position.y, TILE, r.size.y)
+	_rbox(body, 6, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
+	# Решётка мотора и лампа: горит, когда есть энергия.
+	var mc := body.get_center()
+	for k in 3:
+		var off := (k - 1) * 7.0
+		if dir == Vector2i.DOWN:
+			draw_line(mc + Vector2(-12, off), mc + Vector2(12, off), Color(0.45, 0.3, 0.1, alpha), 2.0)
+		else:
+			draw_line(mc + Vector2(off, -12), mc + Vector2(off, 12), Color(0.45, 0.3, 0.1, alpha), 2.0)
+	var lamp_on := colony.powered() or p.fuel > 0.0
+	draw_circle(body.position + Vector2(9, 9), 4, Color(LAMP, alpha) if lamp_on else Color(0.35, 0.35, 0.38, alpha))
+	var d := Vector2(dir)
+	var side := Vector2(-d.y, d.x)
+	var base_c := face.get_center() - d * TILE * 0.5
+	var tip := face.get_center() + d * TILE * 0.45
+	var half := side * TILE * 1.3
+	draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68, alpha))
+	var spin := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and lamp_on else 0.0
 	for k in 3:
 		var t := fmod(spin + k / 3.0, 1.0)
 		var m := base_c.lerp(tip, t)
 		var w := half * (1.0 - t)
-		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35), 2.0)
+		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
 
 
 ## Лифт: стальные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
@@ -1380,8 +1395,6 @@ func _draw_rails(r: Rect2, alpha: float) -> void:
 
 func _draw_site(p: Project, font: Font) -> void:
 	var r := _rect_px(p.rect)
-	if p.kind == Project.Kind.DRILL:
-		_draw_drill(p, r)
 	var edge := DIG_EDGE if p.phase == Project.Phase.DIG else BUILD_EDGE
 	if not p.blocked.is_empty():
 		edge = BLOCKED
@@ -1413,6 +1426,8 @@ func _draw_site(p: Project, font: Font) -> void:
 		elif p.kind == Project.Kind.ROOM:
 			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
 			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
+		elif p.kind == Project.Kind.DRILL:
+			_draw_drill(p, r, 0.3 + 0.7 * t)
 		else:
 			_draw_supports(p, r, 0.3 + 0.7 * t)
 		var bar := Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 6)

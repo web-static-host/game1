@@ -24,6 +24,8 @@ var deck: Dictionary
 ## Клетки с лестницей и клетки идущих строек (леса) — их ведёт колония.
 var ladders := {}
 var sites := {}
+## Крепь шахты под ногами: шахта над шахтой — ходят по балкам нижней.
+var floors := {}
 ## Меняется, когда меняются лестницы или леса: старые пути не годятся.
 var climb_rev := 0
 var _cache := {}
@@ -68,7 +70,7 @@ func solid(c: Vector2i) -> bool:
 func standable(c: Vector2i) -> bool:
 	if not passable(c):
 		return false
-	if deck.has(c):
+	if deck.has(c) or floors.has(c):
 		return true
 	if world.get_mat(c.x, c.y) == Mat.WATER:
 		# В озёра не заходят (вода выше земли) — водоём переходят только по мосту.

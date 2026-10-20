@@ -51,6 +51,12 @@ var _send_unit := 0
 
 
 ## Выбранный в карточке материал для перестройки стен: id комнаты -> материал.
+## На сколько метров продлевать шахту, тоннель или лифт (кнопки «Продлить»).
+var _extend_len := 5
+## Фильтры в списках выбора жителей: только без пары, только по призванию.
+var _pick_filters := {"single": false, "calling": false}
+## На сколько метров сверлить буром.
+var _drill_len := 10
 var _wall_choice := {}
 
 func _ready() -> void:
@@ -836,13 +842,53 @@ func _show_project(p: Project) -> void:
 					_show_project(p)
 				else:
 					hud.log_event(colony.repair_error(p), "warning"), "primary"])
-		actions.append(["Снести", func() -> void:
-			var err := colony.demolish_error(p)
-			if not err.is_empty():
-				hud.log_event(err, "warning")
-				return
-			colony.demolish(p)
-			_select(null, null), "danger"])
+		# Бур: куда и сколько сверлить; сверлящий — пауза и остановка.
+		if p.kind == Project.Kind.DRILL:
+			if colony.drilling(p):
+				if not p.paused:
+					actions.push_front(["Пауза", func() -> void:
+						colony.set_paused(p, true)
+						_show_project(p)])
+				actions.push_front(["Остановить", func() -> void:
+					colony.stop_drill(p)
+					_show_project(p), "danger"])
+			else:
+				controls.append({"label": "Сверлить, м", "value": _drill_len, "min": 1, "max": Colony.DRILL_MAX,
+					"changed": func(v: int) -> void: _drill_len = v})
+				for d: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.RIGHT: "Вправо →"}[d]
+					actions.push_front([label, func() -> void:
+						var err := colony.start_drill(p, d, _drill_len)
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+						_show_project(p), "primary"])
+		# Шахту, тоннель и лифт продлевают: продолжение копают и сливают с этой постройкой.
+		var dirs := Colony.extend_dirs(p)
+		if not dirs.is_empty() and not p.repairing:
+			var ext := colony.extension_of(p)
+			if ext != null:
+				actions.append(["К продолжению", func() -> void: _select(null, ext)])
+			else:
+				controls.append({"label": "Продлить на, м", "value": _extend_len, "min": 1, "max": Colony.EXTEND_MAX,
+					"changed": func(v: int) -> void: _extend_len = v})
+				for d: Vector2i in dirs:
+					var label: String = {Vector2i.LEFT: "← Продлить", Vector2i.DOWN: "Продлить ↓", Vector2i.RIGHT: "Продлить →"}[d]
+					actions.push_front([label, func() -> void:
+						var err := colony.extend_error(p, d, _extend_len)
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+							return
+						var q := colony.extend_project(p, d, _extend_len)
+						if q != null:
+							_select(null, q), "primary"])
+		if not colony.drilling(p):
+			actions.append(["Снести", func() -> void:
+				var err := colony.demolish_error(p)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+					return
+				colony.demolish(p)
+				_select(null, null), "danger"])
 	# Свет — во всей комнате сразу: включить, выключить или вернуть «сам».
 	if colony.lightable(p) and colony.research.has("electricity"):
 		if p.light != -1:
@@ -1009,6 +1055,7 @@ func _pick_worker(p: Project) -> void:
 			return colony.is_free(a)
 		return colony.suitability(a, p) > colony.suitability(b, p))
 	var task := colony.work_task(p)
+	cands = cands.filter(func(u: Unit) -> bool: return _pick_pass(u, task))
 	for u: Unit in cands:
 		var info := "подходит на %d%% · %s · навык %d%s" % [roundi(colony.suitability(u, p) * 100),
 			_fit_text(u, task), u.level(colony.work_skill(p)), _calling_text(u, task)]
@@ -1024,8 +1071,28 @@ func _pick_worker(p: Project) -> void:
 				_show_project(p)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
 		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
-		"controls": [{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items, "empty": "Все взрослые уже здесь."}],
+		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)),
+			{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items,
+			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Все взрослые уже здесь."}],
 		"actions": [["Назад", func() -> void: _show_project(p)]]})
+
+
+## Переключатели фильтров над списком выбора жителей (по умолчанию выключены).
+func _pick_filter_control(refresh: Callable) -> Dictionary:
+	return {"type": "checks", "label": "Показать только:", "items": [
+		["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]]],
+		"toggled": func(k: String, on: bool) -> void:
+			_pick_filters[k] = on
+			refresh.call()}
+
+
+## Проходит ли житель включённые фильтры (для работы task).
+func _pick_pass(u: Unit, task: int) -> bool:
+	if _pick_filters["single"] and u.partner_id != 0:
+		return false
+	if _pick_filters["calling"] and colony.calling_of(u, task) != 1:
+		return false
+	return true
 
 
 ## Нормы запаса склада: сколько держать каждого ресурса.
@@ -1143,14 +1210,20 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
 			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
 		Project.Kind.DRILL:
-			var dn: int = colony._drill_done_slices(p)
-			var dl := maxi(p.rect.size.x, p.rect.size.y)
-			rows.append(_progress("Пройдено", float(dn) / dl, "%d из %d м" % [dn, dl], Color(0.6, 0.7, 0.8)))
-			chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else "нет — бур стоит")])
-			chips.append(["", "скорость ×%.1f от жителя" % colony.drill_speed()])
-			if not p.paid:
-				rows.append({"type": "text", "text": "Ждёт материалы на обсадку хода — их привезут подсобные и свободные жители."})
-			rows.append({"type": "text", "text": "Бур сверлит сам по 3 клетки поперёк, втрое быстрее жителя, на энергии. Породу уносят жители. Перед газом, водой или магмой останавливается с тревогой. «Остановить» — пройденная часть остаётся ходом. Готовый ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты."})
+			if colony.drilling(p):
+				var went := absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
+				var all := went + p.drill_left
+				rows.append(_progress("Пройдено", float(went) / maxf(1.0, all), "%d из %d м" % [went, all], Color(0.6, 0.7, 0.8)))
+			if colony.drilling(p):
+				rows.append({"type": "text", "text": "Бур едет и сверлит ход 3 м шириной втрое быстрее жителя. Породу уносят жители. «Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
+			if p.phase == Project.Phase.DONE and not colony.drilling(p):
+				var diesel := colony.research.has("combustion")
+				chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else ("нет — на дизеле" if diesel else "нет — бур стоит"))])
+				chips.append(["", "скорость ×%.1f от жителя" % colony.drill_speed(true)])
+				rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее жителя, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят жители. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
+					" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
+			else:
+				rows.append({"type": "text", "text": "Место под бур выкапывают, потом собирают машину. Готовым буром командуют из его карточки: куда и сколько сверлить."})
 		Project.Kind.LIFT:
 			chips.append(["", "по вертикали" if p.lift_vertical() else "по горизонтали"])
 			if p.phase == Project.Phase.DONE:
@@ -1472,6 +1545,7 @@ func _pick_role(prof: int) -> void:
 		return not o.child and not (o.workplace == 0 and o.profession == prof))
 	var score := func(o: Unit) -> float:
 		return colony.stat_fit(o, task) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
+	cands = cands.filter(func(o: Unit) -> bool: return _pick_pass(o, task))
 	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
 	var items := []
 	for o: Unit in cands:
@@ -1483,7 +1557,9 @@ func _pick_role(prof: int) -> void:
 				colony.set_profession(o, prof)
 				_show_people()})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",
-		"controls": [{"type": "people", "label": "Кого назначить:", "items": items, "empty": "Некого назначить."}],
+		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)),
+			{"type": "people", "label": "Кого назначить:", "items": items,
+			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],
 		"actions": [["Назад", _show_people]]})
 
 
@@ -1603,11 +1679,21 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		# Шахта — всегда 3 м: полоса тянется по горизонтали от места, где коснулись.
 		r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, Project.MINE_HEIGHT)
 		err = colony.validate(kind, r)
-	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT or mode == Hud.Mode.DRILL:
-		# Лифт и бур — строго вертикально или строго горизонтально (ход 3 м).
+	elif mode == Hud.Mode.DRILL:
+		# Бур — машина 3×3 под пальцем; сама прилипает к земле или полу рядом.
+		r = Rect2i(c.x - 1, c.y - 1, 3, 3)
+		err = colony.validate(kind, r)
+		for dy in [1, -1, 2, -2]:
+			if err.is_empty():
+				break
+			var rr := Rect2i(c.x - 1, c.y - 1 + dy, 3, 3)
+			if colony.validate(kind, rr).is_empty():
+				r = rr
+				err = ""
+	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
+		# Лифт — строго вертикально или строго горизонтально (ход 3 м).
 		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
-			r = Rect2i(_drag_start.x - (1 if mode == Hud.Mode.DRILL else 0), r.position.y,
-				3 if mode != Hud.Mode.LIFT else 2, r.size.y)
+			r = Rect2i(_drag_start.x, r.position.y, 3 if mode != Hud.Mode.LIFT else 2, r.size.y)
 		else:
 			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
 		err = colony.validate(kind, r, _lift_material())
@@ -1870,10 +1956,6 @@ func _confirm_pending() -> bool:
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()
-	if p != null and _pending_kind == Project.Kind.DRILL:
-		# Бур идёт от того конца, где начали вести пальцем.
-		var vert := p.rect.size.y > p.rect.size.x
-		p.drill_rev = _drag_start.y > p.rect.get_center().y if vert else _drag_start.x > p.rect.get_center().x
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")
