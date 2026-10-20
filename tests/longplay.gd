@@ -18,6 +18,9 @@ var shaft_x := 0
 var shaft_bottom := 0
 var side := 1
 var _pending_purpose := {}
+## Сколько секунд стройка стоит с «Нет доступа» и места, где бот такую уже бросил.
+var _stuck := {}
+var _bad_rects: Array[Rect2i] = []
 var deaths: Array[String] = []
 var births := 0
 var prof := {}
@@ -177,7 +180,7 @@ func _summary() -> void:
 		sl.append("%s %d" % [k, shapes[k]])
 	print("Формы: %s" % ", ".join(sl))
 	print("Сверхюниты (бирюзовые): %d · мутанты: %d" % [supers, mutants])
-	print("Планеты: Земля (полёты на другие планеты ещё не сделаны)")
+	print("Планеты: Земля (бот пока не строит ракеты)")
 
 
 ## Цвет жителя словами: ближайший из основных.
@@ -336,6 +339,7 @@ func _play() -> void:
 	if not OS.get_environment("IDLE").is_empty():
 		return
 	_answer_geologist()
+	_drop_stuck()
 	_finish_purposes()
 	_repairs()
 	_marks()
@@ -542,6 +546,36 @@ func _finish_purposes() -> void:
 			_pending_purpose.erase(p.id)
 
 
+## Как сделал бы игрок: очаг, к которому жителям не подойти (например, на крыше
+## подземной фермы), через пару минут отменяет и больше на это место не ставит.
+## (Комнаты у шахты ждут тоннеля — их не трогаем.)
+func _drop_stuck() -> void:
+	for p in colony.projects.duplicate():
+		if _pending_purpose.get(p.id, -1) != RoomType.HEARTH or p.phase == Project.Phase.DONE or not p.blocked.begins_with("Нет доступа"):
+			_stuck.erase(p.id)
+			continue
+		_stuck[p.id] = _stuck.get(p.id, 0.0) + 5.0
+		if _stuck[p.id] >= 120.0:
+			_bad_rects.append(p.rect)
+			colony.cancel_project(p)
+			_pending_purpose.erase(p.id)
+			_stuck.erase(p.id)
+			_act("отмена недоступной стройки")
+
+
+## Очаг — готовый, обустраиваемый (пока ставят печи, назначение ещё не задано) или в планах.
+func _is_hearth(p: Project) -> bool:
+	return p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH \
+		or (p.phase == Project.Phase.EQUIP and p.equip_target == RoomType.HEARTH)
+
+
+func _bad_spot(r: Rect2i) -> bool:
+	for b in _bad_rects:
+		if b.intersects(r):
+			return true
+	return false
+
+
 func _repairs() -> void:
 	for p in colony.projects:
 		if p.wear >= 0.7 and colony.repair_error(p).is_empty():
@@ -627,7 +661,7 @@ func _heat_farms() -> bool:
 			continue
 		var has_hearth := false
 		for p in colony.projects:
-			var hearth: bool = p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH
+			var hearth := _is_hearth(p)
 			if hearth and absi(p.rect.get_center().x - farm.rect.get_center().x) <= 6 and absi(p.rect.get_center().y - farm.rect.get_center().y) <= 3:
 				has_hearth = true
 		if has_hearth:
@@ -639,7 +673,7 @@ func _heat_farms() -> bool:
 		for r in spots:
 			var hc := r.get_center()
 			var fc := farm.rect.get_center()
-			if maxi(absi(hc.x - fc.x), absi(hc.y - fc.y)) > 4:
+			if maxi(absi(hc.x - fc.x), absi(hc.y - fc.y)) > 4 or _bad_spot(r):
 				continue
 			if colony.validate(Project.Kind.ROOM, r, "wood").is_empty():
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
@@ -655,19 +689,18 @@ func _heat_homes() -> bool:
 	# Утепляются к осени: летом тепло, а камень на очаг нужнее для шахты.
 	if colony.time_to_winter() > Colony.MONTH * 3.0:
 		return false
-	for p in colony.projects:
-		if _pending_purpose.get(p.id, -1) == RoomType.HEARTH:
-			return false
 	for home in colony.rooms_of(RoomType.HOME):
 		var warm := false
 		for p in colony.projects:
-			var hearth: bool = p.purpose == RoomType.HEARTH or _pending_purpose.get(p.id, -1) == RoomType.HEARTH
+			var hearth := _is_hearth(p)
 			if hearth and absi(p.rect.get_center().x - home.rect.get_center().x) <= 7 and absi(p.rect.get_center().y - home.rect.get_center().y) <= 4:
 				warm = true
 		if warm:
 			continue
 		for r in [Rect2i(home.rect.end.x, home.rect.position.y, 3, 3), Rect2i(home.rect.position.x - 3, home.rect.position.y, 3, 3),
 				Rect2i(home.rect.position.x, home.rect.position.y - 3, 3, 3), Rect2i(home.rect.end.x - 3, home.rect.position.y - 3, 3, 3)]:
+			if _bad_spot(r):
+				continue
 			if colony.validate(Project.Kind.ROOM, r, "wood").is_empty():
 				var q := colony.create_project(Project.Kind.ROOM, r, -1, "wood")
 				if q != null:
