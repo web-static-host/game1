@@ -205,11 +205,24 @@ static func ladder_work(p: Project) -> float:
 
 ## Стоимость и объём текущего обустройства (назначение или лестница).
 static func job_cost(p: Project) -> Dictionary:
+	if not p.equip_material.is_empty():
+		return material_cost(p, p.equip_material)
 	return ladder_cost(p) if p.equip_ladder else equip_cost(p.equip_target, p)
 
 
 static func job_work(p: Project) -> float:
+	if not p.equip_material.is_empty():
+		return material_work(p, p.equip_material)
 	return ladder_work(p) if p.equip_ladder else equip_work(p.equip_target, p)
+
+
+## Перестройка стен готовой комнаты из материала mat: как новые стены, работы — 70%.
+static func material_cost(p: Project, mat: String) -> Dictionary:
+	return Project.cost_for(Project.Kind.ROOM, p.rect, mat)
+
+
+static func material_work(p: Project, mat: String) -> float:
+	return Project.work_for(Project.Kind.ROOM, p.rect, mat) * 0.7
 
 
 ## Склад — для стройматериалов, амбар — для еды (без учёта галочек «что хранить»).

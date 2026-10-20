@@ -44,6 +44,9 @@ var _room_w := 6
 var _send_unit := 0
 
 
+## Выбранный в карточке материал для перестройки стен: id комнаты -> материал.
+var _wall_choice := {}
+
 func _ready() -> void:
 	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
 	ThemeDB.fallback_font = Fonts.bold()
@@ -635,6 +638,24 @@ func _show_project(p: Project) -> void:
 				_show_project(p)
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
+		# Стены можно перестроить из другого материала (дерево → камень и т. п.).
+		var mats := colony.available_materials()
+		if mats.size() > 1:
+			var cur_mat: String = _wall_choice.get(p.id, p.material)
+			controls.append({"label": "Стены", "value": maxi(0, mats.find(cur_mat)), "min": 0, "max": mats.size() - 1,
+				"options": mats.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
+				"changed": func(i: int) -> void:
+					_wall_choice[p.id] = mats[i]
+					hud.refresh_panel(_project_spec(p, preview["v"])),
+			})
+			actions.append(["Перестроить стены", func() -> void:
+				var m: String = _wall_choice.get(p.id, p.material)
+				var err := colony.material_error(p, m)
+				if not err.is_empty():
+					hud.log_event(err if m != p.material else "Выберите другой материал стен (переключатель «Стены»)", "warning")
+				elif colony.change_material(p, m):
+					_wall_choice.erase(p.id)
+					_show_project(p)])
 		# Каменный очаг можно переложить кирпичом.
 		if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
 			actions.push_front(["Кирпичные печи", func() -> void:
@@ -802,12 +823,25 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			rows.append(_progress("Строительство", p.build_done / p.build_work() if p.paid else 0.0))
 		Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
-			rows.append(_progress("Лестница" if p.equip_ladder else "Обустройство", p.equip_done / w if p.equip_paid else 0.0))
+			var what: String = "Лестница" if p.equip_ladder else ("Перестройка стен — " + Project.MATERIALS[p.equip_material][0].to_lower()
+				if not p.equip_material.is_empty() else "Обустройство")
+			rows.append(_progress(what, p.equip_done / w if p.equip_paid else 0.0))
 	if p.repairing:
 		rows.append(_progress("Ремонт", p.repair_done / maxf(1.0, p.repair_work) if p.repair_paid else 0.0))
 	var supply := colony.supply_status(p)
 	if not supply.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
+	var wall: String = _wall_choice.get(p.id, p.material)
+	if p.phase == Project.Phase.DONE and wall != p.material:
+		var wc := RoomType.material_cost(p, wall)
+		var witems := []
+		for k in wc:
+			witems.append([k, colony.inventory.get(k, 0), wc[k], colony.inventory.get(k, 0) >= wc[k]])
+		rows.append({"type": "resources", "label": "Перестроить стены — %s (%d с работы; на время работ комната не работает):" % [
+			Project.MATERIALS[wall][0].to_lower(), roundi(RoomType.material_work(p, wall))], "items": witems})
+		var werr := colony.material_error(p, wall)
+		if not werr.is_empty():
+			rows.append({"type": "warning", "text": werr})
 	var chips := []
 	if p.phase != Project.Phase.DONE or p.repairing:
 		chips.append(["people", "рабочие %d/%d" % [colony.workers_on(p), p.workers]])

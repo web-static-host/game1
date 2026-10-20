@@ -1302,6 +1302,45 @@ func is_hearth_upgrade(p: Project, t: int) -> bool:
 	return (t == RoomType.HEARTH_BRICK and not p.brick_stoves) or (t == RoomType.HEARTH_GAS and not p.gas_boiler)
 
 
+## Почему нельзя перестроить стены комнаты из mat (пусто — можно).
+func material_error(p: Project, mat: String) -> String:
+	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
+		return "Перестраивать можно только готовую комнату"
+	if mat == p.material:
+		return "Стены уже из этого материала"
+	if not available_materials().has(mat):
+		return "Этот материал ещё не доступен"
+	# Тяжелее стены — больше вес на нижние этажи; слабее — меньше держат верхние.
+	var old := p.material
+	p.material = mat
+	var predicted := loads.compute()
+	var err := ""
+	for q in projects:
+		if q.kind == Project.Kind.ROOM and loads.utilization(q, predicted) > 1.0:
+			err = "%s не выдержит: сверху будет %d т, держит %d т" % [q.title(), roundi(predicted.get(q.id, 0.0)), roundi(Loads.bearing(q))]
+			break
+	p.material = old
+	return err
+
+
+## Перестроить стены готовой комнаты из другого материала (дерево → камень и т. п.).
+## На время работ комната не работает; новые стены — без износа.
+func change_material(p: Project, mat: String) -> bool:
+	wake_idle()
+	if not material_error(p, mat).is_empty():
+		return false
+	_release_beds(p)
+	p.equip_ladder = false
+	p.equip_material = mat
+	p.equip_target = p.purpose
+	p.equip_paid = false
+	p.equip_done = 0.0
+	p.phase = Project.Phase.EQUIP
+	_log("%s: перестраиваем стены — %s" % [p.title(), Project.MATERIALS[mat][0].to_lower()], "info")
+	_try_pay(p)
+	return true
+
+
 ## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
 func add_ladder(p: Project) -> bool:
 	wake_idle()
@@ -1324,9 +1363,10 @@ func cancel_equip(p: Project) -> void:
 		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
-	if not p.equip_ladder and not is_hearth_upgrade(p, p.equip_target):
+	if not p.equip_ladder and p.equip_material.is_empty() and not is_hearth_upgrade(p, p.equip_target):
 		p.purpose = RoomType.NONE
 	p.equip_ladder = false
+	p.equip_material = ""
 	p.blocked = ""
 	for u in units:
 		if u.project_id == p.id:
@@ -1338,6 +1378,18 @@ func _finish_equip(p: Project) -> void:
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	p.blocked = ""
+	if not p.equip_material.is_empty():
+		p.material = p.equip_material
+		p.equip_material = ""
+		p.wear = 0.0
+		p.wear_warned = 0
+		for c in p.cells():
+			world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("%s: стены перестроены — %s" % [p.title(), Project.MATERIALS[p.material][0].to_lower()], "good")
+		return
 	if p.equip_ladder:
 		p.equip_ladder = false
 		p.ladder = true

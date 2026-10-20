@@ -59,6 +59,7 @@ func _initialize() -> void:
 	test_lights()
 	test_two_generators()
 	test_store_limits()
+	test_change_material()
 	test_walk_floor_only()
 	test_job_stats()
 	test_pairs_at_work()
@@ -2516,6 +2517,27 @@ func test_clearing_regrown() -> void:
 	check(colony._task_valid(u), "рубка на месте стройки не отменяется без отметки")
 	u.task = Unit.Task.NONE
 	u.project_id = 0
+
+
+func test_change_material() -> void:
+	# Стены готовой комнаты перестраивают из другого материала: назначение остаётся, износ — с нуля.
+	var res := _colony_with_room(33, RoomType.HOME)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	check(room.purpose == RoomType.HOME and room.material == "wood", "деревянный дом готов")
+	room.wear = 0.6
+	check(not colony.material_error(room, "wood").is_empty(), "на тот же материал перестраивать нечего")
+	colony.known_resources["stone"] = true
+	check(colony.material_error(room, "stone").is_empty(), "на камень можно")
+	colony.inventory = {"wood": 80, "stone": 80, "food": 80}
+	colony._sync_held()
+	check(colony.change_material(room, "stone") and room.phase == Project.Phase.EQUIP, "перестройка началась")
+	colony.advance_offline(6000.0)
+	check(room.phase == Project.Phase.DONE and room.material == "stone", "стены каменные")
+	check(room.purpose == RoomType.HOME and room.wear < 0.1, "дом остался домом, износ с нуля")
+	check(colony.change_material(room, "wood"), "обратно на дерево тоже можно")
+	colony.cancel_equip(room)
+	check(room.material == "stone" and room.purpose == RoomType.HOME and room.equip_material.is_empty(), "отмена — всё как было")
 
 
 func test_store_limits() -> void:
