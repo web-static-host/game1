@@ -1005,12 +1005,14 @@ func _check_supply(p: Project) -> void:
 # --- Бур ------------------------------------------------------------------------------
 ## Бур проходит срез (3 клетки поперёк) втрое быстрее, чем житель копает одну клетку.
 const DRILL_POWER := 10
+## На сколько секунд сверления хватает 1 дизеля.
+const DRILL_DIESEL_TIME := 30.0
 const DRILL_SPEED := 3.0
 
 
-func drill_speed() -> float:
+func drill_speed(diesel := false) -> float:
 	return DRILL_SPEED * dig_bonus() * (1.5 if research.has("diamond_bits") else 1.0) \
-		* (1.5 if research.has("heavy_drill") else 1.0) * clampf(power_ratio, 0.0, 1.0)
+		* (1.5 if research.has("heavy_drill") else 1.0) * (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
 
 
 ## Бур работает: материалы привезли, не на паузе, ещё есть что сверлить.
@@ -1079,10 +1081,17 @@ func _drills_tick(dt: float) -> void:
 			p.paid = true
 			p.blocked = ""
 			_log("%s: материалы на месте — бур пошёл" % p.title(), "info")
+		# Без энергии дизельный бур идёт на дизеле из нефтехранилища.
+		var on_diesel := false
 		if not powered() or power_ratio <= 0.0:
-			if p.blocked.is_empty():
-				p.blocked = "Нет энергии — бур стоит"
-			continue
+			if research.has("combustion") and (p.fuel > 0.0 or _remove("diesel", 1) >= 1):
+				if p.fuel <= 0.0:
+					p.fuel += DRILL_DIESEL_TIME
+				on_diesel = true
+			else:
+				if p.blocked.is_empty():
+					p.blocked = "Нет энергии — бур стоит" + (" (и дизеля нет)" if research.has("combustion") else "")
+				continue
 		if p.blocked.begins_with("Нет энергии"):
 			p.blocked = ""
 		var front := drill_front(p)
@@ -1096,7 +1105,9 @@ func _drills_tick(dt: float) -> void:
 				break
 		if stop:
 			continue
-		p.drill_t += dt * drill_speed()
+		if on_diesel:
+			p.fuel = maxf(0.0, p.fuel - dt)
+		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
 		var need := 0.0
 		for c in front:
 			need = maxf(need, dig_time(c))
@@ -1137,6 +1148,56 @@ func stop_drill(p: Project) -> void:
 	else:
 		r = Rect2i(r.end.x - m if p.drill_rev else r.position.x, r.position.y, m, r.size.y)
 	_finish_drill(p, r)
+
+
+# --- Нефть ----------------------------------------------------------------------------
+## Нефтекачалка на энергии раз в OIL_PUMP_TIME выкачивает ближайшую клетку нефтеносного
+## пласта в радиусе: +OIL_PER_CELL_YIELD нефти в хранилище, пласт становится пустым сланцем.
+const OIL_PUMP_TIME := 15.0
+const OIL_PER_CELL_YIELD := 3
+
+
+func _oil_tick(dt: float) -> void:
+	for p in rooms_of(RoomType.OIL_PUMP):
+		if p.paused:
+			continue
+		if not powered() or power_ratio <= 0.0:
+			p.blocked = "Нет энергии — качалка стоит"
+			continue
+		var free := 0
+		for t in rooms_of(RoomType.OIL_TANK):
+			free += room_free(t, "oil")
+		if free <= 0:
+			p.blocked = "Нефтехранилище полно или его нет — качалка стоит"
+			continue
+		p.farm_progress += dt * power_ratio
+		if p.farm_progress < OIL_PUMP_TIME:
+			continue
+		p.farm_progress = 0.0
+		var cell = _nearest_oil(p)
+		if cell == null:
+			p.blocked = "Рядом нет нефти (качает на %d м)" % RoomType.effect_radius(p)
+			continue
+		p.blocked = ""
+		world.set_material(cell.x, cell.y, Mat.SHALE)
+		_add("oil", OIL_PER_CELL_YIELD)
+		produced["oil"] = int(produced.get("oil", 0)) + OIL_PER_CELL_YIELD
+
+
+## Ближайшая к нефтекачалке клетка нефтеносного пласта в её радиусе.
+func _nearest_oil(p: Project) -> Variant:
+	var c0 := p.rect.get_center()
+	var rad := RoomType.effect_radius(p)
+	var best = null
+	var best_d := 1 << 30
+	for y in range(c0.y - rad, c0.y + rad + 1):
+		for x in range(c0.x - rad, c0.x + rad + 1):
+			if world.get_mat(x, y) == Mat.OIL:
+				var d := absi(x - c0.x) + absi(y - c0.y)
+				if d < best_d:
+					best_d = d
+					best = Vector2i(x, y)
+	return best
 
 
 # --- Лифты -----------------------------------------------------------------------------
@@ -2725,7 +2786,7 @@ func is_workplace(p: Project) -> bool:
 		return false
 	if p.is_water_structure():
 		return true
-	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE,
+	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY,
 		RoomType.STORAGE, RoomType.GRANARY]
 
 
@@ -2846,7 +2907,7 @@ func work_task(p: Project) -> int:
 			return Unit.Task.FARM
 		RoomType.LAB:
 			return Unit.Task.RESEARCH
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			return Unit.Task.CRAFT
 		RoomType.STORAGE:
 			return Unit.Task.HARVEST
@@ -2929,7 +2990,7 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			# Нет сырья — мастер сам приносит его со склада в свою мастерскую.
 			if has_inputs(p):
 				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
@@ -3037,6 +3098,7 @@ func update(dt: float) -> void:
 		_power_tick(step)
 		_lifts_tick(step)
 		_drills_tick(step)
+		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, false)
@@ -4271,6 +4333,10 @@ func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if key.is_empty() or n <= 0:
 		return
 	produced[key] = int(produced.get(key, 0)) + n
+	# Нефть из вскрытого пласта — сразу по трубам в хранилище (нет его — разлилась).
+	if RoomType.PIPED.has(key):
+		_add(key, n)
+		return
 	known_resources[key] = true
 	if site != null:
 		var use := mini(n, int(remaining(site).get(key, 0)))
@@ -4604,6 +4670,8 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		return false
 	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
 	for k in need:
+		if RoomType.PIPED.has(k):
+			continue
 		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
 		if want <= 0:
 			continue
@@ -5199,6 +5267,9 @@ func _room_supported(q: Project) -> bool:
 ## Хватает ли сырья на цикл мастерской.
 ## Сколько сырья k есть у мастерской: принесённое; без игрока жители берут и со склада.
 func _input_have(p: Project, k: String) -> int:
+	# Нефть — по трубам прямо из хранилища.
+	if RoomType.PIPED.has(k):
+		return inventory.get(k, 0)
 	return p.stock.get(k, 0) + (inventory.get(k, 0) if offline else 0)
 
 
@@ -5251,6 +5322,10 @@ func missing_inputs(p: Project) -> Dictionary:
 ## Готовая продукция: при игроке — кучей на полу мастерской (её уносят подсобные),
 ## без игрока — сразу на склад (если на нём есть работник).
 func _produce(p: Project, k: String, n: int) -> void:
+	if RoomType.PIPED.has(k):
+		produced[k] = int(produced.get(k, 0)) + n
+		_add(k, n)
+		return
 	drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
 
 
@@ -5412,10 +5487,15 @@ func _power_tick(dt: float) -> void:
 		p.burning = false
 		if p.paused:
 			continue
-		# Газовый жжёт только метан из баков дегазации, обычный — уголь, а без него дрова.
+		# Газовый жжёт только метан из баков дегазации, дизельный — дизель из нефтехранилища,
+		# обычный — уголь, а без него дрова.
 		var gas := p.purpose == RoomType.GAS_GEN
+		var diesel := p.purpose == RoomType.DIESEL_GEN
 		if p.farm_progress <= 0.0:
-			if gas:
+			if diesel:
+				if _remove("diesel", 1) >= 1:
+					p.farm_progress += RoomType.FUEL_TIME * 2.0
+			elif gas:
 				if _remove("methane", 1) >= 1:
 					p.farm_progress += RoomType.FUEL_TIME
 			elif _remove("coal", 1) >= 1:
@@ -5426,11 +5506,12 @@ func _power_tick(dt: float) -> void:
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true
-			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0))
-			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана"):
+			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0) * (1.5 if diesel else 1.0))
+			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана") or p.blocked.begins_with("Нет дизеля"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
-			p.blocked = "Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова"
+			p.blocked = "Нет дизеля: нужен нефтезавод и топливо в нефтехранилище" if diesel else \
+				("Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова")
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 	_hearth_tick(dt)
 	for p in lifts():
@@ -5646,6 +5727,7 @@ func advance_offline(dt: float) -> int:
 		_power_tick(step)
 		_lifts_tick(step)
 		_drills_tick(step)
+		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, true)
@@ -5950,7 +6032,7 @@ func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
 			if not research.current.is_empty():
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.RESEARCH, p]
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			if has_inputs(p):
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.CRAFT, p]
@@ -5994,6 +6076,8 @@ func _offline_harvest(taken: Dictionary) -> Array:
 func holders(key: String) -> Array[Project]:
 	if key == "methane":
 		return rooms_of(RoomType.DEGAS)
+	if key == "oil" or key == "diesel":
+		return rooms_of(RoomType.OIL_TANK)
 	var out: Array[Project] = []
 	for p in store_rooms():
 		if RoomType.stores(p, key):
@@ -6005,6 +6089,8 @@ func holders(key: String) -> Array[Project]:
 func room_cap(p: Project, key: String) -> int:
 	if key == "methane":
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
+	if key == "oil" or key == "diesel":
+		return RoomType.OIL_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.OIL_TANK else 0
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
 		return 0
 	var c := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
@@ -6037,7 +6123,7 @@ func base_have(key: String) -> int:
 
 
 func _base_cap(key: String) -> int:
-	return 0 if key == "methane" else RoomType.BASE_CAPACITY
+	return 0 if RoomType.PIPED.has(key) else RoomType.BASE_CAPACITY
 
 
 ## Склад (амбар) в клетке c.
@@ -6093,7 +6179,7 @@ func _migrate_stores() -> void:
 			var put := clampi(room_cap(p, k) - held_in(p, k), 0, extra)
 			p.held[k] = held_in(p, k) + put
 			extra -= put
-		if k == "methane" and extra > 0:
+		if RoomType.PIPED.has(k) and extra > 0:
 			inventory[k] = int(inventory[k]) - extra
 
 
@@ -6144,7 +6230,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 		for p in holders(key):
 			if put >= amount:
 				break
-			if key != "methane" and not store_staffed(p):
+			if not RoomType.PIPED.has(key) and not store_staffed(p):
 				continue
 			var free := clampi(room_limit(p, key) - held_in(p, key), 0, amount - put)
 			if free > 0:
@@ -6156,7 +6242,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 	if room != null:
 		return put
 	# Предупреждаем один раз на ресурс, пока не построят новый склад.
-	if put < amount and not _full_warned.has(key) and key != "methane":
+	if put < amount and not _full_warned.has(key) and not RoomType.PIPED.has(key):
 		_full_warned[key] = true
 		_log("Склад полон: %s (%d). Постройте склад, лишнее выбрасывается." % [Mat.resource_name(key).to_lower(), cap], "warning")
 	return put

@@ -2,10 +2,12 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN,
+	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор",
+	"Нефтекачалка", "Нефтехранилище", "Нефтезавод", "Дизельный генератор"]
 ## Еда хранится в амбаре, всё остальное — на складе.
 const FOOD_KEYS := ["food", "berries"]
 const HINTS := [
@@ -24,11 +26,16 @@ const HINTS := [
 	"хранит еду: рыбу, урожай ферм, ягоды",
 	"отопление: печи (по одной на 3 м) жгут дрова (кирпичные — и уголь) и греют от стен на 6–10 м",
 	"энергия: сжигает метан из баков дегазации",
+	"тянет нефть из пластов вокруг (10, 20 или 40 м — по размеру комнаты) по трубам в нефтехранилище; нужна энергия",
+	"хранит нефть и дизельное топливо (только здесь, по трубам); если рухнет — взрыв вокруг",
+	"мастер перегоняет нефть в дизельное топливо: 2 нефти → 1 дизель (по трубам из хранилища и обратно)",
+	"энергия: сжигает дизельное топливо — мощнее и вдвое дольше на единице",
 ]
 ## Взрываются при обрушении (бак газа; потом — хранилище нефти).
-const EXPLOSIVE := [DEGAS]
+const EXPLOSIVE := [DEGAS, OIL_TANK]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
+	REFINERY: "refining", DIESEL_GEN: "combustion", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
@@ -46,11 +53,17 @@ const FUEL_VALUE := {"methane": 3.0, "coal": 2.0, "wood": 1.0}
 const RECIPES := {
 	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
 	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
+	REFINERY: [{"oil": 2}, {"diesel": 1}, 20.0],
 }
 ## Генераторы: на дровах и угле или на метане.
-const GENERATORS := [GENERATOR, GAS_GEN]
+const GENERATORS := [GENERATOR, GAS_GEN, DIESEL_GEN]
+## Жидкое и газ: хранятся только в баках (метан — в дегазации, нефть и дизель — в
+## нефтехранилище) и идут по трубам — их не носят.
+const PIPED := ["methane", "oil", "diesel"]
+## Нефтехранилище: сколько нефти (и отдельно дизеля) держит на метр ширины.
+const OIL_PER_CELL := 40
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
-const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
+const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5, OIL_PUMP: 10, REFINERY: 10}
 const POWER_MAKE := 20
 ## На сколько секунд хватает 1 метана, 1 угля или 2 дров.
 const FUEL_TIME := 40.0
@@ -108,7 +121,7 @@ static func effect_radius(p: Project) -> int:
 			return 16
 		VENT:
 			return 20
-		DEGAS:
+		DEGAS, OIL_PUMP:
 			# 3 м — 10, 6 м — 20, 9 м — 40.
 			return [10, 20, 40][clampi(blocks(p), 1, 3) - 1]
 	return 0
@@ -179,6 +192,14 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 10, "brick": 8}
 		GENERATOR, GAS_GEN:
 			return {"stone": 6, "copper": 4, "iron": 4}
+		OIL_PUMP:
+			return {"iron": 8, "copper": 4, "stone": 6}
+		OIL_TANK:
+			return {"iron": 4 * blocks(p), "stone": 6}
+		REFINERY:
+			return {"iron": 12, "copper": 6, "brick": 8}
+		DIESEL_GEN:
+			return {"iron": 10, "copper": 6, "metal": 4}
 		DEGAS:
 			return {"wood": 8, "stone": 8}
 		GRANARY:
@@ -233,7 +254,7 @@ static func same_kind(p: Project, key: String) -> bool:
 
 
 static func stores(p: Project, key: String) -> bool:
-	if p.store_off.has(key):
+	if p.store_off.has(key) or PIPED.has(key):
 		return false
 	if p.purpose == GRANARY:
 		return FOOD_KEYS.has(key)

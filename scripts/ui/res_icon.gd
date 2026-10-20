@@ -10,6 +10,7 @@ const COLORS := {
 	"uranium": Color(0.55, 0.9, 0.32), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.93, 0.9, 0.92),
 	"oil": Color(0.12, 0.1, 0.08), "limestone": Color(0.83, 0.8, 0.7),
 	"brick": Color(0.72, 0.3, 0.22), "metal": Color(0.62, 0.66, 0.72), "methane": Color(0.55, 0.8, 0.3),
+	"diesel": Color(0.95, 0.65, 0.15),
 	"soil": Color(0.42, 0.29, 0.18), "sand": Color(0.87, 0.77, 0.53), "gravel": Color(0.58, 0.55, 0.5),
 }
 
@@ -71,6 +72,12 @@ static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
 			ci.draw_rect(Rect2(c + Vector2(-r * 0.45, -r * 0.55), Vector2(r * 0.9, r * 1.45)), col)
 			ci.draw_circle(c + Vector2(0, -r * 0.55), r * 0.45, col)
 			ci.draw_rect(Rect2(c + Vector2(-r * 0.15, -r * 1.05), Vector2(r * 0.3, r * 0.25)), col.darkened(0.4))
+		"diesel":
+			# Канистра.
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.6, -r * 0.55), Vector2(r * 1.2, r * 1.4)), col)
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.6, -r * 0.55), Vector2(r * 1.2, r * 1.4)), dark, false, maxf(1.5, r * 0.12))
+			ci.draw_rect(Rect2(c + Vector2(r * 0.05, -r * 0.85), Vector2(r * 0.35, r * 0.3)), dark)
+			ci.draw_line(c + Vector2(-r * 0.4, -r * 0.3), c + Vector2(r * 0.4, r * 0.6), dark, maxf(1.5, r * 0.12))
 		"metal":
 			# Слиток.
 			ci.draw_colored_polygon(PackedVector2Array([

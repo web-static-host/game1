@@ -65,6 +65,7 @@ func _initialize() -> void:
 	test_lifts()
 	test_stop_by_meter()
 	test_drill()
+	test_oil()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2616,6 +2617,72 @@ func _power_up(colony: Colony, x: int) -> void:
 	colony.projects.append(gen)
 	colony.inventory["coal"] = 50
 	colony._power_tick(0.1)
+
+
+func test_oil() -> void:
+	# Нефть: качалка тянет из пласта в хранилище, завод перегоняет в дизель, дизельный генератор и бур жгут его.
+	var colony := _new_colony(39)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	colony.research.done.append_array(["electricity", "metallurgy", "drilling", "drill_rig", "oil_drilling", "refining", "combustion"])
+	check(colony._add("oil", 5) == 0, "без нефтехранилища нефть хранить негде")
+	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 4, 6, 3), 910)
+	tank.purpose = RoomType.OIL_TANK
+	var st := _fake_room(colony, RoomType.STORAGE, x + 40, 6)
+	check(not RoomType.stores(st, "oil") and not RoomType.stores(st, "diesel"), "на складе нефть не хранят")
+	var pump := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 8, s + 4, 3, 3), 911)
+	pump.purpose = RoomType.OIL_PUMP
+	var oc := Vector2i(x + 9, s + 12)
+	w.set_material(oc.x, oc.y, Mat.OIL)
+	_power_up(colony, x)
+	colony.research.done.append_array(["oil_drilling", "refining", "combustion"])
+	var t := 0.0
+	while t < 40.0 and colony.inventory.get("oil", 0) < 3:
+		colony._power_tick(0.5)
+		colony._oil_tick(0.5)
+		t += 0.5
+	check(colony.held_in(tank, "oil") >= 3, "качалка накачала нефть в хранилище (%d)" % colony.held_in(tank, "oil"))
+	check(w.get_mat(oc.x, oc.y) == Mat.SHALE, "выкачанный пласт — пустой сланец")
+	# Вскрытый пласт: нефть сразу по трубам в хранилище.
+	var before: int = colony.inventory.get("oil", 0)
+	colony.drop_item(Vector2i(x + 3, s + 6), "oil", 4)
+	check(colony.inventory.get("oil", 0) == before + 4 and colony.drop_total("oil") == 0, "нефть из пласта не лежит — сразу в хранилище")
+	# Нефтезавод: 2 нефти → 1 дизель.
+	var ref := _fake_room(colony, RoomType.REFINERY, x + 60, 6)
+	check(colony.has_inputs(ref), "у завода есть нефть по трубам")
+	var oil0: int = colony.inventory.get("oil", 0)
+	colony._craft(ref)
+	check(colony.inventory.get("oil", 0) == oil0 - 2 and colony.held_in(tank, "diesel") == 1, "перегнали 2 нефти в 1 дизель")
+	colony._add("diesel", 9)
+	# Дизельный генератор: без угля даёт энергию на дизеле.
+	for g in colony.generators():
+		colony.projects.erase(g)
+	var dg := _fake_room(colony, RoomType.DIESEL_GEN, x + 80, 3)
+	var d0: int = colony.inventory.get("diesel", 0)
+	colony._power_tick(0.5)
+	check(colony.powered() and colony.inventory.get("diesel", 0) == d0 - 1, "дизельный генератор работает на дизеле")
+	check(colony.power_made >= roundi(RoomType.POWER_MAKE * 1.5), "дизельный мощнее обычного (%d)" % colony.power_made)
+	colony.projects.erase(dg)
+	# Бур на дизеле без электричества.
+	colony._power_tick(0.5)
+	check(not colony.powered(), "электричества нет")
+	var d := colony.create_project(Project.Kind.DRILL, Rect2i(x + 20, s, 3, 6))
+	if d != null:
+		d.delivered = d.cost().duplicate()
+		var dz: int = colony.inventory.get("diesel", 0)
+		var t2 := 0.0
+		while t2 < 400.0 and d.kind == Project.Kind.DRILL:
+			colony._power_tick(0.5)
+			colony._drills_tick(0.5)
+			t2 += 0.5
+			if d.paused:
+				d.hazard_ack.append(d.hazard_pending)
+				colony.set_paused(d, false)
+		check(d.kind != Project.Kind.DRILL and colony.inventory.get("diesel", 0) < dz, "бур прошёл на дизеле без электричества")
+	# Нефтехранилище взрывается, если рухнет.
+	check(RoomType.EXPLOSIVE.has(RoomType.OIL_TANK), "нефтехранилище взрывоопасно")
 
 
 func test_drill() -> void:

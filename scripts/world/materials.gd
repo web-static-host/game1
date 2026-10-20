@@ -100,6 +100,7 @@ const RESOURCE_NAMES := {
 	"brick": "Кирпич",
 	"metal": "Сталь",
 	"methane": "Метан",
+	"diesel": "Дизельное топливо",
 }
 
 static var _names: PackedStringArray

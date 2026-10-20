@@ -759,7 +759,7 @@ func _storage_control(p: Project) -> Dictionary:
 	var known: Array = colony.known_resources.keys()
 	known.sort()
 	for k in known:
-		if not keys.has(k) and not RoomType.BULK.has(k) and k != "methane" and RoomType.same_kind(p, k):
+		if not keys.has(k) and not RoomType.BULK.has(k) and not RoomType.PIPED.has(k) and RoomType.same_kind(p, k):
 			keys.append(k)
 	var items := []
 	for k in keys:
@@ -968,8 +968,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
-			RoomType.KILN, RoomType.FORGE:
+			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 				var recipe: Array = RoomType.RECIPES[p.purpose]
+				if p.purpose == RoomType.REFINERY:
+					rows.append({"type": "text", "text": "Нефть берёт по трубам из нефтехранилища, дизель туда же и отдаёт — носить ничего не надо. Нужны мастер и энергия."})
+					if colony.rooms_of(RoomType.OIL_TANK).is_empty():
+						rows.append({"type": "warning", "text": "Нет нефтехранилища — нефть и дизель хранить негде."})
 				rows.append(_progress("Производство", p.farm_progress / recipe[2]))
 				var items := []
 				for k in recipe[0]:
@@ -1000,12 +1004,27 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
 				else:
 					rows.append(_progress(Research.tech_name(cur), colony.research.progress / colony.research.cost(cur)))
-			RoomType.GENERATOR, RoomType.GAS_GEN:
+			RoomType.OIL_PUMP:
+				chips.append(["", "качает на %d м вокруг" % RoomType.effect_radius(p)])
+				var oil_cell = colony._nearest_oil(p)
+				chips.append(["", "нефть рядом: %s" % ("есть" if oil_cell != null else "нет")])
+				rows.append(_progress("Следующая порция", clampf(p.farm_progress / Colony.OIL_PUMP_TIME, 0.0, 1.0), "", Color(0.35, 0.3, 0.25)))
+				rows.append({"type": "text", "text": "Раз в %d с выкачивает ближайшую клетку нефтеносного пласта (+%d нефти) по трубам в нефтехранилище. Нефть залегает глубже 200 м, в осадочных слоях. Нужна энергия." % [int(Colony.OIL_PUMP_TIME), Colony.OIL_PER_CELL_YIELD]})
+			RoomType.OIL_TANK:
+				for k in ["oil", "diesel"]:
+					var tcap := colony.room_cap(p, k)
+					rows.append(_progress(Mat.resource_name(k), float(colony.held_in(p, k)) / maxf(1.0, tcap),
+						"%d из %d" % [colony.held_in(p, k), tcap], Color(0.25, 0.2, 0.15) if k == "oil" else Color(0.95, 0.65, 0.15)))
+				rows.append({"type": "text", "text": "Нефть и дизельное топливо хранятся только здесь и идут по трубам. Если хранилище рухнет — взрыв: всё вокруг на 3, 6 или 9 м (по размеру)."})
+			RoomType.GENERATOR, RoomType.GAS_GEN, RoomType.DIESEL_GEN:
 				var gas := p.purpose == RoomType.GAS_GEN
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.45, 0.7, 1.0) if gas else Color(0.95, 0.6, 0.2)))
-				if gas:
+				if p.purpose == RoomType.DIESEL_GEN:
+					chips.append(["", "дизеля в хранилище: %d" % colony.inventory.get("diesel", 0)])
+					rows.append({"type": "text", "text": "Жжёт 1 дизель за %d с по трубам из нефтехранилища и даёт в полтора раза больше энергии." % int(RoomType.FUEL_TIME * 2.0)})
+				elif gas:
 					chips.append(["", "метан в баках: %d" % colony.inventory.get("methane", 0)])
 					rows.append({"type": "text", "text": "Жжёт 1 метан за %d с — по трубам из баков дегазации, носить ничего не надо. Уголь и дрова не берёт. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
 					if colony.rooms_of(RoomType.DEGAS).is_empty():
@@ -1525,7 +1544,8 @@ const ROOM_PICS := {
 	RoomType.HEARTH: "hearth/stone_on", RoomType.HEARTH_BRICK: "hearth/brick_on", RoomType.LAB: "lab/microscope",
 	RoomType.PUMP: "pump/pump_on", RoomType.VENT: "degas/compressor", RoomType.DEGAS: "degas/tank_2",
 	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
-	RoomType.GAS_GEN: "generator/gas_on",
+	RoomType.GAS_GEN: "generator/gas_on", RoomType.OIL_PUMP: "pump/pump_on", RoomType.OIL_TANK: "degas/tank_3",
+	RoomType.REFINERY: "lab/still", RoomType.DIESEL_GEN: "generator/coal_on",
 }
 
 
@@ -1542,13 +1562,15 @@ func _build_tool_locks() -> Dictionary:
 func _build_room_items() -> Array:
 	var order := [RoomType.NONE, RoomType.HOME, RoomType.STORAGE, RoomType.GRANARY, RoomType.FARM, RoomType.DINING,
 		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
-		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN]
+		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN,
+		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN]
 	var out := []
 	for t in order:
 		var need: String = RoomType.REQUIRES.get(t, "")
 		var ok := colony.research.has(need)
 		var nm := "Пустая" if t == RoomType.NONE else RoomType.purpose_name(t).replace("Очаг (каменные печи)", "Очаг").replace(
 			"Очаг (кирпичные печи)", "Очаг кирпичный")
+		nm = {"Нефтекачалка": "Нефте-\nкачалка", "Нефтехранилище": "Нефте-\nхранилище"}.get(nm, nm)
 		var pic: String = ROOM_PICS.get(t, "")
 		out.append({"id": t, "name": nm, "tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "",
 			"glyph": "room", "ok": ok, "why": "%s: сначала изучите «%s» (Наука)" % [nm, Research.tech_name(need)] if not ok else ""})
