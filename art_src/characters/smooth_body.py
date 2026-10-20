@@ -87,9 +87,10 @@ def smooth_body(body, rig):
     sm2.iterations = 4
     _apply(body, sm2)
     print('smooth2', flush=True)
-    for poly in me.polygons:
-        poly.use_smooth = True
-    _transfer(body, src)
+    # Сетка та же, что при переносе весов (вершины только сдвинулись) — веса верны; служебную
+    # группу сглаживания убираем.
+    body.vertex_groups.remove(body.vertex_groups['_smooth'])
+    me.shade_smooth()
     for m in arm_mods:
         nm = body.modifiers.new(m.name, 'ARMATURE')
         nm.object = m.object
