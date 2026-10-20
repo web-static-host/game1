@@ -259,6 +259,15 @@ static func _outlined(text: String, fs: int, col: Color) -> Label:
 	return l
 
 
+var _worlds_btn: Control
+
+
+## «Миры» — только когда есть куда лететь (изучено ракетостроение) или уже летали.
+func set_worlds_visible(on: bool) -> void:
+	if _worlds_btn != null and _worlds_btn.visible != on:
+		_worlds_btn.visible = on
+
+
 ## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
 	var keys: Array = ["food", "berries", "wood", "stone"]
@@ -369,6 +378,8 @@ func _build_bottom(box: VBoxContainer) -> void:
 	bar.add_child(science)
 	var worlds := IconButton.make("planet", "Миры")
 	worlds.pressed.connect(func() -> void: worlds_pressed.emit())
+	worlds.visible = false
+	_worlds_btn = worlds
 	bar.add_child(worlds)
 	var home := IconButton.make("home", "К базе")
 	bar.add_child(home)

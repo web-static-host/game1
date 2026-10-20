@@ -1400,6 +1400,11 @@ func _draw_site(p: Project, font: Font) -> void:
 		edge = BLOCKED
 	if p.paused:
 		edge = PAUSED
+	if p.priority:
+		# Приоритет — значок «!» в углу стройки.
+		var at := r.position + Vector2(r.size.x - 12, 12)
+		draw_circle(at, 10, Color(1.0, 0.72, 0.2))
+		draw_string(font, at + Vector2(-3, 6), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.25, 0.15, 0.05))
 	if p.phase == Project.Phase.DIG:
 		for c in colony.remaining_dig(p):
 			draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)

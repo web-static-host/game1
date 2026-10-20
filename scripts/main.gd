@@ -826,6 +826,11 @@ func _show_project(p: Project) -> void:
 				colony.cancel_project(p)
 				_select(null, null), "danger"])
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
+	# Приоритет: бригада бросает другие стройки и идёт сюда.
+	if colony.can_prioritize(p):
+		actions.push_front(["Снять приоритет" if p.priority else "Приоритет", func() -> void:
+			colony.set_priority(p, not p.priority)
+			_show_project(p), "" if p.priority else "primary"])
 	if p.phase == Project.Phase.DONE and p.paused:
 		actions.append(["Продолжить", func() -> void:
 			colony.set_paused(p, false)
@@ -1195,6 +1200,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	var chips := []
 	if p.phase != Project.Phase.DONE or p.repairing:
 		chips.append(["people", "рабочие %d/%d" % [colony.workers_on(p), p.workers]])
+	if p.priority:
+		chips.append(["", "приоритет: %s идут сюда первыми" % ("шахтёры" if p.kind == Project.Kind.MINE else "строители"), Color(1.0, 0.8, 0.4)])
 	match p.kind:
 		Project.Kind.ROOM:
 			chips.append(["", "стены: " + p.material_name().to_lower()])
@@ -2042,6 +2049,10 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
+	var space := universe.worlds.size() > 1 or not universe.flights.is_empty()
+	for e in universe.worlds:
+		space = space or (e["colony"] as Colony).research.has("rocketry")
+	hud.set_worlds_visible(space)
 	if _planet != "earth":
 		var s := world.gen.surface_y(colony.home.x)
 		hud.set_date("%s · %s · %+d °C снаружи" % [Planet.planet_name(_planet), colony.date_text().split(" · ")[0],

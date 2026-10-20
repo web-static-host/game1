@@ -1774,7 +1774,48 @@ func _merge_extension(q: Project) -> bool:
 	highest_y = mini(highest_y, host.rect.position.y)
 	_rebuild_climb()
 	_log("Продлено: %s" % host.title(), "good")
+	if host.kind == Project.Kind.LIFT:
+		_merge_lifts(host)
 	return true
+
+
+## Лифты встык (одного вида и сечения, по одной оси) соединяются в один: одна кабина
+## на всю шахту. Кто ждал или ехал в убранной кабине, идёт дальше пешком; её груз выгружают.
+func _merge_lifts(p: Project) -> void:
+	var merged := true
+	while merged:
+		merged = false
+		for q in projects:
+			if q == p or q.kind != Project.Kind.LIFT or q.phase != Project.Phase.DONE or q.cargo != p.cargo \
+					or q.lift_vertical() != p.lift_vertical() or q.repairing:
+				continue
+			var r := p.rect.merge(q.rect)
+			var same := (r.size.x == p.rect.size.x and r.position.x == p.rect.position.x) if p.lift_vertical() \
+				else (r.size.y == p.rect.size.y and r.position.y == p.rect.position.y)
+			if not same or r.get_area() != p.rect.get_area() + q.rect.get_area():
+				continue
+			for u in units:
+				if u.lift_id == q.id:
+					_drop(u)
+			var spill := q.lift_load.duplicate()
+			for b in q.lift_buf:
+				for k in b:
+					spill[k] = int(spill.get(k, 0)) + int(b[k])
+			for k in spill:
+				drop_item(q.rect.get_center(), k, int(spill[k]))
+			projects.erase(q)
+			p.rect = r
+			p.wear = maxf(p.wear, q.wear)
+			p.lift_goal = -1
+			p.supported.clear()
+			for i in p.slice_count():
+				p.supported.append(i)
+			for c in p.cells():
+				interior[c] = p.id
+			merged = true
+			_log("Лифты соединены: %s" % p.title(), "good")
+			break
+	_rebuild_climb()
 
 
 ## --- Шахта: строится по метру -------------------------------------------------------
@@ -2057,6 +2098,8 @@ func _finish_project(p: Project) -> void:
 		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
 	else:
 		_log("Построено: %s" % p.title(), "good")
+	if p.kind == Project.Kind.LIFT:
+		_merge_lifts(p)
 
 
 ## Убрали мост или пристань — общие с другой водной постройкой клетки снова её.
@@ -3511,6 +3554,7 @@ func update(dt: float) -> void:
 		_explore_t = 0.0
 		_sync_held()
 		explore()
+		_priority_tick()
 		_access_t += 1
 		if _access_t >= 5:
 			_access_t = 0
@@ -4249,7 +4293,9 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 			continue
 		var mine := p.kind == Project.Kind.MINE
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
-		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)):
+		# На стройку с приоритетом её бригада (строители, у шахты — шахтёры) идёт вся.
+		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
+				and not (p.priority and priority_crew(u, p)):
 			continue
 		# Шахтёр в шахте копает и ставит крепь, а дерево на крепь носит сам, только если
 		# нет свободных подсобных. На других стройках — только копает.
@@ -4285,6 +4331,54 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		elif (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
 			return true
 	return false
+
+
+## --- Приоритет стройки -------------------------------------------------------------
+## Стройке, ремонту или шахте ставят приоритет: она первая в списке работ, и её бригада
+## (строители, у шахты — шахтёры) бросает другие стройки и идёт сюда, сверх числа рабочих.
+## Готово — приоритет снимается сам.
+const PRIORITY_REDROP := 30.0
+var _prio_dropped := {}
+
+
+func priority_crew(u: Unit, p: Project) -> bool:
+	return u.workplace == 0 and u.profession == (Unit.Prof.MINER if p.kind == Project.Kind.MINE else Unit.Prof.BUILDER)
+
+
+func can_prioritize(p: Project) -> bool:
+	return p.bored_by == 0 and (p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD
+		or p.phase == Project.Phase.EQUIP or (p.phase == Project.Phase.DONE and p.repairing))
+
+
+func set_priority(p: Project, on: bool) -> void:
+	wake_idle()
+	p.priority = on and can_prioritize(p)
+	if p.priority:
+		projects.erase(p)
+		projects.push_front(p)
+		_log("%s: приоритет — бригада идёт сюда в первую очередь" % p.title(), "info")
+	_priority_tick()
+
+
+func _priority_tick() -> void:
+	for p in projects:
+		if not p.priority:
+			continue
+		if not can_prioritize(p):
+			p.priority = false
+			continue
+		if p.paused or not p.blocked.is_empty():
+			continue
+		for u in units:
+			if u.project_id == 0 or u.project_id == p.id or not priority_crew(u, p):
+				continue
+			var other := project_by_id(u.project_id)
+			if other == null or other.priority:
+				continue
+			if game_time - float(_prio_dropped.get(u.id, -1000.0)) < PRIORITY_REDROP:
+				continue
+			_prio_dropped[u.id] = game_time
+			_drop(u)
 
 
 ## Строитель или шахтёр (без места работы): только строят и копают, ничего не носят.

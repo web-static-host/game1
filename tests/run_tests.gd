@@ -67,6 +67,8 @@ func _initialize() -> void:
 	test_drill()
 	test_extend()
 	test_stacked_mines()
+	test_lift_merge()
+	test_priority()
 	test_oil()
 	test_space()
 	test_job_stats()
@@ -2932,6 +2934,65 @@ func test_extend() -> void:
 	var lq := colony.extend_project(lift, Vector2i.DOWN, 4)
 	check(lq != null and lq.cost() == Project.lift_cost(lq.rect, false, false) and lq.cost()["iron"] < Project.lift_cost(lq.rect, false)["iron"],
 		"продолжение лифта без новой кабины")
+
+
+## Лифты встык одного вида соединяются в один.
+func test_lift_merge() -> void:
+	var colony := _new_colony(34)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var a := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 8), 940)
+	var b := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s + 8, 2, 6), 941)
+	var c := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 10, s + 8, 2, 6), 942)
+	var g := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s + 14, 3, 6), 943)
+	g.cargo = true
+	b.lift_load = {"stone": 5}
+	colony._merge_lifts(a)
+	check(a.rect == Rect2i(x, s, 2, 14) and not colony.projects.has(b), "лифты встык слились в один (%s)" % a.rect)
+	check(colony.projects.has(c) and colony.projects.has(g), "лифт в стороне и грузовой не сливаются")
+	check(colony.drop_total("stone") == 5, "груз из убранной кабины выгружен")
+
+
+## Приоритет: строители бросают другие стройки и идут на эту, сверх числа рабочих.
+func test_priority() -> void:
+	var colony := _new_colony(33)
+	var w := colony.world
+	var x0 := 40
+	while not Mat.is_solid(w.get_mat(x0, w.gen.surface_y(x0))):
+		x0 += 1
+	_start(colony, x0)
+	colony.inventory = {"wood": 80, "food": 50}
+	# Два ровных места рядом с базой.
+	var x := colony.home.x + 2
+	var s := w.gen.surface_y(x)
+	for u in colony.units:
+		colony.set_profession(u, Unit.Prof.BUILDER)
+	var a := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 12), 6)
+	var b := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 4, w.gen.surface_y(x + 4), 1, 12), 1)
+	check(a != null and b != null, "две стройки")
+	if a == null or b == null:
+		return
+	for i in 20:
+		colony.update(0.5)
+	var on_b := func() -> int:
+		return colony.units.filter(func(u: Unit) -> bool: return u.project_id == b.id).size()
+	check(on_b.call() <= 1, "без приоритета на второй — не больше её рабочих (%d)" % on_b.call())
+	check(colony.can_prioritize(b), "стройке можно дать приоритет")
+	var on_a := colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).size()
+	colony.set_priority(b, true)
+	check(colony.projects[0] == b, "приоритетная — первая в списке работ")
+	check(on_a > 0 and colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).is_empty(),
+		"строители бросили другую стройку (было %d)" % on_a)
+	var best := 0
+	for i in 60:
+		colony.update(0.5)
+		best = maxi(best, on_b.call())
+	check(best >= 2, "строители пришли сюда сверх числа рабочих (%d)" % best)
+	b.phase = Project.Phase.DONE
+	colony._priority_tick()
+	check(not b.priority, "готово — приоритет снят")
 
 
 ## Шахта над шахтой: по крепи нижней ходят, как по полу.

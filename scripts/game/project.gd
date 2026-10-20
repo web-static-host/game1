@@ -137,6 +137,8 @@ var gatherers := 0
 var targets := {}
 ## Что лежит именно в этом складе/амбаре (в дегазации — метан в баке): ключ -> количество.
 var held := {}
+## Приоритет: строители (у шахты — шахтёры) бросают другие стройки и идут сюда.
+var priority := false
 ## Продолжение выработки: id шахты, тоннеля или лифта, с которой сольётся по готовности.
 var extends_id := 0
 ## Предупреждения геолога: опасности, на которые игрок разрешил копать, и текущее.
@@ -445,6 +447,7 @@ func to_dict() -> Dictionary:
 		"hazard_ack": hazard_ack,
 		"hazard_pending": hazard_pending,
 		"extends_id": extends_id,
+		"priority": priority,
 	}
 
 
@@ -535,6 +538,7 @@ static func from_dict(d: Dictionary) -> Project:
 		p.hazard_ack.append(str(k))
 	p.hazard_pending = str(d.get("hazard_pending", ""))
 	p.extends_id = int(d.get("extends_id", 0))
+	p.priority = bool(d.get("priority", false))
 	return p
 
 
