@@ -69,6 +69,7 @@ def smooth_body(body, rig):
     feet = {s: _weights(body, ['Foot.' + s]) for s in 'LR'}
     me = body.data
     me.update()
+    print('grow', flush=True)
     for v in me.vertices:
         grow = ARM_GROW * min(1.0, arms[v.index]) + LEG_GROW * min(1.0, legs[v.index])
         v.co += v.normal * grow
@@ -85,12 +86,14 @@ def smooth_body(body, rig):
     sm2.factor = 0.5
     sm2.iterations = 4
     _apply(body, sm2)
+    print('smooth2', flush=True)
     for poly in me.polygons:
         poly.use_smooth = True
     _transfer(body, src)
     for m in arm_mods:
         nm = body.modifiers.new(m.name, 'ARMATURE')
         nm.object = m.object
+    print('weights', flush=True)
     bpy.data.objects.remove(src)
 
 
