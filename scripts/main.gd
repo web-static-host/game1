@@ -128,7 +128,7 @@ func _build_scene() -> void:
 	camera.paint_ended.connect(_on_paint_end)
 	camera.paint_cancelled.connect(_clear_preview)
 	hud.mode_changed.connect(_set_mode)
-	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items()))
+	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items(), _build_tool_locks()))
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.save_pressed.connect(func() -> void:
@@ -290,7 +290,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE or m == Hud.Mode.MINE
+	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT]
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -853,6 +853,26 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			chips.append(["", "стены: " + p.material_name().to_lower()])
 		Project.Kind.TUNNEL:
 			chips.append(["", "потоков: %d" % Colony.tunnel_lanes(p.rect)])
+		Project.Kind.LIFT:
+			chips.append(["", "по вертикали" if p.lift_vertical() else "по горизонтали"])
+			if p.phase == Project.Phase.DONE:
+				chips.append(["power", "энергия: %s" % ("есть" if colony.lift_powered(p) else "нет — кабина стоит")])
+				chips.append(["", "скорость %.0f м/с (пешком %.0f)" % [colony.lift_speed(p), Colony.WALK_SPEED]])
+			if p.cargo:
+				var load := 0
+				for k in p.lift_load:
+					load += int(p.lift_load[k])
+				chips.append(["", "в кабине %d из %d" % [load, Colony.CARGO_CAP]])
+				var names := ["верхнего" if p.lift_vertical() else "левого", "нижнего" if p.lift_vertical() else "правого"]
+				for e in 2:
+					var st := colony.lift_stores(p, e)
+					rows.append({"type": "text", "text": "У %s конца: %s" % [names[e],
+						("склад вплотную — разгрузка и погрузка сами" if not st.is_empty() else "склада нет — груз выгружается на площадку")]})
+				rows.append({"type": "text", "text": "Возит только грузы. Подсобные и работники складов несут добычу в лифт, если до него ближе, чем до склада; у склада вплотную к другому концу лифт разгружается сам. Материалы для строек у дальнего конца лифт сам берёт из склада у своего конца."})
+			else:
+				var riding := colony.units.filter(func(o: Unit) -> bool: return o.lift_id == p.id and o.riding).size()
+				chips.append(["people", "в кабине %d из %d" % [riding, Colony.LIFT_CAP]])
+				rows.append({"type": "text", "text": "Кабина на 6 человек ездит втрое быстрее пешехода и останавливается только там, где садятся и выходят; ждёт тех, кто уже идёт к ней. Без энергии стоит — по шахте лезут по аварийной лестнице."})
 		Project.Kind.MINE:
 			chips.append(["", "шахтёров %d" % colony.units.filter(func(o: Unit) -> bool: return o.workplace == 0 and o.profession == Unit.Prof.MINER).size()])
 			if p.phase == Project.Phase.DONE:
@@ -1260,6 +1280,13 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		# Шахта — всегда 3 м: полоса тянется по горизонтали от места, где коснулись.
 		r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, Project.MINE_HEIGHT)
 		err = colony.validate(kind, r)
+	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
+		# Лифт — строго вертикально (шахта 2 или 3 м) или строго горизонтально (ход 3 м).
+		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
+			r = Rect2i(_drag_start.x, r.position.y, 3 if mode == Hud.Mode.CARGO_LIFT else 2, r.size.y)
+		else:
+			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
+		err = colony.validate(kind, r, _lift_material())
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
@@ -1272,7 +1299,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	if r.size == Vector2i.ZERO:
 		return
 	var kind := _mode_kind()
-	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else "wood")
+	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else _lift_material())
 	if mode == Hud.Mode.BRIDGE:
 		err = "Мостик и пристань строятся над озером" if _water_options.is_empty() else ""
 		for o in _water_options:
@@ -1285,7 +1312,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending = r
 	_pending_kind = kind
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
-	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else "wood"
+	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else _lift_material()
 	_show_pending()
 
 
@@ -1337,7 +1364,14 @@ func _mode_kind() -> int:
 			return Project.Kind.BRIDGE
 		Hud.Mode.MINE:
 			return Project.Kind.MINE
+		Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT:
+			return Project.Kind.LIFT
 	return Project.Kind.TUNNEL
+
+
+## Лифт передаёт «грузовой ли» через материал стройки.
+func _lift_material() -> String:
+	return "cargo" if mode == Hud.Mode.CARGO_LIFT else "wood"
 
 
 func _show_pending() -> void:
@@ -1374,7 +1408,8 @@ func _pending_spec() -> Dictionary:
 	var r := _pending
 	var kind := _pending_kind
 	var rows := []
-	var cost := Project.cost_for(kind, r, _pending_material)
+	var cost := Project.lift_cost(r, _pending_material == "cargo") if kind == Project.Kind.LIFT \
+		else Project.cost_for(kind, r, _pending_material)
 	if not cost.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
@@ -1429,7 +1464,8 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
 	elif not colony.can_reach(r):
 		rows.append({"type": "warning", "text": "Жители не могут сюда дойти — стройка не начнётся."})
-	var title := "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]
+	var title := "%s %d×%d" % [("Грузовой лифт" if _pending_material == "cargo" else "Лифт") if kind == Project.Kind.LIFT
+		else Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
 		var plan := hud.room_purpose()
 		if plan > 0:
@@ -1469,6 +1505,15 @@ const ROOM_PICS := {
 	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
 	RoomType.GAS_GEN: "generator/gas_on",
 }
+
+
+## Неизученные инструменты стройки: режим -> почему нельзя.
+func _build_tool_locks() -> Dictionary:
+	var out := {}
+	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"]]:
+		if not colony.research.has(pair[1]):
+			out[pair[0]] = "Сначала изучите «%s» (Наука)" % Research.tech_name(pair[1])
+	return out
 
 
 ## Плитки комнат для меню стройки: все виды, неизученные — неактивные с подсказкой.

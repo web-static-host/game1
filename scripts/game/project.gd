@@ -6,7 +6,9 @@ extends RefCounted
 ## BRIDGE — мостик над водой (переход и рыбалка), PIER — рыболовная пристань.
 ## MINE — шахта: горизонтальная выработка в 3 м высотой для добычи (копают шахтёры);
 ## на её месте потом можно ставить комнаты.
-enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE }
+## LIFT — лифт: строго вертикальная шахта (пассажирский — 2 м, грузовой — 3 м шириной)
+## или горизонтальный ход в 3 м высотой; строится как тоннель, потом ставят кабину.
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -55,6 +57,16 @@ var equip_done := 0.0
 var farm_progress := 0.0
 ## Обустройство — это постройка лестницы (назначение не меняется).
 var equip_ladder := false
+## Лифт: грузовой (только грузы) или пассажирский.
+var cargo := false
+## Кабина лифта: где она (координата по оси шахты; -1 — ещё не ставили), груз в ней,
+## сколько стоит на остановке, грузы, ждущие у концов шахты [начало, конец].
+var lift_pos := -1.0
+var lift_load := {}
+var lift_dwell := 0.0
+## Грузовой лифт едет к концу (0 — начало, 1 — конец; -1 — стоит).
+var lift_goal := -1
+var lift_buf: Array = [{}, {}]
 ## Перестройка стен из другого материала (пусто — не перестраивают).
 var equip_material := ""
 ## Под что строят комнату (выбрано в меню стройки): после постройки сразу обустраивается.
@@ -117,13 +129,26 @@ var hazard_pending := ""
 
 
 func title() -> String:
+	if kind == Kind.LIFT:
+		return "%s %d м" % ["Грузовой лифт" if cargo else "Лифт", maxi(rect.size.x, rect.size.y)]
 	if kind == Kind.ROOM and purpose != RoomType.NONE:
 		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
 
 
 static func kind_name(k: int) -> String:
-	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта"][k]
+	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт"][k]
+
+
+## Лифт вертикальный (иначе — горизонтальный).
+func lift_vertical() -> bool:
+	return rect.size.y > rect.size.x
+
+
+## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
+static func lift_cost(r: Rect2i, is_cargo: bool) -> Dictionary:
+	var n := maxi(r.size.x, r.size.y)
+	return {"iron": n * (2 if is_cargo else 1) + (10 if is_cargo else 6), "copper": ceili(n / 2.0) + 4}
 
 
 func is_water_structure() -> bool:
@@ -186,10 +211,14 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 		return r.size.x * 4.0
 	if k == Kind.PIER:
 		return r.size.x * 8.0
+	if k == Kind.LIFT:
+		return maxi(r.size.x, r.size.y) * 4.0
 	return cells_n * 1.0
 
 
 func cost() -> Dictionary:
+	if kind == Kind.LIFT:
+		return lift_cost(rect, cargo)
 	return cost_for(kind, rect, material)
 
 
@@ -197,7 +226,7 @@ func cost() -> Dictionary:
 
 ## Вертикальная шахта крепится по 2 ряда, остальное — по столбцам.
 func vertical() -> bool:
-	return kind == Kind.TUNNEL and rect.size.y > rect.size.x
+	return (kind == Kind.TUNNEL or kind == Kind.LIFT) and rect.size.y > rect.size.x
 
 
 func slice_count() -> int:
@@ -280,6 +309,16 @@ static func size_error(k: int, r: Rect2i) -> String:
 		if h != ROOM_HEIGHT:
 			return "Комната — %d м в высоту" % ROOM_HEIGHT
 		return ""
+	if k == Kind.LIFT:
+		# Строго вертикально (2–3 м шириной) или строго горизонтально (3 м высотой).
+		if h > w:
+			if w < 2 or w > 3 or h < 4:
+				return "Лифт по вертикали — шахта 2 м (пассажирский) или 3 м (грузовой) шириной, от 4 м"
+		elif h != 3 or w < 4:
+			return "Лифт по горизонтали — ход в 3 м высотой, от 4 м длиной"
+		if maxi(w, h) > TUNNEL_MAX_LEN:
+			return "Лифт — не длиннее %d м" % TUNNEL_MAX_LEN
+		return ""
 	if k == Kind.MINE:
 		if h != MINE_HEIGHT:
 			return "Шахта — всегда %d м в высоту" % MINE_HEIGHT
@@ -326,6 +365,11 @@ func to_dict() -> Dictionary:
 		"clear_x": clear_x,
 		"store_filter": store_filter,
 		"store_off": store_off,
+		"cargo": cargo,
+		"lift_pos": lift_pos,
+		"lift_load": lift_load,
+		"lift_buf": lift_buf,
+		"lift_goal": lift_goal,
 		"limits": limits,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
@@ -378,6 +422,15 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.equip_material = str(d.get("equip_material", ""))
+	p.cargo = bool(d.get("cargo", false))
+	p.lift_pos = float(d.get("lift_pos", -1.0))
+	p.lift_goal = int(d.get("lift_goal", -1))
+	for k in d.get("lift_load", {}):
+		p.lift_load[str(k)] = int(d["lift_load"][k])
+	var bufs: Array = d.get("lift_buf", [{}, {}])
+	for i in mini(2, bufs.size()):
+		for k in bufs[i]:
+			p.lift_buf[i][str(k)] = int(bufs[i][k])
 	p.plan_purpose = int(d.get("plan_purpose", 0))
 	p.brick_stoves = bool(d.get("brick_stoves", false))
 	p.gas_boiler = bool(d.get("gas_boiler", false))

@@ -21,13 +21,15 @@ signal background_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
-enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE }
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT }
 
 ## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
 	[Mode.TUNNEL, "tunnel", "Тоннель"],
 	[Mode.MINE, "mine", "Шахта"],
 	[Mode.BRIDGE, "bridge", "Мост"],
+	[Mode.LIFT, "lift", "Лифт"],
+	[Mode.CARGO_LIFT, "cargo_lift", "Грузовой лифт"],
 ]
 ## Плиток комнат в ряду меню стройки.
 const ROOM_COLS := 8
@@ -36,6 +38,8 @@ const TOOL_HINTS := {
 	Mode.MINE: "Проведите пальцем вдоль шахты (всегда 3 м высотой). Карта — двумя пальцами",
 	Mode.ROOM: "Выберите размер и материал, коснитесь карты. Карта — двумя пальцами",
 	Mode.BRIDGE: "Проведите пальцем над озером",
+	Mode.LIFT: "Проведите строго вверх-вниз (шахта 2 м) или вбок (ход 3 м). Можно по готовому тоннелю",
+	Mode.CARGO_LIFT: "Проведите строго вверх-вниз (шахта 3 м) или вбок. Поставьте склад вплотную к концам",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 const SPEED_NAMES := ["×1", "×2", "×10", "×20"]
@@ -72,6 +76,9 @@ var _res_sig := ""
 var _build_btn: IconButton
 var _build_row: PanelContainer
 var _room_grid: GridContainer
+## Инструменты стройки: режим -> кнопка; почему недоступен (пусто — доступен).
+var _tool_btns := {}
+var _tool_lock := {}
 ## Под что строится комната из меню (0 — пустая, назначение потом).
 var _room_purpose := 0
 var _menu: PanelContainer
@@ -321,8 +328,13 @@ func _build_bottom(box: VBoxContainer) -> void:
 	for t in TOOLS:
 		var b := IconButton.make(t[1], t[2], 108, 76)
 		b.pressed.connect(func() -> void:
+			var why: String = _tool_lock.get(t[0], "")
+			if not why.is_empty():
+				log_event(why, "warning")
+				return
 			_room_purpose = 0
 			_pick_tool(t[0], t[1], t[2]))
+		_tool_btns[t[0]] = b
 		tools.add_child(b)
 	col.add_child(_label("Комнаты — выберите, что построить (сразу обустроят). Серые — ещё не изучены:", 16, MUTED))
 	_room_grid = GridContainer.new()
@@ -431,7 +443,10 @@ func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 
 
 ## Плитки комнат в меню стройки: [{"id", "name", "tex" (путь картинки) или "glyph", "ok", "why"}].
-func set_build_rooms(items: Array) -> void:
+func set_build_rooms(items: Array, locks: Dictionary = {}) -> void:
+	_tool_lock = locks
+	for m in _tool_btns:
+		(_tool_btns[m] as Control).modulate = Color(1, 1, 1, 0.4) if not str(locks.get(m, "")).is_empty() else Color.WHITE
 	for c in _room_grid.get_children():
 		_room_grid.remove_child(c)
 		c.queue_free()

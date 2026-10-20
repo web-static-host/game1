@@ -358,6 +358,10 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			if other != null and other.is_water_structure() and (kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER) \
 					and other.kind != kind:
 				continue
+			# Лифт можно провести по готовому тоннелю или шахте: занятая часть станет лифтом.
+			if other != null and kind == Project.Kind.LIFT and other.phase == Project.Phase.DONE \
+					and (other.kind == Project.Kind.TUNNEL or other.kind == Project.Kind.MINE):
+				continue
 			if other != null and not (kind == Project.Kind.ROOM and _room_fits_mine(r, other)):
 				if other.kind == Project.Kind.MINE and kind == Project.Kind.ROOM:
 					return "Комнату в шахте ставьте на всю её высоту, когда шахта готова"
@@ -366,10 +370,17 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 				return "В зоне стройки %s" % Mat.name_of(world.get_mat(x, y)).to_lower()
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		return _water_structure_error(kind, r)
-	if kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
+	if kind == Project.Kind.LIFT:
+		var is_cargo := material == "cargo"
+		if not research.has("cargo_lifts" if is_cargo else "lifts"):
+			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
+		if r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
+			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
+	if kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT:
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
-				return "%s — только под землёй. Над землёй стройте комнаты" % ("Тоннели" if kind == Project.Kind.TUNNEL else "Шахты")
+				return "%s — только под землёй. Над землёй стройте комнаты" % (
+					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -423,6 +434,50 @@ func _carve_mines(r: Rect2i) -> void:
 			for i in q.slice_count():
 				q.supported.append(i)
 			projects.append(q)
+
+
+## Лифт по готовому тоннелю или шахте: от них остаются куски вокруг лифта.
+func _carve_passages(r: Rect2i) -> void:
+	for m in projects.duplicate():
+		if m.phase != Project.Phase.DONE or not (m.kind == Project.Kind.TUNNEL or m.kind == Project.Kind.MINE) \
+				or not m.rect.intersects(r):
+			continue
+		projects.erase(m)
+		for c in m.cells():
+			if r.has_point(c):
+				interior.erase(c)
+		# Остаток прямоугольника без r: полосы сверху, снизу, слева и справа.
+		var parts: Array[Rect2i] = []
+		var mr: Rect2i = m.rect
+		var top := Rect2i(mr.position.x, mr.position.y, mr.size.x, r.position.y - mr.position.y)
+		var bottom := Rect2i(mr.position.x, r.end.y, mr.size.x, mr.end.y - r.end.y)
+		var y0 := maxi(mr.position.y, r.position.y)
+		var y1 := mini(mr.end.y, r.end.y)
+		var left := Rect2i(mr.position.x, y0, r.position.x - mr.position.x, y1 - y0)
+		var right := Rect2i(r.end.x, y0, mr.end.x - r.end.x, y1 - y0)
+		for pr in [top, bottom, left, right]:
+			if pr.size.x > 0 and pr.size.y > 0:
+				parts.append(pr)
+		for pr in parts:
+			# Мелкий обрезок (меньше человеческого роста) — просто выкопанная пустота.
+			if m.kind == Project.Kind.TUNNEL and pr.size.y < 2:
+				continue
+			if m.kind == Project.Kind.MINE and pr.size.y != Project.MINE_HEIGHT:
+				continue
+			var q := Project.new()
+			q.id = next_project_id
+			next_project_id += 1
+			q.kind = m.kind
+			q.rect = pr
+			q.phase = Project.Phase.DONE
+			q.paid = true
+			q.workers = m.workers
+			q.wear = m.wear
+			for i in q.slice_count():
+				q.supported.append(i)
+			projects.append(q)
+			for c in q.cells():
+				interior[c] = q.id
 
 
 ## [допустимый пролёт без крепи, самая слабая порода потолка] для комнаты r.
@@ -634,17 +689,20 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> 
 		return null
 	if kind == Project.Kind.ROOM:
 		_carve_mines(r)
+	if kind == Project.Kind.LIFT:
+		_carve_passages(r)
 	var p := Project.new()
 	p.id = next_project_id
 	next_project_id += 1
 	p.kind = kind
 	p.rect = r
 	p.material = material if kind == Project.Kind.ROOM else "wood"
+	p.cargo = kind == Project.Kind.LIFT and material == "cargo"
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
 	# Срезы, где есть порода: их копают по одному и сразу крепят.
-	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT:
 		for i in p.slice_count():
 			for c in p.slice_cells(i):
 				if Mat.is_solid(world.get_mat(c.x, c.y)):
@@ -929,6 +987,327 @@ func _check_supply(p: Project) -> void:
 		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
 
 
+# --- Лифты -----------------------------------------------------------------------------
+## Пассажирский: кабина на 6 человек, ездит втрое быстрее пешехода, останавливается только
+## там, где садятся и выходят, и ждёт тех, кто уже идёт к ней. Грузовой: копит груз у конца,
+## везёт к другому; у склада вплотную сам разгружается и сам берёт материалы для строек.
+const LIFT_CAP := 6
+const CARGO_CAP := 40
+const LIFT_POWER := 5
+## Сколько кабина ждёт подходящих к остановке, сек.
+const LIFT_WAIT := 6.0
+## Сколько грузовой ждёт, пока наберётся груз, сек.
+const CARGO_WAIT := 8.0
+## Ехать на лифте, только если по шахте не меньше стольких метров.
+const LIFT_MIN_RIDE := 3
+var _cargo_check_t := 0.0
+
+
+func lifts() -> Array[Project]:
+	var out: Array[Project] = []
+	for p in projects:
+		if p.kind == Project.Kind.LIFT and p.phase == Project.Phase.DONE:
+			out.append(p)
+	return out
+
+
+## Лифт работает: есть энергия и он не на паузе.
+func lift_powered(p: Project) -> bool:
+	return not p.paused and powered() and power_ratio > 0.0
+
+
+func lift_speed(p: Project) -> float:
+	var s := WALK_SPEED * 3.0 * (1.5 if research.has("fast_lifts") else 1.0) * (1.5 if research.has("fast_lifts2") else 1.0)
+	return s * clampf(power_ratio, 0.0, 1.0)
+
+
+## Координата клетки вдоль шахты лифта.
+func _lift_axis(p: Project, c: Vector2i) -> int:
+	return c.y if p.lift_vertical() else c.x
+
+
+## Ось концов шахты: [начало (верх/лево), конец (низ/право)].
+func _lift_ends(p: Project) -> Array:
+	if p.lift_vertical():
+		return [p.rect.position.y, p.rect.end.y - 1]
+	return [p.rect.position.x, p.rect.end.x - 1]
+
+
+func _passenger_lift_at(c: Vector2i) -> Project:
+	for p in projects:
+		if p.kind == Project.Kind.LIFT and not p.cargo and p.phase == Project.Phase.DONE and p.has_cell(c):
+			return p
+	return null
+
+
+## Житель подошёл к лифту: если ехать по шахте далеко — встаёт ждать кабину.
+func _try_board(u: Unit) -> bool:
+	var nxt: Vector2i = u.path[u.path_i]
+	var p := _passenger_lift_at(nxt)
+	if p == null or not lift_powered(p):
+		return false
+	var j := u.path_i
+	while j + 1 < u.path.size() and p.has_cell(u.path[j + 1]):
+		j += 1
+	if absi(_lift_axis(p, u.path[j]) - _lift_axis(p, nxt)) < LIFT_MIN_RIDE:
+		return false
+	u.lift_id = p.id
+	u.riding = false
+	u.lift_board = u.path_i
+	u.lift_exit = j
+	return true
+
+
+## Выйти из лифта (или перестать ждать): дальше пешком по своему пути.
+func _leave_lift(u: Unit, at_exit: bool) -> void:
+	if at_exit:
+		u.pos = Vector2(u.path[u.lift_exit])
+		u.path_i = u.lift_exit + 1
+	u.lift_id = 0
+	u.riding = false
+
+
+func _lifts_tick(dt: float) -> void:
+	_cargo_check_t += dt
+	var check := _cargo_check_t >= 2.0
+	if check:
+		_cargo_check_t = 0.0
+	for p in lifts():
+		var ends := _lift_ends(p)
+		if p.lift_pos < 0.0:
+			p.lift_pos = float(ends[1])
+		if p.cargo:
+			if check:
+				_cargo_autoload(p)
+			_cargo_tick(p, dt, ends)
+		else:
+			_passenger_tick(p, dt)
+
+
+func _passenger_tick(p: Project, dt: float) -> void:
+	var riders: Array[Unit] = []
+	var waiting: Array[Unit] = []
+	for u in units:
+		if u.lift_id == p.id:
+			if u.state != Unit.State.MOVE or u.path_i > u.lift_exit or u.lift_exit >= u.path.size():
+				_leave_lift(u, false)
+			elif u.riding:
+				riders.append(u)
+			else:
+				waiting.append(u)
+	if not lift_powered(p):
+		# Без энергии кабина стоит: едущие выходят на аварийную лестницу, ждущие идут пешком.
+		for u in riders + waiting:
+			_leave_lift(u, false)
+		return
+	var here := roundi(p.lift_pos)
+	if absf(p.lift_pos - here) < 0.05:
+		p.lift_pos = float(here)
+		var stopped := false
+		for u in riders.duplicate():
+			if _lift_axis(p, u.path[u.lift_exit]) == here:
+				_leave_lift(u, true)
+				riders.erase(u)
+				stopped = true
+		for u in waiting.duplicate():
+			if riders.size() < LIFT_CAP and _lift_axis(p, u.path[u.lift_board]) == here:
+				u.riding = true
+				u.pos = Vector2(u.path[u.lift_board])
+				waiting.erase(u)
+				riders.append(u)
+				stopped = true
+		# Кто уже идёт к этой остановке — кабина его ждёт (недолго и если есть место).
+		if (stopped or p.lift_dwell > 0.0) and riders.size() < LIFT_CAP and p.lift_dwell < LIFT_WAIT and _approaching(p, here):
+			p.lift_dwell += dt
+			return
+	var target := -1
+	var best := 1 << 30
+	for u in (riders if not riders.is_empty() else waiting):
+		var a := _lift_axis(p, u.path[u.lift_exit if u.riding else u.lift_board])
+		if absi(a - here) < best:
+			best = absi(a - here)
+			target = a
+	if target < 0:
+		p.lift_dwell = 0.0
+		return
+	if absf(float(target) - p.lift_pos) > 0.01:
+		p.lift_dwell = 0.0
+		var step := lift_speed(p) * dt
+		p.lift_pos = move_toward(p.lift_pos, float(target), step)
+	for u in riders:
+		var c: Vector2i = u.path[u.lift_board]
+		u.pos = Vector2(c.x, p.lift_pos) if p.lift_vertical() else Vector2(p.lift_pos, c.y)
+
+
+## Кто-то идёт к остановке here этого лифта и вот-вот сядет.
+func _approaching(p: Project, here: int) -> bool:
+	for u in units:
+		if u.lift_id != 0 or u.state != Unit.State.MOVE:
+			continue
+		for i in range(u.path_i, mini(u.path.size(), u.path_i + 8)):
+			var c: Vector2i = u.path[i]
+			if p.has_cell(c):
+				if _lift_axis(p, c) == here:
+					return true
+				break
+	return false
+
+
+## Площадка у конца грузового лифта: где стоят, кладя груз, и куда он выгружает.
+func lift_station(p: Project, end: int) -> Variant:
+	var ends := _lift_ends(p)
+	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
+		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
+	var best = null
+	for c in _rect_cells(slice.grow(1)):
+		if p.has_cell(c) or not pathing.node(c):
+			continue
+		if best == null or absi(_lift_axis(p, c) - ends[end]) < absi(_lift_axis(p, best) - ends[end]):
+			best = c
+	return best
+
+
+func _rect_cells(r: Rect2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			out.append(Vector2i(x, y))
+	return out
+
+
+## Склады и амбары вплотную к концу end грузового лифта.
+func lift_stores(p: Project, end: int) -> Array[Project]:
+	var ends := _lift_ends(p)
+	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
+		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
+	var out: Array[Project] = []
+	for room in store_rooms():
+		if room.rect.intersects(slice.grow(1)) and store_staffed(room):
+			out.append(room)
+	return out
+
+
+func _load_total(d: Dictionary) -> int:
+	var n := 0
+	for k in d:
+		n += int(d[k])
+	return n
+
+
+func _cargo_tick(p: Project, dt: float, ends: Array) -> void:
+	if not lift_powered(p):
+		return
+	if p.lift_goal >= 0:
+		# В пути к концу lift_goal; приехал — выгружает.
+		p.lift_pos = move_toward(p.lift_pos, float(ends[p.lift_goal]), lift_speed(p) * dt)
+		if absf(p.lift_pos - ends[p.lift_goal]) < 0.01:
+			var arrived := p.lift_goal
+			p.lift_pos = float(ends[arrived])
+			p.lift_goal = -1
+			p.lift_dwell = 0.0
+			if not p.lift_load.is_empty():
+				_cargo_unload(p, arrived)
+		return
+	var at := 0 if absf(p.lift_pos - ends[0]) <= absf(p.lift_pos - ends[1]) else 1
+	p.lift_pos = float(ends[at])
+	var other := 1 - at
+	# Берёт то, что ждёт у этого конца.
+	var buf: Dictionary = p.lift_buf[at]
+	for k in buf.keys():
+		var space := CARGO_CAP - _load_total(p.lift_load)
+		if space <= 0:
+			break
+		var n := mini(space, int(buf[k]))
+		p.lift_load[k] = int(p.lift_load.get(k, 0)) + n
+		buf[k] = int(buf[k]) - n
+		if buf[k] <= 0:
+			buf.erase(k)
+	var load_n := _load_total(p.lift_load)
+	if load_n > 0:
+		p.lift_dwell += dt
+	# Едет, когда набралось полкабины, или подождав, или за грузом с того конца.
+	if load_n >= CARGO_CAP / 2 or (load_n > 0 and p.lift_dwell >= CARGO_WAIT) \
+			or (load_n == 0 and _load_total(p.lift_buf[other]) > 0):
+		p.lift_goal = other
+		p.lift_dwell = 0.0
+
+
+func _cargo_unload(p: Project, end: int) -> void:
+	var stores := lift_stores(p, end)
+	var spot = lift_station(p, end)
+	for k in p.lift_load.keys():
+		var n := int(p.lift_load[k])
+		for room in stores:
+			if n <= 0:
+				break
+			if RoomType.stores(room, k):
+				n -= _add(k, n, room)
+		if n > 0:
+			if spot != null:
+				drop_item(spot, k, n)
+			else:
+				_add(k, n)
+	p.lift_load.clear()
+
+
+## Склад вплотную к концу грузового лифта: материалы для строек у другого конца
+## лифт сам берёт со склада и везёт (их там разносят уже недалеко).
+func _cargo_autoload(p: Project) -> void:
+	if not lift_powered(p):
+		return
+	for e in 2:
+		var stores := lift_stores(p, e)
+		if stores.is_empty():
+			continue
+		var far = lift_station(p, 1 - e)
+		if far == null:
+			continue
+		for q in projects:
+			if q.paused or q == p or (q.phase == Project.Phase.DONE and not q.repairing):
+				continue
+			var d: Vector2i = q.rect.get_center() - (far as Vector2i)
+			if absi(d.x) + absi(d.y) > 25:
+				continue
+			# Ближе к этому концу — пусть носят напрямую.
+			var near = lift_station(p, e)
+			if near != null:
+				var dn: Vector2i = q.rect.get_center() - (near as Vector2i)
+				if absi(dn.x) + absi(dn.y) <= absi(d.x) + absi(d.y):
+					continue
+			var need := remaining(q)
+			for k in need:
+				var want: int = int(need[k]) - drop_amount(far, k) - int(p.lift_buf[e].get(k, 0)) - int(p.lift_load.get(k, 0))
+				for room in stores:
+					if want <= 0:
+						break
+					var got := _remove(k, mini(want, held_in(room, k)), room)
+					if got > 0:
+						p.lift_buf[e][k] = int(p.lift_buf[e].get(k, 0)) + got
+						want -= got
+
+
+## Куда выгоднее отнести груз с кучи: в грузовой лифт, если у другого его конца есть
+## склад с местом и до лифта ближе, чем до склада. [площадка, лифт, конец] или null.
+func _cargo_route(key: String, dist: Dictionary, direct_d: int, only: Project = null) -> Variant:
+	var best = null
+	var best_d := direct_d - 4
+	for p in lifts():
+		if not p.cargo or not lift_powered(p):
+			continue
+		for e in 2:
+			var ok := false
+			for room in lift_stores(p, 1 - e):
+				if (only == null or room == only) and RoomType.stores(room, key) and room_free(room, key) > 0:
+					ok = true
+			if not ok:
+				continue
+			var st = lift_station(p, e)
+			if st != null and dist.has(st) and dist[st] < best_d:
+				best_d = dist[st]
+				best = [st, p, e]
+	return best
+
+
 ## Где можно лазить (pathing.ladders, pathing.sites): лестницы готовых построек и леса строек.
 func _rebuild_climb() -> void:
 	var lad := {}
@@ -941,9 +1320,10 @@ func _rebuild_climb() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			continue
 		match p.kind:
-			Project.Kind.TUNNEL, Project.Kind.MINE:
+			Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.LIFT:
 				# Вертикальный тоннель — с лестницей; горизонтальный и шахта — только по полу.
-				if p.rect.size.y > p.rect.size.x:
+				# В шахте пассажирского лифта — аварийная лестница; в грузовом лазить нельзя.
+				if p.rect.size.y > p.rect.size.x and not (p.kind == Project.Kind.LIFT and p.cargo):
 					for c in p.cells():
 						lad[c] = true
 			Project.Kind.ROOM:
@@ -2450,6 +2830,7 @@ func update(dt: float) -> void:
 		_tick_exposure(step)
 		_wear_tick(step)
 		_power_tick(step)
+		_lifts_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, false)
@@ -2704,7 +3085,12 @@ func congestion(u: Unit) -> float:
 func _move(u: Unit, dt: float) -> void:
 	var budget := dt
 	var jam := congestion(u)
+	# В лифте: кабина везёт сама; у лифта — ждём кабину.
+	if u.lift_id != 0:
+		return
 	while budget > 0.0 and u.path_i < u.path.size():
+		if _try_board(u):
+			return
 		# Путь устарел (рухнуло, убрали лестницу) — останавливаемся и ищем заново.
 		if not pathing.node(u.path[u.path_i]):
 			_drop(u)
@@ -3067,6 +3453,9 @@ func _drop(u: Unit) -> void:
 	u.gather_room = 0
 	u.from_drop = false
 	u.to_store = false
+	u.lift_id = 0
+	u.riding = false
+	u.cargo_end = -1
 	u.task = Unit.Task.NONE
 	u.project_id = 0
 	u.path.clear()
@@ -3845,6 +4234,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_n := 0
 	var best_d := 1 << 30
 	var best_room: Project = null
+	var best_lift_end := -1
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
 		if stand == null or dist[stand] >= best_d:
@@ -3862,13 +4252,21 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			if avail <= 0:
 				continue
 			var to = _store_target(k, dist, only)
-			if to == null:
+			# До грузового лифта ближе, чем до склада, — несут в лифт (он довезёт до склада).
+			var lift = _cargo_route(k, dist, dist[to[0]] if to != null else (1 << 30), only)
+			if to == null and lift == null:
 				continue
 			best = stand
 			best_c = c
 			best_k = k
-			best_room = to[1]
-			best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
+			best_lift_end = -1
+			if lift != null:
+				best_room = lift[1]
+				best_lift_end = lift[2]
+				best_n = mini(carry_cap(), avail)
+			else:
+				best_room = to[1]
+				best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
 			best_d = dist[stand]
 			break
 	if best == null:
@@ -3879,6 +4277,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	u.from_drop = true
 	u.haul_src = best_c
 	u.to_store = true
+	u.cargo_end = best_lift_end
 	_start(u, Unit.Task.HAUL, best, best, best_room.id, parents)
 	return true
 
@@ -4116,7 +4515,11 @@ func _haul_pickup(u: Unit) -> void:
 	var stand = null
 	if u.to_store:
 		# Несёт в тот склад, куда собирался; там уже нет места — в ближайший другой.
-		if p != null and RoomType.is_store(p.purpose) and store_staffed(p):
+		if p != null and p.kind == Project.Kind.LIFT and u.cargo_end >= 0 and lift_powered(p):
+			stand = lift_station(p, u.cargo_end)
+			if stand != null and not reach[1].has(stand):
+				stand = null
+		elif p != null and RoomType.is_store(p.purpose) and store_staffed(p):
 			stand = _room_stand(p, reach[1])
 		if stand == null:
 			var to = _store_target(u.carry_key, reach[1])
@@ -4147,8 +4550,13 @@ func _haul_deliver(u: Unit) -> void:
 	var n := u.carry_amount
 	var to_storage := u.gather_room != 0 or u.to_store
 	var spot := u.cell()
+	var end := u.cargo_end
 	u.carry_amount = 0
 	_drop(u)
+	if p != null and p.kind == Project.Kind.LIFT and to_storage and end >= 0:
+		# Груз — в грузовой лифт: он довезёт до склада у другого конца.
+		p.lift_buf[end][k] = int(p.lift_buf[end].get(k, 0)) + n
+		return
 	if to_storage or p == null:
 		# В свой склад; не влезло — остаётся лежать здесь (подберут и отнесут в другой).
 		var room: Project = p if p != null and RoomType.is_store(p.purpose) else store_at(spot)
@@ -4813,6 +5221,9 @@ func _power_tick(dt: float) -> void:
 			p.blocked = "Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 	_hearth_tick(dt)
+	for p in lifts():
+		if not p.paused:
+			power_used += LIFT_POWER
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
 			continue
@@ -5018,6 +5429,7 @@ func advance_offline(dt: float) -> int:
 		_tick_exposure(step)
 		_wear_tick(step)
 		_power_tick(step)
+		_lifts_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, true)

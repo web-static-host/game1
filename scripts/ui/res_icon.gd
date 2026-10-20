@@ -177,6 +177,12 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 					var tip: Vector2 = c + dir * r * 0.55 * s
 					ci.draw_line(tip, tip + (dir * s).rotated(0.8) * r * 0.3, col, w * 0.8)
 					ci.draw_line(tip, tip + (dir * s).rotated(-0.8) * r * 0.3, col, w * 0.8)
+		"lift", "cargo_lift":
+			# Шахта с кабиной и стрелками вверх-вниз; у грузового — ящик в кабине.
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.75, -r * 0.9), Vector2(r * 1.5, r * 1.8)), col, false, w)
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.45, -r * 0.15), Vector2(r * 0.9, r * 0.75)), col, name == "cargo_lift", w)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.3, -r * 0.35), c + Vector2(0, -r * 0.7),
+				c + Vector2(r * 0.3, -r * 0.35)]), col)
 		"check", "check_off":
 			# Квадрат галочки; включённая — с галкой.
 			ci.draw_rect(Rect2(c - Vector2(r, r) * 0.8, Vector2(r, r) * 1.6), col, false, w)

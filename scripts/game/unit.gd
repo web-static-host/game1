@@ -85,6 +85,13 @@ var starving_warned := false
 var haul_src := Vector2i.ZERO
 var from_drop := false
 var to_store := false
+## Лифт: в каком едет или ждёт (0 — нет), едет ли уже, где сел и где выйдет (индексы пути).
+var lift_id := 0
+var riding := false
+var lift_board := 0
+var lift_exit := 0
+## Грузовой лифт: к какому его концу несёт груз (0 — начало, 1 — конец).
+var cargo_end := -1
 
 var state := State.IDLE
 var task := Task.NONE

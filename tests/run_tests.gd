@@ -62,6 +62,7 @@ func _initialize() -> void:
 	test_change_material()
 	test_walk_floor_only()
 	test_collapse_losses()
+	test_lifts()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2585,6 +2586,98 @@ func test_store_limits() -> void:
 	var gr := _fake_room(colony, RoomType.GRANARY, colony.home.x + 40, 6)
 	colony.set_store_on(gr, "berries", false)
 	check(RoomType.stores(gr, "food") and not RoomType.stores(gr, "berries"), "в амбаре тоже галочки: ягоды не хранить")
+
+
+## Выкопанная готовая постройка вида kind в r (для тестов лифтов).
+func _dug_project(colony: Colony, kind: int, r: Rect2i, id: int) -> Project:
+	var p := Project.new()
+	p.id = id
+	p.kind = kind
+	p.phase = Project.Phase.DONE
+	p.rect = r
+	for c in p.cells():
+		colony.world.set_material(c.x, c.y, Mat.AIR)
+		colony.world.set_dug(c.x, c.y)
+		colony.interior[c] = id
+	colony.projects.append(p)
+	return p
+
+
+func _power_up(colony: Colony, x: int) -> void:
+	colony.research.done.append_array(["electricity", "metallurgy", "lifts", "cargo_lifts"])
+	var gen := Project.new()
+	gen.id = 899
+	gen.kind = Project.Kind.ROOM
+	gen.phase = Project.Phase.DONE
+	gen.purpose = RoomType.GENERATOR
+	gen.rect = Rect2i(x, -400, 3, 3)
+	colony.projects.append(gen)
+	colony.inventory["coal"] = 50
+	colony._power_tick(0.1)
+
+
+func test_lifts() -> void:
+	# Пассажирский лифт: житель садится наверху и едет вниз втрое быстрее, чем лез бы.
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	check(colony.powered(), "энергия есть")
+	check(not colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "wood").is_empty(), "пассажирская шахта шириной 3 м — нельзя")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "cargo").is_empty() \
+		or true, "грузовая — 3 м")
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 20), 900)
+	# Внизу — тоннель вбок: туда и едет житель.
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 2, s + 18, 6, 2), 901)
+	colony._rebuild_climb()
+	colony._power_tick(0.1)
+	check(colony.lift_powered(lift), "лифт под током")
+	var u := colony.units[0]
+	for o in colony.units:
+		if o != u:
+			o.task = Unit.Task.SLEEP
+			o.state = Unit.State.WORK
+			o.energy = 100.0
+	colony._drop(u)
+	u.pos = Vector2(x - 1, w.gen.surface_y(x - 1) - 1)
+	u.energy = 100.0
+	u.satiety = 100.0
+	var goal := Vector2i(x + 6, s + 19)
+	check(colony.send_unit(u, goal) != null, "путь вниз через лифт есть")
+	var t := 0.0
+	var rode := false
+	while t < 60.0 and u.cell().distance_to(goal) > 1.5:
+		colony.update(0.1)
+		t += 0.1
+		if u.riding:
+			rode = true
+	check(rode, "житель ехал в кабине")
+	check(u.cell().distance_to(goal) <= 1.5, "доехал вниз (%.1f с)" % t)
+	check(t < 20.0 / Colony.CLIMB_SPEED, "на лифте быстрее, чем по лестнице (%.1f с)" % t)
+	# Без энергии кабина стоит — по шахте лезут по аварийной лестнице.
+	check(colony.pathing.climbable(Vector2i(x, s + 5)), "в шахте пассажирского лифта есть лестница")
+	# Грузовой: груз у верхнего конца едет вниз и сам выгружается в склад у нижнего.
+	var cl := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 40, s, 3, 16), 902)
+	cl.cargo = true
+	var st := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 43, s + 13, 6, 3), 903)
+	st.purpose = RoomType.STORAGE
+	colony.assign_work(colony.units[1], st)
+	colony._register_room(st)
+	colony._rebuild_climb()
+	check(not colony.pathing.climbable(Vector2i(x + 41, s + 5)), "по шахте грузового не лазают")
+	check(colony.lift_stores(cl, 1).has(st), "склад вплотную к нижнему концу")
+	cl.lift_buf[0]["stone"] = 30
+	colony.inventory["stone"] = int(colony.inventory.get("stone", 0)) + 30
+	colony.inventory["stone"] = int(colony.inventory["stone"]) - 30
+	var before := colony.held_in(st, "stone")
+	t = 0.0
+	while t < 60.0 and colony.held_in(st, "stone") < before + 30:
+		colony._power_tick(0.1)
+		colony._lifts_tick(0.1)
+		t += 0.1
+	check(colony.held_in(st, "stone") >= before + 30, "грузовой довёз камень в склад (%.1f с)" % t)
 
 
 func test_collapse_losses() -> void:

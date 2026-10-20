@@ -136,6 +136,8 @@ func _draw_done(p: Project) -> void:
 			_draw_furniture(p, r, p.purpose, 1.0)
 			if p.purpose == RoomType.NONE and p.phase == Project.Phase.DONE:
 				_draw_question(r)
+	elif p.kind == Project.Kind.LIFT:
+		_draw_lift(p, r)
 	else:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
@@ -148,6 +150,48 @@ func _draw_done(p: Project) -> void:
 		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
 	if p.id == selected_project:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
+
+
+## Лифт: стальные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
+const LIFT_STEEL := Color(0.55, 0.58, 0.64)
+const LIFT_CAB := Color(0.86, 0.62, 0.22)
+
+
+func _draw_lift(p: Project, r: Rect2) -> void:
+	var dark := Color(0.2, 0.21, 0.24)
+	var cab_col := Color(0.5, 0.56, 0.62) if p.cargo else LIFT_CAB
+	if p.lift_vertical():
+		for x in [r.position.x + 3, r.end.x - 3]:
+			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
+			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
+		var y := r.end.y - TILE
+		if p.lift_pos >= 0.0:
+			y = view.cell_to_local(Vector2i(0, 0)).y + p.lift_pos * TILE
+		# Кабина — на высоту человека (2 м) над полом клетки, где стоит.
+		var cab := Rect2(r.position.x + 5, y - TILE + 2, r.size.x - 10, TILE * 2 - 2)
+		draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, cab.position.y), Color(0.15, 0.15, 0.17), 2.0)
+		_draw_cabin(cab, cab_col, p)
+	else:
+		draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
+		draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
+		var x0 := r.position.x
+		if p.lift_pos >= 0.0:
+			x0 = view.cell_to_local(Vector2i(0, 0)).x + p.lift_pos * TILE
+		var cab := Rect2(x0 - TILE * 0.5 + 2, r.end.y - TILE * 2 - 2, TILE * 2 - 4, TILE * 2)
+		_draw_cabin(cab, cab_col, p)
+
+
+func _draw_cabin(cab: Rect2, col: Color, p: Project) -> void:
+	_rbox(cab, 5, Color(col, 0.35), col.darkened(0.3), 3)
+	if p.cargo and not p.lift_load.is_empty():
+		var n := mini(4, 1 + int(colony._load_total(p.lift_load)) / 10)
+		for i in n:
+			var bx := cab.position.x + 4 + (i % 2) * (cab.size.x * 0.5 - 4)
+			var by := cab.end.y - 12 - (i / 2) * 11
+			_rbox(Rect2(bx, by, cab.size.x * 0.5 - 8, 10), 2, Color(0.65, 0.45, 0.25), Color(0.4, 0.27, 0.15), 1)
+	# Лампочка: горит, когда лифт под током.
+	draw_circle(Vector2(cab.get_center().x, cab.position.y + 5), 3.0,
+		LAMP if colony.lift_powered(p) else Color(0.35, 0.35, 0.38))
 
 
 ## Радиус действия выбранной комнаты: насос, вентиляция, дегазация — квадрат вокруг центра;
