@@ -792,8 +792,13 @@ func flee_gas(u: Unit) -> void:
 
 func cancel_project(p: Project) -> void:
 	wake_idle()
-	if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
+	# Шахту и тоннель останавливают: готовые метры остаются; мост — построенная часть
+	# остаётся пристанью у берега.
+	if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
 		stop_mine(p)
+		return
+	if p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD and bridge_meters_done(p) > 0:
+		stop_bridge(p)
 		return
 	if p.phase == Project.Phase.EQUIP:
 		cancel_equip(p)
@@ -1427,7 +1432,12 @@ func stop_mine(p: Project) -> void:
 	p.support_paid = false
 	var old := p.cells()
 	var total := p.slice_count()
-	p.rect = Rect2i(p.rect.position.x + best_a, p.rect.position.y, best_n, p.rect.size.y)
+	if p.vertical():
+		# Вертикальный тоннель крепят по 2 ряда.
+		p.rect = Rect2i(p.rect.position.x, p.rect.position.y + best_a * 2, p.rect.size.x,
+			mini(best_n * 2, p.rect.size.y - best_a * 2))
+	else:
+		p.rect = Rect2i(p.rect.position.x + best_a, p.rect.position.y, best_n, p.rect.size.y)
 	var ns: Array[int] = []
 	var sp: Array[int] = []
 	for i in p.needs_support:
@@ -1446,6 +1456,38 @@ func stop_mine(p: Project) -> void:
 		if not p.has_cell(c):
 			cut.append(c)
 	physics.check_area(cut)
+
+
+## Сколько метров моста уже построено (строят от берега ближе к базе).
+func bridge_meters_done(p: Project) -> int:
+	if p.kind != Project.Kind.BRIDGE or p.phase != Project.Phase.BUILD or not p.paid:
+		return 0
+	return mini(p.rect.size.x, floori(p.build_done / (p.build_work() / p.rect.size.x) + 0.001))
+
+
+## Мост строят от этого края (true — от правого).
+func bridge_from_right(p: Project) -> bool:
+	return absi(p.rect.end.x - 1 - home.x) < absi(p.rect.position.x - home.x)
+
+
+## Остановить мост: построенная часть у берега остаётся пристанью, дерево за
+## непостроенное — обратно.
+func stop_bridge(p: Project) -> void:
+	var m := bridge_meters_done(p)
+	var total := p.rect.size.x
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	_refund(p.cost(), 1.0 - float(m) / total)
+	var right := bridge_from_right(p)
+	var old := p.cells()
+	p.rect = Rect2i(p.rect.end.x - m if right else p.rect.position.x, p.rect.position.y, m, p.rect.size.y)
+	p.kind = Project.Kind.PIER
+	for c in old:
+		if not p.has_cell(c):
+			deck.erase(c)
+	_finish_project(p)
+	_log("Мост остановлен: готово %d м из %d — стоит пристанью у берега" % [m, total], "info")
 
 
 ## Срез выкопан целиком.
@@ -1533,8 +1575,13 @@ func _check_phase(p: Project) -> void:
 		if not p.supported.has(i):
 			all_supported = false
 	if remaining_dig(p).is_empty() and uncleared(p).is_empty() and all_supported:
-		if p.kind == Project.Kind.MINE:
-			# Шахта — без отделки: выкопана и закреплена — готова.
+		if p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL:
+			# Шахта и тоннель — без отделки: выкопаны и закреплены — готовы.
+			var found: PackedStringArray = []
+			for k in p.found:
+				found.append("%s %d" % [Mat.resource_name(k), p.found[k]])
+			if not found.is_empty():
+				_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(found)], "good")
 			_finish_project(p)
 			return
 		p.phase = Project.Phase.BUILD

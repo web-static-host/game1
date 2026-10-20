@@ -63,6 +63,7 @@ func _initialize() -> void:
 	test_walk_floor_only()
 	test_collapse_losses()
 	test_lifts()
+	test_stop_by_meter()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -2614,6 +2615,64 @@ func _power_up(colony: Colony, x: int) -> void:
 	colony.projects.append(gen)
 	colony.inventory["coal"] = 50
 	colony._power_tick(0.1)
+
+
+func test_stop_by_meter() -> void:
+	# Тоннель и мост строятся по метру: остановили — готовая часть остаётся.
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s + 4, 8, 2))
+	check(t != null, "тоннель заложен")
+	if t != null:
+		# Выкопаны и закреплены первые 3 метра.
+		for i in 3:
+			for c in t.slice_cells(i):
+				w.set_material(c.x, c.y, Mat.AIR)
+			if t.needs_support.has(i):
+				t.supported.append(i)
+		check(colony.mine_meters_done(t) == 3, "готово 3 м")
+		colony.cancel_project(t)
+		check(colony.projects.has(t) and t.phase == Project.Phase.DONE and t.rect.size.x == 3, "остановили — 3 м тоннеля остались готовыми")
+		# Вертикальный: срезы по 2 м.
+		var v := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 20, s, 1, 10))
+		if v != null:
+			for i in 2:
+				for c in v.slice_cells(i):
+					w.set_material(c.x, c.y, Mat.AIR)
+				if v.needs_support.has(i):
+					v.supported.append(i)
+			colony.cancel_project(v)
+			check(v.phase == Project.Phase.DONE and v.rect.size.y == 4, "вертикальный: готовые 4 м остались (%d)" % v.rect.size.y)
+	# Мост: построено 3 м — остаётся пристанью у берега, дерево за остальное возвращается.
+	var lake := {}
+	for lx in range(x - 200, x + 200):
+		lake = w.gen.lake_at(lx)
+		if not lake.is_empty():
+			break
+	if lake.is_empty():
+		return
+	var span := w.gen.lake_water_span(lake)
+	var br: Rect2i = colony.water_rects(span.x, span.y)["bridge"]
+	if br.size.x < 5:
+		return
+	colony.inventory["wood"] = 200
+	var b := colony.create_project(Project.Kind.BRIDGE, br)
+	check(b != null, "мост заложен")
+	if b == null:
+		return
+	b.paid = true
+	b.phase = Project.Phase.BUILD
+	b.build_done = b.build_work() / br.size.x * 3.0
+	check(colony.bridge_meters_done(b) == 3, "построено 3 м моста")
+	colony.inventory["wood"] = 0
+	colony._sync_held()
+	var wood0: int = colony.inventory.get("wood", 0)
+	colony.cancel_project(b)
+	check(b.kind == Project.Kind.PIER and b.phase == Project.Phase.DONE and b.rect.size.x == 3, "остановили — 3 м стоят пристанью")
+	check(int(colony.inventory.get("wood", 0)) > wood0, "дерево за непостроенное вернули")
 
 
 func test_lifts() -> void:

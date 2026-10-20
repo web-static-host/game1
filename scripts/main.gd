@@ -559,8 +559,9 @@ func _show_project(p: Project) -> void:
 		actions.append(["Продолжить" if p.paused else "Пауза", func() -> void:
 			colony.set_paused(p, not p.paused)
 			_show_project(p)])
-		if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG:
-			# Шахту можно остановить в любой момент: готовые метры остаются.
+		if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and p.phase == Project.Phase.DIG \
+				or p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD:
+			# Шахту, тоннель и мост можно остановить в любой момент: готовые метры остаются.
 			actions.append(["Остановить", func() -> void:
 				colony.cancel_project(p)
 				if colony.projects.has(p):
@@ -853,6 +854,15 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			chips.append(["", "стены: " + p.material_name().to_lower()])
 		Project.Kind.TUNNEL:
 			chips.append(["", "потоков: %d" % Colony.tunnel_lanes(p.rect)])
+			if p.phase == Project.Phase.DIG:
+				var tdone := colony.mine_meters_done(p)
+				var unit := "по 2 м" if p.vertical() else "м"
+				rows.append(_progress("Готово", float(tdone) / maxf(1.0, p.slice_count()), "%d из %d (%s)" % [tdone, p.slice_count(), unit]))
+				rows.append({"type": "text", "text": "Тоннель строится по метру: выкопан и закреплён — готов. «Остановить» — готовая часть остаётся тоннелем."})
+		Project.Kind.BRIDGE when p.phase == Project.Phase.BUILD:
+			var bdone := colony.bridge_meters_done(p)
+			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
+			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
 		Project.Kind.LIFT:
 			chips.append(["", "по вертикали" if p.lift_vertical() else "по горизонтали"])
 			if p.phase == Project.Phase.DONE:

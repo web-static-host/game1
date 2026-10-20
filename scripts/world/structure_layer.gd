@@ -1281,7 +1281,15 @@ func _draw_site(p: Project, font: Font) -> void:
 			_draw_slice_support(p, i, 1.0)
 	if p.phase != Project.Phase.DIG:
 		var t := clampf(p.build_done / p.build_work(), 0.0, 1.0) if p.paid else 0.0
-		if p.is_water_structure():
+		if p.kind == Project.Kind.BRIDGE:
+			# Мост строят по метру от берега: готовые метры — целиком, остальное — призраком.
+			_draw_deck(p, r, 0.3)
+			var m := colony.bridge_meters_done(p)
+			if m > 0:
+				var bw := m * TILE
+				var br := Rect2(r.end.x - bw if colony.bridge_from_right(p) else r.position.x, r.position.y, bw, r.size.y)
+				_draw_deck(p, br, 1.0)
+		elif p.is_water_structure():
 			_draw_deck(p, r, 0.3 + 0.7 * t)
 		elif p.kind == Project.Kind.ROOM:
 			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
