@@ -3115,8 +3115,8 @@ func test_far_reach() -> void:
 	check(q.blocked.is_empty() or colony.workers_on(q) > 0, "предупреждение «Нет доступа» снимается")
 
 
-## Шахтёр — только шахты, строитель — остальные стройки, прочие только носят; нет бригады —
-## берутся свободные. Гаврик возвращается на свою стройку, а не на первую в списке.
+## Шахтёр — только шахты, строитель — остальные стройки, свободные помогают везде.
+## Гаврик возвращается на свою стройку, а не на первую в списке.
 func test_crew_roles() -> void:
 	var colony := _new_colony(38)
 	_start(colony, _find_solid_column(colony.world, 40))
@@ -3129,13 +3129,13 @@ func test_crew_roles() -> void:
 	var mine := Project.new()
 	mine.id = 1202
 	mine.kind = Project.Kind.MINE
-	check(colony.works_on(f, room) and colony.works_on(f, mine), "без строителей и шахтёров строят свободные")
 	b.profession = Unit.Prof.BUILDER
-	check(colony.works_on(b, room) and colony.works_on(b, mine) and not colony.works_on(f, room) and not colony.works_on(f, mine),
-		"есть строитель — свободные не копают; шахту без шахтёров копает строитель")
+	check(colony.works_on(f, room) and colony.works_on(f, mine), "свободные помогают и на стройке, и в шахте")
+	check(colony.works_on(b, room) and colony.works_on(b, mine), "шахту без шахтёров копает строитель")
 	m.profession = Unit.Prof.MINER
 	check(colony.works_on(m, mine) and not colony.works_on(m, room), "шахтёр — только шахты")
 	check(colony.works_on(b, room) and not colony.works_on(b, mine), "есть шахтёр — строитель шахты не копает")
+	check(colony.works_on(f, room) and colony.works_on(f, mine), "свободные помогают и при бригадах")
 	var other := Project.new()
 	other.id = 1203
 	other.kind = Project.Kind.ROOM

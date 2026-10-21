@@ -4476,22 +4476,20 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 	return false
 
 
-## Кто копает и строит: шахты — шахтёры, остальное — строители. Остальные гаврики на стройках
-## только носят материалы. Если нужной бригады в колонии нет вовсе — берутся свободные
-## (шахту без шахтёров копают строители, а без них — свободные).
+## Кто копает и строит: шахтёр — только шахты, строитель — остальные стройки (шахты — только
+## если шахтёров нет). Свободные и прочие помогают везде, где есть места; строитель и шахтёр
+## на своей стройке вытесняют свободного.
 func works_on(u: Unit, p: Project) -> bool:
 	return _crew_ok(u, p.kind == Project.Kind.MINE, has_crew(Unit.Prof.MINER), has_crew(Unit.Prof.BUILDER))
 
 
-static func _crew_ok(u: Unit, mine: bool, miners: bool, builders: bool) -> bool:
+static func _crew_ok(u: Unit, mine: bool, miners: bool, _builders: bool) -> bool:
 	if u.workplace == 0:
 		if u.profession == Unit.Prof.MINER:
 			return mine
 		if u.profession == Unit.Prof.BUILDER:
 			return not mine or not miners
-	if mine:
-		return not miners and not builders
-	return not builders
+	return true
 
 
 ## Есть ли в колонии взрослый с этой профессией без места работы (строитель, шахтёр).
