@@ -191,8 +191,9 @@ def build_mesh():
     # Толще DEPTH не бывает — плоский перед под лицом.
     g = (np.maximum(g, 1e-6) ** -PROFILE + DEPTH ** -PROFILE) ** (-1.0 / PROFILE)
     Y = ys[None, :, None]
-    # Край: где толщина и контур сходятся — скругляем (иначе по бокам две полоски-ребра).
-    F_up = _smax(np.abs(Y) - g[:, None, :], np.broadcast_to(d2[:, None, :], (len(xs), len(ys), len(zs))), RIM)
+    # Край: где толщина и контур сходятся — скругляем (иначе по бокам две полоски-ребра); |y| —
+    # сглаженный (иначе по середине края полоска), толщина при этом ровно g.
+    F_up = _smax(np.sqrt(Y * Y + 0.04 ** 2) - np.sqrt(g[:, None, :] ** 2 + 0.04 ** 2), np.broadcast_to(d2[:, None, :], (len(xs), len(ys), len(zs))), RIM)
     X3, Y3, Z3 = np.meshgrid(xs, ys, zs, indexing='ij')
     F_up = _metric(F_up)
     w = _smooth((Z3 - LOW[0]) / (LOW[1] - LOW[0]))
