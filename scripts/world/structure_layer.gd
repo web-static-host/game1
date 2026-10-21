@@ -1062,6 +1062,82 @@ func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	_furn_at(comp, x0 + tw + TILE * 0.1 * sc + comp.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
 
 
+## Вентиляция: установка на каждые 3 м; под потолком — воздуховод во всю комнату, над каждой
+## установкой — решётка и короб в потолок. Что комната охлаждает и работает от тока, видно сразу:
+## при энергии лопасти крутятся, из решёток вниз идёт холодный воздух со снежинками.
+func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var on := p.phase == Project.Phase.DONE and not p.paused and colony.powered()
+	var fan := furniture("vent", "fan_on" if on else "fan_off")
+	var sc := _fit(fan, lay.unit * 3)
+	var k := TILE / FURN_PX_PER_M
+	var mod := Color(1, 1, 1, alpha)
+	var xs := _block_centers(lay, n, 0.0)
+	var duct := furniture("vent", "duct_h")
+	var dh := duct.get_height() * k
+	var top := fy - TILE * 2.38
+	var right: float = lay.x + n * 3 * lay.unit
+	_tile_h(duct, lay.x + TILE * 0.05, right - TILE * 0.05, top, alpha)
+	var grille := furniture("vent", "grille")
+	var gw := grille.get_width() * k
+	var box := furniture("vent", "duct_v")
+	var air := furniture("vent", "air")
+	var thermo := furniture("vent", "thermo")
+	for i in n:
+		var x: float = xs[i]
+		_tile_v(box, x - box.get_width() * k * 0.5, fy - TILE * CEILING, top + 2, alpha)
+		draw_texture_rect(grille, Rect2(x - gw * 0.5, top, gw, dh), false, mod)
+		if on:
+			var asz := air.get_size() * k
+			draw_texture_rect(air, Rect2(x - asz.x * 0.5, top + dh * 0.8, asz.x, asz.y), false, Color(1, 1, 1, 0.85 * alpha))
+		_furn_at(fan, x, fy, alpha, 1, sc)
+	# Термометр — на стене возле первой установки (между установками или справа от неё).
+	var a := (xs[0] - r.position.x) / TILE + 0.85 * sc
+	var b: float = minf(a + 0.9, (lay.x + n * 3 * lay.unit - r.position.x) / TILE)
+	if b - a < 0.3:     # справа места нет — слева от установки
+		b = (xs[0] - r.position.x) / TILE - 0.85 * sc
+		a = maxf(b - 0.9, (lay.x - r.position.x) / TILE)
+	_hang_fit(thermo, r, a, b, wall_posts(p.rect.size.x), fy, alpha)
+
+
+## Кузница: на каждые 3 м — горн с мехами (угли горят, пока кузнец работает), наковальня на пне,
+## бочка с водой; перед горном — ящик руды и стопка слитков; от колпака горна — труба в потолок;
+## на стене между горнами — клещи и молот.
+func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var on := _crafting(p)
+	var forge := furniture("forge", "forge_on" if on else "forge_off")
+	var anvil := furniture("forge", "anvil")
+	var barrel := furniture("forge", "barrel")
+	var ore := furniture("forge", "ore")
+	var ingots := furniture("forge", "ingots")
+	var chimney := furniture("hearth", "chimney")
+	var sc := _group_fit([forge, anvil, barrel], lay.unit * 3)
+	var k := TILE / FURN_PX_PER_M * sc
+	var gap := TILE * 0.08 * sc
+	var row := (forge.get_width() + anvil.get_width() + barrel.get_width()) * k + 2 * gap
+	var fxs: Array[float] = []
+	for i in n:
+		var x0: float = lay.x + i * 3 * lay.unit + (lay.unit * 3 - row) * 0.5
+		var fx := x0 + forge.get_width() * k * 0.5
+		fxs.append(fx)
+		var hood := x0 + forge.get_width() * k * 0.657
+		_tile_v(chimney, hood - chimney.get_width() * k * 0.5, fy - TILE * CEILING, fy - forge.get_height() * k + 3 * k, alpha)
+		if on and alpha >= 1.0:
+			_glow(Vector2(hood, fy - TILE * 0.5 * sc), TILE * 2.0, Color(1.0, 0.55, 0.2, 0.22))
+		_furn_at(forge, fx, fy, alpha, 1, sc)
+		var ax := x0 + forge.get_width() * k + gap + anvil.get_width() * k * 0.5
+		_furn_at(anvil, ax, fy, alpha, 1, sc)
+		_furn_at(barrel, ax + anvil.get_width() * k * 0.5 + gap + barrel.get_width() * k * 0.5, fy, alpha, 1, sc)
+		_furn_at(ore, x0 + ore.get_width() * k * 0.45, fy + TILE * 0.04, alpha, 1, sc)
+		_furn_at(ingots, x0 + forge.get_width() * k * 0.8, fy + TILE * 0.04, alpha, 1, sc)
+	_tools_between(p, r, lay, fxs, furniture("forge", "tools"), fy, alpha)
+
+
 ## Столовая: стол с лавкой на каждые 3 м, на столе — свой набор посуды; на стене — полки и меню.
 const DINING_WALL := ["shelf_vine", "menu", "shelf_plates"]
 const DINING_TABLEWARE := ["bowl", "jug_blue", "mug_red", "fruit", "mug_blue", "jug_red", "bowl", "mug_green"]
@@ -1225,6 +1301,12 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 		return
 	if purpose == RoomType.DEGAS and furniture("degas", "tank_1") != null:
 		_draw_degas_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.VENT and furniture("vent", "fan_on") != null:
+		_draw_vent_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.FORGE and furniture("forge", "forge_on") != null:
+		_draw_forge_furniture(p, r, alpha)
 		return
 	match purpose:
 		RoomType.HOME:
