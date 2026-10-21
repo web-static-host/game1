@@ -6,6 +6,10 @@ const AUTOSAVE_SEC := 30.0
 ## Сколько времени отсутствия засчитывается (стимул заходить регулярно).
 const OFFLINE_CAP_SEC := 1.0 * 3600.0
 const SPEEDS := [1.0, 2.0, 10.0, 20.0]
+## Сколько миллисекунд кадра можно отдать симуляции.
+const SIM_BUDGET_MS := 30.0
+## Сколько стоит секунда игры (мс), скользящее среднее — по нему режем шаг.
+var _sim_cost := 0.0
 const STATUS_INTERVAL := 0.2
 
 var world: WorldData
@@ -181,9 +185,17 @@ func _process(delta: float) -> void:
 	var dt := 0.0 if _away else minf(delta, 0.25)
 	# Время идёт во всех мирах сразу; ракеты летят.
 	var step: float = dt * SPEEDS[_speed_idx]
+	# Симуляция не съедает кадр: если на большой колонии шаг дороже бюджета, игра идёт
+	# медленнее заказанной скорости, но не замирает (иначе долгий кадр → ещё больший шаг).
+	if _sim_cost > 0.0:
+		step = maxf(minf(step, SIM_BUDGET_MS / _sim_cost), minf(step, dt))
+	var t0 := Time.get_ticks_usec()
 	for e in universe.worlds:
 		(e["colony"] as Colony).update(step)
 	universe.update(step)
+	if step > 0.0:
+		var cost := (Time.get_ticks_usec() - t0) / 1000.0 / step
+		_sim_cost = cost if _sim_cost == 0.0 else lerpf(_sim_cost, cost, 0.1)
 	_clamp_camera()
 	if _shake > 0.0:
 		_shake -= delta

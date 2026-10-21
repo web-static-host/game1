@@ -44,31 +44,64 @@ var _overlay: Node2D
 var _models: ModelSprites
 
 
-## Узел одного гаврика: хранит записанные позы и рисует текущую.
+## Узел одного гаврика. Модель рисуется куском атласа (дёшево). Рисованный гаврик — много
+## фигур: каждую позу рисуем один раз в свой дочерний узел, а при смене позы только
+## переключаем, какой узел виден, — без перерисовки.
 class CreatureSprite:
 	extends Node2D
 	var looks := {}
 	var pose := ""
 	var cache := {}
+	var _drawn := {}
+	var _shown: Node2D
 
 	func set_pose(p: String) -> void:
-		if p != pose:
-			pose = p
+		if p == pose:
+			return
+		pose = p
+		if _is_model():
 			queue_redraw()
+			return
+		var n: Node2D = _drawn.get(p)
+		if n == null:
+			n = Node2D.new()
+			add_child(n)
+			n.draw.connect(_draw_pose.bind(n, p))
+			_drawn[p] = n
+		# Видимость — прямо на сервере отрисовки: смена .visible заставила бы узел перерисоваться.
+		if _shown != null and _shown != n:
+			RenderingServer.canvas_item_set_visible(_shown.get_canvas_item(), false)
+		RenderingServer.canvas_item_set_visible(n.get_canvas_item(), true)
+		_shown = n
+
+	func _is_model() -> bool:
+		return ModelSprites.shared != null and ModelSprites.shared.is_baked and ModelSprites.enabled \
+			and ModelSprites.fits(looks)
+
+	## Модель запеклась или её включили/выключили — рисуем заново.
+	func reset() -> void:
+		for k in _drawn:
+			(_drawn[k] as Node2D).queue_free()
+		_drawn.clear()
+		_shown = null
+		var p := pose
+		pose = ""
+		queue_redraw()
+		set_pose(p)
 
 	func _draw() -> void:
-		if pose.is_empty():
+		if pose.is_empty() or not _is_model():
 			return
-		if ModelSprites.draw_creature(self, pose.split("|")[0], Vector2.ZERO, BODY_W, looks):
-			return
-		material = null
-		if not cache.has(pose):
+		ModelSprites.draw_creature(self, pose.split("|")[0], Vector2.ZERO, BODY_W, looks)
+
+	func _draw_pose(n: Node2D, p: String) -> void:
+		if not cache.has(p):
 			var g := looks.duplicate()
-			var key := pose.split("|")[0]
+			var key := p.split("|")[0]
 			g["pose"] = POSES.get(key, {})
-			g["mood"] = -0.6 if pose.ends_with("|sad") else 1.0
-			cache[pose] = CreatureArt.record(BODY_W, g)
-		(cache[pose] as DrawRecorder).replay(self)
+			g["mood"] = -0.6 if p.ends_with("|sad") else 1.0
+			cache[p] = CreatureArt.record(BODY_W, g)
+		(cache[p] as DrawRecorder).replay(n)
 
 
 func _ready() -> void:
@@ -108,7 +141,7 @@ func _process(_delta: float) -> void:
 ## Перерисовать всех (модель готова или переключили 3D / рисованных).
 func refresh() -> void:
 	for id in _nodes:
-		(_nodes[id] as CreatureSprite).queue_redraw()
+		(_nodes[id] as CreatureSprite).reset()
 
 
 ## Гаврик нарисован 3D-моделью.
