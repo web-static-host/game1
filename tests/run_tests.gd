@@ -69,6 +69,7 @@ func _initialize() -> void:
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
+	test_far_reach()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3072,6 +3073,45 @@ func test_lift_above_zero() -> void:
 		if u.riding:
 			break
 	check(u.riding, "кабина поднялась к остановке выше нуля и забрала жителя (%.1f)" % lift.lift_pos)
+
+
+## Большая колония: обход жителя обрывается раньше глубокого забоя — путь к стройке ищут
+## прицельно, и продолжение ствола копают, а не «Нет доступа».
+func test_far_reach() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := 40
+	while true:
+		var dry := true
+		for dx in range(-5, 100):
+			if not w.gen.lake_at(x + dx).is_empty():
+				dry = false
+		if dry:
+			break
+		x += 50
+	_start(colony, x + 10)
+	# Сеть ходов у базы: больше клеток, чем охватывает обход.
+	for i in 80:
+		_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + i, w.gen.surface_y(x + i), 1, 80), 1000 + i)
+	var shaft := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 81, w.gen.surface_y(x + 81), 1, 150), 1100)
+	colony._rebuild_climb()
+	var u: Unit = colony.units[0]
+	u.profession = Unit.Prof.BUILDER
+	var q := colony.extend_project(shaft, Vector2i.DOWN, 5)
+	check(q != null, "ствол продлевается")
+	if q == null:
+		return
+	var reach := colony.pathing.explore(u.cell())
+	check(Pathing.truncated(reach[1]) and colony._near_rect(q.rect, reach[1]) == null, "обход жителя до дна ствола не достаёт")
+	check(colony.can_reach(q.rect), "но дойти до продолжения можно — прицельный поиск нашёл путь")
+	for v in colony.units:
+		v.state = Unit.State.IDLE
+		v.retry = 0.0
+		colony._assign(v)
+	check(colony.workers_on(q) > 0, "продолжение глубокого ствола копают")
+	q.blocked = "Нет доступа — проложите тоннель к стройке"
+	colony._check_access()
+	check(q.blocked.is_empty() or colony.workers_on(q) > 0, "предупреждение «Нет доступа» снимается")
 
 
 ## Лифты встык одного вида соединяются в один.

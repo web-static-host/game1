@@ -169,14 +169,14 @@ func clear_cache() -> void:
 	_pass_memo.clear()
 
 
-func _explore(start: Vector2i) -> Array:
+func _explore(start: Vector2i, cap := MAX_NODES) -> Array:
 	var parents := {start: start}
 	var dist := {start: 0}
 	if not node(start):
 		return [parents, dist]
 	var queue: Array[Vector2i] = [start]
 	var head := 0
-	while head < queue.size() and queue.size() < MAX_NODES:
+	while head < queue.size() and queue.size() < cap:
 		var c := queue[head]
 		head += 1
 		var d: int = dist[c] + 1
@@ -189,6 +189,84 @@ func _explore(start: Vector2i) -> Array:
 			dist[n] = d
 			queue.append(n)
 	return [parents, dist]
+
+
+## Обход упёрся в предел: дальнее (глубокий забой в большой колонии) в него не попало.
+static func truncated(dist: Dictionary) -> bool:
+	return dist.size() >= MAX_NODES
+
+
+## Прицельный поиск пути к любой из клеток goals (A*): для целей дальше, чем достаёт обход.
+## Возвращает путь от старта (не включая его) до цели или пустой, если не нашёл за limit клеток.
+func find_path(start: Vector2i, goals: Dictionary, limit := FAR_NODES) -> Array[Vector2i]:
+	var none: Array[Vector2i] = []
+	if goals.is_empty() or not node(start):
+		return none
+	var box := Rect2i(goals.keys()[0], Vector2i.ONE)
+	for g in goals:
+		box = box.expand(g)
+	box.size += Vector2i.ONE
+	var parents := {start: start}
+	var g_cost := {start: 0}
+	# Двоичная куча: [оценка, клетка].
+	var heap: Array = [[_h(start, box), start]]
+	var seen := 0
+	while not heap.is_empty() and seen < limit:
+		var c: Vector2i = _heap_pop(heap)[1]
+		seen += 1
+		if goals.has(c):
+			return path_to(parents, c)
+		var d: int = g_cost[c] + 1
+		for n in neighbors(c):
+			if g_cost.has(n) and g_cost[n] <= d:
+				continue
+			g_cost[n] = d
+			parents[n] = c
+			_heap_push(heap, [d + _h(n, box), n])
+	return none
+
+
+## Сколько клеток перебирает прицельный поиск.
+const FAR_NODES := 12000
+
+
+static func _h(c: Vector2i, box: Rect2i) -> int:
+	var dx := maxi(0, maxi(box.position.x - c.x, c.x - (box.end.x - 1)))
+	var dy := maxi(0, maxi(box.position.y - c.y, c.y - (box.end.y - 1)))
+	return dx + dy
+
+
+static func _heap_push(heap: Array, item: Array) -> void:
+	heap.append(item)
+	var i := heap.size() - 1
+	while i > 0:
+		var up := (i - 1) / 2
+		if heap[up][0] <= item[0]:
+			break
+		heap[i] = heap[up]
+		i = up
+	heap[i] = item
+
+
+static func _heap_pop(heap: Array) -> Array:
+	var top: Array = heap[0]
+	var last: Array = heap.pop_back()
+	if heap.is_empty():
+		return top
+	var i := 0
+	var n := heap.size()
+	while true:
+		var l := i * 2 + 1
+		if l >= n:
+			break
+		var r := l + 1
+		var m := r if r < n and heap[r][0] < heap[l][0] else l
+		if heap[m][0] >= last[0]:
+			break
+		heap[i] = heap[m]
+		i = m
+	heap[i] = last
+	return top
 
 
 ## Путь от старта (не включая его) до target по результату explore().

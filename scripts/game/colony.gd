@@ -571,10 +571,76 @@ func can_reach(r: Rect2i) -> bool:
 				continue
 			seen[u.cell()] = true
 			_reach_cache.append(pathing.explore(u.cell())[1])
+	var cut := false
 	for dist in _reach_cache:
 		if _near_rect(r, dist) != null:
 			return true
-	return false
+		cut = cut or Pathing.truncated(dist)
+	if not cut:
+		return false
+	# В большой колонии обход обрывается раньше дальних мест — ищем путь прицельно
+	# от ближайшего к зоне жителя.
+	var near: Unit = null
+	var best := INF
+	for u in units:
+		var d := Vector2(u.cell()).distance_squared_to(Vector2(r.get_center()))
+		if not u.child and d < best:
+			best = d
+			near = u
+	if near == null:
+		return false
+	# Прицельный поиск недешёв: не чаще раза в FAR_GAP мс (пока ждём — не пугаем «нет доступа»).
+	if not offline and now - _far_at < FAR_GAP:
+		return true
+	_far_at = now
+	var e := pathing.explore(near.cell())
+	return _reach_far(near.cell(), r, e[0], e[1])
+
+
+## --- Дальние стройки ------------------------------------------------------------------
+## Обход жителя ограничен (Pathing.MAX_NODES): в большой колонии глубокий забой в него не
+## попадает, и стройка висела бы «Нет доступа». Тогда путь к ней ищут прицельно и дописывают
+## в обход жителя (вместе с клетками вокруг стройки). Неудачу помнят FAR_RETRY секунд.
+const FAR_RETRY := 20.0
+const FAR_GAP := 300
+var _far_fail := {}
+var _far_at := -100000
+
+
+func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionary) -> bool:
+	if _near_rect(r, dist) != null:
+		return true
+	if not Pathing.truncated(dist):
+		return false
+	var key := "%d,%d,%d,%d" % [r.position.x, r.position.y, r.size.x, r.size.y]
+	if game_time - float(_far_fail.get(key, -INF)) < FAR_RETRY:
+		return false
+	var goals := {}
+	var area := r.grow(1)
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
+			var c := Vector2i(x, y)
+			if pathing.node(c):
+				goals[c] = true
+	var path := pathing.find_path(start, goals)
+	if path.is_empty():
+		_far_fail[key] = game_time
+		return false
+	_far_fail.erase(key)
+	var prev := start
+	for c in path:
+		if not parents.has(c):
+			parents[c] = prev
+			dist[c] = int(dist[prev]) + 1
+		prev = c
+	# Вокруг стройки — небольшой обход: чтобы подойти к любой её клетке.
+	var local := pathing._explore(prev, 400)
+	var base := int(dist[prev])
+	for c in local[0]:
+		if not parents.has(c):
+			parents[c] = local[0][c]
+			dist[c] = base + int(local[1][c])
+	return true
 
 
 ## Раз в несколько секунд: до каких строек жителям не дойти — предупреждение.
@@ -4378,6 +4444,8 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
 				and not (p.priority and priority_crew(u, p)):
 			continue
+		# Дальняя стройка (глубоко в большой колонии) — путь к ней ищут прицельно.
+		_reach_far(u.cell(), p.rect, parents, dist)
 		# Шахтёр в шахте копает и ставит крепь, а дерево на крепь носит сам, только если
 		# нет свободных подсобных. На других стройках — только копает.
 		if u.profession == Unit.Prof.MINER and u.workplace == 0:
