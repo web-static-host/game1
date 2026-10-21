@@ -4545,6 +4545,9 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 	var mine := p.kind == Project.Kind.MINE
 	var crew := _crew_ok(u, mine, miners, builders)
 	var priority := crew and builder_or_miner(u)
+	# Помощник (не своя бригада) берётся, только если своя бригада не стоит без дела.
+	if crew and not priority and _crew_idle(mine):
+		crew = false
 	# На стройку с приоритетом её бригада (строители, у шахты — шахтёры) идёт вся.
 	if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
 			and not (p.priority and priority_crew(u, p)):
@@ -4637,6 +4640,18 @@ static func _crew_ok(u: Unit, mine: bool, miners: bool, _builders: bool) -> bool
 		if u.profession == Unit.Prof.BUILDER:
 			return not mine or not miners
 	return true
+
+
+## Стоит ли без дела кто-то из бригады этой стройки (шахтёр — для шахты, строитель — для прочих).
+func _crew_idle(mine: bool) -> bool:
+	var prof := Unit.Prof.MINER if mine else Unit.Prof.BUILDER
+	for o in units:
+		if o.profession == prof and o.workplace == 0 and not o.child and o.state == Unit.State.IDLE \
+				and (o.task == Unit.Task.NONE or o.task == Unit.Task.STROLL) and not o.waiting_own \
+				and o.idle_fails < 3:
+			# Кто уже несколько раз не нашёл себе дела, сюда, видно, не дойдёт — не ждём его.
+			return true
+	return false
 
 
 ## Есть ли в колонии взрослый с этой профессией без места работы (строитель, шахтёр).
@@ -5172,6 +5187,8 @@ func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 		_add(key, n)
 		return
 	var spot := _landing(c)
+	if not drops.has(spot):
+		drop_born[spot] = game_time
 	var d: Dictionary = drops.get(spot, {})
 	d[key] = int(d.get(key, 0)) + n
 	drops[spot] = d
@@ -5190,6 +5207,23 @@ func _landing(c: Vector2i) -> Vector2i:
 	return k
 
 
+## Когда на клетке появилась кучка (у загруженных из сохранения — «давно»).
+var drop_born := {}
+## Свежую маленькую кучку не несут сразу: ждут, пока рядом наберётся полная ноша,
+## но не дольше DROP_WAIT секунд — иначе ходят на склад с одной штукой.
+const DROP_WAIT := 45.0
+
+
+func _worth_carrying(c: Vector2i, key: String, avail: int) -> bool:
+	if avail >= carry_cap() or game_time - float(drop_born.get(c, -INF)) >= DROP_WAIT:
+		return true
+	var near := 0
+	for dy in range(-PICK_RADIUS, PICK_RADIUS + 1):
+		for dx in range(-PICK_RADIUS, PICK_RADIUS + 1):
+			near += drop_amount(c + Vector2i(dx, dy), key)
+	return near >= carry_cap()
+
+
 func drop_amount(c: Vector2i, key: String) -> int:
 	return int(drops.get(c, {}).get(key, 0))
 
@@ -5205,6 +5239,7 @@ func _take_drop(c: Vector2i, key: String, n: int) -> int:
 		d.erase(key)
 	if d.is_empty():
 		drops.erase(c)
+		drop_born.erase(c)
 	return take
 
 
@@ -5352,12 +5387,16 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			if only != null and not RoomType.same_kind(only, k):
 				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
-			if avail <= 0:
+			if avail <= 0 or not _worth_carrying(c, k, avail):
 				continue
 			var to = _store_target(k, dist, only)
 			# До грузового лифта ближе, чем до склада, — несут в лифт (он довезёт до склада).
 			var lift = _cargo_route(k, dist, dist[to[0]] if to != null else (1 << 30), only)
 			if to == null and lift == null:
+				continue
+			# На почти полный склад по одной штуке не носят: ждут, пока освободится место
+			# под всю ношу.
+			if lift == null and room_free(to[1], k) < mini(carry_cap(), avail):
 				continue
 			best = stand
 			best_c = c
@@ -5374,6 +5413,8 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			break
 	if best == null:
 		return false
+	# Что останется на куче — снова «свежее»: следующий не побежит за одной штукой.
+	drop_born[best_c] = game_time
 	u.carry_key = best_k
 	u.carry_amount = best_n
 	u.haul_stage = 0
@@ -5595,6 +5636,36 @@ func _construction_recheck(u: Unit, dt: float) -> void:
 	u.work_t = saved[13]
 
 
+## Несёт с кучи на склад — заодно подбирает то же самое из соседних кучек (в 2 клетках),
+## пока руки не полны: после копки добытое лежит кучками по 1–2, и носить по одной долго.
+const PICK_RADIUS := 2
+
+
+func _pick_nearby(u: Unit, have: int) -> int:
+	if not u.to_store or u.cargo_end >= 0 or have <= 0:
+		return 0
+	var room := project_by_id(u.project_id)
+	if room == null:
+		return 0
+	# Своя ходка уже учтена в «месте на складе» — добавляем её обратно.
+	var want := mini(carry_cap(), room_free(room, u.carry_key) + u.carry_amount) - have
+	var got := 0
+	for dy in range(-PICK_RADIUS, PICK_RADIUS + 1):
+		for dx in range(-PICK_RADIUS, PICK_RADIUS + 1):
+			if want <= 0:
+				return got
+			var c := u.haul_src + Vector2i(dx, dy)
+			if c == u.haul_src or not drops.has(c):
+				continue
+			var avail := drop_amount(c, u.carry_key) - _claimed_drop(c, u.carry_key)
+			if avail <= 0:
+				continue
+			var n := _take_drop(c, u.carry_key, mini(avail, want))
+			got += n
+			want -= n
+	return got
+
+
 ## Гаврик у склада или кучи: берёт ресурс и несёт к стройке или на склад.
 func _haul_pickup(u: Unit) -> void:
 	var p := project_by_id(u.project_id)
@@ -5604,6 +5675,7 @@ func _haul_pickup(u: Unit) -> void:
 	var take := 0
 	if u.from_drop:
 		take = _take_drop(u.haul_src, u.carry_key, u.carry_amount)
+		take += _pick_nearby(u, take)
 	else:
 		# Берёт из того склада, у которого стоит; у базы — из запаса у базы.
 		var from := store_at(u.cell())

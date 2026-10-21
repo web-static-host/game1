@@ -72,6 +72,7 @@ func _initialize() -> void:
 	test_far_reach()
 	test_crew_roles()
 	test_digger_stays()
+	test_haul_batches()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3172,6 +3173,31 @@ func test_digger_stays() -> void:
 				diggers[u.id] = true
 	check(t.phase != Project.Phase.DIG, "ствол выкопан (%.0f с)" % time)
 	check(diggers.size() <= 2, "ствол копает один-два гаврика, а не все по очереди (%d)" % diggers.size())
+
+
+## На склад не носят по одной штуке: свежую маленькую кучку ждут, пока наберётся ноша
+## (или пока не пролежит DROP_WAIT); соседние кучки подбирают заодно.
+func test_haul_batches() -> void:
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var store: Project = res[1]
+	var u: Unit = colony.units[0]
+	colony.assign_work(u, store)
+	var spot := Vector2i(store.rect.position.x + 2, store.rect.end.y - 1)
+	colony.drops.clear()
+	colony.drop_item(spot, "stone", 1)
+	var reach := colony.pathing.explore(u.cell())
+	check(not colony._try_cleanup(u, reach[0], reach[1]), "за одной свежей штукой не идут")
+	colony.drop_item(spot + Vector2i(1, 0), "stone", 4)
+	check(colony._try_cleanup(u, reach[0], reach[1]), "рядом набралась ноша — несут")
+	var src := u.haul_src
+	colony._haul_pickup(u)
+	check(u.carry_amount == 5 and colony.drop_total("stone") == 0, "соседнюю кучку подобрали заодно (несёт %d)" % u.carry_amount)
+	colony._drop(u)
+	colony.drops.clear()
+	colony.drop_item(src, "stone", 1)
+	colony.drop_born[src] = colony.game_time - Colony.DROP_WAIT - 1.0
+	check(colony._try_cleanup(u, reach[0], reach[1]), "пролежала долго — несут и одну")
 
 
 ## Лифты встык одного вида соединяются в один.

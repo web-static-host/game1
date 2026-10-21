@@ -36,7 +36,7 @@ var _cache_age := 0.0
 ## Запомненные node() и passable() клеток — живут столько же, сколько кэш обходов.
 var _node_memo := {}
 var _pass_memo := {}
-const CACHE_TIME := 2.0
+const CACHE_TIME := 4.0
 
 
 func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
