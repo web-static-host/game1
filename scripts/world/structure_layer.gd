@@ -71,6 +71,10 @@ func _draw() -> void:
 	for p in colony.projects:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
+	# Бур — поверх хода, который сверлит.
+	for p in colony.projects:
+		if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE:
+			_draw_drill(p, _rect_px(p.rect), 1.0)
 	_draw_dig_progress()
 	_draw_drops(font)
 	_draw_gas()
@@ -136,7 +140,9 @@ func _draw_done(p: Project) -> void:
 			_draw_furniture(p, r, p.purpose, 1.0)
 			if p.purpose == RoomType.NONE and p.phase == Project.Phase.DONE:
 				_draw_question(r)
-	else:
+	elif p.kind == Project.Kind.LIFT:
+		_draw_lift(p, r)
+	elif p.kind != Project.Kind.DRILL:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
 		_draw_cracks(p, r)
@@ -148,6 +154,170 @@ func _draw_done(p: Project) -> void:
 		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
 	if p.id == selected_project:
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
+
+
+## Корабль: койки в два яруса, пульт, иллюминаторы; снаружи — нос, стабилизаторы, опоры.
+const HULL := Color(0.78, 0.8, 0.84)
+const HULL_DARK := Color(0.45, 0.48, 0.55)
+
+
+func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
+	# Нос справа, стабилизаторы слева, опоры снизу — вокруг комнаты.
+	var mid := r.get_center().y
+	draw_colored_polygon(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+		Vector2(r.end.x, r.end.y - 4)]), Color(HULL, alpha))
+	draw_polyline(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+		Vector2(r.end.x, r.end.y - 4)]), Color(HULL_DARK, alpha), 3.0)
+	for sgn in [-1.0, 1.0]:
+		var base: Vector2 = Vector2(r.position.x, mid + sgn * r.size.y * 0.35)
+		draw_colored_polygon(PackedVector2Array([base, base + Vector2(-TILE * 1.4, sgn * TILE * 1.2),
+			base + Vector2(TILE * 0.8, 0)]), Color(0.85, 0.35, 0.3, alpha))
+	for k in 3:
+		var lx := r.position.x + r.size.x * (0.2 + 0.3 * k)
+		draw_line(Vector2(lx, r.end.y), Vector2(lx - 6, r.end.y + 10), Color(HULL_DARK, alpha), 3.0)
+	# Иллюминаторы под потолком.
+	for k in 4:
+		var wc := Vector2(r.position.x + r.size.x * (0.15 + 0.23 * k), r.position.y + 14)
+		draw_circle(wc, 7, Color(HULL_DARK, alpha))
+		draw_circle(wc, 5, Color(0.55, 0.8, 1.0, alpha))
+	# Койки в два яруса вдоль стены.
+	var n := 5
+	for i in n:
+		var bx := r.position.x + 8 + i * (r.size.x - 70) / n
+		var bw := (r.size.x - 70) / n - 6
+		for lvl in 2:
+			var by := r.end.y - 14 - lvl * 22
+			_rbox(Rect2(bx, by, bw, 9), 3, Color(0.5, 0.55, 0.65, alpha))
+			_rbox(Rect2(bx + 2, by - 4, bw * 0.35, 5), 2, Color(0.95, 0.95, 0.92, alpha))
+	# Пульт с огоньками.
+	var cx := r.end.x - 52
+	_rbox(Rect2(cx, r.end.y - 34, 44, 28), 5, Color(0.3, 0.33, 0.4, alpha), Color(0.15, 0.16, 0.2, alpha), 2)
+	var blink := int(Time.get_ticks_msec() / 500) % 3
+	for k in 3:
+		draw_circle(Vector2(cx + 9 + k * 13, r.end.y - 25), 3.5,
+			Color(0.4, 1.0, 0.5, alpha) if k == blink else Color(0.25, 0.45, 0.3, alpha))
+
+
+## Космодром: бетонный стол, башня обслуживания; ракета на столе (во время сборки — в лесах).
+func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
+	_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
+	var tx := r.end.x - TILE * 0.8
+	for y in range(int(r.position.y - TILE * 12), int(r.end.y - 16), 18):
+		draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+		draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+	draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	var t := 0.0
+	if not p.rocket.is_empty():
+		t = 1.0
+	elif not p.equip_rocket.is_empty():
+		t = clampf(p.equip_done / RoomType.ROCKET_WORK, 0.0, 1.0) if p.equip_paid else 0.0
+	else:
+		return
+	var nuclear := p.rocket == "nuclear" or p.equip_rocket == "nuclear"
+	var cx := r.get_center().x - TILE * 0.6
+	var w := TILE * 2.4
+	var top := r.end.y - 16 - TILE * 14
+	var body := Rect2(cx - w * 0.5, top + TILE * 2.5, w, r.end.y - 16 - top - TILE * 2.5)
+	var a := alpha * (0.35 + 0.65 * t)
+	# Корпус растёт снизу вверх по мере сборки.
+	var built := Rect2(body.position.x, body.end.y - body.size.y * maxf(t, 0.05), body.size.x, body.size.y * maxf(t, 0.05))
+	_rbox(body, 6, Color(HULL, alpha * 0.18), Color(HULL_DARK, alpha * 0.4), 1)
+	_rbox(built, 6, Color(HULL, a), Color(HULL_DARK, a), 2)
+	if t >= 0.999:
+		draw_colored_polygon(PackedVector2Array([Vector2(body.position.x, body.position.y), Vector2(cx, top),
+			Vector2(body.end.x, body.position.y)]), Color(0.85, 0.3, 0.28, alpha) if not nuclear else Color(0.3, 0.75, 0.4, alpha))
+		for sgn in [-1.0, 1.0]:
+			var fx: float = cx + sgn * w * 0.5
+			draw_colored_polygon(PackedVector2Array([Vector2(fx, body.end.y - TILE * 2.5), Vector2(fx + sgn * TILE, body.end.y),
+				Vector2(fx, body.end.y)]), Color(0.85, 0.3, 0.28, alpha))
+		draw_circle(Vector2(cx, body.position.y + TILE * 2), 9, Color(HULL_DARK, alpha))
+		draw_circle(Vector2(cx, body.position.y + TILE * 2), 6.5, Color(0.55, 0.8, 1.0, alpha))
+		if nuclear:
+			draw_circle(Vector2(cx, body.end.y - TILE * 3), 8, Color(1.0, 0.85, 0.2, alpha))
+
+
+## Бур — машина 3×3: корпус с мотором сзади, сверло спереди (куда едет; стоит — вниз).
+## Сверло крутится, пока бур сверлит.
+func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
+	var dir := p.drill_dir if p.drill_dir != Vector2i.ZERO else Vector2i.DOWN
+	var body := r.grow(-3)
+	var face := r
+	if dir == Vector2i.DOWN:
+		body.size.y = TILE * 2 - 4
+		face = Rect2(r.position.x, r.position.y + TILE * 2, r.size.x, TILE)
+	elif dir == Vector2i.RIGHT:
+		body.size.x = TILE * 2 - 4
+		face = Rect2(r.position.x + TILE * 2, r.position.y, TILE, r.size.y)
+	else:
+		body.position.x += TILE + 2
+		body.size.x = TILE * 2 - 4
+		face = Rect2(r.position.x, r.position.y, TILE, r.size.y)
+	_rbox(body, 6, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
+	# Решётка мотора и лампа: горит, когда есть энергия.
+	var mc := body.get_center()
+	for k in 3:
+		var off := (k - 1) * 7.0
+		if dir == Vector2i.DOWN:
+			draw_line(mc + Vector2(-12, off), mc + Vector2(12, off), Color(0.45, 0.3, 0.1, alpha), 2.0)
+		else:
+			draw_line(mc + Vector2(off, -12), mc + Vector2(off, 12), Color(0.45, 0.3, 0.1, alpha), 2.0)
+	var lamp_on := colony.powered() or p.fuel > 0.0
+	draw_circle(body.position + Vector2(9, 9), 4, Color(LAMP, alpha) if lamp_on else Color(0.35, 0.35, 0.38, alpha))
+	var d := Vector2(dir)
+	var side := Vector2(-d.y, d.x)
+	var base_c := face.get_center() - d * TILE * 0.5
+	var tip := face.get_center() + d * TILE * 0.45
+	var half := side * TILE * 1.3
+	draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68, alpha))
+	var spin := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and lamp_on else 0.0
+	for k in 3:
+		var t := fmod(spin + k / 3.0, 1.0)
+		var m := base_c.lerp(tip, t)
+		var w := half * (1.0 - t)
+		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
+
+
+## Лифт: стальные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
+const LIFT_STEEL := Color(0.55, 0.58, 0.64)
+const LIFT_CAB := Color(0.86, 0.62, 0.22)
+
+
+func _draw_lift(p: Project, r: Rect2) -> void:
+	var dark := Color(0.2, 0.21, 0.24)
+	var cab_col := Color(0.5, 0.56, 0.62) if p.cargo else LIFT_CAB
+	if p.lift_vertical():
+		for x in [r.position.x + 3, r.end.x - 3]:
+			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
+			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
+		var y := r.end.y - TILE
+		if p.lift_pos >= 0.0:
+			y = view.cell_to_local(Vector2i(0, 0)).y + p.lift_pos * TILE
+		# Кабина — на высоту человека (2 м) над полом клетки, где стоит.
+		var cab := Rect2(r.position.x + 5, y - TILE + 2, r.size.x - 10, TILE * 2 - 2)
+		draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, cab.position.y), Color(0.15, 0.15, 0.17), 2.0)
+		_draw_cabin(cab, cab_col, p)
+	else:
+		draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
+		draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
+		var x0 := r.position.x
+		if p.lift_pos >= 0.0:
+			x0 = view.cell_to_local(Vector2i(0, 0)).x + p.lift_pos * TILE
+		var cab := Rect2(x0 - TILE * 0.5 + 2, r.end.y - TILE * 2 - 2, TILE * 2 - 4, TILE * 2)
+		_draw_cabin(cab, cab_col, p)
+
+
+func _draw_cabin(cab: Rect2, col: Color, p: Project) -> void:
+	_rbox(cab, 5, Color(col, 0.35), col.darkened(0.3), 3)
+	if p.cargo and not p.lift_load.is_empty():
+		var n := mini(4, 1 + int(colony._load_total(p.lift_load)) / 10)
+		for i in n:
+			var bx := cab.position.x + 4 + (i % 2) * (cab.size.x * 0.5 - 4)
+			var by := cab.end.y - 12 - (i / 2) * 11
+			_rbox(Rect2(bx, by, cab.size.x * 0.5 - 8, 10), 2, Color(0.65, 0.45, 0.25), Color(0.4, 0.27, 0.15), 1)
+	# Лампочка: горит, когда лифт под током.
+	draw_circle(Vector2(cab.get_center().x, cab.position.y + 5), 3.0,
+		LAMP if colony.lift_powered(p) else Color(0.35, 0.35, 0.38))
 
 
 ## Радиус действия выбранной комнаты: насос, вентиляция, дегазация — квадрат вокруг центра;
@@ -580,7 +750,7 @@ func _fill_racks(rk: Dictionary, boxes: Array[Texture2D], levels: Array, fy: flo
 ## жердь с подвешенными связками.
 const GRANARY_LEVELS := [0.227, 0.828]
 const GRANARY_POST := 21.0
-const BASKETS := {"food": ["basket_fish", "basket_mushroom"], "berries": ["basket_berries"]}
+const BASKETS := {"food": ["basket_mushroom"], "fish": ["basket_fish"], "berries": ["basket_berries"]}
 const HANGERS := ["hang_fish", "hang_garlic", "hang_pepper", "hang_herbs", "hang_onion"]
 func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
@@ -1017,6 +1187,12 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 	var floor_y := r.end.y - 6
 	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
+	if purpose == RoomType.SHIP:
+		_draw_ship(p, r, alpha)
+		return
+	if purpose == RoomType.LAUNCHPAD:
+		_draw_launchpad(p, r, alpha)
+		return
 	if purpose == RoomType.HOME and furniture("home", "bed_blue") != null:
 		_draw_home_furniture(p, r, alpha)
 		return
@@ -1224,6 +1400,11 @@ func _draw_site(p: Project, font: Font) -> void:
 		edge = BLOCKED
 	if p.paused:
 		edge = PAUSED
+	if p.priority:
+		# Приоритет — значок «!» в углу стройки.
+		var at := r.position + Vector2(r.size.x - 12, 12)
+		draw_circle(at, 10, Color(1.0, 0.72, 0.2))
+		draw_string(font, at + Vector2(-3, 6), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.25, 0.15, 0.05))
 	if p.phase == Project.Phase.DIG:
 		for c in colony.remaining_dig(p):
 			draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)
@@ -1237,11 +1418,21 @@ func _draw_site(p: Project, font: Font) -> void:
 			_draw_slice_support(p, i, 1.0)
 	if p.phase != Project.Phase.DIG:
 		var t := clampf(p.build_done / p.build_work(), 0.0, 1.0) if p.paid else 0.0
-		if p.is_water_structure():
+		if p.kind == Project.Kind.BRIDGE:
+			# Мост строят по метру от берега: готовые метры — целиком, остальное — призраком.
+			_draw_deck(p, r, 0.3)
+			var m := colony.bridge_meters_done(p)
+			if m > 0:
+				var bw := m * TILE
+				var br := Rect2(r.end.x - bw if colony.bridge_from_right(p) else r.position.x, r.position.y, bw, r.size.y)
+				_draw_deck(p, br, 1.0)
+		elif p.is_water_structure():
 			_draw_deck(p, r, 0.3 + 0.7 * t)
 		elif p.kind == Project.Kind.ROOM:
 			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
 			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
+		elif p.kind == Project.Kind.DRILL:
+			_draw_drill(p, r, 0.3 + 0.7 * t)
 		else:
 			_draw_supports(p, r, 0.3 + 0.7 * t)
 		var bar := Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 6)
@@ -1302,7 +1493,7 @@ func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 
 const RES_COLORS := {
 	"wood": Color(0.55, 0.38, 0.2), "stone": Color(0.6, 0.6, 0.62), "clay": Color(0.66, 0.42, 0.3),
-	"food": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
+	"food": Color(0.9, 0.8, 0.62), "fish": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
 	"copper": Color(0.25, 0.68, 0.57), "silver": Color(0.84, 0.87, 0.9), "gold": Color(0.95, 0.79, 0.23),
 	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
 	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
@@ -1346,6 +1537,11 @@ func _draw_drops(font: Font) -> void:
 	for c: Vector2i in colony.drops:
 		var d: Dictionary = colony.drops[c]
 		var p := view.cell_to_local(c) + Vector2(TILE * 0.5, TILE)
+		# Готовое у производства — в ящиках внутри комнаты, а не кучей на полу.
+		var prod := colony.producer_at(c)
+		if prod != null:
+			_draw_output_crates(font, d, p, colony.output_held(prod) >= Colony.PRODUCE_CAP)
+			continue
 		# На естественной поверхности — по сглаженной линии земли.
 		if c.y == colony.world.gen.surface_y(c.x) - 1 and not colony.world.is_dug(c.x, c.y + 1):
 			p.y = _ground_y(c.x + 0.5)
@@ -1362,6 +1558,27 @@ func _draw_drops(font: Font) -> void:
 		for k in d:
 			total += int(d[k])
 		_label(font, p + Vector2(-6, -26 - i * 6), str(total), Color(1, 1, 1, 0.9))
+
+
+## Ящики с готовым у входа в производство: чем больше, тем выше стопка (до трёх);
+## на верхнем — значок продукта и сколько лежит (красным, когда склад полон).
+func _draw_output_crates(font: Font, d: Dictionary, bottom: Vector2, full: bool) -> void:
+	var total := 0
+	var key := ""
+	for k in d:
+		total += int(d[k])
+		if key.is_empty() or int(d[k]) > int(d.get(key, 0)):
+			key = k
+	var n := clampi(ceili(total / 34.0), 1, 3)
+	var w := TILE * 0.8
+	var h := TILE * 0.42
+	for i in n:
+		var box := Rect2(bottom.x - w * 0.5, bottom.y - 3 - h * (i + 1), w, h - 2)
+		_rbox(box, 3, CRATE, CRATE.darkened(0.45), 2)
+		draw_line(Vector2(box.position.x + 3, box.get_center().y), Vector2(box.end.x - 3, box.get_center().y), CRATE.darkened(0.3), 1.5)
+	var top := bottom - Vector2(0, 3 + h * n + 9)
+	ResIcon.draw(self, key, top, 8.0)
+	_label(font, top + Vector2(10, 4), str(total), Color(1.0, 0.45, 0.4) if full else Color(1, 1, 1, 0.9))
 
 
 ## Метан: зеленоватая дымка, гуще — опаснее.

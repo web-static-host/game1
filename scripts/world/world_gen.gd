@@ -19,16 +19,23 @@ const MANTLE_DEPTH := 35000 # граница Мохоровичича
 const CAVE_MAX_DEPTH := 10000 # глубже полости схлопываются под давлением
 
 var world_seed: int
+## Планета (Planet.DATA): Земля или другая — свои температура, воздух, недра.
+var planet_id := "earth"
+var planet: Dictionary = {}
 ## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
 ## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше;
-## 4 — озёра ещё чаще и одно — недалеко от базы.
-const LATEST := 4
+## 4 — озёра ещё чаще и одно — недалеко от базы; 5 — серебро, золото и алмазы чаще
+## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди.
+const LATEST := 5
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
 var _tree_share := 0.12
 var _lake_chance := 0.75
 var _home_clear := 60
+## Насколько ниже порог кимберлитовых трубок и какая доля алмазов в них (версия 5 — чаще).
+var _kimb_shift := 0.0
+var _diamond_share := 0.04
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -53,9 +60,11 @@ var _n_magma: FastNoiseLite
 var _n_tint: FastNoiseLite
 
 
-func _init(p_seed: int, p_version := LATEST) -> void:
+func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
 	world_seed = p_seed
 	version = p_version
+	planet_id = p_planet
+	planet = Planet.data(p_planet)
 	if version >= 2:
 		_lake_segment = 267
 		_bush_share = 0.08 / 3.0
@@ -65,6 +74,9 @@ func _init(p_seed: int, p_version := LATEST) -> void:
 		_lake_segment = 160
 		_lake_chance = 0.85
 		_home_clear = 30
+	if version >= 5:
+		_kimb_shift = 0.22
+		_diamond_share = 0.08
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -117,6 +129,9 @@ const FEATURE_BUSH := 3
 
 
 func feature_at(x: int) -> int:
+	if not planet["plants"]:
+		# На других планетах ни деревьев, ни кустов, ни валунов на поверхности.
+		return FEATURE_NONE
 	var s := surface_y(x)
 	if absi(surface_y(x - 1) - s) > 1 or absi(surface_y(x + 1) - s) > 1:
 		return FEATURE_NONE
@@ -189,6 +204,8 @@ var _lakes := {}
 
 
 func _lake_of_segment(k: int) -> Dictionary:
+	if not planet["lakes"]:
+		return {}
 	if _lakes.has(k):
 		return _lakes[k]
 	var d := {}
@@ -272,7 +289,32 @@ func sed_base(x: int) -> int:
 
 
 func _kimberlite_column(x: int) -> bool:
-	return _n_kimberlite.get_noise_1d(x) > 0.62
+	return _n_kimberlite.get_noise_1d(x) > float(planet["kimberlite"]) - _kimb_shift
+
+
+## Температура клетки, °C: на Земле — по Env (времена года, высота); на других планетах
+## холод или жар поверхности за несколько метров сменяется температурой недр.
+func temperature(y: int, surf: int, season := 0.0) -> float:
+	if planet_id == "earth":
+		return Env.temperature(y, surf, season)
+	var depth := y - surf
+	if depth < 0:
+		return planet["surf"]
+	var t: float = planet["under"] + (float(planet["surf"]) - float(planet["under"])) * exp(-depth / Planet.SKIN)
+	return t + depth * Env.GEOTHERMAL_GRADIENT
+
+
+## Чем дышать (1 — как на Земле у моря). На безвоздушной планете под землёй держится
+## воздух корабля, а на поверхности дышать нечем.
+func oxygen_ratio(y: int, surf: int) -> float:
+	if planet["air"]:
+		return Env.oxygen_ratio(y, surf)
+	return 1.0 if y >= surf else 0.0
+
+
+## На поверхности этой планеты не выжить (нет воздуха).
+func airless() -> bool:
+	return not planet["air"]
 
 
 func _water_table(x: int, surf: int) -> int:
@@ -299,7 +341,8 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 		# Дно озера — в основном песок, местами глина.
 		return Mat.SAND if hash01(x, y, world_seed + 8) < 0.8 else Mat.CLAY
 	if d < soil:
-		return Mat.TOPSOIL
+		# Без растений почвы нет — сверху песок и щебень (реголит).
+		return Mat.TOPSOIL if planet["plants"] else (Mat.SAND if hash01(x, y, world_seed + 3) < 0.6 else Mat.GRAVEL)
 	if d < SUBSOIL_BASE + soil * 2:
 		var n := _n_sub.get_noise_2d(x, y * 2.0)
 		if n < -0.15:
@@ -309,7 +352,7 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 		return Mat.GRAVEL
 	if d > 12 and d < CAVE_MAX_DEPTH and _is_cave(x, y, d):
 		# Полости ниже уровня грунтовых вод затоплены.
-		if y > water_table and hash01(x >> 4, y >> 4, world_seed + 77) < 0.75:
+		if planet["lakes"] and y > water_table and hash01(x >> 4, y >> 4, world_seed + 77) < 0.75:
 			return Mat.WATER
 		return Mat.AIR
 	return _rock(x, y, d, sed, kimb)
@@ -332,7 +375,9 @@ func _rock(x: int, y: int, d: int, sed: int, kimb: bool) -> int:
 		return Mat.PERIDOTITE
 
 	if kimb and d > 120:
-		return Mat.DIAMOND if hash01(x, y, world_seed + 5) < 0.04 else Mat.KIMBERLITE
+		# На Уране алмазные дожди: в трубках алмазов куда больше.
+		var share := _diamond_share if float(planet["kimberlite"]) >= 0.5 else 0.3
+		return Mat.DIAMOND if hash01(x, y, world_seed + 5) < share else Mat.KIMBERLITE
 
 	var ore := _ore(x, y, d)
 	if ore != Mat.AIR:
@@ -353,17 +398,17 @@ func _sedimentary(x: int, y: int, d: int, wd: float) -> int:
 	# Слоистость: шум сильно растянут по горизонтали → пласты.
 	if d > 15 and absf(_n_coal.get_noise_2d(x * 0.05, wd)) < 0.035:
 		return Mat.COAL
-	if d < 220 and _n_aquifer.get_noise_2d(x * 0.1, wd) > 0.5:
+	if planet["lakes"] and d < 220 and _n_aquifer.get_noise_2d(x * 0.1, wd) > 0.5:
 		return Mat.AQUIFER
 	if d > 150 and _n_salt.get_noise_2d(x * 0.3, wd * 0.6) > 0.6:
 		return Mat.ROCK_SALT
 	var band := _n_band.get_noise_2d(x * 0.08, wd)
 	if band < -0.2:
-		if d > 40 and _n_gas.get_noise_2d(x, y) > 0.62:
+		if d > 40 and _n_gas.get_noise_2d(x, y) > float(planet["gas"]):
 			return Mat.GAS_POCKET
 		return Mat.SHALE
 	if band < 0.18:
-		if d > 200 and _n_gas.get_noise_2d(y, x) > 0.66:
+		if d > int(planet["oil_depth"]) and _n_gas.get_noise_2d(y, x) > float(planet["oil"]):
 			return Mat.OIL
 		return Mat.SANDSTONE
 	return Mat.LIMESTONE
@@ -374,15 +419,19 @@ func _ore(x: int, y: int, d: int) -> int:
 	if d < 20:
 		return Mat.AIR
 	var richness := clampf(d / 3000.0, 0.0, 1.0)
-	var w := 0.018 + 0.03 * richness
+	var w := (0.018 + 0.03 * richness) * float(planet["ore"])
 	if absf(_n_vein.get_noise_2d(x, y)) >= w:
 		return Mat.AIR
 	if _n_vein_region.get_noise_2d(x, y) < 0.15 - 0.45 * richness:
 		return Mat.AIR
 	var r := (_n_ore_type.get_noise_2d(x, y) + 1.0) * 0.5
 	r = clampf(r + (hash01(x, y, world_seed + 3) - 0.5) * 0.1, 0.0, 0.999)
-	var table: Array
-	if d < 80:
+	var table: Array = planet["ores"]
+	if table.is_empty() and version >= 5:
+		return _ore_v5(x, y, d, r)
+	if not table.is_empty():
+		pass
+	elif d < 80:
 		table = [[0.8, Mat.IRON_ORE], [1.0, Mat.COPPER_ORE]]
 	elif d < 300:
 		table = [[0.5, Mat.IRON_ORE], [0.85, Mat.COPPER_ORE], [0.95, Mat.SILVER_ORE], [1.0, Mat.GOLD_ORE]]
@@ -394,6 +443,25 @@ func _ore(x: int, y: int, d: int) -> int:
 		if r < entry[0]:
 			return entry[1]
 	return Mat.IRON_ORE
+
+
+## Версия 5: редкие металлы — участками жилы по 8×8 м с заданной долей (шум типа руды
+## почти не доходит до краёв, и золото раньше почти не встречалось). Остальное — железо и медь.
+func _ore_v5(x: int, y: int, d: int, r: float) -> int:
+	var h := hash01(x >> 3, y >> 3, world_seed + 31)
+	var rare: Array
+	if d < 80:
+		rare = [[0.04, Mat.SILVER_ORE]]
+	elif d < 300:
+		rare = [[0.08, Mat.GOLD_ORE], [0.2, Mat.SILVER_ORE]]
+	elif d < 1000:
+		rare = [[0.08, Mat.URANIUM_ORE], [0.19, Mat.GOLD_ORE], [0.33, Mat.SILVER_ORE]]
+	else:
+		rare = [[0.12, Mat.URANIUM_ORE], [0.25, Mat.GOLD_ORE], [0.4, Mat.SILVER_ORE]]
+	for e in rare:
+		if h < e[0]:
+			return e[1]
+	return Mat.IRON_ORE if r < (0.78 if d < 80 else 0.55) else Mat.COPPER_ORE
 
 
 func _is_magma(x: int, y: int, d: int) -> bool:

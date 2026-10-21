@@ -40,6 +40,10 @@ const GAS_CLEAR := 0.05
 const VENT_COOLING := 18.0
 ## Выше — жителям вредно (жара).
 const HOT := 50.0
+## Температура внутри корабля.
+const SHIP_TEMP := 20.0
+## Выше этой температуры огонь (сколько бы очагов ни было) не греет.
+const FIRE_MAX_TEMP := 30.0
 
 var colony: Colony
 var world: WorldData
@@ -453,9 +457,12 @@ func temperature(c: Vector2i) -> float:
 
 
 func _temperature(c: Vector2i) -> float:
-	var t := Env.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
-	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг.
-	# Несколько очагов рядом не складываются в жару — греет самый сильный.
+	# В корабле климат держит его реактор.
+	if colony.ship_at(c) != null:
+		return SHIP_TEMP
+	var t := world.gen.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
+	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг. Несколько очагов
+	# рядом складываются (два — вдвое теплее), но в жару не нагреют: огонь греет не выше +30 °C.
 	var fire := 0.0
 	for p in colony.projects:
 		if not p.burning or p.phase != Project.Phase.DONE:
@@ -467,8 +474,9 @@ func _temperature(c: Vector2i) -> float:
 		var d := maxi(dx, dy)
 		var zone := RoomType.heat_zone(p)
 		if d <= zone.y:
-			fire = maxf(fire, Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0))
-	t += fire
+			fire += Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0)
+	if fire > 0.0:
+		t = minf(t + fire, maxf(t, FIRE_MAX_TEMP))
 	if c.y >= world.gen.surface_y(c.x) - 2:
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):
@@ -483,8 +491,16 @@ func _temperature(c: Vector2i) -> float:
 	return t
 
 
+## Выше какой температуры жителю жарко: красным — выше, с кондиционированием — на 15 °C.
+func heat_limit(u: Unit) -> float:
+	return HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
+
+
 ## Воздействие стихий на жителя за dt секунд.
 func affect_unit(u: Unit, dt: float) -> void:
+	# Сверхюниту стихии не страшны — умирает только от старости.
+	if u.invulnerable():
+		return
 	var c := u.cell()
 	var head := c + UP
 	if world.get_mat(head.x, head.y) == Mat.WATER:
@@ -498,7 +514,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= 3.0 * dt
 		_hurt_check(u, "задохнулся(лась) метаном")
 	var t := temperature(c)
-	var hot := HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
+	var hot := heat_limit(u)
 	if t > hot:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
 		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
@@ -509,7 +525,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= minf(2.0, (cold - t) / 40.0) * dt
 		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning")
 		_hurt_check(u, "замёрз(ла)")
-	var o2 := Env.oxygen_ratio(c.y, world.gen.surface_y(c.x))
+	var o2 := 1.0 if colony.ship_at(c) != null else world.gen.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:
 		u.health -= (0.55 - o2) * 10.0 * dt
 		_hurt_check(u, "задохнулся(лась) на высоте")

@@ -80,7 +80,8 @@ const SPAN := {
 
 const RESOURCE_NAMES := {
 	"wood": "Дерево",
-	"food": "Еда",
+	"food": "Грибы",
+	"fish": "Рыба",
 	"berries": "Ягоды",
 	"soil": "Грунт",
 	"clay": "Глина",
@@ -100,6 +101,7 @@ const RESOURCE_NAMES := {
 	"brick": "Кирпич",
 	"metal": "Сталь",
 	"methane": "Метан",
+	"diesel": "Дизельное топливо",
 }
 
 static var _names: PackedStringArray

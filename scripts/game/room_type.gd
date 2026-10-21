@@ -2,12 +2,16 @@ class_name RoomType
 extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
 
-enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN }
+enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN,
+	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
-	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор"]
+	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор",
+	"Нефтекачалка", "Нефтехранилище", "Нефтезавод", "Дизельный генератор",
+	"Корабль", "Космодром"]
 ## Еда хранится в амбаре, всё остальное — на складе.
-const FOOD_KEYS := ["food", "berries"]
+## Еда: грибы с фермы ("food" — ключ с тех пор, как еда была одна), рыба и ягоды.
+const FOOD_KEYS := ["food", "fish", "berries"]
 const HINTS := [
 	"",
 	"кровати: место для сна и для детей",
@@ -24,9 +28,18 @@ const HINTS := [
 	"хранит еду: рыбу, урожай ферм, ягоды",
 	"отопление: печи (по одной на 3 м) жгут дрова (кирпичные — и уголь) и греют от стен на 6–10 м",
 	"энергия: сжигает метан из баков дегазации",
+	"тянет нефть из пластов вокруг (10, 20 или 40 м — по размеру комнаты) по трубам в нефтехранилище; нужна энергия",
+	"хранит нефть и дизельное топливо (только здесь, по трубам); если рухнет — взрыв вокруг",
+	"мастер перегоняет нефть в дизельное топливо: 2 нефти → 1 дизель (по трубам из хранилища и обратно)",
+	"энергия: сжигает дизельное топливо — мощнее и вдвое дольше на единице",
+	"приземлившийся корабль: жильё на 10 человек, воздух, тепло, свет и трюм с грузом",
+	"стартовый стол на поверхности: здесь собирают ракету и отправляют экспедицию на другую планету",
 ]
+## Взрываются при обрушении (бак газа; потом — хранилище нефти).
+const EXPLOSIVE := [DEGAS, OIL_TANK]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
+const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
+	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", SHIP: "_ship", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
@@ -44,11 +57,28 @@ const FUEL_VALUE := {"methane": 3.0, "coal": 2.0, "wood": 1.0}
 const RECIPES := {
 	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
 	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
+	REFINERY: [{"oil": 2}, {"diesel": 1}, 20.0],
 }
 ## Генераторы: на дровах и угле или на метане.
-const GENERATORS := [GENERATOR, GAS_GEN]
+const GENERATORS := [GENERATOR, GAS_GEN, DIESEL_GEN]
+## Корабль: сколько в нём спальных мест, сколько каждого груза держит трюм, сколько энергии
+## даёт его реактор (воздух, тепло и свет внутри — всегда).
+const SHIP_BEDS := 10
+const SHIP_HOLD := 200
+const SHIP_POWER := 20
+## Ракета: материалы на сборку (топливо — по трубам из баков) и время сборки.
+const ROCKET_COST := {
+	"chem": {"iron": 80, "metal": 30, "copper": 40, "gold": 10, "silver": 10, "diamond": 4, "diesel": 60},
+	"nuclear": {"iron": 100, "metal": 50, "copper": 50, "gold": 20, "silver": 20, "diamond": 8, "uranium": 20},
+}
+const ROCKET_WORK := 600.0
+## Жидкое и газ: хранятся только в баках (метан — в дегазации, нефть и дизель — в
+## нефтехранилище) и идут по трубам — их не носят.
+const PIPED := ["methane", "oil", "diesel"]
+## Нефтехранилище: сколько нефти (и отдельно дизеля) держит на метр ширины.
+const OIL_PER_CELL := 40
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
-const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5}
+const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5, OIL_PUMP: 10, REFINERY: 10}
 const POWER_MAKE := 20
 ## На сколько секунд хватает 1 метана, 1 угля или 2 дров.
 const FUEL_TIME := 40.0
@@ -60,8 +90,8 @@ const BASE_CAPACITY := 50
 const CAPACITY_PER_CELL := 40
 ## Бак дегазации: сколько метана держит на метр ширины комнаты (газ хранят только там).
 const GAS_PER_CELL := 40
-## Пустая порода из шахт: ссыпается в отвал, места на складе не занимает.
-const BULK := ["soil", "sand", "gravel"]
+## Пустая порода и ненужное (известняк, соль): не копится и не хранится — просто исчезает.
+const BULK := ["soil", "sand", "gravel", "limestone", "salt"]
 ## Сколько секунд работы фермера даёт 1 еду.
 const FARM_CYCLE := 12.0
 
@@ -83,6 +113,8 @@ static func stoves(p: Project) -> int:
 ## Очаг греет от стен комнаты: полное тепло в пределах full клеток, дальше слабеет до reach.
 ## Больше печей — греет дальше. Генератор (любой) греет как одна печь.
 static func heat_zone(p: Project) -> Vector2i:
+	if p.purpose == SHIP:
+		return Vector2i(3, 6)
 	var n := stoves(p) if p.purpose == HEARTH else 1
 	var z := Vector2i(2 + n, 4 + 2 * n)
 	if p.purpose == HEARTH and p.brick_stoves:
@@ -106,7 +138,7 @@ static func effect_radius(p: Project) -> int:
 			return 16
 		VENT:
 			return 20
-		DEGAS:
+		DEGAS, OIL_PUMP:
 			# 3 м — 10, 6 м — 20, 9 м — 40.
 			return [10, 20, 40][clampi(blocks(p), 1, 3) - 1]
 	return 0
@@ -146,6 +178,8 @@ static func purpose_hint(t: int) -> String:
 
 
 static func beds(p: Project) -> int:
+	if p.purpose == SHIP:
+		return SHIP_BEDS
 	return maxi(1, usable_width(p) / 2)
 
 
@@ -177,6 +211,16 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"stone": 10, "brick": 8}
 		GENERATOR, GAS_GEN:
 			return {"stone": 6, "copper": 4, "iron": 4}
+		OIL_PUMP:
+			return {"iron": 8, "copper": 4, "stone": 6}
+		OIL_TANK:
+			return {"iron": 4 * blocks(p), "stone": 6}
+		REFINERY:
+			return {"iron": 12, "copper": 6, "brick": 8}
+		DIESEL_GEN:
+			return {"iron": 10, "copper": 6, "metal": 4}
+		LAUNCHPAD:
+			return {"stone": 40, "brick": 20, "metal": 20}
 		DEGAS:
 			return {"wood": 8, "stone": 8}
 		GRANARY:
@@ -205,21 +249,42 @@ static func ladder_work(p: Project) -> float:
 
 ## Стоимость и объём текущего обустройства (назначение или лестница).
 static func job_cost(p: Project) -> Dictionary:
+	if not p.equip_rocket.is_empty():
+		return ROCKET_COST[p.equip_rocket]
+	if not p.equip_material.is_empty():
+		return material_cost(p, p.equip_material)
 	return ladder_cost(p) if p.equip_ladder else equip_cost(p.equip_target, p)
 
 
 static func job_work(p: Project) -> float:
+	if not p.equip_rocket.is_empty():
+		return ROCKET_WORK
+	if not p.equip_material.is_empty():
+		return material_work(p, p.equip_material)
 	return ladder_work(p) if p.equip_ladder else equip_work(p.equip_target, p)
+
+
+## Перестройка стен готовой комнаты из материала mat: как новые стены, работы — 70%.
+static func material_cost(p: Project, mat: String) -> Dictionary:
+	return Project.cost_for(Project.Kind.ROOM, p.rect, mat)
+
+
+static func material_work(p: Project, mat: String) -> float:
+	return Project.work_for(Project.Kind.ROOM, p.rect, mat) * 0.7
 
 
 ## Склад — для стройматериалов, амбар — для еды (без учёта галочек «что хранить»).
 static func same_kind(p: Project, key: String) -> bool:
+	if p.purpose == SHIP:
+		return true
 	return FOOD_KEYS.has(key) == (p.purpose == GRANARY)
 
 
 static func stores(p: Project, key: String) -> bool:
-	if p.store_off.has(key):
+	if p.store_off.has(key) or PIPED.has(key):
 		return false
+	if p.purpose == SHIP:
+		return true
 	if p.purpose == GRANARY:
 		return FOOD_KEYS.has(key)
 	if FOOD_KEYS.has(key):
@@ -229,4 +294,4 @@ static func stores(p: Project, key: String) -> bool:
 
 ## Склад или амбар.
 static func is_store(t: int) -> bool:
-	return t == STORAGE or t == GRANARY
+	return t == STORAGE or t == GRANARY or t == SHIP

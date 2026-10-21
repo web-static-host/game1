@@ -8,6 +8,12 @@ signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
 signal home_pressed
+## «Миры»: Земля, колонии на планетах, ракеты в полёте.
+signal worlds_pressed
+## Нажали на бургер в строке ресурсов — показать, сколько какой еды.
+signal food_pressed
+## Открыли меню стройки — main присылает плитки комнат (set_build_rooms).
+signal build_opened
 ## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
 signal speed_selected(index: int)
 signal science_pressed
@@ -19,20 +25,27 @@ signal background_toggled(on: bool)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
-enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE }
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT, DRILL }
 
 ## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
 	[Mode.TUNNEL, "tunnel", "Тоннель"],
 	[Mode.MINE, "mine", "Шахта"],
-	[Mode.ROOM, "room", "Комната"],
 	[Mode.BRIDGE, "bridge", "Мост"],
+	[Mode.LIFT, "lift", "Лифт"],
+	[Mode.CARGO_LIFT, "cargo_lift", "Грузовой лифт"],
+	[Mode.DRILL, "drill", "Бур"],
 ]
+## Плиток комнат в ряду меню стройки.
+const ROOM_COLS := 10
 const TOOL_HINTS := {
 	Mode.TUNNEL: "Проведите пальцем рамку тоннеля. Карта — двумя пальцами",
 	Mode.MINE: "Проведите пальцем вдоль шахты (всегда 3 м высотой). Карта — двумя пальцами",
 	Mode.ROOM: "Выберите размер и материал, коснитесь карты. Карта — двумя пальцами",
 	Mode.BRIDGE: "Проведите пальцем над озером",
+	Mode.LIFT: "Проведите строго вверх-вниз (шахта 2 м) или вбок (ход 3 м). Можно по готовому тоннелю",
+	Mode.CARGO_LIFT: "Проведите строго вверх-вниз (шахта 3 м) или вбок. Поставьте склад вплотную к концам",
+	Mode.DRILL: "Коснитесь, где поставить бур (машина 3×3). Куда и сколько сверлить — в его карточке",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 const SPEED_NAMES := ["×1", "×2", "×10", "×20"]
@@ -67,7 +80,13 @@ var _weather_name := ""
 var _res_box: HBoxContainer
 var _res_sig := ""
 var _build_btn: IconButton
-var _build_row: HBoxContainer
+var _build_row: PanelContainer
+var _room_grid: GridContainer
+## Инструменты стройки: режим -> кнопка; почему недоступен (пусто — доступен).
+var _tool_btns := {}
+var _tool_lock := {}
+## Под что строится комната из меню (0 — пустая, назначение потом).
+var _room_purpose := 0
 var _menu: PanelContainer
 var _menu_new: Button
 var _models_hint: Label
@@ -242,14 +261,27 @@ static func _outlined(text: String, fs: int, col: Color) -> Label:
 	return l
 
 
+var _worlds_btn: Control
+
+
+## «Миры» — только когда есть куда лететь (изучено ракетостроение) или уже летали.
+func set_worlds_visible(on: bool) -> void:
+	if _worlds_btn != null and _worlds_btn.visible != on:
+		_worlds_btn.visible = on
+
+
 ## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
-	var keys: Array = ["food", "berries", "wood", "stone"]
+	# Еда — одним бургером (сумма грибов, рыбы и ягод), остальное — по ресурсам.
+	var keys: Array = ["wood", "stone"]
 	var rest := inventory.keys().filter(func(k: String) -> bool:
-		return not keys.has(k) and not RoomType.BULK.has(k) and inventory[k] > 0)
+		return not keys.has(k) and not RoomType.BULK.has(k) and not RoomType.FOOD_KEYS.has(k) and inventory[k] > 0)
+	var food := 0
+	for k in RoomType.FOOD_KEYS:
+		food += int(inventory.get(k, 0))
 	rest.sort()
 	keys.append_array(rest)
-	var sig := "%d/%d/%d/%d|" % [people, hungry, power_made, power_used]
+	var sig := "%d/%d/%d/%d/%d|" % [people, hungry, power_made, power_used, food]
 	for k in keys:
 		sig += "%s=%d," % [k, inventory.get(k, 0)]
 	if sig == _res_sig:
@@ -262,6 +294,16 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made :
 	if power_known and (power_made > 0 or power_used > 0):
 		_res_box.add_child(_chip_plain("power", "%d/%d" % [power_made, power_used],
 			Color(1.0, 0.85, 0.3) if power_made >= power_used else Color(1.0, 0.55, 0.5)))
+	# Бургер нажимается: всплывает, сколько грибов, рыбы и ягод.
+	var meal := HBoxContainer.new()
+	meal.add_theme_constant_override("separation", 4)
+	meal.mouse_filter = Control.MOUSE_FILTER_STOP
+	meal.add_child(IconView.make("meal", 24))
+	meal.add_child(_label(Fmt.int_spaced(food), 19, Color(0.97, 0.92, 0.75)))
+	meal.gui_input.connect(func(e: InputEvent) -> void:
+		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
+			food_pressed.emit())
+	_res_box.add_child(meal)
 	for k in keys:
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
@@ -298,20 +340,40 @@ func set_status(text: String) -> void:
 # --- Низ: карточка, подменю стройки, кнопки ------------------------------------------------
 
 func _build_bottom(box: VBoxContainer) -> void:
-	_build_row = HBoxContainer.new()
-	_build_row.add_theme_constant_override("separation", 8)
+	# Меню «Стройки»: проходы сверху, ниже — все виды комнат (недоступные — серые).
+	_build_row = PanelContainer.new()
+	_build_row.add_theme_stylebox_override("panel", _box(Color(0.1, 0.11, 0.14, 0.94), 16, 12))
 	_build_row.visible = false
 	add_child(_build_row)
 	_build_row.resized.connect(_place_build_row)
 	resized.connect(_place_build_row)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	_build_row.add_child(col)
+	col.add_child(_label("Проходы", 16, MUTED))
+	var tools := HBoxContainer.new()
+	tools.add_theme_constant_override("separation", 8)
+	col.add_child(tools)
+	for t in TOOLS:
+		var b := IconButton.make(t[1], t[2], 108, 76)
+		b.pressed.connect(func() -> void:
+			var why: String = _tool_lock.get(t[0], "")
+			if not why.is_empty():
+				log_event(why, "warning")
+				return
+			_room_purpose = 0
+			_pick_tool(t[0], t[1], t[2]))
+		_tool_btns[t[0]] = b
+		tools.add_child(b)
+	col.add_child(_label("Комнаты — выберите, что построить (сразу обустроят). Серые — ещё не изучены:", 16, MUTED))
+	_room_grid = GridContainer.new()
+	_room_grid.columns = ROOM_COLS
+	_room_grid.add_theme_constant_override("h_separation", 8)
+	_room_grid.add_theme_constant_override("v_separation", 8)
+	col.add_child(_room_grid)
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
-	# Подменю «Стройки»: инструменты; после выбора — разовый режим установки.
-	for t in TOOLS:
-		var b := IconButton.make(t[1], t[2], 108, 80)
-		b.pressed.connect(func() -> void: _pick_tool(t[0], t[1], t[2]))
-		_build_row.add_child(b)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
 	# Главная кнопка — оранжевая.
@@ -330,6 +392,11 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var science := IconButton.make("flask", "Наука")
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
+	var worlds := IconButton.make("planet", "Миры")
+	worlds.pressed.connect(func() -> void: worlds_pressed.emit())
+	worlds.visible = false
+	_worlds_btn = worlds
+	bar.add_child(worlds)
 	var home := IconButton.make("home", "К базе")
 	bar.add_child(home)
 	# Скорость — переключатель в одной панели.
@@ -383,6 +450,7 @@ func _on_build_toggled(on: bool) -> void:
 		return
 	if on:
 		close_overlays()
+		build_opened.emit()
 	_build_row.visible = on
 
 
@@ -406,6 +474,64 @@ func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 	set_hint(TOOL_HINTS.get(mode, ""))
 	_show_room_strip(mode == Mode.ROOM)
 	mode_changed.emit(mode, _room_w if mode == Mode.ROOM else 0)
+
+
+## Плитки комнат в меню стройки: [{"id", "name", "tex" (путь картинки) или "glyph", "ok", "why"}].
+func set_build_rooms(items: Array, locks: Dictionary = {}) -> void:
+	_tool_lock = locks
+	for m in _tool_btns:
+		(_tool_btns[m] as Control).modulate = Color(1, 1, 1, 0.4) if not str(locks.get(m, "")).is_empty() else Color.WHITE
+	for c in _room_grid.get_children():
+		_room_grid.remove_child(c)
+		c.queue_free()
+	for it in items:
+		var ok: bool = it["ok"]
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(104, 104)
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_stylebox_override("normal", btn_box(Color(0.22, 0.24, 0.3) if ok else Color(0.15, 0.16, 0.19)))
+		var v := VBoxContainer.new()
+		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(v)
+		var pic: Control
+		var path: String = it.get("tex", "")
+		if not path.is_empty() and ResourceLoader.exists(path):
+			var tr := TextureRect.new()
+			tr.texture = load(path)
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.custom_minimum_size = Vector2(88, 54)
+			pic = tr
+		else:
+			pic = IconView.make("", 44, it.get("glyph", "room"), Color.WHITE)
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pic.modulate = Color.WHITE if ok else Color(0.4, 0.4, 0.45, 0.8)
+		v.add_child(pic)
+		var l := _label(it["name"], 14, Color.WHITE if ok else MUTED)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(96, 0)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(l)
+		var id: int = it["id"]
+		var nm: String = it["name"]
+		var why: String = it.get("why", "")
+		b.pressed.connect(func() -> void:
+			if not ok:
+				log_event(why, "warning")
+				return
+			_room_purpose = id
+			_pick_tool(Mode.ROOM, "room", nm))
+		_room_grid.add_child(b)
+
+
+## Под что строят комнату (0 — пустая).
+func room_purpose() -> int:
+	return _room_purpose
 
 
 ## Материалы стен, доступные колонии (для полоски выбора комнаты).
@@ -830,7 +956,7 @@ func _build_people(st: Dictionary) -> void:
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.custom_minimum_size = Vector2(PANEL_WIDTH - 300, 0)
 		col.add_child(info)
-		if not item.has("button"):
+		if not item.has("button") or str(item["button"]).is_empty():
 			continue
 		var b := Button.new()
 		b.text = item["button"]
@@ -948,23 +1074,30 @@ func _build_store(st: Dictionary) -> void:
 			row.add_child(_label("не хранить", 16, MUTED))
 			continue
 		var cap: int = item["cap"]
-		row.add_child(_label("лежит %s · до" % Fmt.int_spaced(item["held"]), 16, MUTED))
+		row.add_child(_label("сейчас %s из %s" % [Fmt.int_spaced(item["held"]), Fmt.int_spaced(cap)], 17, Color.WHITE))
 		var set_target := Callable()
-		_stepper_widgets(row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
+		var lim_row := _store_line(col, "Хранить не больше")
+		_stepper_widgets(lim_row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
 			st["limit"].call(key, v)
 			if set_target.is_valid():
 				set_target.call(mini(v, int(item["target"]))))
 		if int(item["target"]) >= 0:
-			var row2 := HBoxContainer.new()
-			row2.add_theme_constant_override("separation", 8)
-			col.add_child(row2)
-			var l := _label("работники склада добывают до", 16, MUTED)
-			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-			row2.add_child(l)
-			set_target = _stepper_widgets(row2, int(item["target"]), 0, cap, 10, [], func(v: int) -> void:
-				item["target"] = v
-				st["target"].call(key, v))
+			set_target = _stepper_widgets(_store_line(col, "Работники склада добывают, пока меньше"), int(item["target"]), 0, cap, 10, [],
+				func(v: int) -> void:
+					item["target"] = v
+					st["target"].call(key, v))
+
+
+## Строка настройки ресурса на складе: подпись справа и место под переключатель.
+func _store_line(col: VBoxContainer, text: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	col.add_child(row)
+	var l := _label(text, 16, MUTED)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(l)
+	return row
 
 
 func _build_stepper(st: Dictionary) -> void:

@@ -216,7 +216,7 @@ func _draw() -> void:
 					if clip.size() >= 3:
 						_fill_poly(clip, rock_color(m, v), rock_tex_of(m))
 				if y == surf:
-					if gen.water_level(x) >= surf:
+					if gen.water_level(x) >= surf and gen.planet["plants"]:
 						_draw_smooth_grass(lx, ly, line, x)
 				continue
 			if f & ChunkData.F_REVEALED == 0:

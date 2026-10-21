@@ -15,8 +15,10 @@ extends RefCounted
 ## Сверхюнит — цвет рядом с градиентом лого: все характеристики 200%.
 
 const MUTATION_CHANCE := 0.1
-## Насколько близко к цвету лого нужно попасть, чтобы родился сверхюнит (≈1 на 110 рождений).
-const SUPER_RADIUS := 0.07
+## Насколько близко к цвету лого нужно попасть, чтобы родился сверхюнит (оттенок примерно 162°–202°).
+const SUPER_RADIUS := 0.10
+## Стартовые цвета основателей держатся подальше от бирюзы (сверхюниты только выводятся).
+const FOUNDER_GAP := 0.175
 
 const SHAPE_NAMES := ["треугольник", "квадрат", "круг"]
 ## Цвета волос: тёмные доминируют над светлыми (видна копия с меньшим номером).
@@ -44,9 +46,9 @@ const MUTATION_NAMES := {"color": "цвет", "eyes": "глаза", "fingers": "
 const PERSONALITIES := ["трудоголик", "лентяй", "обжора", "весельчак", "трус", "смельчак", "педант"]
 
 const STATS := ["vision", "strength", "agility", "intellect", "heat", "cold", "stamina", "health",
-	"appetite", "speed", "learning", "fertility", "longevity", "charm"]
+	"appetite", "fasting", "speed", "learning", "fertility", "longevity", "charm"]
 const STAT_NAMES := {"vision": "Зрение", "strength": "Сила", "agility": "Ловкость", "intellect": "Интеллект",
-	"heat": "Жара", "cold": "Холод", "stamina": "Выносливость", "health": "Здоровье", "appetite": "Аппетит",
+	"heat": "Жара", "cold": "Холод", "stamina": "Выносливость", "health": "Здоровье", "appetite": "Аппетит", "fasting": "Голодостойкость",
 	"speed": "Скорость", "learning": "Обучаемость", "fertility": "Плодовитость", "longevity": "Долголетие",
 	"charm": "Общительность"}
 
@@ -64,7 +66,7 @@ const PINK := Color(1, 0.2, 0.6)
 static func bright_color(rng: RandomNumberGenerator) -> Color:
 	while true:
 		var c := Color.from_hsv(rng.randf(), rng.randf_range(0.85, 1.0), 1.0)
-		if CreatureArt.super_distance(c) > SUPER_RADIUS * 2.5:
+		if CreatureArt.super_distance(c) > FOUNDER_GAP:
 			return c
 	return Color.RED
 
@@ -294,7 +296,9 @@ static func stats(g: Dictionary) -> Dictionary:
 		s["cold"] += 0.6 * _near(col, BLUE)
 		s["health"] += 0.2 * _near(col, ORANGE)
 		s["stamina"] += 0.25 * _near(col, YELLOW)
+		# Зелёные мало едят и дольше живут без еды.
 		s["appetite"] -= 0.25 * _near(col, GREEN)
+		s["fasting"] += 0.8 * _near(col, GREEN)
 		s["intellect"] += 0.2 * _near(col, PURPLE)
 		s["charm"] += 0.2 * _near(col, PINK)
 	if has(g, "fur"):

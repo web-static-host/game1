@@ -6,7 +6,11 @@ extends RefCounted
 ## BRIDGE — мостик над водой (переход и рыбалка), PIER — рыболовная пристань.
 ## MINE — шахта: горизонтальная выработка в 3 м высотой для добычи (копают шахтёры);
 ## на её месте потом можно ставить комнаты.
-enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE }
+## LIFT — лифт: строго вертикальная шахта (пассажирский — 2 м, грузовой — 3 м шириной)
+## или горизонтальный ход в 3 м высотой; строится как тоннель, потом ставят кабину.
+## DRILL — бур: машина 3×3; по приказу сама едет вниз или вбок и сверлит ход в 3 м,
+## за ней остаётся тоннель (вниз) или ход как шахта (вбок).
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT, DRILL }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -55,6 +59,32 @@ var equip_done := 0.0
 var farm_progress := 0.0
 ## Обустройство — это постройка лестницы (назначение не меняется).
 var equip_ladder := false
+## Лифт: грузовой (только грузы) или пассажирский.
+var cargo := false
+## Кабина лифта: где она (координата по оси шахты; -1 — ещё не ставили), груз в ней,
+## сколько стоит на остановке, грузы, ждущие у концов шахты [начало, конец].
+var lift_pos := -1.0
+## Бур: куда едет (ноль — стоит), сколько метров осталось, сколько уже сверлит срез,
+## ход, который он проходит, и где стоял, когда получил приказ.
+var drill_dir := Vector2i.ZERO
+var drill_left := 0
+var drill_t := 0.0
+var bore_id := 0
+var bore_from := Rect2i()
+## Ход, который сверлит бур (id бура): жители его не копают.
+var bored_by := 0
+var lift_load := {}
+var lift_dwell := 0.0
+## Грузовой лифт едет к концу (0 — начало, 1 — конец; -1 — стоит).
+var lift_goal := -1
+var lift_buf: Array = [{}, {}]
+## Перестройка стен из другого материала (пусто — не перестраивают).
+var equip_material := ""
+## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
+var equip_rocket := ""
+var rocket := ""
+## Под что строят комнату (выбрано в меню стройки): после постройки сразу обустраивается.
+var plan_purpose := 0
 ## Очаг с кирпичными печами (иначе — каменные).
 var brick_stoves := false
 ## Очаг сейчас горит на метане (газовое отопление).
@@ -81,6 +111,8 @@ var supported: Array[int] = []
 var support_slice := -1
 var support_paid := false
 var support_progress := 0.0
+## Из чего оплачена крепь текущего среза ("wood" или "metal").
+var support_mat := ""
 ## Материалы, уже принесённые на стройку: ключ -> количество.
 var delivered := {}
 ## Сырьё, которое подсобные рабочие уже принесли в мастерскую.
@@ -107,19 +139,48 @@ var gatherers := 0
 var targets := {}
 ## Что лежит именно в этом складе/амбаре (в дегазации — метан в баке): ключ -> количество.
 var held := {}
+## Приоритет: строители (у шахты — шахтёры) бросают другие стройки и идут сюда.
+var priority := false
+## Продолжение выработки: id шахты, тоннеля или лифта, с которой сольётся по готовности.
+var extends_id := 0
 ## Предупреждения геолога: опасности, на которые игрок разрешил копать, и текущее.
 var hazard_ack: Array[String] = []
 var hazard_pending := ""
 
 
 func title() -> String:
+	if kind == Kind.LIFT:
+		return "%s %d м" % ["Грузовой лифт" if cargo else "Лифт", maxi(rect.size.x, rect.size.y)]
+	if kind == Kind.DRILL:
+		return "Бур"
 	if kind == Kind.ROOM and purpose != RoomType.NONE:
 		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
 
 
 static func kind_name(k: int) -> String:
-	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта"][k]
+	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт", "Бур"][k]
+
+
+## Лифт вертикальный (иначе — горизонтальный).
+func lift_vertical() -> bool:
+	return rect.size.y > rect.size.x
+
+
+## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
+## Бур: железо на корпус и медь на мотор (обсадку хода берут при каждом приказе).
+static func drill_cost(_r: Rect2i) -> Dictionary:
+	return {"iron": 4, "copper": 2}
+
+
+## base — с кабиной (у продолжения шахты лифта — только рельсы и провода).
+static func lift_cost(r: Rect2i, is_cargo: bool, base := true) -> Dictionary:
+	var n := maxi(r.size.x, r.size.y)
+	var out := {"iron": n * (2 if is_cargo else 1), "copper": ceili(n / 2.0)}
+	if base:
+		out["iron"] += 10 if is_cargo else 6
+		out["copper"] += 4
+	return out
 
 
 func is_water_structure() -> bool:
@@ -157,6 +218,14 @@ func has_cell(c: Vector2i) -> bool:
 	return rect.has_point(c)
 
 
+static func rect_cells(r: Rect2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			out.append(Vector2i(x, y))
+	return out
+
+
 ## Стоимость второго этапа. Тоннелю нужна крепь и лестницы (дерево),
 ## комнате — стены из выбранного материала и деревянные балки перекрытий.
 static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
@@ -182,10 +251,18 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 		return r.size.x * 4.0
 	if k == Kind.PIER:
 		return r.size.x * 8.0
+	if k == Kind.LIFT:
+		return maxi(r.size.x, r.size.y) * 4.0
+	if k == Kind.DRILL:
+		return 30.0
 	return cells_n * 1.0
 
 
 func cost() -> Dictionary:
+	if kind == Kind.LIFT:
+		return lift_cost(rect, cargo, extends_id == 0)
+	if kind == Kind.DRILL:
+		return drill_cost(rect)
 	return cost_for(kind, rect, material)
 
 
@@ -193,7 +270,7 @@ func cost() -> Dictionary:
 
 ## Вертикальная шахта крепится по 2 ряда, остальное — по столбцам.
 func vertical() -> bool:
-	return kind == Kind.TUNNEL and rect.size.y > rect.size.x
+	return (kind == Kind.TUNNEL or kind == Kind.LIFT) and rect.size.y > rect.size.x
 
 
 func slice_count() -> int:
@@ -276,6 +353,20 @@ static func size_error(k: int, r: Rect2i) -> String:
 		if h != ROOM_HEIGHT:
 			return "Комната — %d м в высоту" % ROOM_HEIGHT
 		return ""
+	if k == Kind.DRILL:
+		if w != 3 or h != 3:
+			return "Бур — машина 3×3"
+		return ""
+	if k == Kind.LIFT:
+		# Строго вертикально (2–3 м шириной) или строго горизонтально (3 м высотой).
+		if h > w:
+			if w < 2 or w > 3 or h < 4:
+				return "Лифт по вертикали — шахта 2 м (пассажирский) или 3 м (грузовой) шириной, от 4 м"
+		elif h != 3 or w < 4:
+			return "Лифт по горизонтали — ход в 3 м высотой, от 4 м длиной"
+		if maxi(w, h) > TUNNEL_MAX_LEN:
+			return "Лифт — не длиннее %d м" % TUNNEL_MAX_LEN
+		return ""
 	if k == Kind.MINE:
 		if h != MINE_HEIGHT:
 			return "Шахта — всегда %d м в высоту" % MINE_HEIGHT
@@ -313,6 +404,10 @@ func to_dict() -> Dictionary:
 		"equip_done": equip_done,
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
+		"equip_material": equip_material,
+		"equip_rocket": equip_rocket,
+		"rocket": rocket,
+		"plan_purpose": plan_purpose,
 		"brick_stoves": brick_stoves,
 		"gas_boiler": gas_boiler,
 		"light": light,
@@ -320,6 +415,17 @@ func to_dict() -> Dictionary:
 		"clear_x": clear_x,
 		"store_filter": store_filter,
 		"store_off": store_off,
+		"cargo": cargo,
+		"lift_pos": lift_pos,
+		"lift_load": lift_load,
+		"lift_buf": lift_buf,
+		"lift_goal": lift_goal,
+		"drill_dir": [drill_dir.x, drill_dir.y],
+		"drill_left": drill_left,
+		"drill_t": drill_t,
+		"bore_id": bore_id,
+		"bore_from": [bore_from.position.x, bore_from.position.y, bore_from.size.x, bore_from.size.y],
+		"bored_by": bored_by,
 		"limits": limits,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
@@ -328,6 +434,7 @@ func to_dict() -> Dictionary:
 		"support_slice": support_slice,
 		"support_paid": support_paid,
 		"support_progress": support_progress,
+		"support_mat": support_mat,
 		"delivered": delivered,
 		"stock": stock,
 		"wear": wear,
@@ -342,6 +449,8 @@ func to_dict() -> Dictionary:
 		"held": held,
 		"hazard_ack": hazard_ack,
 		"hazard_pending": hazard_pending,
+		"extends_id": extends_id,
+		"priority": priority,
 	}
 
 
@@ -371,6 +480,27 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_done = float(d.get("equip_done", 0.0))
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
+	p.equip_material = str(d.get("equip_material", ""))
+	p.equip_rocket = str(d.get("equip_rocket", ""))
+	p.rocket = str(d.get("rocket", ""))
+	p.cargo = bool(d.get("cargo", false))
+	p.lift_pos = float(d.get("lift_pos", -1.0))
+	p.lift_goal = int(d.get("lift_goal", -1))
+	var dd: Array = d.get("drill_dir", [0, 0])
+	p.drill_dir = Vector2i(int(dd[0]), int(dd[1]))
+	p.drill_left = int(d.get("drill_left", 0))
+	p.drill_t = float(d.get("drill_t", 0.0))
+	p.bore_id = int(d.get("bore_id", 0))
+	var bf: Array = d.get("bore_from", [0, 0, 0, 0])
+	p.bore_from = Rect2i(int(bf[0]), int(bf[1]), int(bf[2]), int(bf[3]))
+	p.bored_by = int(d.get("bored_by", 0))
+	for k in d.get("lift_load", {}):
+		p.lift_load[str(k)] = int(d["lift_load"][k])
+	var bufs: Array = d.get("lift_buf", [{}, {}])
+	for i in mini(2, bufs.size()):
+		for k in bufs[i]:
+			p.lift_buf[i][str(k)] = int(bufs[i][k])
+	p.plan_purpose = int(d.get("plan_purpose", 0))
 	p.brick_stoves = bool(d.get("brick_stoves", false))
 	p.gas_boiler = bool(d.get("gas_boiler", false))
 	p.light = int(d.get("light", -1))
@@ -395,6 +525,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_slice = int(d.get("support_slice", -1))
 	p.support_paid = bool(d.get("support_paid", false))
 	p.support_progress = float(d.get("support_progress", 0.0))
+	p.support_mat = str(d.get("support_mat", ""))
 	p.delivered = _int_dict(d.get("delivered", {}))
 	p.stock = _int_dict(d.get("stock", {}))
 	p.wear = float(d.get("wear", 0.0))
@@ -410,6 +541,8 @@ static func from_dict(d: Dictionary) -> Project:
 	for k in d.get("hazard_ack", []):
 		p.hazard_ack.append(str(k))
 	p.hazard_pending = str(d.get("hazard_pending", ""))
+	p.extends_id = int(d.get("extends_id", 0))
+	p.priority = bool(d.get("priority", false))
 	return p
 
 

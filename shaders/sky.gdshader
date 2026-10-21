@@ -16,6 +16,8 @@ uniform float view_w = 60.0;
 uniform float ground_alt = 0.0;
 // Сид мира (0..999) — порядок кусков слоёв.
 uniform float world_seed = 0.0;
+// Оттенок неба другой планеты (на Земле — белый).
+uniform vec3 tint = vec3(1.0);
 
 uniform sampler2D mountains_1 : source_color, filter_linear_mipmap, repeat_disable;
 uniform sampler2D mountains_2 : source_color, filter_linear_mipmap, repeat_disable;
@@ -138,6 +140,7 @@ void fragment() {
 		c = over(c, tex, 0.0, horizon, cover);
 	}
 
+	c *= tint;
 	// Ночь: небо тёмно-синее.
 	vec3 night = vec3(0.02, 0.04, 0.12) + c * mix(0.08, 0.14, cover);
 	c = mix(night, c, daylight);

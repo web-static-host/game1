@@ -57,7 +57,11 @@ static func _plants_list(world: WorldData) -> Array:
 
 
 static func save(world: WorldData, colony: Colony, camera_cell: Vector2i, path := DEFAULT_PATH) -> bool:
-	var data := serialize(world, colony, camera_cell)
+	return write(serialize(world, colony, camera_cell), path)
+
+
+## Записать готовое сохранение (с мирами других планет и полётами).
+static func write(data: Dictionary, path := DEFAULT_PATH) -> bool:
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:

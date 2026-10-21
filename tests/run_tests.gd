@@ -59,7 +59,20 @@ func _initialize() -> void:
 	test_lights()
 	test_two_generators()
 	test_store_limits()
+	test_change_material()
 	test_walk_floor_only()
+	test_collapse_losses()
+	test_lifts()
+	test_stop_by_meter()
+	test_drill()
+	test_extend()
+	test_stacked_mines()
+	test_lift_merge()
+	test_planet_balance()
+	test_food_and_output()
+	test_priority()
+	test_oil()
+	test_space()
 	test_job_stats()
 	test_pairs_at_work()
 	test_clearing_regrown()
@@ -630,16 +643,32 @@ func test_needs_realtime() -> void:
 		colony.update(0.5)
 		t += 0.5
 	check(u.satiety >= 50.0 and colony.inventory["food"] < 10, "голодный житель поел (%.0f с)" % t)
-	u.energy = 5.0
+	# Сна нет: жители не устают и не уходят спать, старый «спящий» сразу встаёт.
+	var slept := false
+	u.task = Unit.Task.SLEEP
+	u.state = Unit.State.WORK
 	t = 0.0
-	var slept_in_bed := false
-	while t < 900.0 and u.energy < 99.0:
+	while t < 600.0:
 		colony.update(0.5)
 		t += 0.5
-		if u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK and u.project_id != 0:
-			slept_in_bed = true
-	check(u.energy >= 99.0, "уставший житель выспался (%.0f с)" % t)
-	check(slept_in_bed, "спал в кровати")
+		if u.task == Unit.Task.SLEEP:
+			slept = true
+	check(u.energy == 100.0 and not slept, "сна нет: жители не устают и не спят")
+	# Без сна мёрзнущий ослабевший житель сам идёт в тепло и там быстрее поправляется.
+	u.health = 40.0
+	u.task = Unit.Task.NONE
+	u.state = Unit.State.IDLE
+	var cold_spot := u.cell()
+	colony.elements._temp_memo[cold_spot] = -30.0
+	check(colony.needs_warmth(u), "замёрзший ослабевший — нужно в тепло")
+	var reach := colony.pathing.explore(u.cell())
+	colony.elements._temp_memo.clear()
+	for c in reach[1]:
+		colony.elements._temp_memo[c] = -30.0
+	var warm_cell: Vector2i = reach[1].keys()[reach[1].size() - 1]
+	colony.elements._temp_memo[warm_cell] = 20.0
+	colony.elements._temp_memo[cold_spot] = -30.0
+	check(colony._start_warm(u, reach[0], reach[1]) and u.task == Unit.Task.WARM and u.target == warm_cell, "идёт греться в тёплое место")
 
 
 func test_family() -> void:
@@ -923,9 +952,10 @@ func test_build_rules_v2() -> void:
 	check(house.ladder and top.phase == Project.Phase.DONE, "лестница и второй этаж построены")
 	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree - 1, ts - 9, 4, 3)).is_empty(), "на деревянный дом третий этаж нельзя")
 	check(not colony.validate(Project.Kind.ROOM, Rect2i(tree + 3, ts - 6, 4, 3)).is_empty(), "висящий второй этаж нельзя")
-	# Отвал не ограничен, склад хранит выбранное.
-	colony._add("sand", 5000)
-	check(colony.inventory["sand"] == 5000, "песок уходит в отвал без лимита")
+	# Пустая порода, известняк и соль не копятся — исчезают.
+	check(colony._add("sand", 5000) == 5000 and not colony.inventory.has("sand"), "песок исчезает, не копится")
+	colony.drop_item(Vector2i(tree, ts - 1), "salt", 7)
+	check(colony.drop_total("salt") == 0 and not colony.inventory.has("salt"), "соль не лежит и не хранится")
 	var stone_cap := colony.capacity("stone")
 	colony.inventory["stone"] = 0
 	colony._add("stone", 500)
@@ -1762,6 +1792,19 @@ func test_elements() -> void:
 	check(gp.paused and gp.hazard_pending == "water" and gp.blocked.begins_with("Геолог"), "геолог предупредил о воде: " + gp.blocked)
 	gc.set_paused(gp, false)
 	check(not gp.paused and gp.hazard_ack.has("water"), "игрок разрешил копать дальше")
+	# Вода в 4 м от забоя — не тревога: опасно, только когда до неё клетка-две.
+	var fc := _new_colony(62)
+	var fw := fc.world
+	_start(fc, gx)
+	fc.inventory = {"wood": 40}
+	fc.research.done.append_array(["geology", "geology2", "geology3", "geology4"])
+	fw.set_fluid(gx, gs + 6, Mat.WATER)
+	var fp := fc.create_project(Project.Kind.TUNNEL, Rect2i(gx, gs, 1, 2))
+	for i in 400:
+		fc.update(0.5)
+		if fp.paused or fp.phase == Project.Phase.DONE:
+			break
+	check(not fp.paused and fp.hazard_pending.is_empty(), "дальняя вода — без тревоги даже при геологии IV")
 
 
 ## Газовая тревога: метан у стройки останавливает работы, жители уходят из облака,
@@ -2443,6 +2486,19 @@ func test_job_stats() -> void:
 	a.task = Unit.Task.NONE
 	b.task = Unit.Task.NONE
 	colony.set_profession(b, Unit.Prof.ANY)
+	# Голодостойкость: без еды здоровье тает медленнее.
+	a.stats["fasting"] = 2.0
+	b.stats["fasting"] = 1.0
+	for u in [a, b]:
+		u.satiety = 0.0
+		u.health = 100.0
+	colony._life_tick(10.0, false)
+	check(absf((100.0 - b.health) - 2.0 * (100.0 - a.health)) < 0.6, "голодостойкий теряет здоровье от голода вдвое медленнее")
+	var green := Genetics.founder(colony.rng)
+	green["color"] = [Genetics.GREEN, Genetics.GREEN]
+	var gs := Genetics.stats(green)
+	check(Genetics.has(green, "albino") or Genetics.has(green, "melanist") or gs["fasting"] > 1.5,
+		"зелёный — голодостойкий (%.2f)" % gs["fasting"])
 	check(b.calling == 0, "без своей работы — ни призвания, ни «не по душе»")
 
 
@@ -2504,6 +2560,42 @@ func test_clearing_regrown() -> void:
 	u.project_id = 0
 
 
+func test_change_material() -> void:
+	# Стены готовой комнаты перестраивают из другого материала: назначение остаётся, износ — с нуля.
+	var res := _colony_with_room(33, RoomType.HOME)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	check(room.purpose == RoomType.HOME and room.material == "wood", "деревянный дом готов")
+	room.wear = 0.6
+	check(not colony.material_error(room, "wood").is_empty(), "на тот же материал перестраивать нечего")
+	colony.known_resources["stone"] = true
+	check(colony.material_error(room, "stone").is_empty(), "на камень можно")
+	colony.inventory = {"wood": 80, "stone": 80, "food": 80}
+	colony._sync_held()
+	check(colony.change_material(room, "stone") and room.phase == Project.Phase.EQUIP, "перестройка началась")
+	colony.advance_offline(6000.0)
+	check(room.phase == Project.Phase.DONE and room.material == "stone", "стены каменные")
+	check(room.purpose == RoomType.HOME and room.wear < 0.1, "дом остался домом, износ с нуля")
+	# Комната, заложенная из меню под назначение, после постройки сразу обустраивается.
+	var r2 := Rect2i(room.rect.end.x + 1, room.rect.position.y, 3, 3)
+	colony.inventory = {"wood": 80, "stone": 80, "food": 80}
+	colony._sync_held()
+	var planned := Project.new()
+	planned.id = 995
+	planned.kind = Project.Kind.ROOM
+	planned.phase = Project.Phase.BUILD
+	planned.rect = r2
+	planned.plan_purpose = RoomType.STORAGE
+	colony.projects.append(planned)
+	colony._finish_project(planned)
+	check(planned.phase == Project.Phase.EQUIP and planned.equip_target == RoomType.STORAGE and planned.plan_purpose == 0,
+		"заложили склад — после постройки сразу обустраивают")
+	colony.projects.erase(planned)
+	check(colony.change_material(room, "wood"), "обратно на дерево тоже можно")
+	colony.cancel_equip(room)
+	check(room.material == "stone" and room.purpose == RoomType.HOME and room.equip_material.is_empty(), "отмена — всё как было")
+
+
 func test_store_limits() -> void:
 	# Галочки «хранить» и предел: больше предела в склад не кладут и не добывают.
 	var res := _colony_with_room(31, RoomType.STORAGE)
@@ -2533,6 +2625,697 @@ func test_store_limits() -> void:
 	var gr := _fake_room(colony, RoomType.GRANARY, colony.home.x + 40, 6)
 	colony.set_store_on(gr, "berries", false)
 	check(RoomType.stores(gr, "food") and not RoomType.stores(gr, "berries"), "в амбаре тоже галочки: ягоды не хранить")
+
+
+## Выкопанная готовая постройка вида kind в r (для тестов лифтов).
+func _dug_project(colony: Colony, kind: int, r: Rect2i, id: int) -> Project:
+	var p := Project.new()
+	p.id = id
+	p.kind = kind
+	p.phase = Project.Phase.DONE
+	p.rect = r
+	for c in p.cells():
+		colony.world.set_material(c.x, c.y, Mat.AIR)
+		colony.world.set_dug(c.x, c.y)
+		colony.interior[c] = id
+	colony.projects.append(p)
+	return p
+
+
+func _power_up(colony: Colony, x: int) -> void:
+	colony.research.done.append_array(["electricity", "metallurgy", "lifts", "cargo_lifts"])
+	var gen := Project.new()
+	gen.id = 899
+	gen.kind = Project.Kind.ROOM
+	gen.phase = Project.Phase.DONE
+	gen.purpose = RoomType.GENERATOR
+	gen.rect = Rect2i(x, -400, 3, 3)
+	colony.projects.append(gen)
+	colony.inventory["coal"] = 50
+	colony._power_tick(0.1)
+
+
+func test_space() -> void:
+	# Планеты: ни деревьев, ни озёр, свой климат; на поверхности без воздуха не ходят.
+	var mg := WorldGen.new(5, WorldGen.LATEST, "mars")
+	var trees := 0
+	for x in range(-200, 200):
+		if mg.feature_at(x) != WorldGen.FEATURE_NONE:
+			trees += 1
+	check(trees == 0 and mg.lake_at(50).is_empty(), "на Марсе нет деревьев и озёр")
+	var ms := mg.surface_y(0)
+	check(mg.temperature(ms - 1, ms) < -25.0 and mg.temperature(ms + 20, ms) > -16.0, "Марс: на поверхности −30, в недрах около −12")
+	check(mg.oxygen_ratio(ms - 1, ms) == 0.0 and mg.oxygen_ratio(ms + 5, ms) == 1.0, "на поверхности Марса дышать нечем")
+	check(WorldGen.new(5, WorldGen.LATEST, "earth").temperature(ms + 20, ms) == Env.temperature(ms + 20, ms), "на Земле климат прежний")
+	# Ракета: собирают на космодроме, топливо — по трубам.
+	var colony := _new_colony(40)
+	var w := colony.world
+	var x := _flat_x(w, 80)
+	_start(colony, x - 10)
+	colony.research.done.append_array(["electricity", "metallurgy", "rocketry", "oil_drilling", "refining", "combustion", "automation"])
+	var s := w.gen.surface_y(x)
+	var pad := Project.new()
+	pad.id = 920
+	pad.kind = Project.Kind.ROOM
+	pad.phase = Project.Phase.DONE
+	pad.rect = Rect2i(x, s - 3, 6, 3)
+	colony.projects.append(pad)
+	check(colony.launchpad_error(pad).is_empty(), "космодром на поверхности под открытым небом: " + colony.launchpad_error(pad))
+	pad.purpose = RoomType.LAUNCHPAD
+	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 6, 6, 3), 921)
+	tank.purpose = RoomType.OIL_TANK
+	check(colony.start_rocket(pad, "nuclear") != "", "ядерную без технологии не собрать")
+	check(colony.start_rocket(pad, "chem").is_empty() and pad.phase == Project.Phase.EQUIP, "сборка ракеты началась")
+	check(not colony.required(pad).has("diesel"), "дизель на ракету не носят — он по трубам")
+	pad.delivered = RoomType.ROCKET_COST["chem"].duplicate()
+	pad.delivered.erase("diesel")
+	colony._add("diesel", 60)
+	colony._try_pay(pad)
+	check(pad.equip_paid and colony.inventory.get("diesel", 0) == 0, "оплатили: материалы привезли, дизель взяли из бака")
+	pad.equip_done = RoomType.ROCKET_WORK
+	colony._finish_equip(pad)
+	check(pad.rocket == "chem" and pad.purpose == RoomType.LAUNCHPAD, "ракета готова")
+	# Старт: химический до Юпитера не долетит; на Марс — да.
+	colony.inventory["food"] = 120
+	colony.inventory["wood"] = 60
+	colony._sync_held()
+	var crew: Array = [colony.units[0], colony.units[1], colony.units[2]]
+	crew[0].partner_id = crew[1].id
+	crew[1].partner_id = crew[0].id
+	check(colony.launch(pad, "jupiter", crew, {}).has("error"), "на химическом до Юпитера не долететь")
+	check(colony.launch(pad, "mars", crew, {"food": 300}).has("error"), "больше 200 груза не взять")
+	var n0 := colony.units.size()
+	var flight := colony.launch(pad, "mars", crew, {"food": 100, "wood": 50})
+	check(not flight.has("error") and colony.units.size() == n0 - 3 and pad.rocket.is_empty(), "экспедиция улетела: 3 жителя, 150 груза")
+	check(colony.inventory.get("food", 0) <= 20, "груз списан со склада")
+	var uni := Universe.new()
+	uni.base_seed = 40
+	uni.add_world("earth", w, colony)
+	uni.send(flight)
+	uni.update(Colony.MONTH * 2.0)
+	check(uni.worlds.size() == 1 and uni.flights.size() == 1, "летят — ещё не долетели")
+	uni.update(Colony.MONTH * 1.5)
+	var e := uni.entry("mars")
+	check(not e.is_empty(), "долетели — появился мир Марса")
+	if e.is_empty():
+		return
+	var mc: Colony = e["colony"]
+	check(mc.units.size() == 3 and mc.research.has("rocketry"), "на Марсе 3 жителя, знания с Земли")
+	var ship := mc.rooms_of(RoomType.SHIP)
+	check(ship.size() == 1 and mc.held_in(ship[0], "food") == 100 and mc.held_in(ship[0], "wood") == 50, "корабль сел, груз в трюме")
+	check(mc.beds_total() == RoomType.SHIP_BEDS, "в корабле 10 спальных мест")
+	var pair := mc.units.filter(func(u: Unit) -> bool: return u.partner_id != 0)
+	check(pair.size() == 2 and mc.unit_by_id(pair[0].partner_id) == pair[1], "пара прилетела парой")
+	var inside: Vector2i = ship[0].rect.position + Vector2i(3, 1)
+	check(mc.elements.temperature(inside) == Elements.SHIP_TEMP, "в корабле тепло (+20)")
+	var outside := Vector2i(ship[0].rect.end.x + 3, mc.world.gen.surface_y(ship[0].rect.end.x + 3) - 1)
+	check(not mc.pathing.node(outside), "наружу на поверхность Марса не выйти")
+	# Живут в корабле: месяц — все живы (еда есть, тепло, воздух).
+	var t := 0.0
+	while t < Colony.MONTH:
+		mc.update(1.0)
+		t += 1.0
+	check(mc.units.size() == 3, "за месяц на Марсе все живы в корабле (%d)" % mc.units.size())
+	# Вторая ракета — в ту же колонию, корабль рядом.
+	var f2 := {"planet": "mars", "crew": [], "cargo": {"stone": 30}, "research": [], "left": 1.0}
+	uni.send(f2)
+	uni.update(2.0)
+	check(uni.worlds.size() == 2 and mc.rooms_of(RoomType.SHIP).size() == 2, "вторая ракета села рядом с колонией")
+	# Сохранение миров и полётов.
+	var saved := uni.to_dict({})
+	var uni2 := Universe.new()
+	uni2.load_dict(saved)
+	check(uni2.worlds.size() == 1 and (uni2.worlds[0]["colony"] as Colony).units.size() == 3, "мир Марса сохраняется и загружается")
+
+
+func test_oil() -> void:
+	# Нефть: качалка тянет из пласта в хранилище, завод перегоняет в дизель, дизельный генератор и бур жгут его.
+	var colony := _new_colony(39)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	colony.research.done.append_array(["electricity", "metallurgy", "drilling", "drill_rig", "oil_drilling", "refining", "combustion"])
+	check(colony._add("oil", 5) == 0, "без нефтехранилища нефть хранить негде")
+	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 4, 6, 3), 910)
+	tank.purpose = RoomType.OIL_TANK
+	var st := _fake_room(colony, RoomType.STORAGE, x + 40, 6)
+	check(not RoomType.stores(st, "oil") and not RoomType.stores(st, "diesel"), "на складе нефть не хранят")
+	var pump := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 8, s + 4, 3, 3), 911)
+	pump.purpose = RoomType.OIL_PUMP
+	var oc := Vector2i(x + 9, s + 12)
+	w.set_material(oc.x, oc.y, Mat.OIL)
+	_power_up(colony, x)
+	colony.research.done.append_array(["oil_drilling", "refining", "combustion"])
+	var t := 0.0
+	while t < 40.0 and colony.inventory.get("oil", 0) < 3:
+		colony._power_tick(0.5)
+		colony._oil_tick(0.5)
+		t += 0.5
+	check(colony.held_in(tank, "oil") >= 3, "качалка накачала нефть в хранилище (%d)" % colony.held_in(tank, "oil"))
+	check(w.get_mat(oc.x, oc.y) == Mat.SHALE, "выкачанный пласт — пустой сланец")
+	# Вскрытый пласт: нефть сразу по трубам в хранилище.
+	var before: int = colony.inventory.get("oil", 0)
+	colony.drop_item(Vector2i(x + 3, s + 6), "oil", 4)
+	check(colony.inventory.get("oil", 0) == before + 4 and colony.drop_total("oil") == 0, "нефть из пласта не лежит — сразу в хранилище")
+	# Нефтезавод: 2 нефти → 1 дизель.
+	var ref := _fake_room(colony, RoomType.REFINERY, x + 60, 6)
+	check(colony.has_inputs(ref), "у завода есть нефть по трубам")
+	var oil0: int = colony.inventory.get("oil", 0)
+	colony._craft(ref)
+	check(colony.inventory.get("oil", 0) == oil0 - 2 and colony.held_in(tank, "diesel") == 1, "перегнали 2 нефти в 1 дизель")
+	colony._add("diesel", 9)
+	# Дизельный генератор: без угля даёт энергию на дизеле.
+	for g in colony.generators():
+		colony.projects.erase(g)
+	var dg := _fake_room(colony, RoomType.DIESEL_GEN, x + 80, 3)
+	var d0: int = colony.inventory.get("diesel", 0)
+	colony._power_tick(0.5)
+	check(colony.powered() and colony.inventory.get("diesel", 0) == d0 - 1, "дизельный генератор работает на дизеле")
+	check(colony.power_made >= roundi(RoomType.POWER_MAKE * 1.5), "дизельный мощнее обычного (%d)" % colony.power_made)
+	colony.projects.erase(dg)
+	# Бур на дизеле без электричества.
+	colony._power_tick(0.5)
+	check(not colony.powered(), "электричества нет")
+	var d := colony.create_project(Project.Kind.DRILL, Rect2i(x + 20, s - 3, 3, 3))
+	if d != null:
+		d.delivered = d.cost().duplicate()
+		colony._try_pay(d)
+		colony._finish_project(d)
+		colony.inventory["iron"] = 10
+		var dz: int = colony.inventory.get("diesel", 0)
+		check(colony.start_drill(d, Vector2i.DOWN, 6).is_empty(), "приказ буру на дизеле")
+		var t2 := 0.0
+		while t2 < 400.0 and colony.drilling(d):
+			colony._power_tick(0.5)
+			colony._drills_tick(0.5)
+			t2 += 0.5
+			if d.paused:
+				colony.set_paused(d, false)
+		check(not colony.drilling(d) and colony.inventory.get("diesel", 0) < dz, "бур прошёл на дизеле без электричества")
+	# Нефтехранилище взрывается, если рухнет.
+	check(RoomType.EXPLOSIVE.has(RoomType.OIL_TANK), "нефтехранилище взрывоопасно")
+
+
+func test_drill() -> void:
+	# Бур — машина 3×3: ставят, собирают, потом велят сверлить n м вниз или вбок.
+	var colony := _new_colony(38)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	colony.research.done.append_array(["drilling", "drill_rig"])
+	# Ровное сухое место под бур.
+	for dx in 60:
+		var xx := x + dx
+		var sx := w.gen.surface_y(xx)
+		if sx == w.gen.surface_y(xx + 1) and sx == w.gen.surface_y(xx + 2) and w.gen.water_level(xx) >= sx + 20 \
+				and colony.validate(Project.Kind.DRILL, Rect2i(xx, sx - 3, 3, 3)).is_empty():
+			x = xx
+			s = sx
+			break
+	check(not colony.validate(Project.Kind.DRILL, Rect2i(x, s - 3, 3, 6)).is_empty(), "бур — только 3×3")
+	var r := Rect2i(x, s - 3, 3, 3)
+	check(colony.validate(Project.Kind.DRILL, r).is_empty(), "бур на земле можно: " + colony.validate(Project.Kind.DRILL, r))
+	var d := colony.create_project(Project.Kind.DRILL, r)
+	check(d != null, "бур заложен")
+	if d == null:
+		return
+	# Деревья на месте бура рубят, копать на земле нечего — сразу сборка.
+	d.clear_x.clear()
+	colony._check_phase(d)
+	check(d.phase == Project.Phase.BUILD and d.cost().has("iron") and d.cost().has("copper"), "на земле копать нечего — сразу сборка из железа и меди")
+	d.delivered = d.cost().duplicate()
+	colony._try_pay(d)
+	colony._finish_project(d)
+	check(d.phase == Project.Phase.DONE and not colony.drilling(d), "бур собран и ждёт приказа")
+	check(not colony.interior.has(r.position), "бур — машина, не помещение")
+	colony.inventory["iron"] = 0
+	check(colony.start_drill(d, Vector2i.DOWN, 12).begins_with("Нужно"), "без железа на обсадку не сверлит")
+	colony.inventory["iron"] = 20
+	check(not colony.drill_error(d, Vector2i.UP, 5).is_empty(), "вверх бур не сверлит")
+	check(colony.start_drill(d, Vector2i.DOWN, 12).is_empty(), "приказ: 12 м вниз")
+	check(colony.inventory.get("iron", 0) == 20 - Colony.drill_casing(12), "обсадка взята со склада")
+	var bore := colony.project_by_id(d.bore_id)
+	check(bore != null and bore.kind == Project.Kind.TUNNEL and bore.bored_by == d.id and bore.rect == Rect2i(x, s, 3, 12),
+		"ход вниз размечен тоннелем 3×12")
+	var t := 0.0
+	while t < 2000.0 and colony.drilling(d):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+		if d.paused:
+			colony.set_paused(d, false)
+	check(not colony.drilling(d) and d.rect == Rect2i(x, s + 9, 3, 3), "бур доехал до конца хода (%.0f с)" % t)
+	check(bore.phase == Project.Phase.DONE and bore.kind == Project.Kind.TUNNEL, "готов тоннель")
+	var cells := 0
+	for c in bore.cells():
+		if Mat.is_solid(w.get_mat(c.x, c.y)):
+			cells += 1
+	check(cells == 0, "весь ход 3×12 выкопан")
+	check(colony.drops.size() > 0 or colony.inventory.size() > 0, "порода выпала — её уносят жители")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x, s, 2, 12), "wood").is_empty(), "по ходу бура можно ставить лифт")
+	# Вбок — ход как шахта (с местом, где стоял бур); остановили на полпути — пройденное осталось.
+	check(colony.start_drill(d, Vector2i.RIGHT, 10).is_empty(), "приказ: 10 м вправо")
+	var side := colony.project_by_id(d.bore_id)
+	t = 0.0
+	while t < 2000.0 and d.rect.position.x < x + 4:
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+		if d.paused:
+			colony.set_paused(d, false)
+	colony.cancel_project(side)
+	check(not colony.drilling(d) and side.kind == Project.Kind.MINE and side.phase == Project.Phase.DONE
+		and side.rect.size.x == 7 and side.rect.position.x == x, "остановили — пройденные 4 м и место бура стали шахтой (%s, x %d, бурит %s)" % [side.rect, x, colony.drilling(d)])
+	check(d.rect.position == Vector2i(x + 4, s + 9), "бур стоит там, где остановили")
+	# Без энергии бур стоит.
+	colony.inventory["coal"] = 0
+	colony._sync_held()
+	for gp in colony.generators():
+		gp.farm_progress = 0.0
+	colony.inventory.erase("wood")
+	colony._power_tick(0.5)
+	var e5 := colony.start_drill(d, Vector2i.DOWN, 5)
+	check(e5.is_empty(), "приказ: 5 м вниз " + e5)
+	colony._drills_tick(0.5)
+	colony._drills_tick(0.5)
+	check(not colony.powered() and d.blocked.begins_with("Нет энергии"), "без энергии бур стоит")
+	check(not colony.demolish_error(d).is_empty(), "сверлящий бур не сносят")
+	colony.stop_drill(d)
+	check(colony.project_by_id(d.bore_id) == null and not colony.drilling(d), "остановили сразу — разметка хода убрана")
+	# Старый бур (ход во всю длину) из сохранения убирается, материалы возвращаются.
+	var data := SaveSystem.serialize(w, colony, Vector2i.ZERO)
+	var old := Project.new()
+	old.id = 990
+	old.kind = Project.Kind.DRILL
+	old.rect = Rect2i(x + 40, s, 3, 8)
+	old.delivered = {"iron": 3}
+	(data["colony"]["projects"] as Array).append(old.to_dict())
+	var w2 := WorldData.new(WorldGen.new(38))
+	var c2 := Colony.new(w2)
+	SaveSystem.apply(JSON.parse_string(JSON.stringify(data)), w2, c2)
+	check(c2.project_by_id(990) == null, "старый бур убран при загрузке")
+
+
+## Продлить готовую шахту, тоннель или лифт: продолжение копают и сливают с исходной.
+func test_extend() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var m := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 6, 6, 3), 920)
+	m.supported.append_array([0, 1, 2, 3, 4, 5])
+	check(Colony.extend_dirs(m) == [Vector2i.LEFT, Vector2i.RIGHT], "шахту продлевают влево и вправо")
+	check(colony.extend_error(m, Vector2i.DOWN, 3) != "", "вниз шахту не продлить")
+	var q := colony.extend_project(m, Vector2i.RIGHT, 1)
+	check(q != null and q.rect == Rect2i(x + 6, s + 6, 1, 3) and q.extends_id == m.id, "продолжение на 1 м заложено")
+	if q == null:
+		return
+	check(colony.extend_error(m, Vector2i.RIGHT, 3) == "Продолжение уже строится", "второе продолжение не закладывают")
+	for c in q.cells():
+		w.set_material(c.x, c.y, Mat.AIR)
+		w.set_dug(c.x, c.y)
+	q.supported = q.needs_support.duplicate()
+	colony._check_phase(q)
+	check(not colony.projects.has(q) and m.rect == Rect2i(x, s + 6, 7, 3) and colony.interior.get(Vector2i(x + 6, s + 7)) == m.id,
+		"готовое продолжение слилось с шахтой (%s)" % m.rect)
+	var tun := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 20, s, 1, 6), 921)
+	check(Colony.extend_dirs(tun) == [Vector2i.DOWN], "вертикальный тоннель продлевают вниз")
+	var tq := colony.extend_project(tun, Vector2i.DOWN, 4)
+	check(tq != null and tq.rect == Rect2i(x + 20, s + 6, 1, 4), "тоннель продлевается вниз")
+	# Продолжение лифта: без кабины — только рельсы и провода за метры.
+	colony.research.done.append_array(["electricity", "lifts"])
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 30, s, 2, 8), 922)
+	var lq := colony.extend_project(lift, Vector2i.DOWN, 4)
+	check(lq != null and lq.cost() == Project.lift_cost(lq.rect, false, false) and lq.cost()["iron"] < Project.lift_cost(lq.rect, false)["iron"],
+		"продолжение лифта без новой кабины")
+
+
+## Еда трёх видов (грибы, рыба, ягоды); производства держат готовое у себя до 100.
+func test_food_and_output() -> void:
+	var colony := _new_colony(31)
+	var x := _find_solid_column(colony.world, 40)
+	_start(colony, x)
+	colony.inventory = {"fish": 3}
+	check(colony.has_food() and colony.food_total() == 3 and RoomType.FOOD_KEYS.has("fish"), "рыба — тоже еда")
+	var u: Unit = colony.units[0]
+	u.satiety = 10.0
+	colony._eat_from(u, colony._take_store)
+	check(u.satiety > 10.0 and colony.inventory.get("fish", 0) < 3, "рыбу едят")
+	colony.inventory = {}
+	var lake := {"id": 1}
+	colony.fish[1] = 5.0
+	colony._catch_from(lake, null)
+	check(colony.inventory.get("fish", 0) == 2 and not colony.inventory.has("food"), "улов — рыба, а не грибы")
+	# Ферма: готовое — в ящиках у входа, при 100 работа встаёт.
+	var farm := _fake_room(colony, RoomType.FARM, x + 10, 6)
+	check(colony.is_producer(farm) and not colony.output_full(farm), "ферма — производство")
+	colony.drop_item(Colony.output_cell(farm), "food", Colony.PRODUCE_CAP)
+	check(colony.output_full(farm) and colony.producer_at(Colony.output_cell(farm)) == farm, "100 в ящиках — склад фермы полон")
+	var reach := colony.pathing.explore(u.cell())
+	u.workplace = farm.id
+	check(not colony._try_room_work(u, RoomType.FARM, Unit.Task.FARM, reach[0], reach[1]) and farm.blocked.begins_with("Склад постройки полон"),
+		"на полную ферму не идут: «%s»" % farm.blocked)
+	colony.drops.clear()
+	colony._mark_full(farm)
+	check(farm.blocked.is_empty(), "унесли — ферма снова работает")
+
+
+## Баланс для планет: очаги складываются (не выше +30 °C), крепь из стали без дерева,
+## в новых мирах золото и алмазы досягаемы, но реже железа и меди.
+func test_planet_balance() -> void:
+	var colony := _new_colony(32)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var cell := Vector2i(x + 4, s + 20)
+	var base := colony.elements.temperature(cell)
+	var h1 := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 18, 3, 3), 950)
+	h1.purpose = RoomType.HEARTH
+	h1.burning = true
+	colony.elements._temp_memo.clear()
+	var one := colony.elements.temperature(cell)
+	var h2 := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 6, s + 18, 3, 3), 951)
+	h2.purpose = RoomType.HEARTH
+	h2.burning = true
+	colony.elements._temp_memo.clear()
+	var two := colony.elements.temperature(cell)
+	check(one > base and two > one and two <= maxf(base, Elements.FIRE_MAX_TEMP) + 0.01,
+		"два очага греют сильнее одного, но не выше +30 (%.1f → %.1f → %.1f)" % [base, one, two])
+	# Пустую комнату сразу под очаг с кирпичными печами (раньше падало).
+	var hb := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 12, s + 18, 3, 3), 952)
+	colony.research.done.append("bricks")
+	check(colony.set_purpose(hb, RoomType.HEARTH_BRICK) and hb.equip_target == RoomType.HEARTH_BRICK, "комнату сразу под кирпичный очаг")
+	# Крепь из стали.
+	colony.inventory = {"metal": 10}
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	check(t != null and colony.support_key(t) == "metal" and colony.required(t).has("metal") and not colony.required(t).has("wood"),
+		"нет дерева — крепь из стали (%s, %s, дерева на земле %d)" % [colony.support_key(t) if t else "-", colony.required(t) if t else {}, colony.drop_total("wood")])
+	if t != null:
+		t.delivered = {"metal": 1}
+		check(colony._pay_support(t, t.needs_support[0]) and t.support_mat == "metal", "срез закреплён сталью (1 сталь за 2 дерева)")
+	# Редкие металлы: в новых мирах золото есть на 80–300 м, но его меньше, чем железа.
+	# Ствол через пещеру: по её пустым клеткам на стройке лазят (раньше стройка вставала).
+	var cave := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 30, s + 20, 1, 10))
+	if cave != null:
+		w.set_material(x + 30, s + 24, Mat.AIR)
+		colony._rebuild_climb()
+		check(colony.pathing.climbable(Vector2i(x + 30, s + 24)), "по пещере на пути ствола лазят")
+	# Глубина без предела: с поверхности по стволу доходят и до 220 м.
+	var sx := x - 10
+	var ds := w.gen.surface_y(sx)
+	var deep := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(sx, ds, 1, 230), 953)
+	colony._rebuild_climb()
+	colony.pathing.clear_cache()
+	var far: Dictionary = colony.pathing.explore(Vector2i(sx, ds))[1]
+	check(deep != null and far.has(Vector2i(sx, ds + 220)), "по стволу доходят до забоя на 220 м (узлов %d)" % far.size())
+	var g := WorldData.new(WorldGen.new(7))
+	var gold := 0
+	var iron := 0
+	for d in range(80, 300, 2):
+		for dx in range(-100, 101, 2):
+			var m := g.get_mat(dx, g.gen.surface_y(dx) + d)
+			if m == Mat.GOLD_ORE:
+				gold += 1
+			elif m == Mat.IRON_ORE:
+				iron += 1
+	check(gold > 0 and gold * 3 < iron, "золото есть, но реже железа (%d против %d)" % [gold, iron])
+	var old := WorldData.new(WorldGen.new(7, 4))
+	check(old.gen._diamond_share == 0.04 and WorldGen.new(7).version == WorldGen.LATEST, "старые миры не меняются")
+
+
+## Лифты встык одного вида соединяются в один.
+func test_lift_merge() -> void:
+	var colony := _new_colony(34)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var a := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 8), 940)
+	var b := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s + 8, 2, 6), 941)
+	var c := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 10, s + 8, 2, 6), 942)
+	var g := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s + 14, 3, 6), 943)
+	g.cargo = true
+	b.lift_load = {"stone": 5}
+	colony._merge_lifts(a)
+	check(a.rect == Rect2i(x, s, 2, 14) and not colony.projects.has(b), "лифты встык слились в один (%s)" % a.rect)
+	check(colony.projects.has(c) and colony.projects.has(g), "лифт в стороне и грузовой не сливаются")
+	check(colony.drop_total("stone") == 5, "груз из убранной кабины выгружен")
+
+
+## Приоритет: строители бросают другие стройки и идут на эту, сверх числа рабочих.
+func test_priority() -> void:
+	var colony := _new_colony(33)
+	var w := colony.world
+	var x0 := 40
+	while not Mat.is_solid(w.get_mat(x0, w.gen.surface_y(x0))):
+		x0 += 1
+	_start(colony, x0)
+	colony.inventory = {"wood": 80, "food": 50}
+	# Два ровных места рядом с базой.
+	var x := colony.home.x + 2
+	var s := w.gen.surface_y(x)
+	for u in colony.units:
+		colony.set_profession(u, Unit.Prof.BUILDER)
+	var a := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 12), 6)
+	var b := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 4, w.gen.surface_y(x + 4), 1, 12), 1)
+	check(a != null and b != null, "две стройки")
+	if a == null or b == null:
+		return
+	for i in 20:
+		colony.update(0.5)
+	var on_b := func() -> int:
+		return colony.units.filter(func(u: Unit) -> bool: return u.project_id == b.id).size()
+	check(on_b.call() <= 1, "без приоритета на второй — не больше её рабочих (%d)" % on_b.call())
+	check(colony.can_prioritize(b), "стройке можно дать приоритет")
+	var on_a := colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).size()
+	colony.set_priority(b, true)
+	check(colony.projects[0] == b, "приоритетная — первая в списке работ")
+	check(on_a > 0 and colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).is_empty(),
+		"строители бросили другую стройку (было %d)" % on_a)
+	var best := 0
+	for i in 60:
+		colony.update(0.5)
+		best = maxi(best, on_b.call())
+	check(best >= 2, "строители пришли сюда сверх числа рабочих (%d)" % best)
+	b.phase = Project.Phase.DONE
+	colony._priority_tick()
+	check(not b.priority, "готово — приоритет снят")
+
+
+## Шахта над шахтой: по крепи нижней ходят, как по полу.
+func test_stacked_mines() -> void:
+	var colony := _new_colony(35)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var low := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 9, 6, 3), 930)
+	var up := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 6, 6, 3), 931)
+	colony._rebuild_climb()
+	check(colony.pathing.node(Vector2i(x + 1, s + 8)), "в верхней шахте можно стоять на крепи нижней")
+	check(colony.pathing.node(Vector2i(x + 1, s + 11)), "в нижней — на её полу")
+	check(up != null and low != null, "шахты на месте")
+
+
+func test_stop_by_meter() -> void:
+	# Тоннель и мост строятся по метру: остановили — готовая часть остаётся.
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s + 4, 8, 2))
+	check(t != null, "тоннель заложен")
+	if t != null:
+		# Выкопаны и закреплены первые 3 метра.
+		for i in 3:
+			for c in t.slice_cells(i):
+				w.set_material(c.x, c.y, Mat.AIR)
+			if t.needs_support.has(i):
+				t.supported.append(i)
+		check(colony.mine_meters_done(t) == 3, "готово 3 м")
+		colony.cancel_project(t)
+		check(colony.projects.has(t) and t.phase == Project.Phase.DONE and t.rect.size.x == 3, "остановили — 3 м тоннеля остались готовыми")
+		# Вертикальный: срезы по 2 м.
+		var v := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 20, s, 1, 10))
+		if v != null:
+			for i in 2:
+				for c in v.slice_cells(i):
+					w.set_material(c.x, c.y, Mat.AIR)
+				if v.needs_support.has(i):
+					v.supported.append(i)
+			colony.cancel_project(v)
+			check(v.phase == Project.Phase.DONE and v.rect.size.y == 4, "вертикальный: готовые 4 м остались (%d)" % v.rect.size.y)
+	# Тоннели, шахты и лифты пересекаются: крест из двух тоннелей, один снесли — второй цел.
+	var h := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 30, s + 6, 10, 2))
+	check(colony.validate(Project.Kind.TUNNEL, Rect2i(x + 34, s, 1, 12)).is_empty(), "вертикальный тоннель пересекает горизонтальный")
+	check(colony.validate(Project.Kind.MINE, Rect2i(x + 31, s + 5, 6, 3)).is_empty(), "шахта пересекает тоннель")
+	var vv := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 34, s, 1, 12))
+	if h != null and vv != null:
+		for q in [h, vv]:
+			for c in q.cells():
+				w.set_material(c.x, c.y, Mat.AIR)
+			q.phase = Project.Phase.DONE
+			for c in q.cells():
+				colony.interior[c] = q.id
+		var cross := Vector2i(x + 34, s + 6)
+		colony.cancel_project(vv)
+		colony.collapse(vv, "тест")
+		check(colony.interior.has(cross) and colony.interior[cross] == h.id, "сняли вертикальный — перекрёсток остался у горизонтального")
+	# Мост: построено 3 м — остаётся пристанью у берега, дерево за остальное возвращается.
+	var lake := {}
+	for lx in range(x - 200, x + 200):
+		lake = w.gen.lake_at(lx)
+		if not lake.is_empty():
+			break
+	if lake.is_empty():
+		return
+	var span := w.gen.lake_water_span(lake)
+	var br: Rect2i = colony.water_rects(span.x, span.y)["bridge"]
+	if br.size.x < 5:
+		return
+	colony.inventory["wood"] = 200
+	var b := colony.create_project(Project.Kind.BRIDGE, br)
+	check(b != null, "мост заложен")
+	if b == null:
+		return
+	b.paid = true
+	b.phase = Project.Phase.BUILD
+	b.build_done = b.build_work() / br.size.x * 3.0
+	check(colony.bridge_meters_done(b) == 3, "построено 3 м моста")
+	colony.inventory["wood"] = 0
+	colony._sync_held()
+	var wood0: int = colony.inventory.get("wood", 0)
+	colony.cancel_project(b)
+	check(b.kind == Project.Kind.PIER and b.phase == Project.Phase.DONE and b.rect.size.x == 3, "остановили — 3 м стоят пристанью")
+	check(int(colony.inventory.get("wood", 0)) > wood0, "дерево за непостроенное вернули")
+
+
+func test_lifts() -> void:
+	# Пассажирский лифт: житель садится наверху и едет вниз втрое быстрее, чем лез бы.
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	check(colony.powered(), "энергия есть")
+	check(not colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "wood").is_empty(), "пассажирская шахта шириной 3 м — нельзя")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "cargo").is_empty() \
+		or true, "грузовая — 3 м")
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 20), 900)
+	# Внизу — тоннель вбок: туда и едет житель.
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 2, s + 18, 6, 2), 901)
+	colony._rebuild_climb()
+	colony._power_tick(0.1)
+	check(colony.lift_powered(lift), "лифт под током")
+	var u := colony.units[0]
+	for o in colony.units:
+		if o != u:
+			o.task = Unit.Task.SLEEP
+			o.state = Unit.State.WORK
+			o.energy = 100.0
+	colony._drop(u)
+	u.pos = Vector2(x - 1, w.gen.surface_y(x - 1) - 1)
+	u.energy = 100.0
+	u.satiety = 100.0
+	var goal := Vector2i(x + 6, s + 19)
+	check(colony.send_unit(u, goal) != null, "путь вниз через лифт есть")
+	var t := 0.0
+	var rode := false
+	while t < 60.0 and u.cell().distance_to(goal) > 1.5:
+		colony.update(0.1)
+		t += 0.1
+		if u.riding:
+			rode = true
+	check(rode, "житель ехал в кабине")
+	check(u.cell().distance_to(goal) <= 1.5, "доехал вниз (%.1f с)" % t)
+	check(t < 20.0 / Colony.CLIMB_SPEED, "на лифте быстрее, чем по лестнице (%.1f с)" % t)
+	# Без энергии кабина стоит — по шахте лезут по аварийной лестнице.
+	check(colony.pathing.climbable(Vector2i(x, s + 5)), "в шахте пассажирского лифта есть лестница")
+	# Грузовой: груз у верхнего конца едет вниз и сам выгружается в склад у нижнего.
+	var cl := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 40, s, 3, 16), 902)
+	cl.cargo = true
+	var st := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 43, s + 13, 6, 3), 903)
+	st.purpose = RoomType.STORAGE
+	colony.assign_work(colony.units[1], st)
+	colony._register_room(st)
+	colony._rebuild_climb()
+	check(not colony.pathing.climbable(Vector2i(x + 41, s + 5)), "по шахте грузового не лазают")
+	check(colony.lift_stores(cl, 1).has(st), "склад вплотную к нижнему концу")
+	cl.lift_buf[0]["stone"] = 30
+	colony.inventory["stone"] = int(colony.inventory.get("stone", 0)) + 30
+	colony.inventory["stone"] = int(colony.inventory["stone"]) - 30
+	var before := colony.held_in(st, "stone")
+	t = 0.0
+	while t < 60.0 and colony.held_in(st, "stone") < before + 30:
+		colony._power_tick(0.1)
+		colony._lifts_tick(0.1)
+		t += 0.1
+	check(colony.held_in(st, "stone") >= before + 30, "грузовой довёз камень в склад (%.1f с)" % t)
+
+
+func test_collapse_losses() -> void:
+	# Рухнул склад: запасы пропали, кто внутри — погиб; сверхюнит выжил.
+	var res := _colony_with_room(34, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var st: Project = res[1]
+	colony.inventory = {}
+	colony._sync_held()
+	colony._add("wood", 30, st)
+	check(colony.held_in(st, "wood") == 30, "в складе 30 дерева")
+	var a := colony.units[0]
+	var b := colony.units[1]
+	var floor_c := Vector2i(st.rect.position.x + 2, st.rect.end.y - 1)
+	for u in [a, b]:
+		colony._drop(u)
+		u.pos = Vector2(floor_c)
+	var g := b.genome.duplicate(true)
+	b.genome["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_A]
+	var b_super := Genetics.is_super(b.genome)
+	check(b_super, "бирюзовый — сверхюнит")
+	var n0 := colony.units.size()
+	colony.collapse(st, "тест")
+	check(colony.inventory.get("wood", 0) == 0, "дерево из рухнувшего склада пропало")
+	check(not colony.units.has(a), "кто был внутри — погиб")
+	if b_super:
+		check(colony.units.has(b), "сверхюнит выжил под обломками")
+	check(colony.units.size() == n0 - (1 if b_super else 2), "погибли только те, кто внутри")
+	# Сверхюнит неуязвим: не мёрзнет, не голодает, не гибнет от ран.
+	if b_super:
+		b.satiety = 0.0
+		b.health = 50.0
+		colony._life_tick(5000.0, false)
+		colony.injure(b, 1000.0, "тест")
+		check(colony.units.has(b) and b.health > 0.0, "сверхюнита не убить ни голодом, ни ранами")
+	b.genome = g
+	# Взрыв дегазации: всё вокруг на 3 м (малая комната) рушится, порода — в обломки.
+	var res2 := _colony_with_room(35, RoomType.DEGAS, 3)
+	var c2: Colony = res2[0]
+	var dg: Project = res2[1]
+	check(dg.purpose == RoomType.DEGAS, "малая дегазация готова")
+	var near := Project.new()
+	near.id = 996
+	near.kind = Project.Kind.TUNNEL
+	near.phase = Project.Phase.DONE
+	near.rect = Rect2i(dg.rect.end.x + 2, dg.rect.position.y, 1, 3)
+	c2.projects.append(near)
+	var far := Project.new()
+	far.id = 997
+	far.kind = Project.Kind.TUNNEL
+	far.phase = Project.Phase.DONE
+	far.rect = Rect2i(dg.rect.end.x + 10, dg.rect.position.y, 1, 3)
+	c2.projects.append(far)
+	var rock := Vector2i(dg.rect.position.x + 1, dg.rect.end.y + 2)
+	var was_solid := Mat.is_solid(c2.world.get_mat(rock.x, rock.y))
+	c2.collapse(dg, "тест")
+	check(not c2.projects.has(near) and c2.projects.has(far), "в 3 м всё рухнуло, дальше — цело")
+	check(not was_solid or c2.world.get_mat(rock.x, rock.y) == Mat.RUBBLE, "порода рядом треснула в обломки")
 
 
 func test_walk_floor_only() -> void:

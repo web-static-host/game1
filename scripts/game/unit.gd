@@ -4,7 +4,8 @@ extends RefCounted
 
 enum Sex { MALE, FEMALE }
 enum State { IDLE, MOVE, WORK, FALL, SWIM }
-enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH, GOTO, STROLL }
+## SLEEP — из старых сохранений (сна больше нет); WARM — греется (или остывает) в тёплом месте.
+enum Task { NONE, DIG, BUILD, HARVEST, SLEEP, EAT, FARM, EQUIP, FISH, SUPPORT, HAUL, REPAIR, CRAFT, RESEARCH, GOTO, STROLL, WARM }
 ## Роль жителя без места работы: свободный, строитель или подсобный рабочий
 ## (остальные значения — из старых сохранений).
 enum Prof { ANY, DIGGER, BUILDER, GATHERER, FARMER, SCIENTIST, HAULER, MINER }
@@ -14,7 +15,7 @@ const MALE_NAMES := ["Иван", "Пётр", "Алексей", "Дмитрий",
 const FEMALE_NAMES := ["Анна", "Мария", "Елена", "Ольга", "Наталья", "Татьяна", "Ирина", "Светлана", "Дарья", "Вера",
 	"Алиса", "Ева", "Мила", "Варвара", "Полина", "Софья", "Нина", "Зоя", "Лидия", "Яна"]
 const SKILL_NAMES := {"dig": "Копка", "build": "Стройка", "gather": "Сбор", "farm": "Ферма", "science": "Наука"}
-const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит укрепление", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку", "без дела"]
+const TASK_NAMES := ["отдыхает", "копает", "строит", "собирает ресурсы", "спит", "ест", "работает на ферме", "обустраивает комнату", "рыбачит", "ставит укрепление", "носит материалы", "ремонтирует", "работает в мастерской", "исследует", "идёт на разведку", "без дела", "греется"]
 const PROF_NAMES := ["Свободный", "Копатель", "Строитель", "Сборщик", "Фермер", "Учёный", "Подсобный рабочий", "Шахтёр"]
 ## Сколько секунд длится детство: полгода игры.
 const CHILD_TIME := 3600.0
@@ -85,6 +86,13 @@ var starving_warned := false
 var haul_src := Vector2i.ZERO
 var from_drop := false
 var to_store := false
+## Лифт: в каком едет или ждёт (0 — нет), едет ли уже, где сел и где выйдет (индексы пути).
+var lift_id := 0
+var riding := false
+var lift_board := 0
+var lift_exit := 0
+## Грузовой лифт: к какому его концу несёт груз (0 — начало, 1 — конец).
+var cargo_end := -1
 
 var state := State.IDLE
 var task := Task.NONE
@@ -123,6 +131,11 @@ func age_text() -> String:
 	if months < 12:
 		return "%d мес." % months
 	return "%d г. %d мес." % [months / 12, months % 12]
+
+
+## Бирюзовый сверхюнит неуязвим: умирает только от старости.
+func invulnerable() -> bool:
+	return not genome.is_empty() and Genetics.is_super(genome)
 
 
 ## Характеристика (1.0 = 100%).
@@ -175,9 +188,9 @@ static func skill_for(t: int) -> String:
 	return ""
 
 
-## Настроение 0..100 из сытости, бодрости и наличия кровати.
+## Настроение 0..100 из сытости и наличия кровати.
 func mood() -> float:
-	var m := 50.0 + (satiety - 50.0) * 0.4 + (energy - 50.0) * 0.3 + (10.0 if bed_room != 0 else -10.0) \
+	var m := 50.0 + (satiety - 50.0) * 0.4 + (10.0 if bed_room != 0 else -10.0) \
 		+ Colony.CALLING_MOOD * calling
 	return clampf(m, 0.0, 100.0)
 
@@ -189,8 +202,6 @@ func need_factor() -> float:
 		f *= 0.5
 	elif satiety < 30.0:
 		f *= 0.75
-	if energy < 10.0:
-		f *= 0.6
 	if mood() < 30.0:
 		f *= 0.85
 	if health < 50.0:
@@ -219,7 +230,7 @@ func status_text() -> String:
 		who = "%s, вырастет через %s, ест вдвое больше" % [
 			"малыш" if age < CHILD_TIME * 0.5 else "подросток", Fmt.duration(CHILD_TIME - age)]
 	var lines: PackedStringArray = ["%s (%s) — %s" % [name, who, TASK_NAMES[task]]]
-	var needs := "Сытость %d%% · бодрость %d%% · настроение %d%%" % [roundi(satiety), roundi(energy), roundi(mood())]
+	var needs := "Сытость %d%% · настроение %d%%" % [roundi(satiety), roundi(mood())]
 	if health < 99.5:
 		needs += " · здоровье %d%%" % roundi(health)
 	lines.append(needs)

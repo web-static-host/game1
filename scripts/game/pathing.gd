@@ -7,7 +7,9 @@ extends RefCounted
 ## - в озёра не заходят: водоём переходят только по мосту; подтопленную выработку
 ##   переплывают по поверхности (медленно); упавший в озеро выплывает к берегу.
 
-const MAX_NODES := 3000
+## Обход ограничен числом клеток и расстоянием по горизонтали; по вертикали — без предела,
+## чтобы с поверхности доходили до забоя на любой глубине (и обратно — к складу и в дом).
+const MAX_NODES := 6000
 const MAX_RADIUS := 140
 const UP := Vector2i(0, -1)
 const DOWN := Vector2i(0, 1)
@@ -24,6 +26,8 @@ var deck: Dictionary
 ## Клетки с лестницей и клетки идущих строек (леса) — их ведёт колония.
 var ladders := {}
 var sites := {}
+## Крепь шахты под ногами: шахта над шахтой — ходят по балкам нижней.
+var floors := {}
 ## Меняется, когда меняются лестницы или леса: старые пути не годятся.
 var climb_rev := 0
 var _cache := {}
@@ -48,7 +52,7 @@ func passable(c: Vector2i) -> bool:
 
 
 ## Лазают только по лестницам: в вертикальных тоннелях, у стен комнат (ladders) и по лесам
-## идущей стройки (sites — только выкопанное). По готовым шахтам, горизонтальным тоннелям
+## идущей стройки (sites — её пустые клетки, в том числе пещера на пути). По готовым шахтам, горизонтальным тоннелям
 ## и пустотам после обвала — только по полу.
 func climbable(c: Vector2i) -> bool:
 	if room_cells.has(c):
@@ -57,7 +61,8 @@ func climbable(c: Vector2i) -> bool:
 		return true
 	if interior.has(c):
 		return false
-	return sites.has(c) and world.is_dug(c.x, c.y) and world.get_mat(c.x, c.y) == Mat.AIR
+	# Пустая клетка стройки — выкопанная или естественная пещера, через которую идёт ствол.
+	return sites.has(c) and world.get_mat(c.x, c.y) == Mat.AIR
 
 
 func solid(c: Vector2i) -> bool:
@@ -68,7 +73,7 @@ func solid(c: Vector2i) -> bool:
 func standable(c: Vector2i) -> bool:
 	if not passable(c):
 		return false
-	if deck.has(c):
+	if deck.has(c) or floors.has(c):
 		return true
 	if world.get_mat(c.x, c.y) == Mat.WATER:
 		# В озёра не заходят (вода выше земли) — водоём переходят только по мосту.
@@ -86,6 +91,9 @@ func standable(c: Vector2i) -> bool:
 
 ## Узел графа: можно стоять, голова не упирается и над водой.
 func node(c: Vector2i) -> bool:
+	# На безвоздушной планете на поверхность не выходят — только внутри построек.
+	if world.gen.airless() and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c):
+		return false
 	var h := c + UP
 	return standable(c) and world.is_open(h.x, h.y)
 
@@ -175,7 +183,7 @@ func _explore(start: Vector2i) -> Array:
 		for n in neighbors(c):
 			if parents.has(n):
 				continue
-			if absi(n.x - start.x) > MAX_RADIUS or absi(n.y - start.y) > MAX_RADIUS:
+			if absi(n.x - start.x) > MAX_RADIUS:
 				continue
 			parents[n] = c
 			dist[n] = d

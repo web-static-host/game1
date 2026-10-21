@@ -32,21 +32,21 @@ const HAZARD_TEXT := {
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
 
-# Потребности (сек. реального времени): сытости хватает минут на 10, бодрости — тоже;
-# спят по усталости (смена дня и ночи пока выключена). Во сне голод растёт медленнее.
-const SATIETY_DECAY := 100.0 / 600.0
-const ENERGY_DECAY := 100.0 / 600.0
-const SLEEP_BED := 100.0 / 150.0
-const SLEEP_FLOOR := 100.0 / 240.0
-## Ночью ложатся спать, если бодрость ниже этого (при смене дня и ночи).
-const NIGHT_SLEEP := 85.0
-## Просыпаются, выспавшись до этого.
-const WAKE := 100.0
+# Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — жители не
+# устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
+const SATIETY_DECAY := 100.0 / 600.0 * 0.85
+## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока житель
+## отогревается в тепле — втрое быстрее (как раньше во сне).
+const HEAL_TIME := 2400.0
+## Ниже этого здоровья житель, которому холодно (или жарко), бросает дела и идёт греться.
+const WARM_HEALTH := 60.0
+## Греется, пока здоровье не станет таким (или не пройдёт WARM_MAX секунд).
+const WARM_UNTIL := 90.0
+const WARM_MAX := 300.0
 ## За сколько секунд полный голод убивает здорового жителя (5 минут).
 const STARVE_TIME := 300.0
 const EAT_TIME := 6.0
 const HUNGRY := 35.0
-const TIRED := 25.0
 ## Как долго фермер работает, прежде чем пересмотреть занятия.
 const FARM_SHIFT := 60.0
 # Семьи.
@@ -80,7 +80,7 @@ const CARRY := 5
 const OFFLINE_HAUL_TIME := 20.0
 # Игровое время: сутки — 20 секунд, месяц — 10 минут, год — 2 часа игры.
 const DAY := 20.0
-## Смена дня и ночи (пока выключена: спят по усталости).
+## Смена дня и ночи (выключена; сна у жителей нет).
 const DAY_NIGHT := false
 ## Ночь: с 22:00 до 6:00.
 const NIGHT_FROM := 22.0
@@ -114,16 +114,18 @@ const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "metal": 0.6
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
 ## −1 — еду (рыбу) не собирают с объектов, а ловят.
-const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "berries": WorldGen.FEATURE_BUSH, "food": -1}
+const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "berries": WorldGen.FEATURE_BUSH, "fish": -1}
 ## Сытость за единицу: ягоды — лёгкий перекус, рыба и грибы с фермы — настоящая еда.
-const NUTRITION := {"food": 32.0, "berries": 9.0}
+## Еда трёх видов: грибы с фермы (ключ "food" — так он назывался, когда еда была одна),
+## рыба и ягоды. В строке ресурсов — одним значком (бургер).
+const NUTRITION := {"food": 32.0, "fish": 32.0, "berries": 9.0}
 ## За один приём пищи съедают до стольких единиц, пока не наберут столько сытости.
 const MEAL_UNITS := 4
 const MEAL_GOAL := 60.0
 ## В столовой еда сытнее.
 const DINING_BONUS := 1.5
 ## Норма запаса для нового склада.
-const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "food": 30}
+const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "fish": 30}
 
 var world: WorldData
 var pathing: Pathing
@@ -199,6 +201,8 @@ var _scout_at := -100.0
 var _offline_progress := {}
 ## Добытое лежит там, где добыто, пока не унесут: клетка -> {ресурс: количество}.
 var drops := {}
+## Сколько всего добыто и сделано за игру: ресурс -> количество (для итогов).
+var produced := {}
 ## Нормы запаса — общие для всех складов и амбаров: ресурс -> сколько держать.
 var store_targets := {}
 
@@ -308,10 +312,12 @@ func project_at(c: Vector2i) -> Project:
 	var found: Project = null
 	for p in projects:
 		if p.has_cell(c):
-			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань).
-			if found == null or (p.is_water_structure() and found.is_water_structure() and p.area() < found.area()):
+			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань);
+			# тоннели, шахты и лифты пересекаются — берём лифт.
+			if found == null or (p.is_water_structure() and found.is_water_structure() and p.area() < found.area()) \
+					or (p.kind == Project.Kind.LIFT and is_passage(found.kind)):
 				found = p
-			if not p.is_water_structure():
+			if not p.is_water_structure() and not is_passage(p.kind):
 				return p
 	return found
 
@@ -346,8 +352,8 @@ static func tunnel_lanes(r: Rect2i) -> int:
 	return maxi(1, r.size.y - 1)
 
 
-func validate(kind: int, r: Rect2i, material := "wood") -> String:
-	var err := Project.size_error(kind, r)
+func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> String:
+	var err := Project.size_error(kind, r) if check_size else ""
 	if not err.is_empty():
 		return err
 	for y in range(r.position.y, r.end.y):
@@ -358,6 +364,10 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 			if other != null and other.is_water_structure() and (kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER) \
 					and other.kind != kind:
 				continue
+			# Тоннели, шахты и лифты пересекаются свободно; лифт по готовому тоннелю или
+			# шахте забирает занятую часть себе.
+			if other != null and is_passage(kind) and is_passage(other.kind):
+				continue
 			if other != null and not (kind == Project.Kind.ROOM and _room_fits_mine(r, other)):
 				if other.kind == Project.Kind.MINE and kind == Project.Kind.ROOM:
 					return "Комнату в шахте ставьте на всю её высоту, когда шахта готова"
@@ -366,10 +376,25 @@ func validate(kind: int, r: Rect2i, material := "wood") -> String:
 				return "В зоне стройки %s" % Mat.name_of(world.get_mat(x, y)).to_lower()
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		return _water_structure_error(kind, r)
-	if kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
+	if kind == Project.Kind.LIFT:
+		var is_cargo := material == "cargo"
+		if not research.has("cargo_lifts" if is_cargo else "lifts"):
+			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
+		if r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
+			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
+	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
+		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
+	if is_passage(kind) and kind != Project.Kind.DRILL:
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
-				return "%s — только под землёй. Над землёй стройте комнаты" % ("Тоннели" if kind == Project.Kind.TUNNEL else "Шахты")
+				return "%s — только под землёй. Над землёй стройте комнаты" % (
+					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
+	if kind == Project.Kind.DRILL:
+		# Бур ставят на землю, на пол хода или прямо в породу (место выкопают).
+		for x in range(r.position.x, r.end.x):
+			var below := Vector2i(x, r.end.y)
+			if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y))):
+				return "Буру не на что встать — нужен грунт или пол снизу"
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -423,6 +448,50 @@ func _carve_mines(r: Rect2i) -> void:
 			for i in q.slice_count():
 				q.supported.append(i)
 			projects.append(q)
+
+
+## Лифт по готовому тоннелю или шахте: от них остаются куски вокруг лифта.
+func _carve_passages(r: Rect2i) -> void:
+	for m in projects.duplicate():
+		if m.phase != Project.Phase.DONE or not (m.kind == Project.Kind.TUNNEL or m.kind == Project.Kind.MINE) \
+				or not m.rect.intersects(r):
+			continue
+		projects.erase(m)
+		for c in m.cells():
+			if r.has_point(c):
+				interior.erase(c)
+		# Остаток прямоугольника без r: полосы сверху, снизу, слева и справа.
+		var parts: Array[Rect2i] = []
+		var mr: Rect2i = m.rect
+		var top := Rect2i(mr.position.x, mr.position.y, mr.size.x, r.position.y - mr.position.y)
+		var bottom := Rect2i(mr.position.x, r.end.y, mr.size.x, mr.end.y - r.end.y)
+		var y0 := maxi(mr.position.y, r.position.y)
+		var y1 := mini(mr.end.y, r.end.y)
+		var left := Rect2i(mr.position.x, y0, r.position.x - mr.position.x, y1 - y0)
+		var right := Rect2i(r.end.x, y0, mr.end.x - r.end.x, y1 - y0)
+		for pr in [top, bottom, left, right]:
+			if pr.size.x > 0 and pr.size.y > 0:
+				parts.append(pr)
+		for pr in parts:
+			# Мелкий обрезок (меньше человеческого роста) — просто выкопанная пустота.
+			if m.kind == Project.Kind.TUNNEL and pr.size.y < 2:
+				continue
+			if m.kind == Project.Kind.MINE and pr.size.y != Project.MINE_HEIGHT:
+				continue
+			var q := Project.new()
+			q.id = next_project_id
+			next_project_id += 1
+			q.kind = m.kind
+			q.rect = pr
+			q.phase = Project.Phase.DONE
+			q.paid = true
+			q.workers = m.workers
+			q.wear = m.wear
+			for i in q.slice_count():
+				q.supported.append(i)
+			projects.append(q)
+			for c in q.cells():
+				interior[c] = q.id
 
 
 ## [допустимый пролёт без крепи, самая слабая порода потолка] для комнаты r.
@@ -513,7 +582,7 @@ func _check_access() -> void:
 	for p in projects:
 		var working := p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD \
 			or p.phase == Project.Phase.EQUIP or p.repairing
-		if p.paused or not working or workers_on(p) > 0:
+		if p.paused or not working or workers_on(p) > 0 or p.bored_by > 0:
 			continue
 		var blocked_access := p.blocked.begins_with("Нет доступа")
 		if not p.blocked.is_empty() and not blocked_access:
@@ -628,23 +697,26 @@ func has_access(r: Rect2i) -> bool:
 	return false
 
 
-func create_project(kind: int, r: Rect2i, workers := -1, material := "wood") -> Project:
+func create_project(kind: int, r: Rect2i, workers := -1, material := "wood", check_size := true) -> Project:
 	wake_idle()
-	if not validate(kind, r, material).is_empty():
+	if not validate(kind, r, material, check_size).is_empty():
 		return null
 	if kind == Project.Kind.ROOM:
 		_carve_mines(r)
+	if kind == Project.Kind.LIFT:
+		_carve_passages(r)
 	var p := Project.new()
 	p.id = next_project_id
 	next_project_id += 1
 	p.kind = kind
 	p.rect = r
 	p.material = material if kind == Project.Kind.ROOM else "wood"
+	p.cargo = kind == Project.Kind.LIFT and material == "cargo"
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
 	# Срезы, где есть порода: их копают по одному и сразу крепят.
-	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
+	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT:
 		for i in p.slice_count():
 			for c in p.slice_cells(i):
 				if Mat.is_solid(world.get_mat(c.x, c.y)):
@@ -734,8 +806,22 @@ func flee_gas(u: Unit) -> void:
 
 func cancel_project(p: Project) -> void:
 	wake_idle()
-	if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
+	# Ход, который сверлит бур, отменяют вместе с приказом буру.
+	if p.bored_by > 0:
+		var drill := project_by_id(p.bored_by)
+		if drill != null and drilling(drill) and drill.bore_id == p.id:
+			stop_drill(drill)
+			return
+	# Шахту и тоннель останавливают: готовые метры остаются; мост — построенная часть
+	# остаётся пристанью у берега.
+	if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and p.phase == Project.Phase.DIG and mine_meters_done(p) > 0:
 		stop_mine(p)
+		return
+	if p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD and bridge_meters_done(p) > 0:
+		stop_bridge(p)
+		return
+	if drilling(p):
+		stop_drill(p)
 		return
 	if p.phase == Project.Phase.EQUIP:
 		cancel_equip(p)
@@ -768,6 +854,8 @@ func cancel_project(p: Project) -> void:
 
 ## Можно ли снести постройку (сверху ничего не стоит).
 func demolish_error(p: Project) -> String:
+	if drilling(p):
+		return "Бур сверлит — сначала остановите его"
 	if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
 		return "Снести можно только готовую постройку — идущую стройку отмените"
 	for q in projects:
@@ -826,7 +914,28 @@ func _return_delivered(p: Project) -> void:
 
 # --- Доставка материалов ------------------------------------------------------------
 
-## Сколько дерева ещё уйдёт на крепь незакреплённых срезов.
+## Крепь — из дерева, а нет его — из стали: она прочнее, на срез её вдвое меньше.
+## Чем крепят следующий срез: что уже принесли, иначе дерево, если его хватает, иначе сталь.
+func support_key(p: Project) -> String:
+	var wood := p.slice_wood()
+	var metal := support_amount(p, "metal")
+	if int(p.delivered.get("wood", 0)) >= wood:
+		return "wood"
+	if int(p.delivered.get("metal", 0)) >= metal:
+		return "metal"
+	if int(inventory.get("wood", 0)) + drop_total("wood") + int(p.delivered.get("wood", 0)) >= wood:
+		return "wood"
+	if int(inventory.get("metal", 0)) + int(p.delivered.get("metal", 0)) >= metal:
+		return "metal"
+	return "wood"
+
+
+## Сколько материала key на крепь одного среза.
+static func support_amount(p: Project, key: String) -> int:
+	return ceili(p.slice_wood() / 2.0) if key == "metal" else p.slice_wood()
+
+
+## Сколько дерева ещё уйдёт на крепь незакреплённых срезов (в «деревянных» единицах).
 func support_wood_left(p: Project) -> int:
 	if p.phase != Project.Phase.DIG:
 		return 0
@@ -843,16 +952,21 @@ func required(p: Project) -> Dictionary:
 	var out := {}
 	match p.phase:
 		Project.Phase.DIG:
-			out = p.cost().duplicate()
+			if not (p.kind == Project.Kind.DRILL and p.paid):
+				out = p.cost().duplicate()
 			var sw := support_wood_left(p)
 			if sw > 0:
-				out["wood"] = out.get("wood", 0) + sw
+				var key := support_key(p)
+				var n := sw if key == "wood" else ceili(sw / 2.0)
+				out[key] = out.get(key, 0) + n
 		Project.Phase.BUILD:
 			if not p.paid:
 				out = p.cost().duplicate()
 		Project.Phase.EQUIP:
 			if not p.equip_paid:
 				out = RoomType.job_cost(p).duplicate()
+				for k in RoomType.PIPED:
+					out.erase(k)
 		Project.Phase.DONE:
 			if p.repairing and not p.repair_paid:
 				out = p.repair_need.duplicate()
@@ -900,7 +1014,8 @@ func _needed_now(p: Project) -> Dictionary:
 		Project.Phase.DIG:
 			var i := slice_to_support(p)
 			if i >= 0 and not (p.support_paid and p.support_slice == i):
-				return {"wood": p.slice_wood()}
+				var key := support_key(p)
+				return {key: support_amount(p, key)}
 			return {}
 		Project.Phase.BUILD:
 			return p.cost() if not p.paid else {}
@@ -929,6 +1044,593 @@ func _check_supply(p: Project) -> void:
 		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
 
 
+# --- Бур ------------------------------------------------------------------------------
+## Бур — машина 3×3. Её ставят (место выкапывают), собирают из железа и меди, а потом
+## в карточке велят пройти n м вниз, влево или вправо: бур сам едет и сверлит ход 3 м
+## шириной втрое быстрее жителя (на энергии, после «Двигателей внутреннего сгорания» — и на
+## дизеле). За ним остаётся тоннель (вниз) или ход как шахта (вбок), где можно ставить лифт
+## и комнаты. Дошёл — стоит в конце хода и ждёт нового приказа.
+const DRILL_POWER := 10
+## На сколько секунд сверления хватает 1 дизеля.
+const DRILL_DIESEL_TIME := 30.0
+const DRILL_SPEED := 3.0
+## Без породы впереди бур проезжает метр за столько секунд.
+const DRILL_MOVE_TIME := 1.0
+const DRILL_MAX := 64
+## Обсадка хода: 1 железо на столько метров (берут со склада при приказе).
+const DRILL_CASING_M := 4
+
+
+func drill_speed(diesel := false) -> float:
+	return DRILL_SPEED * dig_bonus() * (1.5 if research.has("diamond_bits") else 1.0) \
+		* (1.5 if research.has("heavy_drill") else 1.0) * (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
+
+
+## Бур сверлит (едет по приказу).
+func drilling(p: Project) -> bool:
+	return p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE and p.drill_left > 0
+
+
+## Бур работает на энергии: сверлит и не на паузе.
+func _drill_active(p: Project) -> bool:
+	return drilling(p) and not p.paused
+
+
+## Клетки хода на n м от бура в сторону dir.
+static func drill_path(p: Project, dir: Vector2i, n: int) -> Rect2i:
+	var r := p.rect
+	if dir == Vector2i.DOWN:
+		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.LEFT:
+		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
+	return Rect2i(r.end.x, r.position.y, n, r.size.y)
+
+
+## Следующий срез перед буром (клетки, куда он въедет).
+func drill_front(p: Project) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if not drilling(p):
+		return out
+	var r := drill_path(p, p.drill_dir, 1)
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			out.append(Vector2i(x, y))
+	return out
+
+
+func _underground(r: Rect2i) -> bool:
+	for x in range(r.position.x, r.end.x):
+		if r.position.y < world.gen.surface_y(x):
+			return false
+	return true
+
+
+## Железо на обсадку хода длиной n.
+static func drill_casing(n: int) -> int:
+	return ceili(n / float(DRILL_CASING_M))
+
+
+func drill_error(p: Project, dir: Vector2i, n: int) -> String:
+	if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DONE:
+		return "Бур ещё не собран"
+	if drilling(p):
+		return "Бур уже сверлит — сначала остановите"
+	if not [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].has(dir):
+		return "Бур сверлит вниз, влево или вправо"
+	if n < 1 or n > DRILL_MAX:
+		return "За раз — от 1 до %d м" % DRILL_MAX
+	var path := drill_path(p, dir, n)
+	if not _underground(path):
+		return "Бурить можно только под землёй"
+	for c in Project.rect_cells(path):
+		var other := project_at(c)
+		if other != null and other != p and not is_passage(other.kind):
+			return "На пути постройка: %s" % other.title()
+		if world.is_revealed(c.x, c.y) and Mat.is_fluid(world.get_mat(c.x, c.y)):
+			return "На пути %s" % Mat.name_of(world.get_mat(c.x, c.y)).to_lower()
+	var iron := drill_casing(n)
+	if int(inventory.get("iron", 0)) < iron:
+		return "Нужно %d железа на обсадку хода (на складе %d)" % [iron, int(inventory.get("iron", 0))]
+	return ""
+
+
+## Приказ буру: пройти n м в сторону dir. Ход сразу размечается тоннелем или шахтой.
+func start_drill(p: Project, dir: Vector2i, n: int) -> String:
+	var err := drill_error(p, dir, n)
+	if not err.is_empty():
+		return err
+	_remove("iron", drill_casing(n))
+	var path := drill_path(p, dir, n)
+	# Бур стоит под землёй — его место тоже становится частью хода.
+	var r := path.merge(p.rect) if _underground(p.rect) else path
+	var q := Project.new()
+	q.id = next_project_id
+	next_project_id += 1
+	q.kind = Project.Kind.TUNNEL if dir == Vector2i.DOWN else Project.Kind.MINE
+	q.rect = r
+	q.workers = 0
+	q.bored_by = p.id
+	q.paid = true
+	for i in q.slice_count():
+		q.supported.append(i)
+	projects.append(q)
+	p.drill_dir = dir
+	p.drill_left = n
+	p.drill_t = 0.0
+	p.bore_id = q.id
+	p.bore_from = p.rect
+	p.hazard_ack.clear()
+	p.blocked = ""
+	_rebuild_climb()
+	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info")
+	return ""
+
+
+func _drills_tick(dt: float) -> void:
+	for p: Project in projects.duplicate():
+		if not drilling(p) or p.paused:
+			continue
+		var bore := project_by_id(p.bore_id)
+		# Без энергии дизельный бур идёт на дизеле из нефтехранилища.
+		var on_diesel := false
+		if not powered() or power_ratio <= 0.0:
+			if research.has("combustion") and (p.fuel > 0.0 or _remove("diesel", 1) >= 1):
+				if p.fuel <= 0.0:
+					p.fuel += DRILL_DIESEL_TIME
+				on_diesel = true
+			else:
+				if p.blocked.is_empty():
+					p.blocked = "Нет энергии — бур стоит" + (" (и дизеля нет)" if research.has("combustion") else "")
+				continue
+		if p.blocked.begins_with("Нет энергии") or p.blocked.begins_with("Впереди"):
+			p.blocked = ""
+		var front := drill_front(p)
+		var solid: Array[Vector2i] = []
+		var stop := false
+		for c in front:
+			var m := world.get_mat(c.x, c.y)
+			if world.is_revealed(c.x, c.y) and Mat.is_fluid(m):
+				p.blocked = "Впереди %s — бур стоит. Остановите его или откачайте" % Mat.name_of(m).to_lower()
+				stop = true
+				break
+			if Mat.is_solid(m):
+				solid.append(c)
+		if stop:
+			continue
+		for c in solid:
+			if _hazard_stop(p, c):
+				stop = true
+				break
+		if stop:
+			continue
+		if on_diesel:
+			p.fuel = maxf(0.0, p.fuel - dt)
+		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
+		var need := DRILL_MOVE_TIME * DRILL_SPEED
+		for c in solid:
+			need = maxf(need, dig_time(c))
+		if p.drill_t < need:
+			continue
+		p.drill_t = 0.0
+		for c in solid:
+			_complete_dig(c, bore, null)
+		p.rect.position += p.drill_dir
+		p.drill_left -= 1
+		if p.drill_left <= 0:
+			_end_bore(p, true)
+
+
+## Бур дошёл (или его остановили): пройденная часть хода готова, бур ждёт приказа.
+func _end_bore(p: Project, arrived: bool) -> void:
+	var bore := project_by_id(p.bore_id)
+	var total := p.drill_left + absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
+	var went := total - p.drill_left
+	p.drill_left = 0
+	p.drill_dir = Vector2i.ZERO
+	p.bore_id = 0
+	p.blocked = ""
+	if bore == null:
+		return
+	var r := bore.rect.intersection(p.bore_from.merge(p.rect))
+	var old := bore.cells()
+	if went <= 0 or r.size.x <= 0 or r.size.y <= 0:
+		projects.erase(bore)
+		_rebuild_climb()
+		_log("%s: остановлен, не пройдя ни метра" % p.title(), "info")
+		return
+	if bore.phase != Project.Phase.DONE:
+		bore.rect = r
+		bore.supported.clear()
+		for i in bore.slice_count():
+			bore.supported.append(i)
+		_finish_project(bore)
+	_log("%s %s %d м%s — готов %s" % [p.title(), "прошёл" if arrived else "остановлен:", went,
+		"" if arrived else " из %d" % total,
+		"тоннель (можно ставить лифт)" if bore.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good")
+	var cut: Array[Vector2i] = []
+	for c in old:
+		if not bore.has_cell(c):
+			cut.append(c)
+	physics.check_area(cut)
+
+
+## Остановить бур: пройденная часть остаётся ходом, бур стоит, где остановился.
+func stop_drill(p: Project) -> void:
+	if drilling(p):
+		_end_bore(p, false)
+
+
+# --- Нефть ----------------------------------------------------------------------------
+## Нефтекачалка на энергии раз в OIL_PUMP_TIME выкачивает ближайшую клетку нефтеносного
+## пласта в радиусе: +OIL_PER_CELL_YIELD нефти в хранилище, пласт становится пустым сланцем.
+const OIL_PUMP_TIME := 15.0
+const OIL_PER_CELL_YIELD := 3
+
+
+func _oil_tick(dt: float) -> void:
+	for p in rooms_of(RoomType.OIL_PUMP):
+		if p.paused:
+			continue
+		if not powered() or power_ratio <= 0.0:
+			p.blocked = "Нет энергии — качалка стоит"
+			continue
+		var free := 0
+		for t in rooms_of(RoomType.OIL_TANK):
+			free += room_free(t, "oil")
+		if free <= 0:
+			p.blocked = "Нефтехранилище полно или его нет — качалка стоит"
+			continue
+		p.farm_progress += dt * power_ratio
+		if p.farm_progress < OIL_PUMP_TIME:
+			continue
+		p.farm_progress = 0.0
+		var cell = _nearest_oil(p)
+		if cell == null:
+			p.blocked = "Рядом нет нефти (качает на %d м)" % RoomType.effect_radius(p)
+			continue
+		p.blocked = ""
+		world.set_material(cell.x, cell.y, Mat.SHALE)
+		_add("oil", OIL_PER_CELL_YIELD)
+		produced["oil"] = int(produced.get("oil", 0)) + OIL_PER_CELL_YIELD
+
+
+## Ближайшая к нефтекачалке клетка нефтеносного пласта в её радиусе.
+func _nearest_oil(p: Project) -> Variant:
+	var c0 := p.rect.get_center()
+	var rad := RoomType.effect_radius(p)
+	var best = null
+	var best_d := 1 << 30
+	for y in range(c0.y - rad, c0.y + rad + 1):
+		for x in range(c0.x - rad, c0.x + rad + 1):
+			if world.get_mat(x, y) == Mat.OIL:
+				var d := absi(x - c0.x) + absi(y - c0.y)
+				if d < best_d:
+					best_d = d
+					best = Vector2i(x, y)
+	return best
+
+
+# --- Лифты -----------------------------------------------------------------------------
+## Пассажирский: кабина на 6 человек, ездит втрое быстрее пешехода, останавливается только
+## там, где садятся и выходят, и ждёт тех, кто уже идёт к ней. Грузовой: копит груз у конца,
+## везёт к другому; у склада вплотную сам разгружается и сам берёт материалы для строек.
+const LIFT_CAP := 6
+const CARGO_CAP := 40
+const LIFT_POWER := 5
+## Сколько кабина ждёт подходящих к остановке, сек.
+const LIFT_WAIT := 6.0
+## Сколько грузовой ждёт, пока наберётся груз, сек.
+const CARGO_WAIT := 8.0
+## Ехать на лифте, только если по шахте не меньше стольких метров.
+const LIFT_MIN_RIDE := 3
+var _cargo_check_t := 0.0
+
+
+func lifts() -> Array[Project]:
+	var out: Array[Project] = []
+	for p in projects:
+		if p.kind == Project.Kind.LIFT and p.phase == Project.Phase.DONE:
+			out.append(p)
+	return out
+
+
+## Лифт работает: есть энергия и он не на паузе.
+func lift_powered(p: Project) -> bool:
+	return not p.paused and powered() and power_ratio > 0.0
+
+
+func lift_speed(p: Project) -> float:
+	var s := WALK_SPEED * 3.0 * (1.5 if research.has("fast_lifts") else 1.0) * (1.5 if research.has("fast_lifts2") else 1.0)
+	return s * clampf(power_ratio, 0.0, 1.0)
+
+
+## Координата клетки вдоль шахты лифта.
+func _lift_axis(p: Project, c: Vector2i) -> int:
+	return c.y if p.lift_vertical() else c.x
+
+
+## Ось концов шахты: [начало (верх/лево), конец (низ/право)].
+func _lift_ends(p: Project) -> Array:
+	if p.lift_vertical():
+		return [p.rect.position.y, p.rect.end.y - 1]
+	return [p.rect.position.x, p.rect.end.x - 1]
+
+
+func _passenger_lift_at(c: Vector2i) -> Project:
+	for p in projects:
+		if p.kind == Project.Kind.LIFT and not p.cargo and p.phase == Project.Phase.DONE and p.has_cell(c):
+			return p
+	return null
+
+
+## Житель подошёл к лифту: если ехать по шахте далеко — встаёт ждать кабину.
+func _try_board(u: Unit) -> bool:
+	var nxt: Vector2i = u.path[u.path_i]
+	var p := _passenger_lift_at(nxt)
+	if p == null or not lift_powered(p):
+		return false
+	var j := u.path_i
+	while j + 1 < u.path.size() and p.has_cell(u.path[j + 1]):
+		j += 1
+	if absi(_lift_axis(p, u.path[j]) - _lift_axis(p, nxt)) < LIFT_MIN_RIDE:
+		return false
+	u.lift_id = p.id
+	u.riding = false
+	u.lift_board = u.path_i
+	u.lift_exit = j
+	return true
+
+
+## Выйти из лифта (или перестать ждать): дальше пешком по своему пути.
+func _leave_lift(u: Unit, at_exit: bool) -> void:
+	if at_exit:
+		u.pos = Vector2(u.path[u.lift_exit])
+		u.path_i = u.lift_exit + 1
+	u.lift_id = 0
+	u.riding = false
+
+
+func _lifts_tick(dt: float) -> void:
+	_cargo_check_t += dt
+	var check := _cargo_check_t >= 2.0
+	if check:
+		_cargo_check_t = 0.0
+	for p in lifts():
+		var ends := _lift_ends(p)
+		if p.lift_pos < 0.0:
+			p.lift_pos = float(ends[1])
+		if p.cargo:
+			if check:
+				_cargo_autoload(p)
+			_cargo_tick(p, dt, ends)
+		else:
+			_passenger_tick(p, dt)
+
+
+func _passenger_tick(p: Project, dt: float) -> void:
+	var riders: Array[Unit] = []
+	var waiting: Array[Unit] = []
+	for u in units:
+		if u.lift_id == p.id:
+			if u.state != Unit.State.MOVE or u.path_i > u.lift_exit or u.lift_exit >= u.path.size():
+				_leave_lift(u, false)
+			elif u.riding:
+				riders.append(u)
+			else:
+				waiting.append(u)
+	if not lift_powered(p):
+		# Без энергии кабина стоит: едущие выходят на аварийную лестницу, ждущие идут пешком.
+		for u in riders + waiting:
+			_leave_lift(u, false)
+		return
+	var here := roundi(p.lift_pos)
+	if absf(p.lift_pos - here) < 0.05:
+		p.lift_pos = float(here)
+		var stopped := false
+		for u in riders.duplicate():
+			if _lift_axis(p, u.path[u.lift_exit]) == here:
+				_leave_lift(u, true)
+				riders.erase(u)
+				stopped = true
+		for u in waiting.duplicate():
+			if riders.size() < LIFT_CAP and _lift_axis(p, u.path[u.lift_board]) == here:
+				u.riding = true
+				u.pos = Vector2(u.path[u.lift_board])
+				waiting.erase(u)
+				riders.append(u)
+				stopped = true
+		# Кто уже идёт к этой остановке — кабина его ждёт (недолго и если есть место).
+		if (stopped or p.lift_dwell > 0.0) and riders.size() < LIFT_CAP and p.lift_dwell < LIFT_WAIT and _approaching(p, here):
+			p.lift_dwell += dt
+			return
+	var target := -1
+	var best := 1 << 30
+	for u in (riders if not riders.is_empty() else waiting):
+		var a := _lift_axis(p, u.path[u.lift_exit if u.riding else u.lift_board])
+		if absi(a - here) < best:
+			best = absi(a - here)
+			target = a
+	if target < 0:
+		p.lift_dwell = 0.0
+		return
+	if absf(float(target) - p.lift_pos) > 0.01:
+		p.lift_dwell = 0.0
+		var step := lift_speed(p) * dt
+		p.lift_pos = move_toward(p.lift_pos, float(target), step)
+	for u in riders:
+		var c: Vector2i = u.path[u.lift_board]
+		u.pos = Vector2(c.x, p.lift_pos) if p.lift_vertical() else Vector2(p.lift_pos, c.y)
+
+
+## Кто-то идёт к остановке here этого лифта и вот-вот сядет.
+func _approaching(p: Project, here: int) -> bool:
+	for u in units:
+		if u.lift_id != 0 or u.state != Unit.State.MOVE:
+			continue
+		for i in range(u.path_i, mini(u.path.size(), u.path_i + 8)):
+			var c: Vector2i = u.path[i]
+			if p.has_cell(c):
+				if _lift_axis(p, c) == here:
+					return true
+				break
+	return false
+
+
+## Площадка у конца грузового лифта: где стоят, кладя груз, и куда он выгружает.
+func lift_station(p: Project, end: int) -> Variant:
+	var ends := _lift_ends(p)
+	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
+		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
+	var best = null
+	for c in _rect_cells(slice.grow(1)):
+		if p.has_cell(c) or not pathing.node(c):
+			continue
+		if best == null or absi(_lift_axis(p, c) - ends[end]) < absi(_lift_axis(p, best) - ends[end]):
+			best = c
+	return best
+
+
+func _rect_cells(r: Rect2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			out.append(Vector2i(x, y))
+	return out
+
+
+## Склады и амбары вплотную к концу end грузового лифта.
+func lift_stores(p: Project, end: int) -> Array[Project]:
+	var ends := _lift_ends(p)
+	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
+		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
+	var out: Array[Project] = []
+	for room in store_rooms():
+		if room.rect.intersects(slice.grow(1)) and store_staffed(room):
+			out.append(room)
+	return out
+
+
+func _load_total(d: Dictionary) -> int:
+	var n := 0
+	for k in d:
+		n += int(d[k])
+	return n
+
+
+func _cargo_tick(p: Project, dt: float, ends: Array) -> void:
+	if not lift_powered(p):
+		return
+	if p.lift_goal >= 0:
+		# В пути к концу lift_goal; приехал — выгружает.
+		p.lift_pos = move_toward(p.lift_pos, float(ends[p.lift_goal]), lift_speed(p) * dt)
+		if absf(p.lift_pos - ends[p.lift_goal]) < 0.01:
+			var arrived := p.lift_goal
+			p.lift_pos = float(ends[arrived])
+			p.lift_goal = -1
+			p.lift_dwell = 0.0
+			if not p.lift_load.is_empty():
+				_cargo_unload(p, arrived)
+		return
+	var at := 0 if absf(p.lift_pos - ends[0]) <= absf(p.lift_pos - ends[1]) else 1
+	p.lift_pos = float(ends[at])
+	var other := 1 - at
+	# Берёт то, что ждёт у этого конца.
+	var buf: Dictionary = p.lift_buf[at]
+	for k in buf.keys():
+		var space := CARGO_CAP - _load_total(p.lift_load)
+		if space <= 0:
+			break
+		var n := mini(space, int(buf[k]))
+		p.lift_load[k] = int(p.lift_load.get(k, 0)) + n
+		buf[k] = int(buf[k]) - n
+		if buf[k] <= 0:
+			buf.erase(k)
+	var load_n := _load_total(p.lift_load)
+	if load_n > 0:
+		p.lift_dwell += dt
+	# Едет, когда набралось полкабины, или подождав, или за грузом с того конца.
+	if load_n >= CARGO_CAP / 2 or (load_n > 0 and p.lift_dwell >= CARGO_WAIT) \
+			or (load_n == 0 and _load_total(p.lift_buf[other]) > 0):
+		p.lift_goal = other
+		p.lift_dwell = 0.0
+
+
+func _cargo_unload(p: Project, end: int) -> void:
+	var stores := lift_stores(p, end)
+	var spot = lift_station(p, end)
+	for k in p.lift_load.keys():
+		var n := int(p.lift_load[k])
+		for room in stores:
+			if n <= 0:
+				break
+			if RoomType.stores(room, k):
+				n -= _add(k, n, room)
+		if n > 0:
+			if spot != null:
+				drop_item(spot, k, n)
+			else:
+				_add(k, n)
+	p.lift_load.clear()
+
+
+## Склад вплотную к концу грузового лифта: материалы для строек у другого конца
+## лифт сам берёт со склада и везёт (их там разносят уже недалеко).
+func _cargo_autoload(p: Project) -> void:
+	if not lift_powered(p):
+		return
+	for e in 2:
+		var stores := lift_stores(p, e)
+		if stores.is_empty():
+			continue
+		var far = lift_station(p, 1 - e)
+		if far == null:
+			continue
+		for q in projects:
+			if q.paused or q == p or (q.phase == Project.Phase.DONE and not q.repairing):
+				continue
+			var d: Vector2i = q.rect.get_center() - (far as Vector2i)
+			if absi(d.x) + absi(d.y) > 25:
+				continue
+			# Ближе к этому концу — пусть носят напрямую.
+			var near = lift_station(p, e)
+			if near != null:
+				var dn: Vector2i = q.rect.get_center() - (near as Vector2i)
+				if absi(dn.x) + absi(dn.y) <= absi(d.x) + absi(d.y):
+					continue
+			var need := remaining(q)
+			for k in need:
+				var want: int = int(need[k]) - drop_amount(far, k) - int(p.lift_buf[e].get(k, 0)) - int(p.lift_load.get(k, 0))
+				for room in stores:
+					if want <= 0:
+						break
+					var got := _remove(k, mini(want, held_in(room, k)), room)
+					if got > 0:
+						p.lift_buf[e][k] = int(p.lift_buf[e].get(k, 0)) + got
+						want -= got
+
+
+## Куда выгоднее отнести груз с кучи: в грузовой лифт, если у другого его конца есть
+## склад с местом и до лифта ближе, чем до склада. [площадка, лифт, конец] или null.
+func _cargo_route(key: String, dist: Dictionary, direct_d: int, only: Project = null) -> Variant:
+	var best = null
+	var best_d := direct_d - 4
+	for p in lifts():
+		if not p.cargo or not lift_powered(p):
+			continue
+		for e in 2:
+			var ok := false
+			for room in lift_stores(p, 1 - e):
+				if (only == null or room == only) and RoomType.stores(room, key) and room_free(room, key) > 0:
+					ok = true
+			if not ok:
+				continue
+			var st = lift_station(p, e)
+			if st != null and dist.has(st) and dist[st] < best_d:
+				best_d = dist[st]
+				best = [st, p, e]
+	return best
+
+
 ## Где можно лазить (pathing.ladders, pathing.sites): лестницы готовых построек и леса строек.
 func _rebuild_climb() -> void:
 	var lad := {}
@@ -941,9 +1643,10 @@ func _rebuild_climb() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			continue
 		match p.kind:
-			Project.Kind.TUNNEL, Project.Kind.MINE:
+			Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.LIFT:
 				# Вертикальный тоннель — с лестницей; горизонтальный и шахта — только по полу.
-				if p.rect.size.y > p.rect.size.x:
+				# В шахте пассажирского лифта — аварийная лестница; в грузовом лазить нельзя.
+				if p.rect.size.y > p.rect.size.x and not (p.kind == Project.Kind.LIFT and p.cargo):
 					for c in p.cells():
 						lad[c] = true
 			Project.Kind.ROOM:
@@ -952,11 +1655,21 @@ func _rebuild_climb() -> void:
 						var x := p.rect.position.x if side < 0 else p.rect.end.x - 1
 						for y in range(p.rect.position.y, p.rect.end.y):
 							lad[Vector2i(x, y)] = true
-	if lad != pathing.ladders or site != pathing.sites:
+	# Шахта над шахтой: верхний ряд нижней закреплён балками — по ним ходят, как по полу.
+	var fl := {}
+	for p in projects:
+		if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DONE:
+			for x in range(p.rect.position.x, p.rect.end.x):
+				var a := Vector2i(x, p.rect.position.y - 1)
+				if interior.has(a) and interior[a] != p.id:
+					fl[a] = true
+	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors:
 		pathing.ladders.clear()
 		pathing.ladders.merge(lad)
 		pathing.sites.clear()
 		pathing.sites.merge(site)
+		pathing.floors.clear()
+		pathing.floors.merge(fl)
 		pathing.climb_rev += 1
 
 
@@ -1004,6 +1717,133 @@ func active_slices(p: Project) -> Array[int]:
 	return out
 
 
+## --- Продолжение выработок ------------------------------------------------------------
+## Готовую шахту, тоннель или лифт продлевают на n м: рядом закладывается продолжение
+## (копают, крепят, у лифта — тянут рельсы), а готовое сливается с исходной постройкой.
+const EXTEND_MAX := 64
+
+
+## Куда можно продлить: вертикальное — вниз, горизонтальное — влево и вправо.
+static func extend_dirs(p: Project) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if p.kind != Project.Kind.MINE and p.kind != Project.Kind.TUNNEL and p.kind != Project.Kind.LIFT:
+		return out
+	if p.rect.size.y > p.rect.size.x:
+		out.append(Vector2i.DOWN)
+	else:
+		out.append_array([Vector2i.LEFT, Vector2i.RIGHT])
+	return out
+
+
+static func extend_rect(p: Project, dir: Vector2i, n: int) -> Rect2i:
+	var r := p.rect
+	if dir == Vector2i.DOWN:
+		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.LEFT:
+		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
+	return Rect2i(r.end.x, r.position.y, n, r.size.y)
+
+
+func extension_of(p: Project) -> Project:
+	for q in projects:
+		if q.extends_id == p.id and q.phase != Project.Phase.DONE:
+			return q
+	return null
+
+
+func extend_error(p: Project, dir: Vector2i, n: int) -> String:
+	if not extend_dirs(p).has(dir):
+		return "Эту постройку так не продлить"
+	if p.phase != Project.Phase.DONE:
+		return "Сначала достройте"
+	if extension_of(p) != null:
+		return "Продолжение уже строится"
+	if n < 1 or n > EXTEND_MAX:
+		return "Продлить можно на 1–%d м за раз" % EXTEND_MAX
+	return validate(p.kind, extend_rect(p, dir, n), "cargo" if p.cargo else "wood", false)
+
+
+func extend_project(p: Project, dir: Vector2i, n: int) -> Project:
+	if not extend_error(p, dir, n).is_empty():
+		return null
+	var q := create_project(p.kind, extend_rect(p, dir, n), p.workers, "cargo" if p.cargo else "wood", false)
+	if q == null:
+		return null
+	q.extends_id = p.id
+	_log("%s: продлеваем на %d м" % [p.title(), n], "info")
+	return q
+
+
+## Готовое продолжение сливается с исходной постройкой (если та цела и они вплотную).
+func _merge_extension(q: Project) -> bool:
+	var host := project_by_id(q.extends_id)
+	if host == null or host.kind != q.kind or host.phase != Project.Phase.DONE:
+		return false
+	var merged := host.rect.merge(q.rect)
+	if merged.get_area() != host.rect.get_area() + q.rect.get_area():
+		return false
+	_return_delivered(q)
+	for u in units:
+		if u.project_id == q.id:
+			_drop(u)
+	projects.erase(q)
+	host.rect = merged
+	host.needs_support.clear()
+	host.supported.clear()
+	for i in host.slice_count():
+		host.supported.append(i)
+	for k in q.found:
+		host.found[k] = int(host.found.get(k, 0)) + int(q.found[k])
+	for c in host.cells():
+		interior[c] = host.id
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	highest_y = mini(highest_y, host.rect.position.y)
+	_rebuild_climb()
+	_log("Продлено: %s" % host.title(), "good")
+	if host.kind == Project.Kind.LIFT:
+		_merge_lifts(host)
+	return true
+
+
+## Лифты встык (одного вида и сечения, по одной оси) соединяются в один: одна кабина
+## на всю шахту. Кто ждал или ехал в убранной кабине, идёт дальше пешком; её груз выгружают.
+func _merge_lifts(p: Project) -> void:
+	var merged := true
+	while merged:
+		merged = false
+		for q in projects:
+			if q == p or q.kind != Project.Kind.LIFT or q.phase != Project.Phase.DONE or q.cargo != p.cargo \
+					or q.lift_vertical() != p.lift_vertical() or q.repairing:
+				continue
+			var r := p.rect.merge(q.rect)
+			var same := (r.size.x == p.rect.size.x and r.position.x == p.rect.position.x) if p.lift_vertical() \
+				else (r.size.y == p.rect.size.y and r.position.y == p.rect.position.y)
+			if not same or r.get_area() != p.rect.get_area() + q.rect.get_area():
+				continue
+			for u in units:
+				if u.lift_id == q.id:
+					_drop(u)
+			var spill := q.lift_load.duplicate()
+			for b in q.lift_buf:
+				for k in b:
+					spill[k] = int(spill.get(k, 0)) + int(b[k])
+			for k in spill:
+				drop_item(q.rect.get_center(), k, int(spill[k]))
+			projects.erase(q)
+			p.rect = r
+			p.wear = maxf(p.wear, q.wear)
+			p.lift_goal = -1
+			p.supported.clear()
+			for i in p.slice_count():
+				p.supported.append(i)
+			for c in p.cells():
+				interior[c] = p.id
+			merged = true
+			_log("Лифты соединены: %s" % p.title(), "good")
+			break
+	_rebuild_climb()
+
+
 ## --- Шахта: строится по метру -------------------------------------------------------
 
 ## Метр шахты готов: выкопан и, если нужно, закреплён.
@@ -1042,12 +1882,18 @@ func stop_mine(p: Project) -> void:
 			_drop(u)
 	# Крепь, за которую уже заплатили, но не поставили, — дерево обратно.
 	if p.support_paid and not p.supported.has(p.support_slice):
-		p.delivered["wood"] = int(p.delivered.get("wood", 0)) + p.slice_wood()
+		var mat := p.support_mat if not p.support_mat.is_empty() else "wood"
+		p.delivered[mat] = int(p.delivered.get(mat, 0)) + support_amount(p, mat)
 	p.support_slice = -1
 	p.support_paid = false
 	var old := p.cells()
 	var total := p.slice_count()
-	p.rect = Rect2i(p.rect.position.x + best_a, p.rect.position.y, best_n, p.rect.size.y)
+	if p.vertical():
+		# Вертикальный тоннель крепят по 2 ряда.
+		p.rect = Rect2i(p.rect.position.x, p.rect.position.y + best_a * 2, p.rect.size.x,
+			mini(best_n * 2, p.rect.size.y - best_a * 2))
+	else:
+		p.rect = Rect2i(p.rect.position.x + best_a, p.rect.position.y, best_n, p.rect.size.y)
 	var ns: Array[int] = []
 	var sp: Array[int] = []
 	for i in p.needs_support:
@@ -1066,6 +1912,38 @@ func stop_mine(p: Project) -> void:
 		if not p.has_cell(c):
 			cut.append(c)
 	physics.check_area(cut)
+
+
+## Сколько метров моста уже построено (строят от берега ближе к базе).
+func bridge_meters_done(p: Project) -> int:
+	if p.kind != Project.Kind.BRIDGE or p.phase != Project.Phase.BUILD or not p.paid:
+		return 0
+	return mini(p.rect.size.x, floori(p.build_done / (p.build_work() / p.rect.size.x) + 0.001))
+
+
+## Мост строят от этого края (true — от правого).
+func bridge_from_right(p: Project) -> bool:
+	return absi(p.rect.end.x - 1 - home.x) < absi(p.rect.position.x - home.x)
+
+
+## Остановить мост: построенная часть у берега остаётся пристанью, дерево за
+## непостроенное — обратно.
+func stop_bridge(p: Project) -> void:
+	var m := bridge_meters_done(p)
+	var total := p.rect.size.x
+	for u in units:
+		if u.project_id == p.id:
+			_drop(u)
+	_refund(p.cost(), 1.0 - float(m) / total)
+	var right := bridge_from_right(p)
+	var old := p.cells()
+	p.rect = Rect2i(p.rect.end.x - m if right else p.rect.position.x, p.rect.position.y, m, p.rect.size.y)
+	p.kind = Project.Kind.PIER
+	for c in old:
+		if not p.has_cell(c):
+			deck.erase(c)
+	_finish_project(p)
+	_log("Мост остановлен: готово %d м из %d — стоит пристанью у берега" % [m, total], "info")
 
 
 ## Срез выкопан целиком.
@@ -1090,10 +1968,17 @@ func slice_to_support(p: Project) -> int:
 func _pay_support(p: Project, i: int) -> bool:
 	if p.support_paid and p.support_slice == i:
 		return true
-	var need := p.slice_wood()
-	if p.delivered.get("wood", 0) < need:
+	var mat := ""
+	for k in ["wood", "metal"]:
+		if int(p.delivered.get(k, 0)) >= support_amount(p, k):
+			mat = k
+			break
+	if mat.is_empty():
 		return false
-	p.delivered["wood"] -= need
+	p.delivered[mat] -= support_amount(p, mat)
+	if p.delivered[mat] <= 0:
+		p.delivered.erase(mat)
+	p.support_mat = mat
 	p.support_slice = i
 	p.support_paid = true
 	p.support_progress = 0.0
@@ -1137,7 +2022,7 @@ func remaining_dig(p: Project) -> Array[Vector2i]:
 ## Базовое время копки клетки (для жителя с навыком 1).
 func dig_time(c: Vector2i) -> float:
 	var m := world.get_mat(c.x, c.y)
-	var t := Mat.hardness(m) * Env.heat_work_factor(Env.temperature(c.y, world.gen.surface_y(c.x)))
+	var t := Mat.hardness(m) * Env.heat_work_factor(world.gen.temperature(c.y, world.gen.surface_y(c.x)))
 	# Порода с полезными ископаемыми добывается аккуратнее — дольше.
 	if NOTABLE.has(Mat.resource(m)):
 		t *= 1.4
@@ -1153,8 +2038,13 @@ func _check_phase(p: Project) -> void:
 		if not p.supported.has(i):
 			all_supported = false
 	if remaining_dig(p).is_empty() and uncleared(p).is_empty() and all_supported:
-		if p.kind == Project.Kind.MINE:
-			# Шахта — без отделки: выкопана и закреплена — готова.
+		if p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL:
+			# Шахта и тоннель — без отделки: выкопаны и закреплены — готовы.
+			var found: PackedStringArray = []
+			for k in p.found:
+				found.append("%s %d" % [Mat.resource_name(k), p.found[k]])
+			if not found.is_empty():
+				_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(found)], "good")
 			_finish_project(p)
 			return
 		p.phase = Project.Phase.BUILD
@@ -1192,11 +2082,16 @@ func _try_pay(p: Project) -> void:
 	else:
 		_check_supply(p)
 		return
+	# Топливо (дизель, метан, нефть) не носят — берут по трубам прямо из баков.
 	for k in cost:
-		if p.delivered.get(k, 0) < cost[k]:
+		var have: int = inventory.get(k, 0) if RoomType.PIPED.has(k) else p.delivered.get(k, 0)
+		if have < cost[k]:
 			_check_supply(p)
 			return
 	for k in cost:
+		if RoomType.PIPED.has(k):
+			_remove(k, cost[k])
+			continue
 		p.delivered[k] -= cost[k]
 		if p.delivered[k] <= 0:
 			p.delivered.erase(k)
@@ -1212,11 +2107,14 @@ func _try_pay(p: Project) -> void:
 
 
 func _finish_project(p: Project) -> void:
+	if p.extends_id > 0 and _merge_extension(p):
+		return
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
-	for c in p.cells():
+	# Бур — машина, а не помещение: сквозь него ходят, он уезжает.
+	for c in ([] as Array[Vector2i]) if p.kind == Project.Kind.DRILL else p.cells():
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_register_deck(p)
@@ -1224,21 +2122,35 @@ func _finish_project(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
-	if p.kind == Project.Kind.ROOM:
+	if p.kind == Project.Kind.ROOM and p.plan_purpose > 0:
+		# Комнату строили под назначение — сразу обустраивают.
+		var t := p.plan_purpose
+		p.plan_purpose = 0
+		_log("Построено: %s — обустраиваем: %s" % [p.title(), RoomType.purpose_name(t)], "good")
+		set_purpose(p, t)
+	elif p.kind == Project.Kind.ROOM:
 		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
 	else:
 		_log("Построено: %s" % p.title(), "good")
+	if p.kind == Project.Kind.LIFT:
+		_merge_lifts(p)
 
 
 ## Убрали мост или пристань — общие с другой водной постройкой клетки снова её.
 func _restore_water_overlaps(gone: Project) -> void:
-	if not gone.is_water_structure():
+	if not gone.is_water_structure() and not is_passage(gone.kind):
 		return
 	for q in projects:
-		if q != gone and q.is_water_structure() and q.phase == Project.Phase.DONE and q.rect.intersects(gone.rect):
+		if q != gone and q.phase == Project.Phase.DONE and q.rect.intersects(gone.rect) \
+				and (q.is_water_structure() or is_passage(q.kind)):
 			for c in q.cells():
 				interior[c] = q.id
 			_register_deck(q)
+
+
+## Проходы — тоннели, шахты и лифты: друг другу не мешают и могут пересекаться.
+static func is_passage(kind: int) -> bool:
+	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT or kind == Project.Kind.DRILL
 
 
 func _register_deck(p: Project) -> void:
@@ -1271,6 +2183,11 @@ func set_purpose(p: Project, t: int) -> bool:
 		return false
 	if not research.has(RoomType.REQUIRES.get(t, "")):
 		return false
+	if p.purpose == RoomType.SHIP:
+		return false
+	if t == RoomType.LAUNCHPAD and not launchpad_error(p).is_empty():
+		_log(launchpad_error(p), "warning")
+		return false
 	if is_hearth_upgrade(p, t):
 		# Печи перекладывают кирпичом или ставят котлы: очаг остаётся очагом.
 		p.equip_ladder = false
@@ -1290,7 +2207,7 @@ func set_purpose(p: Project, t: int) -> bool:
 	if t == RoomType.NONE:
 		_finish_equip(p)
 		return true
-	_log("%s: обустройство под «%s»" % [p.title(), RoomType.NAMES[t]], "info")
+	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info")
 	_try_pay(p)
 	return true
 
@@ -1300,6 +2217,229 @@ func is_hearth_upgrade(p: Project, t: int) -> bool:
 	if p.purpose != RoomType.HEARTH:
 		return false
 	return (t == RoomType.HEARTH_BRICK and not p.brick_stoves) or (t == RoomType.HEARTH_GAS and not p.gas_boiler)
+
+
+# --- Космос: космодром, ракета, экспедиции -----------------------------------------------
+
+## Почему здесь нельзя космодром (пусто — можно): над ним должно быть открытое небо.
+func launchpad_error(p: Project) -> String:
+	if p.kind != Project.Kind.ROOM:
+		return "Космодром — это комната на поверхности"
+	for x in range(p.rect.position.x, p.rect.end.x):
+		if p.rect.end.y - 1 >= world.gen.surface_y(x):
+			return "Космодром — только на поверхности: пол выше земли"
+		for y in range(p.rect.position.y - 14, p.rect.position.y):
+			if not world.is_open(x, y) or project_at(Vector2i(x, y)) != null:
+				return "Над космодромом нужно открытое небо (14 м) — для ракеты"
+	return ""
+
+
+## Начать сборку ракеты на космодроме (engine: "chem" или "nuclear"). Пусто — началась.
+func start_rocket(p: Project, engine: String) -> String:
+	wake_idle()
+	if p.purpose != RoomType.LAUNCHPAD or p.phase != Project.Phase.DONE:
+		return "Ракету собирают на готовом космодроме"
+	if not p.rocket.is_empty():
+		return "Ракета уже стоит на столе"
+	if engine == "nuclear" and not research.has("nuclear_engine"):
+		return "Сначала изучите «%s»" % Research.tech_name("nuclear_engine")
+	var err := launchpad_error(p)
+	if not err.is_empty():
+		return err
+	p.equip_rocket = engine
+	p.equip_target = p.purpose
+	p.equip_ladder = false
+	p.equip_paid = false
+	p.equip_done = 0.0
+	p.phase = Project.Phase.EQUIP
+	_log("%s: собираем ракету (%s двигатель)" % [p.title(), Planet.engine_name(engine)], "info")
+	_try_pay(p)
+	return ""
+
+
+## Куда долетит ракета с этим двигателем.
+static func rocket_reaches(engine: String, planet_id: String) -> bool:
+	var need: String = Planet.data(planet_id)["engine"]
+	return engine == "nuclear" or need == engine
+
+
+## Отправить экспедицию: до 10 жителей и до 200 груза (не топливо — его не возят).
+## Возвращает полёт (словарь для Universe) или ошибку {"error": текст}.
+func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Dictionary:
+	if p.rocket.is_empty():
+		return {"error": "Ракеты на столе нет"}
+	if not rocket_reaches(p.rocket, planet_id):
+		return {"error": "Для полёта на %s нужен %s двигатель" % [Planet.planet_name(planet_id), Planet.engine_name(Planet.data(planet_id)["engine"])]}
+	if crew.size() > RoomType.SHIP_BEDS:
+		return {"error": "В ракете — до %d жителей" % RoomType.SHIP_BEDS}
+	var total := 0
+	for k in cargo:
+		total += int(cargo[k])
+		if RoomType.PIPED.has(k) or RoomType.BULK.has(k):
+			return {"error": "%s в ракете не возят" % Mat.resource_name(k)}
+		if int(inventory.get(k, 0)) < int(cargo[k]):
+			return {"error": "Не хватает: %s" % Mat.resource_name(k).to_lower()}
+	if total > RoomType.SHIP_HOLD:
+		return {"error": "Груза — до %d" % RoomType.SHIP_HOLD}
+	if crew.is_empty() and total == 0:
+		return {"error": "Ракета пустая"}
+	var crew_data := []
+	for u: Unit in crew:
+		if not units.has(u) or u.child:
+			return {"error": "Лететь могут только взрослые жители колонии"}
+	for u: Unit in crew:
+		_drop(u)
+		u.workplace = 0
+		u.bed_room = 0
+		crew_data.append(u.to_dict())
+		units.erase(u)
+	for o in units:
+		if not units.has(unit_by_id(o.partner_id)):
+			o.partner_id = 0
+	for k in cargo:
+		_remove(k, int(cargo[k]))
+	p.rocket = ""
+	_log("Старт! Экспедиция на %s: жителей %d, груза %d. Лететь %d мес." % [Planet.planet_name(planet_id), crew_data.size(), total,
+		int(Planet.data(planet_id)["travel"])], "good")
+	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
+		"left": float(Planet.data(planet_id)["travel"]) * MONTH}
+
+
+## Новая колония на планете: корабль садится на поверхность, экипаж и груз — в нём.
+func start_planet(x: int, flight: Dictionary) -> void:
+	home = Vector2i(x, world.gen.surface_y(x))
+	explored_min = x - START_VIEW
+	explored_max = x + START_VIEW
+	deepest_y = home.y
+	highest_y = home.y
+	for k in flight.get("research", []):
+		if not research.done.has(str(k)):
+			research.done.append(str(k))
+	receive_flight(flight)
+
+
+## Прилетела ракета: корабль садится рядом с колонией (или на месте первой высадки),
+## жители и груз — в корабле.
+func receive_flight(flight: Dictionary) -> void:
+	var ship := _land_ship()
+	var ids := {}
+	var arrived: Array[Unit] = []
+	for d in flight.get("crew", []):
+		var u := Unit.from_dict(d)
+		ids[u.id] = next_unit_id
+		u.id = next_unit_id
+		next_unit_id += 1
+		u.mother_id = 0
+		u.father_id = 0
+		u.task = Unit.Task.NONE
+		u.state = Unit.State.IDLE
+		u.path.clear()
+		u.project_id = 0
+		u.workplace = 0
+		u.bed_room = 0
+		u.pos = Vector2(RoomType.floor_start(ship) + arrived.size() % RoomType.usable_width(ship), ship.rect.end.y - 1)
+		units.append(u)
+		arrived.append(u)
+	for u in arrived:
+		u.partner_id = ids.get(u.partner_id, 0)
+	for k in flight.get("cargo", {}):
+		var n := int(flight["cargo"][k])
+		var put := _add(k, n, ship)
+		if put < n:
+			_add(k, n - put)
+	_log("Посадка на %s! Корабль — жильё на %d человек; прибыло жителей %d. Копайте вниз прямо из корабля." % [
+		Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good")
+
+
+## Корабль садится на ровное место у базы: комната 9×3 на поверхности.
+func _land_ship() -> Project:
+	var x0 = null
+	for k in 40:
+		for sgn in [1, -1]:
+			var x: int = home.x - 4 + sgn * k * 10
+			var sx := world.gen.surface_y(x)
+			var free := true
+			for q in projects:
+				if q.rect.intersects(Rect2i(x - 1, sx - 4, 11, 5)):
+					free = false
+			if free and _flat_at(x):
+				x0 = x
+				break
+		if x0 != null:
+			break
+	if x0 == null:
+		x0 = home.x - 4
+	var s0 := world.gen.surface_y(x0)
+	var p := Project.new()
+	p.id = next_project_id
+	next_project_id += 1
+	p.kind = Project.Kind.ROOM
+	p.rect = Rect2i(x0, s0 - 3, 9, 3)
+	p.material = "metal"
+	p.purpose = RoomType.SHIP
+	p.phase = Project.Phase.DONE
+	p.paid = true
+	projects.append(p)
+	# Под кораблём земля ровная: подсыпаем, где ниже.
+	for x in range(p.rect.position.x, p.rect.end.x):
+		var below := Vector2i(x, p.rect.end.y)
+		if world.is_open(below.x, below.y):
+			world.set_material(below.x, below.y, Mat.GRAVEL)
+	for c in p.cells():
+		if not world.is_open(c.x, c.y):
+			world.set_material(c.x, c.y, Mat.AIR)
+		interior[c] = p.id
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+	_register_room(p)
+	_rebuild_climb()
+	return p
+
+
+func _flat_at(x: int) -> bool:
+	var s := world.gen.surface_y(x)
+	for dx in 9:
+		if world.gen.surface_y(x + dx) != s:
+			return false
+	return true
+
+
+## Почему нельзя перестроить стены комнаты из mat (пусто — можно).
+func material_error(p: Project, mat: String) -> String:
+	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
+		return "Перестраивать можно только готовую комнату"
+	if mat == p.material:
+		return "Стены уже из этого материала"
+	if not available_materials().has(mat):
+		return "Этот материал ещё не доступен"
+	# Тяжелее стены — больше вес на нижние этажи; слабее — меньше держат верхние.
+	var old := p.material
+	p.material = mat
+	var predicted := loads.compute()
+	var err := ""
+	for q in projects:
+		if q.kind == Project.Kind.ROOM and loads.utilization(q, predicted) > 1.0:
+			err = "%s не выдержит: сверху будет %d т, держит %d т" % [q.title(), roundi(predicted.get(q.id, 0.0)), roundi(Loads.bearing(q))]
+			break
+	p.material = old
+	return err
+
+
+## Перестроить стены готовой комнаты из другого материала (дерево → камень и т. п.).
+## На время работ комната не работает; новые стены — без износа.
+func change_material(p: Project, mat: String) -> bool:
+	wake_idle()
+	if not material_error(p, mat).is_empty():
+		return false
+	_release_beds(p)
+	p.equip_ladder = false
+	p.equip_material = mat
+	p.equip_target = p.purpose
+	p.equip_paid = false
+	p.equip_done = 0.0
+	p.phase = Project.Phase.EQUIP
+	_log("%s: перестраиваем стены — %s" % [p.title(), Project.MATERIALS[mat][0].to_lower()], "info")
+	_try_pay(p)
+	return true
 
 
 ## Строит лестницу в готовой комнате (нужна для второго этажа и выхода наверх).
@@ -1324,9 +2464,11 @@ func cancel_equip(p: Project) -> void:
 		_refund(RoomType.job_cost(p), 1.0 - p.equip_done / RoomType.job_work(p))
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
-	if not p.equip_ladder and not is_hearth_upgrade(p, p.equip_target):
+	if not p.equip_ladder and p.equip_material.is_empty() and p.equip_rocket.is_empty() and not is_hearth_upgrade(p, p.equip_target):
 		p.purpose = RoomType.NONE
 	p.equip_ladder = false
+	p.equip_material = ""
+	p.equip_rocket = ""
 	p.blocked = ""
 	for u in units:
 		if u.project_id == p.id:
@@ -1338,6 +2480,26 @@ func _finish_equip(p: Project) -> void:
 	_return_delivered(p)
 	p.phase = Project.Phase.DONE
 	p.blocked = ""
+	if not p.equip_rocket.is_empty():
+		p.rocket = p.equip_rocket
+		p.equip_rocket = ""
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("Ракета собрана (%s двигатель) — готова к старту! Нажмите на космодром → «Запустить»" % Planet.engine_name(p.rocket), "good")
+		return
+	if not p.equip_material.is_empty():
+		p.material = p.equip_material
+		p.equip_material = ""
+		p.wear = 0.0
+		p.wear_warned = 0
+		for c in p.cells():
+			world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+		for u in units:
+			if u.project_id == p.id:
+				_drop(u)
+		_log("%s: стены перестроены — %s" % [p.title(), Project.MATERIALS[p.material][0].to_lower()], "good")
+		return
 	if p.equip_ladder:
 		p.equip_ladder = false
 		p.ladder = true
@@ -1408,6 +2570,7 @@ func capacity(key: String) -> int:
 func store_rooms() -> Array[Project]:
 	var out := rooms_of(RoomType.STORAGE)
 	out.append_array(rooms_of(RoomType.GRANARY))
+	out.append_array(rooms_of(RoomType.SHIP))
 	return out
 
 
@@ -1463,9 +2626,24 @@ func room_limit(p: Project, key: String) -> int:
 
 func beds_total() -> int:
 	var n := 0
-	for p in rooms_of(RoomType.HOME):
+	for p in bed_rooms():
 		n += RoomType.beds(p)
 	return n
+
+
+## Где спят: жилые комнаты и корабли.
+func bed_rooms() -> Array[Project]:
+	var out := rooms_of(RoomType.HOME)
+	out.append_array(rooms_of(RoomType.SHIP))
+	return out
+
+
+## Корабль, внутри которого клетка c (там воздух, тепло и свет), или null.
+func ship_at(c: Vector2i) -> Project:
+	for p in projects:
+		if p.purpose == RoomType.SHIP and p.kind == Project.Kind.ROOM and p.rect.has_point(c):
+			return p
+	return null
 
 
 func pregnant_count() -> int:
@@ -1478,7 +2656,8 @@ func pregnant_count() -> int:
 
 ## Клетка пола, где стоит кровать (index с 1).
 static func bed_cell(p: Project, index: int) -> Vector2i:
-	return Vector2i(RoomType.floor_start(p) + (index - 1) * 2, p.rect.end.y - 1)
+	# В корабле койки в два яруса — места на полу повторяются.
+	return Vector2i(RoomType.floor_start(p) + ((index - 1) * 2) % maxi(1, RoomType.usable_width(p)), p.rect.end.y - 1)
 
 
 func _claim_bed(u: Unit) -> void:
@@ -1489,7 +2668,7 @@ func _claim_bed(u: Unit) -> void:
 	for o in units:
 		if o.bed_room != 0:
 			taken["%d:%d" % [o.bed_room, o.bed_index]] = true
-	for p in rooms_of(RoomType.HOME):
+	for p in bed_rooms():
 		for i in range(1, RoomType.beds(p) + 1):
 			if not taken.has("%d:%d" % [p.id, i]):
 				u.bed_room = p.id
@@ -1513,7 +2692,15 @@ func food_value() -> float:
 
 
 func has_food() -> bool:
-	return inventory.get("food", 0) + inventory.get("berries", 0) > 0
+	return food_total() > 0
+
+
+## Сколько еды всех видов на складах.
+func food_total() -> int:
+	var n := 0
+	for k in RoomType.FOOD_KEYS:
+		n += int(inventory.get(k, 0))
+	return n
 
 
 func food_low() -> bool:
@@ -1522,7 +2709,7 @@ func food_low() -> bool:
 
 ## Еды меньше, чем на полприёма каждому, — все силы на еду.
 func food_critical() -> bool:
-	return food_value() < units.size() * MEAL_GOAL * 0.5 and drop_total("food") + drop_total("berries") == 0
+	return food_value() < units.size() * MEAL_GOAL * 0.5 and drop_total("food") + drop_total("fish") + drop_total("berries") == 0
 
 
 ## Приём пищи: сначала настоящая еда, потом ягоды; take(ключ, n) отдаёт, сколько взяли.
@@ -1531,7 +2718,7 @@ func _eat_from(u: Unit, take: Callable, bonus := 1.0) -> void:
 	var eaten := 0
 	# Растущий ребёнок насыщается вдвое хуже.
 	var k_scale := bonus * (0.5 if u.child else 1.0)
-	for key in ["food", "berries"]:
+	for key in RoomType.FOOD_KEYS:
 		while eaten < MEAL_UNITS and gained < MEAL_GOAL and u.satiety < 100.0:
 			if int(take.call(key, 1)) <= 0:
 				break
@@ -1701,7 +2888,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 func _report_hazard(m: int, c: Vector2i) -> void:
 	if m == Mat.MAGMA:
 		_log("КАТАСТРОФА: прорыв к магме на глубине %s! Температура %d °C." % [
-			_depth_text(c), int(Env.temperature(c.y, world.gen.surface_y(c.x)))], "danger")
+			_depth_text(c), int(world.gen.temperature(c.y, world.gen.surface_y(c.x)))], "danger")
 	else:
 		_log("Вскрыта подземная полость с водой (глубина %s)." % _depth_text(c), "warning")
 
@@ -1753,6 +2940,9 @@ func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 
 
 func injure(u: Unit, dmg: float, why: String) -> void:
+	if u.invulnerable():
+		u.health = maxf(u.health, 1.0)
+		return
 	if u.ability("collapse_proof") == true and (why.contains("обвал") or why.contains("обломк") or why.contains("засыпало") or why.contains("обрушен")):
 		_log("%s: %s — панцирь выдержал!" % [u.name, why], "good")
 		return
@@ -1836,20 +3026,21 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 	fish[int(lake["id"])] = left - 1.0
 	if u != null and u.workplace == 0:
 		# Свободный житель ловил от голода — съедает улов на месте, остаток оставляет на берегу.
-		var catch := {"food": 2}
+		var catch := {"fish": 2}
 		_eat_from(u, func(key: String, n: int) -> int:
 			var t := mini(n, int(catch.get(key, 0)))
 			if t > 0:
 				catch[key] -= t
 			return t)
-		if catch["food"] > 0:
-			drop_item(u.cell(), "food", catch["food"])
+		if catch["fish"] > 0:
+			drop_item(u.cell(), "fish", catch["fish"])
 	elif u != null:
-		drop_item(u.cell(), "food", 2)
+		drop_item(u.cell(), "fish", 2)
 		if not offline:
-			_pick_up(u, _landing(u.cell()), "food")
+			_pick_up(u, _landing(u.cell()), "fish")
 	else:
-		_add("food", 2)
+		_add("fish", 2)
+		produced["fish"] = int(produced.get("fish", 0)) + 2
 	if u != null and left - 1.0 < 1.0:
 		_log("Рыба в озере кончилась — подождите, пока подрастёт новая", "warning")
 
@@ -1953,11 +3144,10 @@ func _life_tick(dt: float, offline: bool) -> void:
 			elements.affect_unit(u, dt)
 			if not units.has(u):
 				continue
-		var asleep := u.task == Unit.Task.SLEEP and u.state == Unit.State.WORK
-		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * (0.4 if asleep else 1.0) * u.stat("appetite"))
+		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
-		if u.satiety <= 0.0:
-			u.health -= dt * 100.0 / STARVE_TIME
+		if u.satiety <= 0.0 and not u.invulnerable():
+			u.health -= dt * 100.0 / STARVE_TIME / maxf(0.3, u.stat("fasting"))
 			if u.health < 50.0 and not u.starving_warned:
 				u.starving_warned = true
 				_log("%s %s от голода — срочно нужна еда!" % [u.name, "истощена" if u.sex == Unit.Sex.FEMALE else "истощён"], "danger")
@@ -1969,13 +3159,13 @@ func _life_tick(dt: float, offline: bool) -> void:
 					continue
 		elif u.satiety > 30.0:
 			u.starving_warned = false
-		if u.task != Unit.Task.SLEEP:
-			u.energy = maxf(0.0, u.energy - ENERGY_DECAY * dt / maxf(0.3, u.stat("stamina")))
-		var heal := (100.0 / 1200.0 if u.task == Unit.Task.SLEEP else 100.0 / 3600.0) * (2.0 if research.has("medicine") else 1.0)
+		u.energy = 100.0
+		var heal := 100.0 / HEAL_TIME * (2.0 if research.has("medicine") else 1.0) \
+			* (3.0 if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
-			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("berries") > 0:
+			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("fish") + _have_any("berries") > 0:
 				_eat_from(u, _take_any, DINING_BONUS if not rooms_of(RoomType.DINING).is_empty() else 1.0)
 			elif u.satiety < HUNGRY + 5.0:
 				for bx in _bushes:
@@ -2079,7 +3269,7 @@ func is_workplace(p: Project) -> bool:
 		return false
 	if p.is_water_structure():
 		return true
-	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE,
+	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY,
 		RoomType.STORAGE, RoomType.GRANARY]
 
 
@@ -2200,7 +3390,7 @@ func work_task(p: Project) -> int:
 			return Unit.Task.FARM
 		RoomType.LAB:
 			return Unit.Task.RESEARCH
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			return Unit.Task.CRAFT
 		RoomType.STORAGE:
 			return Unit.Task.HARVEST
@@ -2283,7 +3473,7 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			# Нет сырья — мастер сам приносит его со склада в свою мастерскую.
 			if has_inputs(p):
 				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
@@ -2389,6 +3579,9 @@ func update(dt: float) -> void:
 		_tick_exposure(step)
 		_wear_tick(step)
 		_power_tick(step)
+		_lifts_tick(step)
+		_drills_tick(step)
+		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, false)
@@ -2402,6 +3595,7 @@ func update(dt: float) -> void:
 		_explore_t = 0.0
 		_sync_held()
 		explore()
+		_priority_tick()
 		_access_t += 1
 		if _access_t >= 5:
 			_access_t = 0
@@ -2617,11 +3811,42 @@ func on_flooded(p: Project, _c: Vector2i) -> void:
 	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
 
 
+## Удобно ли жителю в клетке: не холоднее и не жарче, чем он терпит.
+func comfortable(u: Unit, c: Vector2i) -> bool:
+	var t := elements.temperature(c)
+	return t >= cold_limit(u) and t <= elements.heat_limit(u)
+
+
+## Житель мёрзнет (или перегрелся) и уже заметно ослаб — пора в тепло.
+func needs_warmth(u: Unit) -> bool:
+	return u.health < WARM_HEALTH and not u.invulnerable() and not comfortable(u, u.cell())
+
+
+## Ближайшее место, где жителю не холодно и не жарко (с запасом 3 °C), — туда греться.
+func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var best = null
+	var best_d := 1 << 30
+	var lo := cold_limit(u) + 3.0
+	var hi := elements.heat_limit(u) - 3.0
+	for c: Vector2i in dist:
+		if dist[c] >= best_d:
+			continue
+		var t := elements.temperature(c)
+		if t >= lo and t <= hi:
+			best_d = dist[c]
+			best = c
+	if best == null:
+		return false
+	_drop(u)
+	_start(u, Unit.Task.WARM, best, best, 0, parents)
+	return true
+
+
 ## Совсем устал или голоден — бросает работу.
 func _needs_interrupt(u: Unit) -> bool:
-	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT:
+	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT or u.task == Unit.Task.WARM:
 		return false
-	return u.energy < 10.0 or (u.satiety < 15.0 and has_food())
+	return (u.satiety < 15.0 and has_food()) or needs_warmth(u)
 
 
 ## Замедление в тесном тоннеле: поток ограничен его шириной.
@@ -2643,7 +3868,12 @@ func congestion(u: Unit) -> float:
 func _move(u: Unit, dt: float) -> void:
 	var budget := dt
 	var jam := congestion(u)
+	# В лифте: кабина везёт сама; у лифта — ждём кабину.
+	if u.lift_id != 0:
+		return
 	while budget > 0.0 and u.path_i < u.path.size():
+		if _try_board(u):
+			return
 		# Путь устарел (рухнуло, убрали лестницу) — останавливаемся и ищем заново.
 		if not pathing.node(u.path[u.path_i]):
 			_drop(u)
@@ -2737,13 +3967,13 @@ func relight() -> void:
 func _lights_tick() -> void:
 	work_lamps.clear()
 	for p in projects:
-		p.lit = false
+		p.lit = p.purpose == RoomType.SHIP and p.phase == Project.Phase.DONE
 	if not powered():
 		return
 	# Включённые вручную горят всегда.
 	var auto: Array[Project] = []
 	for p in projects:
-		if not lightable(p):
+		if not lightable(p) or p.purpose == RoomType.SHIP:
 			continue
 		if p.light == 1:
 			p.lit = true
@@ -2859,6 +4089,10 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.STROLL:
 			_drop(u)
+		Unit.Task.WARM:
+			u.work_t += dt
+			if u.health >= WARM_UNTIL or u.work_t >= WARM_MAX or not comfortable(u, u.cell()):
+				_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
 			rp.repair_done += rate * build_bonus()
@@ -2866,6 +4100,9 @@ func _work(u: Unit, dt: float) -> void:
 				_finish_repair(rp)
 		Unit.Task.CRAFT:
 			var cp := project_by_id(u.project_id)
+			if _mark_full(cp):
+				_drop(u)
+				return
 			cp.farm_progress += rate * automation_bonus()
 			if cp.farm_progress >= RoomType.RECIPES[cp.purpose][2]:
 				cp.farm_progress = 0.0
@@ -2880,6 +4117,9 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.FARM:
 			var p := project_by_id(u.project_id)
+			if _mark_full(p):
+				_drop(u)
+				return
 			p.farm_progress += rate * farm_bonus()
 			while p.farm_progress >= RoomType.FARM_CYCLE:
 				p.farm_progress -= RoomType.FARM_CYCLE
@@ -2888,10 +4128,8 @@ func _work(u: Unit, dt: float) -> void:
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
 		Unit.Task.SLEEP:
-			u.energy = minf(100.0, u.energy + dt * (SLEEP_BED if u.project_id != 0 else SLEEP_FLOOR))
-			# Ночью спят до утра, днём — пока не отдохнут.
-			if not is_night() and u.energy >= WAKE:
-				_drop(u)
+			# Сна больше нет (старые сохранения): спящий сразу встаёт.
+			_drop(u)
 		Unit.Task.EAT:
 			u.work_t += dt
 			if u.work_t >= EAT_TIME:
@@ -2978,7 +4216,7 @@ func _task_valid(u: Unit) -> bool:
 			if u.project_id == EAT_BUSH:
 				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
 			if u.project_id == EAT_DROP:
-				return drop_amount(u.target, "food") + drop_amount(u.target, "berries") > 0
+				return drop_amount(u.target, "food") + drop_amount(u.target, "fish") + drop_amount(u.target, "berries") > 0
 			return true
 		Unit.Task.FISH:
 			if u.project_id == 0:
@@ -2988,7 +4226,7 @@ func _task_valid(u: Unit) -> bool:
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
 			return sp != null and not sp.paused and sp.phase == Project.Phase.DIG and sp.support_paid and sp.support_slice >= 0
-		Unit.Task.SLEEP, Unit.Task.GOTO, Unit.Task.STROLL:
+		Unit.Task.SLEEP, Unit.Task.GOTO, Unit.Task.STROLL, Unit.Task.WARM:
 			return true
 	return false
 
@@ -3006,6 +4244,9 @@ func _drop(u: Unit) -> void:
 	u.gather_room = 0
 	u.from_drop = false
 	u.to_store = false
+	u.lift_id = 0
+	u.riding = false
+	u.cargo_end = -1
 	u.task = Unit.Task.NONE
 	u.project_id = 0
 	u.path.clear()
@@ -3057,8 +4298,8 @@ func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
-	if u.energy < TIRED or (is_night() and u.energy < NIGHT_SLEEP):
-		_start_sleep(u, parents, dist)
+	# Мёрзнет (или перегрелся) и уже ослаб — идёт в тепло (раньше отогревались во сне).
+	if needs_warmth(u) and _start_warm(u, parents, dist):
 		return true
 	if u.satiety < HUNGRY:
 		if has_food():
@@ -3127,9 +4368,14 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 			continue
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
 			continue
+		# Ход, который сверлит бур, жители не копают.
+		if p.bored_by > 0:
+			continue
 		var mine := p.kind == Project.Kind.MINE
 		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
-		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)):
+		# На стройку с приоритетом её бригада (строители, у шахты — шахтёры) идёт вся.
+		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
+				and not (p.priority and priority_crew(u, p)):
 			continue
 		# Шахтёр в шахте копает и ставит крепь, а дерево на крепь носит сам, только если
 		# нет свободных подсобных. На других стройках — только копает.
@@ -3165,6 +4411,54 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		elif (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
 			return true
 	return false
+
+
+## --- Приоритет стройки -------------------------------------------------------------
+## Стройке, ремонту или шахте ставят приоритет: она первая в списке работ, и её бригада
+## (строители, у шахты — шахтёры) бросает другие стройки и идёт сюда, сверх числа рабочих.
+## Готово — приоритет снимается сам.
+const PRIORITY_REDROP := 30.0
+var _prio_dropped := {}
+
+
+func priority_crew(u: Unit, p: Project) -> bool:
+	return u.workplace == 0 and u.profession == (Unit.Prof.MINER if p.kind == Project.Kind.MINE else Unit.Prof.BUILDER)
+
+
+func can_prioritize(p: Project) -> bool:
+	return p.bored_by == 0 and (p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD
+		or p.phase == Project.Phase.EQUIP or (p.phase == Project.Phase.DONE and p.repairing))
+
+
+func set_priority(p: Project, on: bool) -> void:
+	wake_idle()
+	p.priority = on and can_prioritize(p)
+	if p.priority:
+		projects.erase(p)
+		projects.push_front(p)
+		_log("%s: приоритет — бригада идёт сюда в первую очередь" % p.title(), "info")
+	_priority_tick()
+
+
+func _priority_tick() -> void:
+	for p in projects:
+		if not p.priority:
+			continue
+		if not can_prioritize(p):
+			p.priority = false
+			continue
+		if p.paused or not p.blocked.is_empty():
+			continue
+		for u in units:
+			if u.project_id == 0 or u.project_id == p.id or not priority_crew(u, p):
+				continue
+			var other := project_by_id(u.project_id)
+			if other == null or other.priority:
+				continue
+			if game_time - float(_prio_dropped.get(u.id, -1000.0)) < PRIORITY_REDROP:
+				continue
+			_prio_dropped[u.id] = game_time
+			_drop(u)
 
 
 ## Строитель или шахтёр (без места работы): только строят и копают, ничего не носят.
@@ -3219,18 +4513,6 @@ func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, par
 		reserved[key] = u.id
 
 
-func _start_sleep(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
-	_claim_bed(u)
-	var room := project_by_id(u.bed_room)
-	if room != null:
-		var bed := bed_cell(room, u.bed_index)
-		if dist.has(bed):
-			_start(u, Unit.Task.SLEEP, bed, bed, room.id, parents)
-			return
-	# Кровати нет или до неё не добраться — спит где стоит.
-	_start(u, Unit.Task.SLEEP, u.cell(), u.cell(), 0, parents)
-
-
 func _start_eat(u: Unit, parents: Dictionary, dist: Dictionary) -> void:
 	var best = null
 	var best_d := 1 << 30
@@ -3254,7 +4536,7 @@ func _start_eat_drop(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	var best_c := Vector2i.ZERO
 	var best_d := 1 << 30
 	for c: Vector2i in drops:
-		if drop_amount(c, "food") + drop_amount(c, "berries") <= 0:
+		if drop_amount(c, "food") + drop_amount(c, "fish") + drop_amount(c, "berries") <= 0:
 			continue
 		var stand = _drop_stand(c, dist)
 		if stand != null and dist[stand] < best_d:
@@ -3422,6 +4704,11 @@ func _dig_deadlock(now: Array[Vector2i]) -> bool:
 
 
 ## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
+## Вода опасна, только когда до неё клетка-две: о дальней геолог не тревожит (она видна на
+## карте). Магму и газ он чует тем дальше, чем выше уровень геологии.
+const WATER_WARN_RADIUS := 2
+
+
 func _hazard_stop(p: Project, c: Vector2i) -> bool:
 	var r := 2 + 2 * geology_level()
 	for dy in range(-r, r + 1):
@@ -3433,7 +4720,8 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 			var kind := ""
 			match world.get_mat(n.x, n.y):
 				Mat.WATER:
-					kind = "water"
+					if maxi(absi(dx), absi(dy)) <= WATER_WARN_RADIUS:
+						kind = "water"
 				Mat.MAGMA:
 					kind = "magma"
 				Mat.GAS_POCKET:
@@ -3500,6 +4788,8 @@ func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 func _try_room_work(u: Unit, purpose: int, task: int, parents: Dictionary, dist: Dictionary) -> bool:
 	for p in rooms_of(purpose):
 		if _closed_for(u, p):
+			continue
+		if _mark_full(p):
 			continue
 		if task == Unit.Task.CRAFT and not has_inputs(p):
 			continue
@@ -3608,6 +4898,11 @@ func _claimed_drop(c: Vector2i, key: String) -> int:
 ## на месте и сразу идёт в её материалы; на склад уносят только излишек.
 func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if key.is_empty() or n <= 0:
+		return
+	produced[key] = int(produced.get(key, 0)) + n
+	# Нефть из вскрытого пласта — сразу по трубам в хранилище (нет его — разлилась).
+	if RoomType.PIPED.has(key):
+		_add(key, n)
 		return
 	known_resources[key] = true
 	if site != null:
@@ -3764,6 +5059,9 @@ func _room_stand(room: Project, dist: Dictionary) -> Variant:
 
 ## Склад (амбар) принимает добро, только когда на него назначен работник.
 func store_staffed(room: Project) -> bool:
+	# Трюм корабля принимает всегда — экипаж на месте.
+	if room.purpose == RoomType.SHIP:
+		return true
 	return not room.paused and not assigned_to(room).is_empty()
 
 
@@ -3784,6 +5082,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_n := 0
 	var best_d := 1 << 30
 	var best_room: Project = null
+	var best_lift_end := -1
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
 		if stand == null or dist[stand] >= best_d:
@@ -3801,13 +5100,21 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			if avail <= 0:
 				continue
 			var to = _store_target(k, dist, only)
-			if to == null:
+			# До грузового лифта ближе, чем до склада, — несут в лифт (он довезёт до склада).
+			var lift = _cargo_route(k, dist, dist[to[0]] if to != null else (1 << 30), only)
+			if to == null and lift == null:
 				continue
 			best = stand
 			best_c = c
 			best_k = k
-			best_room = to[1]
-			best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
+			best_lift_end = -1
+			if lift != null:
+				best_room = lift[1]
+				best_lift_end = lift[2]
+				best_n = mini(carry_cap(), avail)
+			else:
+				best_room = to[1]
+				best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
 			best_d = dist[stand]
 			break
 	if best == null:
@@ -3818,6 +5125,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	u.from_drop = true
 	u.haul_src = best_c
 	u.to_store = true
+	u.cargo_end = best_lift_end
 	_start(u, Unit.Task.HAUL, best, best, best_room.id, parents)
 	return true
 
@@ -3932,6 +5240,8 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		return false
 	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
 	for k in need:
+		if RoomType.PIPED.has(k):
+			continue
 		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
 		if want <= 0:
 			continue
@@ -4055,7 +5365,11 @@ func _haul_pickup(u: Unit) -> void:
 	var stand = null
 	if u.to_store:
 		# Несёт в тот склад, куда собирался; там уже нет места — в ближайший другой.
-		if p != null and RoomType.is_store(p.purpose) and store_staffed(p):
+		if p != null and p.kind == Project.Kind.LIFT and u.cargo_end >= 0 and lift_powered(p):
+			stand = lift_station(p, u.cargo_end)
+			if stand != null and not reach[1].has(stand):
+				stand = null
+		elif p != null and RoomType.is_store(p.purpose) and store_staffed(p):
 			stand = _room_stand(p, reach[1])
 		if stand == null:
 			var to = _store_target(u.carry_key, reach[1])
@@ -4086,8 +5400,13 @@ func _haul_deliver(u: Unit) -> void:
 	var n := u.carry_amount
 	var to_storage := u.gather_room != 0 or u.to_store
 	var spot := u.cell()
+	var end := u.cargo_end
 	u.carry_amount = 0
 	_drop(u)
+	if p != null and p.kind == Project.Kind.LIFT and to_storage and end >= 0:
+		# Груз — в грузовой лифт: он довезёт до склада у другого конца.
+		p.lift_buf[end][k] = int(p.lift_buf[end].get(k, 0)) + n
+		return
 	if to_storage or p == null:
 		# В свой склад; не влезло — остаётся лежать здесь (подберут и отнесут в другой).
 		var room: Project = p if p != null and RoomType.is_store(p.purpose) else store_at(spot)
@@ -4304,7 +5623,7 @@ func service_years(p: Project) -> float:
 		years *= WEAR_UNDERGROUND.get(m, 1.0)
 		# В жаре глубоких шахт дерево и металл портятся ещё быстрее.
 		var c := p.rect.get_center()
-		var t := Env.temperature(c.y, world.gen.surface_y(c.x))
+		var t := world.gen.temperature(c.y, world.gen.surface_y(c.x))
 		if m != "stone" and t > 40.0:
 			years /= 1.0 + (t - 40.0) / 60.0
 	if research.has("maintenance"):
@@ -4323,6 +5642,8 @@ func years_left(p: Project) -> float:
 func _wear_tick(dt: float) -> void:
 	for p: Project in projects.duplicate():
 		if not projects.has(p) or (p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP):
+			continue
+		if p.purpose == RoomType.SHIP:
 			continue
 		p.wear = minf(1.0, p.wear + dt / (service_years(p) * YEAR))
 		for i in WEAR_WARN.size():
@@ -4409,12 +5730,24 @@ func _cancel_repair(p: Project) -> void:
 	_log("%s: ремонт отменён" % p.title(), "info")
 
 
-## Постройка рухнула: обломки, травмы, падают верхние этажи, порода может обвалиться.
+## Постройка рухнула: всё, что в ней лежало, пропадает, кто был внутри — гибнет (кроме
+## сверхюнитов), падают верхние этажи, порода может обвалиться. Дегазация взрывается.
 func collapse(p: Project, why: String) -> void:
 	if not projects.has(p):
 		return
 	_log("ОБРУШЕНИЕ: %s (%s)" % [p.title(), why], "danger")
-	_return_delivered(p)
+	# Запасы, сырьё мастерской и привезённые материалы гибнут вместе с постройкой.
+	var lost: PackedStringArray = []
+	for k in p.held:
+		var n := int(p.held[k])
+		if n > 0:
+			inventory[k] = maxi(0, int(inventory.get(k, 0)) - n)
+			lost.append("%s %d" % [Mat.resource_name(k).to_lower(), n])
+	p.held.clear()
+	p.stock.clear()
+	p.delivered.clear()
+	if not lost.is_empty():
+		_log("Под обломками пропало: %s" % ", ".join(lost), "danger")
 	_release_beds(p)
 	projects.erase(p)
 	for c in p.cells():
@@ -4423,20 +5756,27 @@ func collapse(p: Project, why: String) -> void:
 		deck.erase(c)
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_restore_water_overlaps(p)
-	for u in units:
-		if u.project_id == p.id:
-			_drop(u)
+	_rebuild_climb()
 	for u: Unit in units.duplicate():
 		var c := u.cell()
-		if not (p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1))):
+		if p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1)):
+			if p.is_water_structure():
+				# Настил рухнул в воду — житель выбирается на берег.
+				_drop(u)
+				u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
+				u.state = Unit.State.IDLE
+				injure(u, 10.0, "упал в воду с рухнувшего настила")
+			else:
+				injure(u, 100000.0, "погиб(ла) под обломками")
 			continue
-		if p.is_water_structure():
-			# Настил рухнул в воду — житель выбирается на берег.
-			u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
-			u.state = Unit.State.IDLE
-			injure(u, 10.0, "упал в воду с рухнувшего настила")
-			continue
-		injure(u, 40.0, "завалило обломками")
+		# Кто работал здесь или шёл через рухнувшее — останавливается и ищет путь заново.
+		var through := u.project_id == p.id
+		for i in range(u.path_i, u.path.size()):
+			if through:
+				break
+			through = p.rect.has_point(u.path[i])
+		if through:
+			_drop(u)
 	if p.kind == Project.Kind.ROOM:
 		# Стены и перекрытия ложатся обломками на пол.
 		var floor_y := p.rect.end.y - 1
@@ -4446,6 +5786,8 @@ func collapse(p: Project, why: String) -> void:
 		for u in units:
 			if u.cell().y == floor_y and p.rect.has_point(u.cell()):
 				u.pos.y = floor_y - 1
+	if p.kind == Project.Kind.ROOM and RoomType.EXPLOSIVE.has(p.purpose):
+		_explode(p)
 	# Этажи сверху теряют опору и тоже рушатся.
 	for q: Project in projects.duplicate():
 		if q.kind != Project.Kind.ROOM or q.rect.end.y != p.rect.position.y:
@@ -4457,6 +5799,31 @@ func collapse(p: Project, why: String) -> void:
 	for c in p.cells():
 		elements.on_opened(c)
 	physics.check_area(p.cells())
+
+
+## Взрыв рухнувшей дегазации: всё вокруг на 3, 6 или 9 м (по размеру комнаты) рушится,
+## порода трескается в обломки, кто рядом — гибнет (кроме сверхюнитов).
+func _explode(p: Project) -> void:
+	var rad: int = [3, 6, 9][clampi(RoomType.blocks(p), 1, 3) - 1]
+	var area := p.rect.grow(rad)
+	_log("ВЗРЫВ: %s — разрушено всё вокруг на %d м" % [p.title(), rad], "danger")
+	for u: Unit in units.duplicate():
+		if area.has_point(u.cell()):
+			injure(u, 100000.0, "погиб(ла) при взрыве")
+	var cells: Array[Vector2i] = []
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
+			var c := Vector2i(x, y)
+			if p.rect.has_point(c) or y < world.gen.surface_y(x):
+				continue
+			var m := world.get_mat(x, y)
+			if Mat.is_solid(m) and m != Mat.RUBBLE:
+				world.set_material(x, y, Mat.RUBBLE)
+				cells.append(c)
+	for q: Project in projects.duplicate():
+		if q.rect.intersects(area):
+			collapse(q, "взрыв рядом")
+	physics.check_area(cells)
 
 
 func _room_supported(q: Project) -> bool:
@@ -4472,6 +5839,9 @@ func _room_supported(q: Project) -> bool:
 ## Хватает ли сырья на цикл мастерской.
 ## Сколько сырья k есть у мастерской: принесённое; без игрока жители берут и со склада.
 func _input_have(p: Project, k: String) -> int:
+	# Нефть — по трубам прямо из хранилища.
+	if RoomType.PIPED.has(k):
+		return inventory.get(k, 0)
 	return p.stock.get(k, 0) + (inventory.get(k, 0) if offline else 0)
 
 
@@ -4523,8 +5893,59 @@ func missing_inputs(p: Project) -> Dictionary:
 
 ## Готовая продукция: при игроке — кучей на полу мастерской (её уносят подсобные),
 ## без игрока — сразу на склад (если на нём есть работник).
+## Производства (ферма, печь, кузница) держат готовое у себя — в ящиках у входа, не больше
+## PRODUCE_CAP; дальше работа стоит, пока подсобные или работники склада не унесут.
+const PRODUCE_CAP := 100
+const FULL_TEXT := "Склад постройки полон (%d) — отнесите готовое в амбар или на склад"
+
+
+## Ящики с готовым у входа в производство.
+static func output_cell(p: Project) -> Vector2i:
+	return Vector2i(RoomType.floor_start(p), p.rect.end.y - 1)
+
+
+func is_producer(p: Project) -> bool:
+	return p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and (p.purpose == RoomType.FARM \
+		or (RoomType.RECIPES.has(p.purpose) and not RoomType.PIPED.has(RoomType.RECIPES[p.purpose][1].keys()[0])))
+
+
+## Сколько готового лежит в ящиках производства.
+func output_held(p: Project) -> int:
+	var n := 0
+	var d: Dictionary = drops.get(output_cell(p), {})
+	for k in d:
+		n += int(d[k])
+	return n
+
+
+func output_full(p: Project) -> bool:
+	return is_producer(p) and output_held(p) >= PRODUCE_CAP
+
+
+## Производство, чьи это ящики (клетка c), или null.
+func producer_at(c: Vector2i) -> Project:
+	for p in projects:
+		if is_producer(p) and output_cell(p) == c:
+			return p
+	return null
+
+
+## Отметка «склад постройки полон» появляется и снимается сама.
+func _mark_full(p: Project) -> bool:
+	var full := output_full(p)
+	if full and p.blocked.is_empty():
+		p.blocked = FULL_TEXT % PRODUCE_CAP
+	elif not full and p.blocked.begins_with("Склад постройки полон"):
+		p.blocked = ""
+	return full
+
+
 func _produce(p: Project, k: String, n: int) -> void:
-	drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
+	if RoomType.PIPED.has(k):
+		produced[k] = int(produced.get(k, 0)) + n
+		_add(k, n)
+		return
+	drop_item(output_cell(p), k, n)
 
 
 func _craft(p: Project) -> void:
@@ -4655,7 +6076,7 @@ func _hearth_tick(dt: float) -> void:
 			continue
 		# Холодно ли без огня (своё тепло не считаем).
 		var c := p.rect.get_center()
-		var cold := Env.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
+		var cold := world.gen.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
 		if not cold:
 			# Потеплело — топить не нужно: «нет дров» больше не тревога (иначе все рубят лес).
 			if p.blocked.begins_with("Нет дров"):
@@ -4685,10 +6106,15 @@ func _power_tick(dt: float) -> void:
 		p.burning = false
 		if p.paused:
 			continue
-		# Газовый жжёт только метан из баков дегазации, обычный — уголь, а без него дрова.
+		# Газовый жжёт только метан из баков дегазации, дизельный — дизель из нефтехранилища,
+		# обычный — уголь, а без него дрова.
 		var gas := p.purpose == RoomType.GAS_GEN
+		var diesel := p.purpose == RoomType.DIESEL_GEN
 		if p.farm_progress <= 0.0:
-			if gas:
+			if diesel:
+				if _remove("diesel", 1) >= 1:
+					p.farm_progress += RoomType.FUEL_TIME * 2.0
+			elif gas:
 				if _remove("methane", 1) >= 1:
 					p.farm_progress += RoomType.FUEL_TIME
 			elif _remove("coal", 1) >= 1:
@@ -4699,13 +6125,24 @@ func _power_tick(dt: float) -> void:
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true
-			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0))
-			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана"):
+			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0) * (1.5 if diesel else 1.0))
+			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана") or p.blocked.begins_with("Нет дизеля"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
-			p.blocked = "Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова"
+			p.blocked = "Нет дизеля: нужен нефтезавод и топливо в нефтехранилище" if diesel else \
+				("Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова")
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 	_hearth_tick(dt)
+	for p in lifts():
+		if not p.paused:
+			power_used += LIFT_POWER
+	# Реактор корабля: свой ток, тепло, воздух и свет внутри.
+	for p in rooms_of(RoomType.SHIP):
+		power_made += RoomType.SHIP_POWER
+		p.burning = true
+	for p in projects:
+		if _drill_active(p):
+			power_used += DRILL_POWER
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
 			continue
@@ -4771,7 +6208,7 @@ func season() -> int:
 
 
 func is_winter() -> bool:
-	return season() == Season.WINTER
+	return season() == Season.WINTER and world.gen.planet_id == "earth"
 
 
 ## Отклонение температуры на поверхности от Env.SURFACE_TEMP: холоднее всего в середине января.
@@ -4789,6 +6226,9 @@ var _last_month := -1
 
 ## Смена времён года — в журнал, с подсказкой, к чему готовиться.
 func _season_tick() -> void:
+	# На других планетах времён года нет.
+	if world.gen.planet_id != "earth":
+		return
 	var m := month()
 	if m == _last_month:
 		return
@@ -4911,6 +6351,9 @@ func advance_offline(dt: float) -> int:
 		_tick_exposure(step)
 		_wear_tick(step)
 		_power_tick(step)
+		_lifts_tick(step)
+		_drills_tick(step)
+		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
 		_life_tick(step, true)
@@ -4941,7 +6384,7 @@ func advance_offline(dt: float) -> int:
 					var p: Project = j[3]
 					p.farm_progress += j[1] * step
 					var need: float = RoomType.RECIPES[p.purpose][2]
-					while p.farm_progress >= need and has_inputs(p):
+					while p.farm_progress >= need and has_inputs(p) and not output_full(p):
 						p.farm_progress -= need
 						_craft(p)
 					p.farm_progress = minf(p.farm_progress, need)
@@ -4953,6 +6396,7 @@ func advance_offline(dt: float) -> int:
 					while p.farm_progress >= RoomType.FARM_CYCLE:
 						p.farm_progress -= RoomType.FARM_CYCLE
 						_add("food", 1)
+						produced["food"] = int(produced.get("food", 0)) + 1
 				Unit.Task.SUPPORT:
 					var p: Project = j[3]
 					p.support_progress += j[1] * step
@@ -5126,6 +6570,8 @@ func _offline_job(u: Unit, taken: Dictionary) -> Array:
 						continue
 					if p.phase == Project.Phase.DONE and not p.repairing:
 						continue
+					if p.bored_by > 0:
+						continue
 					if kind != "build" and p.phase == Project.Phase.DIG:
 						for x in uncleared(p):
 							if not taken.has("h%d" % x):
@@ -5209,7 +6655,7 @@ func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
 			if not research.current.is_empty():
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.RESEARCH, p]
-		RoomType.KILN, RoomType.FORGE:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 			if has_inputs(p):
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.CRAFT, p]
@@ -5253,6 +6699,8 @@ func _offline_harvest(taken: Dictionary) -> Array:
 func holders(key: String) -> Array[Project]:
 	if key == "methane":
 		return rooms_of(RoomType.DEGAS)
+	if key == "oil" or key == "diesel":
+		return rooms_of(RoomType.OIL_TANK)
 	var out: Array[Project] = []
 	for p in store_rooms():
 		if RoomType.stores(p, key):
@@ -5264,6 +6712,10 @@ func holders(key: String) -> Array[Project]:
 func room_cap(p: Project, key: String) -> int:
 	if key == "methane":
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
+	if key == "oil" or key == "diesel":
+		return RoomType.OIL_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.OIL_TANK else 0
+	if p.purpose == RoomType.SHIP:
+		return 0 if RoomType.BULK.has(key) else RoomType.SHIP_HOLD
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
 		return 0
 	var c := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
@@ -5296,7 +6748,7 @@ func base_have(key: String) -> int:
 
 
 func _base_cap(key: String) -> int:
-	return 0 if key == "methane" else RoomType.BASE_CAPACITY
+	return 0 if RoomType.PIPED.has(key) else RoomType.BASE_CAPACITY
 
 
 ## Склад (амбар) в клетке c.
@@ -5352,7 +6804,7 @@ func _migrate_stores() -> void:
 			var put := clampi(room_cap(p, k) - held_in(p, k), 0, extra)
 			p.held[k] = held_in(p, k) + put
 			extra -= put
-		if k == "methane" and extra > 0:
+		if RoomType.PIPED.has(k) and extra > 0:
 			inventory[k] = int(inventory[k]) - extra
 
 
@@ -5389,11 +6841,13 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 		return 0
 	known_resources[key] = true
 	_clamp_held(key)
+	if RoomType.BULK.has(key):
+		# Пустая порода не копится — исчезает.
+		inventory.erase(key)
+		return amount
 	var have: int = inventory.get(key, 0)
 	var put := 0
-	if RoomType.BULK.has(key):
-		put = amount
-	elif room != null:
+	if room != null:
 		put = clampi(room_limit(room, key) - held_in(room, key), 0, amount)
 		room.held[key] = held_in(room, key) + put
 	else:
@@ -5401,7 +6855,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 		for p in holders(key):
 			if put >= amount:
 				break
-			if key != "methane" and not store_staffed(p):
+			if not RoomType.PIPED.has(key) and not store_staffed(p):
 				continue
 			var free := clampi(room_limit(p, key) - held_in(p, key), 0, amount - put)
 			if free > 0:
@@ -5413,7 +6867,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 	if room != null:
 		return put
 	# Предупреждаем один раз на ресурс, пока не построят новый склад.
-	if put < amount and not _full_warned.has(key) and key != "methane":
+	if put < amount and not _full_warned.has(key) and not RoomType.PIPED.has(key):
 		_full_warned[key] = true
 		_log("Склад полон: %s (%d). Постройте склад, лишнее выбрасывается." % [Mat.resource_name(key).to_lower(), cap], "warning")
 	return put
@@ -5486,7 +6940,8 @@ func load_dict(d: Dictionary) -> void:
 	inventory.clear()
 	var inv: Dictionary = d.get("inventory", {})
 	for k in inv:
-		inventory[k] = int(inv[k])
+		if not RoomType.BULK.has(k):
+			inventory[k] = int(inv[k])
 		known_resources[k] = true
 	for k in d.get("known_resources", []):
 		known_resources[str(k)] = true
@@ -5502,6 +6957,10 @@ func load_dict(d: Dictionary) -> void:
 	var st: Dictionary = d.get("store_targets", {})
 	for k in st:
 		store_targets[str(k)] = int(st[k])
+	# Раньше еду для склада ловили как «food» — теперь это рыба.
+	if store_targets.has("food"):
+		store_targets["fish"] = store_targets["food"]
+		store_targets.erase("food")
 	for pd in d.get("projects", []):
 		var p := Project.from_dict(pd)
 		projects.append(p)
@@ -5510,7 +6969,7 @@ func load_dict(d: Dictionary) -> void:
 			for k in p.targets:
 				store_targets[k] = maxi(int(store_targets.get(k, 0)), int(p.targets[k]))
 		_register_room(p)
-		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
+		if (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP) and p.kind != Project.Kind.DRILL:
 			for c in p.cells():
 				interior[c] = p.id
 		_register_deck(p)
@@ -5556,6 +7015,12 @@ func load_dict(d: Dictionary) -> void:
 	research.load_dict(d.get("research", {}))
 	if int(d.get("stores_v", 0)) < 1:
 		_migrate_stores()
+	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
+	# материалы возвращаются на склад.
+	for p in projects.duplicate():
+		if p.kind == Project.Kind.DRILL and p.rect.size != Vector2i(3, 3):
+			cancel_project(p)
+			_log("Бур переделан: теперь это машина 3×3, которой в карточке велят, куда и сколько сверлить. Старый бур убран, материалы вернулись — поставьте его заново.", "warning")
 	loads.loads = loads.compute()
 	explore()
 	_refresh_bushes()

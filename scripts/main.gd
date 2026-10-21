@@ -10,6 +10,12 @@ const STATUS_INTERVAL := 0.2
 
 var world: WorldData
 var colony: Colony
+## Все миры (Земля и планеты) и полёты; на экране — мир _planet.
+var universe := Universe.new()
+var _planet := "earth"
+var _cameras := {}
+## Сборка экспедиции: космодром, планета, экипаж, груз.
+var _launch := {}
 var world_view: WorldView
 var camera: CameraController
 var hud: Hud
@@ -44,6 +50,15 @@ var _room_w := 6
 var _send_unit := 0
 
 
+## Выбранный в карточке материал для перестройки стен: id комнаты -> материал.
+## На сколько метров продлевать шахту, тоннель или лифт (кнопки «Продлить»).
+var _extend_len := 5
+## Фильтры в списках выбора жителей: только без пары, только по призванию.
+var _pick_filters := {"single": false, "calling": false}
+## На сколько метров сверлить буром.
+var _drill_len := 10
+var _wall_choice := {}
+
 func _ready() -> void:
 	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
 	ThemeDB.fallback_font = Fonts.bold()
@@ -57,8 +72,9 @@ func _ready() -> void:
 	colony = Colony.new(world)
 	_home = Vector2i(0, world.gen.surface_y(0))
 	_build_scene()
-	colony.event_logged.connect(hud.log_event)
-	colony.quaked.connect(func(mag: int) -> void: _shake = 1.2 + mag * 0.8)
+	universe.base_seed = seed_value
+	_hook(universe.add_world("earth", world, colony))
+	universe.arrived.connect(_on_arrived)
 
 	var start := _home + Vector2i(0, -3)
 	if data.is_empty():
@@ -70,9 +86,18 @@ func _ready() -> void:
 		var cam: Array = data.get("camera", [])
 		if cam.size() == 2:
 			start = Vector2i(int(cam[0]), int(cam[1]))
+		var n0 := universe.worlds.size()
+		universe.load_dict(data.get("universe", {}))
+		for i in range(n0, universe.worlds.size()):
+			_hook(universe.worlds[i])
+		for k in data.get("cameras", {}):
+			var cc: Array = data["cameras"][k]
+			_cameras[str(k)] = Vector2i(int(cc[0]), int(cc[1]))
 		_apply_offline(float(data.get("saved_at", 0.0)))
 	world_view.focus_cell(start)
 	_update_status()
+	if data.get("active", "earth") != "earth":
+		_switch_world(str(data["active"]))
 
 
 ## Игру закрыли (любым способом) — сохраняем последнее состояние.
@@ -125,6 +150,13 @@ func _build_scene() -> void:
 	camera.paint_ended.connect(_on_paint_end)
 	camera.paint_cancelled.connect(_clear_preview)
 	hud.mode_changed.connect(_set_mode)
+	hud.worlds_pressed.connect(_show_worlds)
+	hud.food_pressed.connect(func() -> void:
+		var parts: PackedStringArray = []
+		for k in RoomType.FOOD_KEYS:
+			parts.append("%s %d" % [Mat.resource_name(k).to_lower(), int(colony.inventory.get(k, 0))])
+		hud.log_event("Еда: " + " · ".join(parts), "info"))
+	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items(), _build_tool_locks()))
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.save_pressed.connect(func() -> void:
@@ -147,7 +179,11 @@ func _build_scene() -> void:
 func _process(delta: float) -> void:
 	# Большие паузы (сворачивание) учитываются как оффлайн, а не через delta.
 	var dt := 0.0 if _away else minf(delta, 0.25)
-	colony.update(dt * SPEEDS[_speed_idx])
+	# Время идёт во всех мирах сразу; ракеты летят.
+	var step: float = dt * SPEEDS[_speed_idx]
+	for e in universe.worlds:
+		(e["colony"] as Colony).update(step)
+	universe.update(step)
 	_clamp_camera()
 	if _shake > 0.0:
 		_shake -= delta
@@ -158,6 +194,12 @@ func _process(delta: float) -> void:
 	_status_timer -= delta
 	if _status_timer <= 0.0:
 		_status_timer = STATUS_INTERVAL
+		# Колония на планете вымерла (и туда никто не летит) — мира больше нет.
+		for gone in universe.prune_dead():
+			hud.log_event("Колония на планете %s погибла. Нужна новая экспедиция и новый корабль." % Planet.planet_name(gone), "danger")
+			if gone == _planet:
+				_planet = "__gone"
+				_switch_world("earth")
 		_update_status()
 		_refresh_info()
 	_autosave += delta
@@ -229,7 +271,223 @@ func _new_game(disasters: bool) -> void:
 func _save() -> void:
 	if _restarting:
 		return
-	SaveSystem.save(world, colony, world_view.camera_cell())
+	_cameras[_planet] = world_view.camera_cell()
+	var earth: Dictionary = universe.worlds[0]
+	var data := SaveSystem.serialize(earth["world"], earth["colony"], _cameras.get("earth", world_view.camera_cell()))
+	data["universe"] = universe.to_dict(_cameras)
+	data["active"] = _planet
+	var cams := {}
+	for k in _cameras:
+		cams[k] = [_cameras[k].x, _cameras[k].y]
+	data["cameras"] = cams
+	SaveSystem.write(data)
+
+
+## События колонии — в журнал; с других планет — только важное, с названием планеты.
+func _hook(e: Dictionary) -> void:
+	var c: Colony = e["colony"]
+	var planet: String = e["planet"]
+	c.event_logged.connect(func(t: String, k: String) -> void:
+		if c == colony:
+			hud.log_event(t, k)
+		elif k == "danger" or k == "good":
+			hud.log_event("[%s] %s" % [Planet.planet_name(planet), t], k))
+	c.quaked.connect(func(mag: int) -> void:
+		if c == colony:
+			_shake = 1.2 + mag * 0.8)
+
+
+func _on_arrived(planet: String, c: Colony, new_world: bool) -> void:
+	if new_world:
+		_hook(universe.entry(planet))
+	hud.log_event("Ракета долетела: %s! Откройте «Миры», чтобы перейти туда." % Planet.planet_name(planet), "good")
+	if new_world and c == colony:
+		pass
+
+
+## Перейти в мир планеты: экран, небо и журнал — его.
+func _switch_world(planet: String) -> void:
+	var e := universe.entry(planet)
+	if e.is_empty() or planet == _planet:
+		return
+	_cameras[_planet] = world_view.camera_cell()
+	_to_look()
+	hud.close_overlays()
+	remove_child(world_view)
+	world_view.queue_free()
+	world = e["world"]
+	colony = e["colony"]
+	_planet = planet
+	_home = colony.home
+	world_view = WorldView.new()
+	add_child(world_view)
+	world_view.setup(world, colony, camera)
+	world_view.focus_cell(_cameras.get(planet, colony.home + Vector2i(0, -3)))
+	_apply_planet_sky()
+	_sky_ground = NAN
+	_update_status()
+	hud.log_event("%s: жителей %d" % [Planet.planet_name(planet), colony.units.size()], "info")
+
+
+## «Миры»: где колонии и сколько в них жителей, какие ракеты летят и когда сядут.
+func _show_worlds() -> void:
+	_info_target = []
+	var items := []
+	for e in universe.worlds:
+		var c: Colony = e["colony"]
+		var p: String = e["planet"]
+		var here: bool = p == _planet
+		var kids := c.units.filter(func(u: Unit) -> bool: return u.child).size()
+		items.append({"name": Planet.planet_name(p) + (" — вы здесь" if here else ""),
+			"info": "жителей %d%s · %s" % [c.units.size(), (" (детей %d)" % kids) if kids > 0 else "",
+				Planet.data(p)["desc"]],
+			"button": "" if here else "Перейти", "pick": func() -> void:
+				_switch_world(p)})
+	for f in universe.flights:
+		var days := int(ceilf(float(f["left"]) / Colony.DAY))
+		var cargo := 0
+		for k in f["cargo"]:
+			cargo += int(f["cargo"][k])
+		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
+			"info": "жителей %d, груза %d · сядет через %d дн." % [f["crew"].size(), cargo, days]})
+	hud.show_panel({"title": "Миры", "subtitle": "время идёт во всех мирах сразу",
+		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракетостроение»): до 10 жителей и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
+		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
+		"actions": [["Закрыть", func() -> void: hud.hide_info()]]})
+
+
+## Космодром: что нужно на ракету и что есть.
+func _rocket_rows(p: Project, rows: Array) -> void:
+	if not p.rocket.is_empty():
+		rows.append({"type": "text", "text": "Ракета на столе: %s двигатель — летит на %s. Нажмите «Запустить»: выберите планету, экипаж (до 10) и груз (до 200)." % [
+			Planet.engine_name(p.rocket), ", ".join(Planet.ORDER.filter(func(id: String) -> bool: return Colony.rocket_reaches(p.rocket, id)).map(
+				func(id: String) -> String: return Planet.planet_name(id)))]})
+		return
+	if p.phase == Project.Phase.EQUIP and not p.equip_rocket.is_empty():
+		return
+	for engine in ["chem", "nuclear"]:
+		if engine == "nuclear" and not colony.research.has("nuclear_engine"):
+			rows.append({"type": "text", "text": "Ядерная ракета (до Юпитера, Сатурна, Урана и Нептуна) — после «Ядерного двигателя»."})
+			continue
+		rows.append({"type": "resources", "label": "Ракета, %s двигатель:" % Planet.engine_name(engine), "items": _cost_items(RoomType.ROCKET_COST[engine])})
+	var err := colony.launchpad_error(p)
+	if not err.is_empty():
+		rows.append({"type": "warning", "text": err})
+
+
+## Запуск, шаг 1: куда лететь.
+func _launch_pick_planet(pad: Project) -> void:
+	_info_target = []
+	_launch = {"pad": pad, "planet": "", "crew": [], "cargo": {}}
+	var items := []
+	for id in Planet.ORDER:
+		var d := Planet.data(id)
+		var ok := Colony.rocket_reaches(pad.rocket, id)
+		var col := universe.entry(id)
+		var info := "%s Лететь %d мес.%s" % [d["desc"], int(d["travel"]),
+			(" · там колония: жителей %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
+		if not ok:
+			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]
+		items.append({"name": d["name"], "info": info, "button": "Сюда" if ok else "", "pick": func() -> void:
+			_launch["planet"] = id
+			_launch_crew()})
+	hud.show_panel({"title": "Запуск: куда лететь?", "subtitle": "ракета: %s двигатель" % Planet.engine_name(pad.rocket),
+		"controls": [{"type": "people", "label": "Планеты:", "items": items, "empty": ""}],
+		"actions": [["Назад", func() -> void: _show_project(pad)]]})
+
+
+## Запуск, шаг 2: экипаж (до 10).
+func _launch_crew() -> void:
+	_info_target = []
+	var crew: Array = _launch["crew"]
+	var planet: String = _launch["planet"]
+	var hot: bool = float(Planet.data(planet)["under"]) > 30.0
+	var items := []
+	for u in colony.units:
+		if u.child:
+			continue
+		var on := crew.has(u)
+		var stat := "жара" if hot else "холод"
+		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
+			"info": "%s · %s %d%% · %s%s" % [_family_text(u), stat, roundi(u.stat("heat" if hot else "cold") * 100),
+				colony.role_name(u).to_lower(), " · СВЕРХЮНИТ" if u.invulnerable() else ""],
+			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
+				if crew.has(u):
+					crew.erase(u)
+				elif crew.size() < RoomType.SHIP_BEDS:
+					crew.append(u)
+				else:
+					hud.log_event("В ракете — до %d жителей" % RoomType.SHIP_BEDS, "warning")
+				_launch_crew()})
+	hud.show_panel({"title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
+		"subtitle": Planet.data(planet)["desc"],
+		"controls": [{"type": "people", "label": "Кто летит (важно: %s):" % ("стойкость к жаре" if hot else "стойкость к холоду"),
+			"items": items, "empty": "Нет взрослых жителей."}],
+		"actions": [["Дальше: груз", _launch_cargo, "primary"], ["Назад", func() -> void: _launch_pick_planet(_launch["pad"])]]})
+
+
+## Запуск, шаг 3: груз (до 200) — и старт.
+func _launch_cargo() -> void:
+	_info_target = []
+	var cargo: Dictionary = _launch["cargo"]
+	var controls := []
+	var keys: Array = colony.inventory.keys()
+	keys.sort()
+	for k in keys:
+		var have: int = colony.inventory[k]
+		if have <= 0 or RoomType.PIPED.has(k) or RoomType.BULK.has(k):
+			continue
+		controls.append({"label": "%s (есть %d)" % [Mat.resource_name(k), have], "value": int(cargo.get(k, 0)), "min": 0,
+			"max": mini(have, RoomType.SHIP_HOLD), "step": 10, "changed": func(v: int) -> void:
+				cargo[k] = v
+				hud.refresh_panel(_launch_cargo_spec())})
+	var spec := _launch_cargo_spec()
+	spec["controls"] = controls
+	spec["controls_first"] = true
+	spec["actions"] = [["Старт!", _do_launch, "primary"], ["Назад", _launch_crew]]
+	hud.show_panel(spec)
+
+
+func _launch_cargo_spec() -> Dictionary:
+	var total := 0
+	for k in _launch["cargo"]:
+		total += int(_launch["cargo"][k])
+	return {"title": "Груз: %d из %d" % [total, RoomType.SHIP_HOLD],
+		"subtitle": "экипаж %d · на %s" % [_launch["crew"].size(), Planet.planet_name(_launch["planet"])],
+		"rows": [{"type": "text", "text": "Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}
+
+
+func _do_launch() -> void:
+	var cargo := {}
+	for k in _launch["cargo"]:
+		if int(_launch["cargo"][k]) > 0:
+			cargo[k] = int(_launch["cargo"][k])
+	var flight := colony.launch(_launch["pad"], _launch["planet"], _launch["crew"], cargo)
+	if flight.has("error"):
+		hud.log_event(flight["error"], "warning")
+		return
+	universe.send(flight)
+	_launch = {}
+	_show_worlds()
+
+
+## Небо планеты: свой оттенок; на других планетах нет лесов, холмов с травой и облаков.
+func _apply_planet_sky() -> void:
+	var m := _sky.material as ShaderMaterial
+	var earth := _planet == "earth"
+	for n in ["forest_1", "forest_2", "hills_1", "hills_2", "clouds"]:
+		m.set_shader_parameter(n, load("res://assets/background/%s.png" % n) if earth else _blank_tex())
+	var tint: Color = Planet.data(_planet)["sky"]
+	m.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+
+
+var _blank: ImageTexture
+func _blank_tex() -> ImageTexture:
+	if _blank == null:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 0))
+		_blank = ImageTexture.create_from_image(img)
+	return _blank
 
 
 func _apply_offline(since_unix: float) -> void:
@@ -241,6 +499,10 @@ func _apply_offline(since_unix: float) -> void:
 	var built_before := _done_count()
 	var units_before := colony.units.size()
 	var dug := colony.advance_offline(simulated)
+	for e in universe.worlds:
+		if e["colony"] != colony:
+			(e["colony"] as Colony).advance_offline(simulated)
+	universe.update(simulated)
 	var lines: PackedStringArray = ["Вас не было %s." % Fmt.duration(away)]
 	if away > OFFLINE_CAP_SEC:
 		lines.append("Жители работали первые %s — дальше им нужны ваши указания." % Fmt.duration(OFFLINE_CAP_SEC))
@@ -286,7 +548,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m == Hud.Mode.TUNNEL or m == Hud.Mode.ROOM or m == Hud.Mode.BRIDGE or m == Hud.Mode.MINE
+	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL]
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -476,7 +738,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])
 		if Genetics.is_super(g):
-			tags.append(["СВЕРХЮНИТ — все характеристики ×2", Color(0.3, 0.9, 0.85)])
+			tags.append(["СВЕРХЮНИТ — все характеристики ×2, неуязвим: умирает только от старости", Color(0.3, 0.9, 0.85)])
 		var mt := Genetics.mutation_text(g)
 		if not mt.is_empty():
 			var rarity_cols := [Color(0.6, 0.85, 0.6), Color(0.5, 0.75, 1.0), Color(0.8, 0.6, 1.0), Color(1.0, 0.8, 0.3)]
@@ -490,7 +752,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		elif u.calling < 0:
 			tags.append(["Работа не по душе: навык растёт медленнее, настроение хуже", Color(1.0, 0.7, 0.45)])
 		rows.append({"type": "portrait", "looks": Genetics.looks(g), "tags": tags})
-	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Бодрость", u.energy), _need_bar("Настроение", u.mood())])
+	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
 		rows.append(_need_bar("Здоровье", u.health))
 	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
@@ -499,7 +761,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		rows.append({"type": "section", "text": "Характеристики (100% — обычный житель)"})
 		var items := []
 		for k in Genetics.STATS:
-			var v: float = u.stats[k]
+			var v: float = u.stat(k)
 			items.append([Genetics.STAT_NAMES[k], v, v >= 1.0 if k != "appetite" else v <= 1.0])
 		rows.append({"type": "stats", "items": items})
 	if not u.child:
@@ -555,8 +817,9 @@ func _show_project(p: Project) -> void:
 		actions.append(["Продолжить" if p.paused else "Пауза", func() -> void:
 			colony.set_paused(p, not p.paused)
 			_show_project(p)])
-		if p.kind == Project.Kind.MINE and p.phase == Project.Phase.DIG:
-			# Шахту можно остановить в любой момент: готовые метры остаются.
+		if (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.DRILL) and p.phase == Project.Phase.DIG \
+				or p.kind == Project.Kind.BRIDGE and p.phase == Project.Phase.BUILD:
+			# Шахту, тоннель и мост можно остановить в любой момент: готовые метры остаются.
 			actions.append(["Остановить", func() -> void:
 				colony.cancel_project(p)
 				if colony.projects.has(p):
@@ -568,6 +831,11 @@ func _show_project(p: Project) -> void:
 				colony.cancel_project(p)
 				_select(null, null), "danger"])
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
+	# Приоритет: бригада бросает другие стройки и идёт сюда.
+	if colony.can_prioritize(p):
+		actions.push_front(["Снять приоритет" if p.priority else "Приоритет", func() -> void:
+			colony.set_priority(p, not p.priority)
+			_show_project(p), "" if p.priority else "primary"])
 	if p.phase == Project.Phase.DONE and p.paused:
 		actions.append(["Продолжить", func() -> void:
 			colony.set_paused(p, false)
@@ -584,13 +852,53 @@ func _show_project(p: Project) -> void:
 					_show_project(p)
 				else:
 					hud.log_event(colony.repair_error(p), "warning"), "primary"])
-		actions.append(["Снести", func() -> void:
-			var err := colony.demolish_error(p)
-			if not err.is_empty():
-				hud.log_event(err, "warning")
-				return
-			colony.demolish(p)
-			_select(null, null), "danger"])
+		# Бур: куда и сколько сверлить; сверлящий — пауза и остановка.
+		if p.kind == Project.Kind.DRILL:
+			if colony.drilling(p):
+				if not p.paused:
+					actions.push_front(["Пауза", func() -> void:
+						colony.set_paused(p, true)
+						_show_project(p)])
+				actions.push_front(["Остановить", func() -> void:
+					colony.stop_drill(p)
+					_show_project(p), "danger"])
+			else:
+				controls.append({"label": "Сверлить, м", "value": _drill_len, "min": 1, "max": Colony.DRILL_MAX,
+					"changed": func(v: int) -> void: _drill_len = v})
+				for d: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.RIGHT: "Вправо →"}[d]
+					actions.push_front([label, func() -> void:
+						var err := colony.start_drill(p, d, _drill_len)
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+						_show_project(p), "primary"])
+		# Шахту, тоннель и лифт продлевают: продолжение копают и сливают с этой постройкой.
+		var dirs := Colony.extend_dirs(p)
+		if not dirs.is_empty() and not p.repairing:
+			var ext := colony.extension_of(p)
+			if ext != null:
+				actions.append(["К продолжению", func() -> void: _select(null, ext)])
+			else:
+				controls.append({"label": "Продлить на, м", "value": _extend_len, "min": 1, "max": Colony.EXTEND_MAX,
+					"changed": func(v: int) -> void: _extend_len = v})
+				for d: Vector2i in dirs:
+					var label: String = {Vector2i.LEFT: "← Продлить", Vector2i.DOWN: "Продлить ↓", Vector2i.RIGHT: "Продлить →"}[d]
+					actions.push_front([label, func() -> void:
+						var err := colony.extend_error(p, d, _extend_len)
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+							return
+						var q := colony.extend_project(p, d, _extend_len)
+						if q != null:
+							_select(null, q), "primary"])
+		if not colony.drilling(p):
+			actions.append(["Снести", func() -> void:
+				var err := colony.demolish_error(p)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+					return
+				colony.demolish(p)
+				_select(null, null), "danger"])
 	# Свет — во всей комнате сразу: включить, выключить или вернуть «сам».
 	if colony.lightable(p) and colony.research.has("electricity"):
 		if p.light != -1:
@@ -603,7 +911,7 @@ func _show_project(p: Project) -> void:
 			_show_project(p)])
 	var current := RoomType.current_purpose(p)
 	var preview := {"v": maxi(current, 1)}
-	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
+	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM and p.purpose != RoomType.SHIP:
 		if RoomType.is_store(p.purpose):
 			controls.append(_storage_control(p))
 		# Готовая комната: выбор назначения (только изученные).
@@ -635,6 +943,40 @@ func _show_project(p: Project) -> void:
 				_show_project(p)
 			else:
 				hud.log_event("Комната уже так обустроена", "info")])
+		# Космодром: собрать ракету, запустить готовую.
+		if p.purpose == RoomType.LAUNCHPAD:
+			if not p.rocket.is_empty():
+				actions.push_front(["Запустить", func() -> void: _launch_pick_planet(p), "primary"])
+			else:
+				if colony.research.has("nuclear_engine"):
+					actions.push_front(["Ядерная ракета", func() -> void:
+						var err := colony.start_rocket(p, "nuclear")
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+						_show_project(p), "primary"])
+				actions.push_front(["Собрать ракету", func() -> void:
+					var err := colony.start_rocket(p, "chem")
+					if not err.is_empty():
+						hud.log_event(err, "warning")
+					_show_project(p), "primary"])
+		# Стены можно перестроить из другого материала (дерево → камень и т. п.).
+		var mats := colony.available_materials()
+		if mats.size() > 1:
+			var cur_mat: String = _wall_choice.get(p.id, p.material)
+			controls.append({"label": "Стены", "value": maxi(0, mats.find(cur_mat)), "min": 0, "max": mats.size() - 1,
+				"options": mats.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
+				"changed": func(i: int) -> void:
+					_wall_choice[p.id] = mats[i]
+					hud.refresh_panel(_project_spec(p, preview["v"])),
+			})
+			actions.append(["Перестроить стены", func() -> void:
+				var m: String = _wall_choice.get(p.id, p.material)
+				var err := colony.material_error(p, m)
+				if not err.is_empty():
+					hud.log_event(err if m != p.material else "Выберите другой материал стен (переключатель «Стены»)", "warning")
+				elif colony.change_material(p, m):
+					_wall_choice.erase(p.id)
+					_show_project(p)])
 		# Каменный очаг можно переложить кирпичом.
 		if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
 			actions.push_front(["Кирпичные печи", func() -> void:
@@ -654,6 +996,22 @@ func _show_project(p: Project) -> void:
 	spec["controls"] = controls
 	spec["controls_first"] = RoomType.is_store(p.purpose) and p.phase == Project.Phase.DONE
 	hud.show_panel(spec)
+
+
+## Имя с полом: «Анна ♀» — чтобы сразу видеть, кого с кем сводить.
+func _name_sex(u: Unit) -> String:
+	return "%s · %s" % [u.name, "жен." if u.sex == Unit.Sex.FEMALE else "муж."]
+
+
+## Семейное положение: пара или без пары (дети, беременность).
+func _family_text(u: Unit) -> String:
+	if u.child:
+		return "ребёнок"
+	var partner := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
+	var out := ("пара: " + partner.name) if partner != null else ("без пары" if not u.is_elder() else "без пары (пожилой)")
+	if u.pregnancy >= 0.0:
+		out += ", ждёт ребёнка"
+	return out
 
 
 ## Нужные для работы характеристики жителя: «сила 130% + выносливость 90%».
@@ -686,8 +1044,8 @@ func _job_stats_text(task: int) -> String:
 func _workers_list(p: Project) -> Dictionary:
 	var items := []
 	for u in colony.assigned_to(p):
-		items.append({"looks": Genetics.looks(u.genome), "name": u.name,
-			"info": "подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
+		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
+			"info": _family_text(u) + " · подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
 				_show_project(p)})
@@ -707,13 +1065,14 @@ func _pick_worker(p: Project) -> void:
 			return colony.is_free(a)
 		return colony.suitability(a, p) > colony.suitability(b, p))
 	var task := colony.work_task(p)
+	cands = cands.filter(func(u: Unit) -> bool: return _pick_pass(u, task))
 	for u: Unit in cands:
 		var info := "подходит на %d%% · %s · навык %d%s" % [roundi(colony.suitability(u, p) * 100),
 			_fit_text(u, task), u.level(colony.work_skill(p)), _calling_text(u, task)]
 		var busy := not colony.is_free(u)
 		if busy:
 			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
-		items.append({"looks": Genetics.looks(u.genome), "name": u.name, "info": info,
+		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
 				var err := colony.assign_work(u, p)
@@ -722,8 +1081,28 @@ func _pick_worker(p: Project) -> void:
 				_show_project(p)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
 		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
-		"controls": [{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items, "empty": "Все взрослые уже здесь."}],
+		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)),
+			{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items,
+			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Все взрослые уже здесь."}],
 		"actions": [["Назад", func() -> void: _show_project(p)]]})
+
+
+## Переключатели фильтров над списком выбора жителей (по умолчанию выключены).
+func _pick_filter_control(refresh: Callable) -> Dictionary:
+	return {"type": "checks", "label": "Показать только:", "items": [
+		["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]]],
+		"toggled": func(k: String, on: bool) -> void:
+			_pick_filters[k] = on
+			refresh.call()}
+
+
+## Проходит ли житель включённые фильтры (для работы task).
+func _pick_pass(u: Unit, task: int) -> bool:
+	if _pick_filters["single"] and u.partner_id != 0:
+		return false
+	if _pick_filters["calling"] and colony.calling_of(u, task) != 1:
+		return false
+	return true
 
 
 ## Нормы запаса склада: сколько держать каждого ресурса.
@@ -736,7 +1115,7 @@ func _storage_control(p: Project) -> Dictionary:
 	var known: Array = colony.known_resources.keys()
 	known.sort()
 	for k in known:
-		if not keys.has(k) and not RoomType.BULK.has(k) and k != "methane" and RoomType.same_kind(p, k):
+		if not keys.has(k) and not RoomType.BULK.has(k) and not RoomType.PIPED.has(k) and RoomType.same_kind(p, k):
 			keys.append(k)
 	var items := []
 	for k in keys:
@@ -748,7 +1127,14 @@ func _storage_control(p: Project) -> Dictionary:
 		items.append({"key": k, "on": on, "held": colony.held_in(p, k), "cap": cap,
 			"limit": mini(cap, int(p.limits.get(k, cap))),
 			"target": int(p.targets.get(k, 0)) if Colony.GATHER_SOURCES.has(k) else -1})
-	return {"type": "store", "label": "Что хранить и сколько (больше предела сюда не носят). Работники этого склада добывают до нормы:",
+	var total := 0
+	for k in p.held:
+		total += int(p.held[k])
+	var cap0 := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	if colony.research.has("shelving"):
+		cap0 = roundi(cap0 * 1.5)
+	return {"type": "store", "label": "Вместимость: по %s каждого %s. Сейчас лежит всего %s.\nГалочка — хранить ли здесь этот ресурс:" % [
+		Fmt.int_spaced(cap0), "вида еды" if p.purpose == RoomType.GRANARY else "ресурса", Fmt.int_spaced(total)],
 		"items": items,
 		"toggled": func(key: String, on: bool) -> void:
 			colony.set_store_on(p, key, on)
@@ -795,20 +1181,81 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			rows.append(_progress("Строительство", p.build_done / p.build_work() if p.paid else 0.0))
 		Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
-			rows.append(_progress("Лестница" if p.equip_ladder else "Обустройство", p.equip_done / w if p.equip_paid else 0.0))
+			var what: String = "Сборка ракеты" if not p.equip_rocket.is_empty() else "Лестница" if p.equip_ladder else ("Перестройка стен — " + Project.MATERIALS[p.equip_material][0].to_lower()
+				if not p.equip_material.is_empty() else "Обустройство")
+			rows.append(_progress(what, p.equip_done / w if p.equip_paid else 0.0))
 	if p.repairing:
 		rows.append(_progress("Ремонт", p.repair_done / maxf(1.0, p.repair_work) if p.repair_paid else 0.0))
 	var supply := colony.supply_status(p)
 	if not supply.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
+	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
+		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
+	var wall: String = _wall_choice.get(p.id, p.material)
+	if p.phase == Project.Phase.DONE and wall != p.material:
+		var wc := RoomType.material_cost(p, wall)
+		var witems := []
+		for k in wc:
+			witems.append([k, colony.inventory.get(k, 0), wc[k], colony.inventory.get(k, 0) >= wc[k]])
+		rows.append({"type": "resources", "label": "Перестроить стены — %s (%d с работы; на время работ комната не работает):" % [
+			Project.MATERIALS[wall][0].to_lower(), roundi(RoomType.material_work(p, wall))], "items": witems})
+		var werr := colony.material_error(p, wall)
+		if not werr.is_empty():
+			rows.append({"type": "warning", "text": werr})
 	var chips := []
 	if p.phase != Project.Phase.DONE or p.repairing:
 		chips.append(["people", "рабочие %d/%d" % [colony.workers_on(p), p.workers]])
+	if p.priority:
+		chips.append(["", "приоритет: %s идут сюда первыми" % ("шахтёры" if p.kind == Project.Kind.MINE else "строители"), Color(1.0, 0.8, 0.4)])
 	match p.kind:
 		Project.Kind.ROOM:
 			chips.append(["", "стены: " + p.material_name().to_lower()])
 		Project.Kind.TUNNEL:
 			chips.append(["", "потоков: %d" % Colony.tunnel_lanes(p.rect)])
+			if p.phase == Project.Phase.DIG:
+				var tdone := colony.mine_meters_done(p)
+				var unit := "по 2 м" if p.vertical() else "м"
+				rows.append(_progress("Готово", float(tdone) / maxf(1.0, p.slice_count()), "%d из %d (%s)" % [tdone, p.slice_count(), unit]))
+				rows.append({"type": "text", "text": "Тоннель строится по метру: выкопан и закреплён — готов. «Остановить» — готовая часть остаётся тоннелем."})
+		Project.Kind.BRIDGE when p.phase == Project.Phase.BUILD:
+			var bdone := colony.bridge_meters_done(p)
+			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
+			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
+		Project.Kind.DRILL:
+			if colony.drilling(p):
+				var went := absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
+				var all := went + p.drill_left
+				rows.append(_progress("Пройдено", float(went) / maxf(1.0, all), "%d из %d м" % [went, all], Color(0.6, 0.7, 0.8)))
+			if colony.drilling(p):
+				rows.append({"type": "text", "text": "Бур едет и сверлит ход 3 м шириной втрое быстрее жителя. Породу уносят жители. «Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
+			if p.phase == Project.Phase.DONE and not colony.drilling(p):
+				var diesel := colony.research.has("combustion")
+				chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else ("нет — на дизеле" if diesel else "нет — бур стоит"))])
+				chips.append(["", "скорость ×%.1f от жителя" % colony.drill_speed(true)])
+				rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее жителя, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят жители. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
+					" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
+			else:
+				rows.append({"type": "text", "text": "Место под бур выкапывают, потом собирают машину. Готовым буром командуют из его карточки: куда и сколько сверлить."})
+		Project.Kind.LIFT:
+			chips.append(["", "по вертикали" if p.lift_vertical() else "по горизонтали"])
+			if p.phase == Project.Phase.DONE:
+				chips.append(["power", "энергия: %s" % ("есть" if colony.lift_powered(p) else "нет — кабина стоит")])
+				chips.append(["", "скорость %.0f м/с (пешком %.0f)" % [colony.lift_speed(p), Colony.WALK_SPEED]])
+			if p.cargo:
+				var load := 0
+				for k in p.lift_load:
+					load += int(p.lift_load[k])
+				chips.append(["", "в кабине %d из %d" % [load, Colony.CARGO_CAP]])
+				var names := ["верхнего" if p.lift_vertical() else "левого", "нижнего" if p.lift_vertical() else "правого"]
+				for e in 2:
+					var st := colony.lift_stores(p, e)
+					rows.append({"type": "text", "text": "У %s конца: %s" % [names[e],
+						("склад вплотную — разгрузка и погрузка сами" if not st.is_empty() else "склада нет — груз выгружается на площадку")]})
+				rows.append({"type": "text", "text": "Возит только грузы. Подсобные и работники складов несут добычу в лифт, если до него ближе, чем до склада; у склада вплотную к другому концу лифт разгружается сам. Материалы для строек у дальнего конца лифт сам берёт из склада у своего конца."})
+			else:
+				var riding := colony.units.filter(func(o: Unit) -> bool: return o.lift_id == p.id and o.riding).size()
+				chips.append(["people", "в кабине %d из %d" % [riding, Colony.LIFT_CAP]])
+				rows.append({"type": "text", "text": "Кабина на 6 человек ездит втрое быстрее пешехода и останавливается только там, где садятся и выходят; ждёт тех, кто уже идёт к ней. Без энергии стоит — по шахте лезут по аварийной лестнице."})
 		Project.Kind.MINE:
 			chips.append(["", "шахтёров %d" % colony.units.filter(func(o: Unit) -> bool: return o.workplace == 0 and o.profession == Unit.Prof.MINER).size()])
 			if p.phase == Project.Phase.DONE:
@@ -826,7 +1273,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["", "зимой улов вдвое медленнее"])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		chips.append(["", "внутри %+d °C" % roundi(colony.room_temp(p))])
-		# Продукция и урожай лежат на полу, пока подсобные не унесут их на склад или в амбар.
+		# Готовое у производства — в его ящиках (до 100), пока подсобные не унесут.
+		if colony.is_producer(p):
+			var held := colony.output_held(p)
+			rows.append(_progress("Готовое в ящиках", float(held) / Colony.PRODUCE_CAP, "%d из %d%s" % [held, Colony.PRODUCE_CAP,
+				" — работа стоит, унесите в амбар или на склад" if held >= Colony.PRODUCE_CAP else ""],
+				Color(1.0, 0.5, 0.4) if held >= Colony.PRODUCE_CAP else Color(0.6, 0.8, 0.5)))
 		var lying := {}
 		for c: Vector2i in colony.drops:
 			if p.rect.has_point(c):
@@ -836,7 +1288,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			var items := []
 			for k in lying:
 				items.append([k, lying[k], -1, true])
-			rows.append({"type": "resources", "label": "Лежит на полу", "items": items})
+			rows.append({"type": "resources", "label": "В ящиках" if colony.is_producer(p) else "Лежит на полу", "items": items})
 		if not p.stock.is_empty() and RoomType.RECIPES.has(p.purpose):
 			var st := []
 			for k in p.stock:
@@ -866,7 +1318,11 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["people", "мест для детей в колонии: %d" % maxi(0, free)])
 			RoomType.STORAGE, RoomType.GRANARY:
 				chips.append(["people", "работников %d/%d" % [colony.assigned_to(p).size(), colony.work_slots(p)]])
-				chips.append(["", "по %d места каждому %s" % [colony.room_cap(p, "food" if p.purpose == RoomType.GRANARY else "wood"),
+				var held_total := 0
+				for k in p.held:
+					held_total += int(p.held[k])
+				chips.append(["", "лежит всего %s · по %s мест каждому %s" % [Fmt.int_spaced(held_total),
+					Fmt.int_spaced(roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * (1.5 if colony.research.has("shelving") else 1.0))),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				if colony.assigned_to(p).is_empty():
 					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у жителя)."})
@@ -881,8 +1337,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
-			RoomType.KILN, RoomType.FORGE:
+			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
 				var recipe: Array = RoomType.RECIPES[p.purpose]
+				if p.purpose == RoomType.REFINERY:
+					rows.append({"type": "text", "text": "Нефть берёт по трубам из нефтехранилища, дизель туда же и отдаёт — носить ничего не надо. Нужны мастер и энергия."})
+					if colony.rooms_of(RoomType.OIL_TANK).is_empty():
+						rows.append({"type": "warning", "text": "Нет нефтехранилища — нефть и дизель хранить негде."})
 				rows.append(_progress("Производство", p.farm_progress / recipe[2]))
 				var items := []
 				for k in recipe[0]:
@@ -913,12 +1373,33 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
 				else:
 					rows.append(_progress(Research.tech_name(cur), colony.research.progress / colony.research.cost(cur)))
-			RoomType.GENERATOR, RoomType.GAS_GEN:
+			RoomType.LAUNCHPAD:
+				_rocket_rows(p, rows)
+			RoomType.SHIP:
+				chips.append(["home", "мест %d" % RoomType.SHIP_BEDS])
+				chips.append(["power", "реактор: %d" % RoomType.SHIP_POWER])
+				rows.append({"type": "text", "text": "Корабль — жильё на 10 человек: внутри воздух, тепло (+20 °C) и свет, трюм держит груз. Наружу на поверхность без воздуха не выйти — копайте тоннель вниз прямо из корабля."})
+			RoomType.OIL_PUMP:
+				chips.append(["", "качает на %d м вокруг" % RoomType.effect_radius(p)])
+				var oil_cell = colony._nearest_oil(p)
+				chips.append(["", "нефть рядом: %s" % ("есть" if oil_cell != null else "нет")])
+				rows.append(_progress("Следующая порция", clampf(p.farm_progress / Colony.OIL_PUMP_TIME, 0.0, 1.0), "", Color(0.35, 0.3, 0.25)))
+				rows.append({"type": "text", "text": "Раз в %d с выкачивает ближайшую клетку нефтеносного пласта (+%d нефти) по трубам в нефтехранилище. Нефть залегает глубже 200 м, в осадочных слоях. Нужна энергия." % [int(Colony.OIL_PUMP_TIME), Colony.OIL_PER_CELL_YIELD]})
+			RoomType.OIL_TANK:
+				for k in ["oil", "diesel"]:
+					var tcap := colony.room_cap(p, k)
+					rows.append(_progress(Mat.resource_name(k), float(colony.held_in(p, k)) / maxf(1.0, tcap),
+						"%d из %d" % [colony.held_in(p, k), tcap], Color(0.25, 0.2, 0.15) if k == "oil" else Color(0.95, 0.65, 0.15)))
+				rows.append({"type": "text", "text": "Нефть и дизельное топливо хранятся только здесь и идут по трубам. Если хранилище рухнет — взрыв: всё вокруг на 3, 6 или 9 м (по размеру)."})
+			RoomType.GENERATOR, RoomType.GAS_GEN, RoomType.DIESEL_GEN:
 				var gas := p.purpose == RoomType.GAS_GEN
 				chips.append(["power", "даёт %d, колонии нужно %d" % [RoomType.POWER_MAKE, colony.power_used]])
 				rows.append(_progress("Топливо", clampf(p.farm_progress / RoomType.FUEL_TIME, 0.0, 1.0),
 					"%d с" % maxi(0, roundi(p.farm_progress)), Color(0.45, 0.7, 1.0) if gas else Color(0.95, 0.6, 0.2)))
-				if gas:
+				if p.purpose == RoomType.DIESEL_GEN:
+					chips.append(["", "дизеля в хранилище: %d" % colony.inventory.get("diesel", 0)])
+					rows.append({"type": "text", "text": "Жжёт 1 дизель за %d с по трубам из нефтехранилища и даёт в полтора раза больше энергии." % int(RoomType.FUEL_TIME * 2.0)})
+				elif gas:
 					chips.append(["", "метан в баках: %d" % colony.inventory.get("methane", 0)])
 					rows.append({"type": "text", "text": "Жжёт 1 метан за %d с — по трубам из баков дегазации, носить ничего не надо. Уголь и дрова не берёт. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
 					if colony.rooms_of(RoomType.DEGAS).is_empty():
@@ -1052,7 +1533,7 @@ func _show_people() -> void:
 		var members := colony.units.filter(g[1])
 		var items := []
 		for u: Unit in members:
-			var item := {"looks": Genetics.looks(u.genome), "name": u.name, "info": _doing(u),
+			var item := {"looks": Genetics.looks(u.genome), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
 				"button": "Карточка", "pick": func() -> void: _select(u, null)}
 			if u.workplace != 0:
 				item["info"] = colony.role_name(u) + " · " + _doing(u)
@@ -1081,18 +1562,21 @@ func _pick_role(prof: int) -> void:
 		return not o.child and not (o.workplace == 0 and o.profession == prof))
 	var score := func(o: Unit) -> float:
 		return colony.stat_fit(o, task) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
+	cands = cands.filter(func(o: Unit) -> bool: return _pick_pass(o, task))
 	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
-		items.append({"looks": Genetics.looks(o.genome), "name": o.name,
-			"info": "%s%s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", colony.role_name(o).to_lower(), _fit_text(o, task),
+		items.append({"looks": Genetics.looks(o.genome), "name": _name_sex(o),
+			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof)
 				_show_people()})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",
-		"controls": [{"type": "people", "label": "Кого назначить:", "items": items, "empty": "Некого назначить."}],
+		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)),
+			{"type": "people", "label": "Кого назначить:", "items": items,
+			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],
 		"actions": [["Назад", _show_people]]})
 
 
@@ -1212,6 +1696,24 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		# Шахта — всегда 3 м: полоса тянется по горизонтали от места, где коснулись.
 		r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, Project.MINE_HEIGHT)
 		err = colony.validate(kind, r)
+	elif mode == Hud.Mode.DRILL:
+		# Бур — машина 3×3 под пальцем; сама прилипает к земле или полу рядом.
+		r = Rect2i(c.x - 1, c.y - 1, 3, 3)
+		err = colony.validate(kind, r)
+		for dy in [1, -1, 2, -2]:
+			if err.is_empty():
+				break
+			var rr := Rect2i(c.x - 1, c.y - 1 + dy, 3, 3)
+			if colony.validate(kind, rr).is_empty():
+				r = rr
+				err = ""
+	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
+		# Лифт — строго вертикально или строго горизонтально (ход 3 м).
+		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
+			r = Rect2i(_drag_start.x, r.position.y, 3 if mode != Hud.Mode.LIFT else 2, r.size.y)
+		else:
+			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
+		err = colony.validate(kind, r, _lift_material())
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
@@ -1224,7 +1726,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	if r.size == Vector2i.ZERO:
 		return
 	var kind := _mode_kind()
-	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else "wood")
+	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else _lift_material())
 	if mode == Hud.Mode.BRIDGE:
 		err = "Мостик и пристань строятся над озером" if _water_options.is_empty() else ""
 		for o in _water_options:
@@ -1237,7 +1739,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending = r
 	_pending_kind = kind
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
-	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else "wood"
+	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else _lift_material()
 	_show_pending()
 
 
@@ -1289,7 +1791,16 @@ func _mode_kind() -> int:
 			return Project.Kind.BRIDGE
 		Hud.Mode.MINE:
 			return Project.Kind.MINE
+		Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT:
+			return Project.Kind.LIFT
+		Hud.Mode.DRILL:
+			return Project.Kind.DRILL
 	return Project.Kind.TUNNEL
+
+
+## Лифт передаёт «грузовой ли» через материал стройки.
+func _lift_material() -> String:
+	return "cargo" if mode == Hud.Mode.CARGO_LIFT else "wood"
 
 
 func _show_pending() -> void:
@@ -1326,7 +1837,8 @@ func _pending_spec() -> Dictionary:
 	var r := _pending
 	var kind := _pending_kind
 	var rows := []
-	var cost := Project.cost_for(kind, r, _pending_material)
+	var cost := Project.lift_cost(r, _pending_material == "cargo") if kind == Project.Kind.LIFT \
+		else (Project.drill_cost(r) if kind == Project.Kind.DRILL else Project.cost_for(kind, r, _pending_material))
 	if not cost.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
@@ -1334,7 +1846,12 @@ func _pending_spec() -> Dictionary:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
 		if sw > 0:
-			rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
+			# Нет дерева — крепь из стали (её вдвое меньше).
+			var steel: int = colony.inventory.get("metal", 0)
+			if have < sw and steel > 0:
+				rows.append({"type": "resources", "label": "Укрепление", "items": [["metal", steel, ceili(sw / 2.0), steel >= ceili(sw / 2.0)]]})
+			else:
+				rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
 	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
@@ -1381,8 +1898,18 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
 	elif not colony.can_reach(r):
 		rows.append({"type": "warning", "text": "Жители не могут сюда дойти — стройка не начнётся."})
-	var title := "%s %d×%d" % [Project.kind_name(kind), r.size.x, r.size.y]
+	var title := "%s %d×%d" % [("Грузовой лифт" if _pending_material == "cargo" else "Лифт") if kind == Project.Kind.LIFT
+		else Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
+		var plan := hud.room_purpose()
+		if plan > 0:
+			title = "%s %d×%d" % [RoomType.purpose_name(plan), r.size.x, r.size.y]
+			var tmp2 := Project.new()
+			tmp2.kind = kind
+			tmp2.rect = r
+			var ec := RoomType.equip_cost(plan, tmp2)
+			if not ec.is_empty():
+				rows.insert(1 if not rows.is_empty() else 0, {"type": "resources", "label": "Обустройство (после постройки)", "items": _cost_items(ec)})
 		title += " · " + Project.MATERIALS[_pending_material][0].to_lower()
 	return {"title": title, "rows": rows}
 
@@ -1403,12 +1930,54 @@ func _support_estimate(kind: int, r: Rect2i) -> int:
 	return tmp.slice_wood() * n
 
 
+## Картинки плиток меню стройки: назначение -> мебель.
+const ROOM_PICS := {
+	RoomType.NONE: "", RoomType.HOME: "home/bed_blue", RoomType.STORAGE: "storage/crate_wood",
+	RoomType.GRANARY: "granary/basket_fish", RoomType.FARM: "farm/shoots_3", RoomType.DINING: "dining/table",
+	RoomType.HEARTH: "hearth/stone_on", RoomType.HEARTH_BRICK: "hearth/brick_on", RoomType.LAB: "lab/microscope",
+	RoomType.PUMP: "pump/pump_on", RoomType.VENT: "degas/compressor", RoomType.DEGAS: "degas/tank_2",
+	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
+	RoomType.GAS_GEN: "generator/gas_on", RoomType.OIL_PUMP: "pump/pump_on", RoomType.OIL_TANK: "degas/tank_3",
+	RoomType.REFINERY: "lab/still", RoomType.DIESEL_GEN: "generator/coal_on",
+}
+
+
+## Неизученные инструменты стройки: режим -> почему нельзя.
+func _build_tool_locks() -> Dictionary:
+	var out := {}
+	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"]]:
+		if not colony.research.has(pair[1]):
+			out[pair[0]] = "Сначала изучите «%s» (Наука)" % Research.tech_name(pair[1])
+	return out
+
+
+## Плитки комнат для меню стройки: все виды, неизученные — неактивные с подсказкой.
+func _build_room_items() -> Array:
+	var order := [RoomType.NONE, RoomType.HOME, RoomType.STORAGE, RoomType.GRANARY, RoomType.FARM, RoomType.DINING,
+		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
+		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN,
+		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN, RoomType.LAUNCHPAD]
+	var out := []
+	for t in order:
+		var need: String = RoomType.REQUIRES.get(t, "")
+		var ok := colony.research.has(need)
+		var nm := "Пустая" if t == RoomType.NONE else RoomType.purpose_name(t).replace("Очаг (каменные печи)", "Очаг").replace(
+			"Очаг (кирпичные печи)", "Очаг кирпичный")
+		nm = {"Нефтекачалка": "Нефте-\nкачалка", "Нефтехранилище": "Нефте-\nхранилище"}.get(nm, nm)
+		var pic: String = ROOM_PICS.get(t, "")
+		out.append({"id": t, "name": nm, "tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "",
+			"glyph": "rocket" if t == RoomType.LAUNCHPAD else "room", "ok": ok, "why": "%s: сначала изучите «%s» (Наука)" % [nm, Research.tech_name(need)] if not ok else ""})
+	return out
+
+
 func _confirm_pending() -> bool:
 	var err := colony.validate(_pending_kind, _pending, _pending_material)
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		return false
 	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
+	if p != null and _pending_kind == Project.Kind.ROOM:
+		p.plan_purpose = hud.room_purpose()
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")
@@ -1477,7 +2046,7 @@ func _env_text(c: Vector2i) -> String:
 	var t := "%d °C · %d кПа · кислород %d%%" % [
 		roundi(colony.elements.temperature(c)),
 		roundi(Env.pressure(c.y, surf)),
-		roundi(Env.oxygen_ratio(c.y, surf) * 100.0)]
+		roundi(world.gen.oxygen_ratio(c.y, surf) * 100.0)]
 	var g := colony.elements.gas_at(c)
 	if g >= Elements.GAS_MIN:
 		t += " · метан %d%%%s" % [roundi(g * 100.0), " — взрывоопасно!" if g >= Elements.GAS_EXPLOSIVE else ""]
@@ -1495,7 +2064,16 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
-	hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())], _weather_icon())
+	var space := universe.worlds.size() > 1 or not universe.flights.is_empty()
+	for e in universe.worlds:
+		space = space or (e["colony"] as Colony).research.has("rocketry")
+	hud.set_worlds_visible(space)
+	if _planet != "earth":
+		var s := world.gen.surface_y(colony.home.x)
+		hud.set_date("%s · %s · %+d °C снаружи" % [Planet.planet_name(_planet), colony.date_text().split(" · ")[0],
+			roundi(world.gen.temperature(s - 1, s))], "")
+	else:
+		hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())], _weather_icon())
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
