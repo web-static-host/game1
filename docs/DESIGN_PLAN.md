@@ -65,7 +65,9 @@
    СПЕРЕДИ, как комната (лист склада перерисован: storage_items_front.png) — иначе перекос;
    состояния «строится» / «повреждена».
 4. Улица — деревья по сезонам, ели, кусты, валуны (модели).
-5. Жители — квадратные и круглые на основе `art_src/characters/BlueBuddy.blend`,
+5. Жители — модель-треугольник с новым телом по прототипу ChatGPT (`art_src/characters/build_body.py` →
+   `art_src/characters/body/body.npz`, экспорт `export_buddy.py` с `BUDDY_NEW_BODY`, позы — `tests/pose_preview.gd`);
+   дальше — квадратные и круглые на основе `art_src/characters/BlueBuddy.blend`,
    мутации деталями; перевести 3D-жителей на заранее отрендеренный атлас.
 6. Интерфейс — иконки ресурсов и погоды готовы: `art_src/icons/cut_icons.py` →
    `assets/icons/`, `ResIcon.texture()`. Погоды в игре нет — значок по сезону/ночи.
