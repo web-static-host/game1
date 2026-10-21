@@ -114,16 +114,18 @@ const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "metal": 0.6
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
 ## −1 — еду (рыбу) не собирают с объектов, а ловят.
-const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "berries": WorldGen.FEATURE_BUSH, "food": -1}
+const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "berries": WorldGen.FEATURE_BUSH, "fish": -1}
 ## Сытость за единицу: ягоды — лёгкий перекус, рыба и грибы с фермы — настоящая еда.
-const NUTRITION := {"food": 32.0, "berries": 9.0}
+## Еда трёх видов: грибы с фермы (ключ "food" — так он назывался, когда еда была одна),
+## рыба и ягоды. В строке ресурсов — одним значком (бургер).
+const NUTRITION := {"food": 32.0, "fish": 32.0, "berries": 9.0}
 ## За один приём пищи съедают до стольких единиц, пока не наберут столько сытости.
 const MEAL_UNITS := 4
 const MEAL_GOAL := 60.0
 ## В столовой еда сытнее.
 const DINING_BONUS := 1.5
 ## Норма запаса для нового склада.
-const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "food": 30}
+const DEFAULT_TARGETS := {"wood": 40, "stone": 20, "fish": 30}
 
 var world: WorldData
 var pathing: Pathing
@@ -2690,7 +2692,15 @@ func food_value() -> float:
 
 
 func has_food() -> bool:
-	return inventory.get("food", 0) + inventory.get("berries", 0) > 0
+	return food_total() > 0
+
+
+## Сколько еды всех видов на складах.
+func food_total() -> int:
+	var n := 0
+	for k in RoomType.FOOD_KEYS:
+		n += int(inventory.get(k, 0))
+	return n
 
 
 func food_low() -> bool:
@@ -2699,7 +2709,7 @@ func food_low() -> bool:
 
 ## Еды меньше, чем на полприёма каждому, — все силы на еду.
 func food_critical() -> bool:
-	return food_value() < units.size() * MEAL_GOAL * 0.5 and drop_total("food") + drop_total("berries") == 0
+	return food_value() < units.size() * MEAL_GOAL * 0.5 and drop_total("food") + drop_total("fish") + drop_total("berries") == 0
 
 
 ## Приём пищи: сначала настоящая еда, потом ягоды; take(ключ, n) отдаёт, сколько взяли.
@@ -2708,7 +2718,7 @@ func _eat_from(u: Unit, take: Callable, bonus := 1.0) -> void:
 	var eaten := 0
 	# Растущий ребёнок насыщается вдвое хуже.
 	var k_scale := bonus * (0.5 if u.child else 1.0)
-	for key in ["food", "berries"]:
+	for key in RoomType.FOOD_KEYS:
 		while eaten < MEAL_UNITS and gained < MEAL_GOAL and u.satiety < 100.0:
 			if int(take.call(key, 1)) <= 0:
 				break
@@ -3016,21 +3026,21 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 	fish[int(lake["id"])] = left - 1.0
 	if u != null and u.workplace == 0:
 		# Свободный житель ловил от голода — съедает улов на месте, остаток оставляет на берегу.
-		var catch := {"food": 2}
+		var catch := {"fish": 2}
 		_eat_from(u, func(key: String, n: int) -> int:
 			var t := mini(n, int(catch.get(key, 0)))
 			if t > 0:
 				catch[key] -= t
 			return t)
-		if catch["food"] > 0:
-			drop_item(u.cell(), "food", catch["food"])
+		if catch["fish"] > 0:
+			drop_item(u.cell(), "fish", catch["fish"])
 	elif u != null:
-		drop_item(u.cell(), "food", 2)
+		drop_item(u.cell(), "fish", 2)
 		if not offline:
-			_pick_up(u, _landing(u.cell()), "food")
+			_pick_up(u, _landing(u.cell()), "fish")
 	else:
-		_add("food", 2)
-		produced["food"] = int(produced.get("food", 0)) + 2
+		_add("fish", 2)
+		produced["fish"] = int(produced.get("fish", 0)) + 2
 	if u != null and left - 1.0 < 1.0:
 		_log("Рыба в озере кончилась — подождите, пока подрастёт новая", "warning")
 
@@ -3155,7 +3165,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн жители сами едят и спят по расписанию.
-			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("berries") > 0:
+			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("fish") + _have_any("berries") > 0:
 				_eat_from(u, _take_any, DINING_BONUS if not rooms_of(RoomType.DINING).is_empty() else 1.0)
 			elif u.satiety < HUNGRY + 5.0:
 				for bx in _bushes:
@@ -4090,6 +4100,9 @@ func _work(u: Unit, dt: float) -> void:
 				_finish_repair(rp)
 		Unit.Task.CRAFT:
 			var cp := project_by_id(u.project_id)
+			if _mark_full(cp):
+				_drop(u)
+				return
 			cp.farm_progress += rate * automation_bonus()
 			if cp.farm_progress >= RoomType.RECIPES[cp.purpose][2]:
 				cp.farm_progress = 0.0
@@ -4104,6 +4117,9 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.FARM:
 			var p := project_by_id(u.project_id)
+			if _mark_full(p):
+				_drop(u)
+				return
 			p.farm_progress += rate * farm_bonus()
 			while p.farm_progress >= RoomType.FARM_CYCLE:
 				p.farm_progress -= RoomType.FARM_CYCLE
@@ -4200,7 +4216,7 @@ func _task_valid(u: Unit) -> bool:
 			if u.project_id == EAT_BUSH:
 				return world.feature_at(u.target.x) == WorldGen.FEATURE_BUSH and world.berries(u.target.x) >= 1.0
 			if u.project_id == EAT_DROP:
-				return drop_amount(u.target, "food") + drop_amount(u.target, "berries") > 0
+				return drop_amount(u.target, "food") + drop_amount(u.target, "fish") + drop_amount(u.target, "berries") > 0
 			return true
 		Unit.Task.FISH:
 			if u.project_id == 0:
@@ -4520,7 +4536,7 @@ func _start_eat_drop(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	var best_c := Vector2i.ZERO
 	var best_d := 1 << 30
 	for c: Vector2i in drops:
-		if drop_amount(c, "food") + drop_amount(c, "berries") <= 0:
+		if drop_amount(c, "food") + drop_amount(c, "fish") + drop_amount(c, "berries") <= 0:
 			continue
 		var stand = _drop_stand(c, dist)
 		if stand != null and dist[stand] < best_d:
@@ -4772,6 +4788,8 @@ func _try_farm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 func _try_room_work(u: Unit, purpose: int, task: int, parents: Dictionary, dist: Dictionary) -> bool:
 	for p in rooms_of(purpose):
 		if _closed_for(u, p):
+			continue
+		if _mark_full(p):
 			continue
 		if task == Unit.Task.CRAFT and not has_inputs(p):
 			continue
@@ -5875,12 +5893,59 @@ func missing_inputs(p: Project) -> Dictionary:
 
 ## Готовая продукция: при игроке — кучей на полу мастерской (её уносят подсобные),
 ## без игрока — сразу на склад (если на нём есть работник).
+## Производства (ферма, печь, кузница) держат готовое у себя — в ящиках у входа, не больше
+## PRODUCE_CAP; дальше работа стоит, пока подсобные или работники склада не унесут.
+const PRODUCE_CAP := 100
+const FULL_TEXT := "Склад постройки полон (%d) — отнесите готовое в амбар или на склад"
+
+
+## Ящики с готовым у входа в производство.
+static func output_cell(p: Project) -> Vector2i:
+	return Vector2i(RoomType.floor_start(p), p.rect.end.y - 1)
+
+
+func is_producer(p: Project) -> bool:
+	return p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and (p.purpose == RoomType.FARM \
+		or (RoomType.RECIPES.has(p.purpose) and not RoomType.PIPED.has(RoomType.RECIPES[p.purpose][1].keys()[0])))
+
+
+## Сколько готового лежит в ящиках производства.
+func output_held(p: Project) -> int:
+	var n := 0
+	var d: Dictionary = drops.get(output_cell(p), {})
+	for k in d:
+		n += int(d[k])
+	return n
+
+
+func output_full(p: Project) -> bool:
+	return is_producer(p) and output_held(p) >= PRODUCE_CAP
+
+
+## Производство, чьи это ящики (клетка c), или null.
+func producer_at(c: Vector2i) -> Project:
+	for p in projects:
+		if is_producer(p) and output_cell(p) == c:
+			return p
+	return null
+
+
+## Отметка «склад постройки полон» появляется и снимается сама.
+func _mark_full(p: Project) -> bool:
+	var full := output_full(p)
+	if full and p.blocked.is_empty():
+		p.blocked = FULL_TEXT % PRODUCE_CAP
+	elif not full and p.blocked.begins_with("Склад постройки полон"):
+		p.blocked = ""
+	return full
+
+
 func _produce(p: Project, k: String, n: int) -> void:
 	if RoomType.PIPED.has(k):
 		produced[k] = int(produced.get(k, 0)) + n
 		_add(k, n)
 		return
-	drop_item(Vector2i(RoomType.floor_start(p), p.rect.end.y - 1), k, n)
+	drop_item(output_cell(p), k, n)
 
 
 func _craft(p: Project) -> void:
@@ -6319,7 +6384,7 @@ func advance_offline(dt: float) -> int:
 					var p: Project = j[3]
 					p.farm_progress += j[1] * step
 					var need: float = RoomType.RECIPES[p.purpose][2]
-					while p.farm_progress >= need and has_inputs(p):
+					while p.farm_progress >= need and has_inputs(p) and not output_full(p):
 						p.farm_progress -= need
 						_craft(p)
 					p.farm_progress = minf(p.farm_progress, need)
@@ -6892,6 +6957,10 @@ func load_dict(d: Dictionary) -> void:
 	var st: Dictionary = d.get("store_targets", {})
 	for k in st:
 		store_targets[str(k)] = int(st[k])
+	# Раньше еду для склада ловили как «food» — теперь это рыба.
+	if store_targets.has("food"):
+		store_targets["fish"] = store_targets["food"]
+		store_targets.erase("food")
 	for pd in d.get("projects", []):
 		var p := Project.from_dict(pd)
 		projects.append(p)

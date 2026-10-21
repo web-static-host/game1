@@ -5,7 +5,7 @@ extends RefCounted
 
 const COLORS := {
 	"wood": Color(0.62, 0.42, 0.22), "stone": Color(0.64, 0.64, 0.67), "clay": Color(0.74, 0.44, 0.3),
-	"food": Color(0.55, 0.72, 0.85), "berries": Color(0.88, 0.22, 0.28), "coal": Color(0.2, 0.19, 0.18), "iron": Color(0.72, 0.36, 0.2),
+	"food": Color(0.9, 0.8, 0.62), "fish": Color(0.55, 0.72, 0.85), "meal": Color(0.85, 0.55, 0.25), "berries": Color(0.88, 0.22, 0.28), "coal": Color(0.2, 0.19, 0.18), "iron": Color(0.72, 0.36, 0.2),
 	"copper": Color(0.28, 0.72, 0.6), "silver": Color(0.86, 0.89, 0.93), "gold": Color(0.97, 0.8, 0.24),
 	"uranium": Color(0.55, 0.9, 0.32), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.93, 0.9, 0.92),
 	"oil": Color(0.12, 0.1, 0.08), "limestone": Color(0.83, 0.8, 0.7),
@@ -53,6 +53,24 @@ static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
 				c + Vector2(-r * 0.15, -r * 0.75), c + Vector2(r * 0.6, -r * 0.5), c + Vector2(r * 0.1, -r * 0.1),
 				c + Vector2(-r * 0.5, -r * 0.2)]), col.lightened(0.25))
 		"food":
+			# Гриб: шляпка и ножка.
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.2, -r * 0.1), Vector2(r * 0.4, r * 0.9)), Color(0.95, 0.92, 0.84))
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-r * 0.9, r * 0.05), c + Vector2(-r * 0.7, -r * 0.5), c + Vector2(0, -r * 0.8),
+				c + Vector2(r * 0.7, -r * 0.5), c + Vector2(r * 0.9, r * 0.05)]), Color(0.86, 0.36, 0.26))
+			ci.draw_circle(c + Vector2(-r * 0.3, -r * 0.4), r * 0.12, Color(1, 0.95, 0.88))
+			ci.draw_circle(c + Vector2(r * 0.35, -r * 0.3), r * 0.1, Color(1, 0.95, 0.88))
+		"meal":
+			# Бургер: булка, котлета, салат, булка.
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-r * 0.9, -r * 0.15), c + Vector2(-r * 0.75, -r * 0.6), c + Vector2(0, -r * 0.85),
+				c + Vector2(r * 0.75, -r * 0.6), c + Vector2(r * 0.9, -r * 0.15)]), Color(0.93, 0.66, 0.3))
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.95, -r * 0.15), Vector2(r * 1.9, r * 0.22)), Color(0.45, 0.75, 0.3))
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.9, r * 0.07), Vector2(r * 1.8, r * 0.3)), Color(0.45, 0.25, 0.15))
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.85, r * 0.37), Vector2(r * 1.7, r * 0.33)), Color(0.9, 0.62, 0.28))
+			for dx in [-0.4, 0.0, 0.4]:
+				ci.draw_circle(c + Vector2(r * dx, -r * 0.55), r * 0.06, Color(1, 0.95, 0.8))
+		"fish":
 			# Рыба.
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(-r * 0.9, 0), c + Vector2(-r * 0.2, -r * 0.5), c + Vector2(r * 0.45, -r * 0.3),

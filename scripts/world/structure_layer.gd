@@ -750,7 +750,7 @@ func _fill_racks(rk: Dictionary, boxes: Array[Texture2D], levels: Array, fy: flo
 ## жердь с подвешенными связками.
 const GRANARY_LEVELS := [0.227, 0.828]
 const GRANARY_POST := 21.0
-const BASKETS := {"food": ["basket_fish", "basket_mushroom"], "berries": ["basket_berries"]}
+const BASKETS := {"food": ["basket_mushroom"], "fish": ["basket_fish"], "berries": ["basket_berries"]}
 const HANGERS := ["hang_fish", "hang_garlic", "hang_pepper", "hang_herbs", "hang_onion"]
 func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
@@ -1493,7 +1493,7 @@ func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 
 const RES_COLORS := {
 	"wood": Color(0.55, 0.38, 0.2), "stone": Color(0.6, 0.6, 0.62), "clay": Color(0.66, 0.42, 0.3),
-	"food": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
+	"food": Color(0.9, 0.8, 0.62), "fish": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
 	"copper": Color(0.25, 0.68, 0.57), "silver": Color(0.84, 0.87, 0.9), "gold": Color(0.95, 0.79, 0.23),
 	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
 	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
@@ -1537,6 +1537,11 @@ func _draw_drops(font: Font) -> void:
 	for c: Vector2i in colony.drops:
 		var d: Dictionary = colony.drops[c]
 		var p := view.cell_to_local(c) + Vector2(TILE * 0.5, TILE)
+		# Готовое у производства — в ящиках внутри комнаты, а не кучей на полу.
+		var prod := colony.producer_at(c)
+		if prod != null:
+			_draw_output_crates(font, d, p, colony.output_held(prod) >= Colony.PRODUCE_CAP)
+			continue
 		# На естественной поверхности — по сглаженной линии земли.
 		if c.y == colony.world.gen.surface_y(c.x) - 1 and not colony.world.is_dug(c.x, c.y + 1):
 			p.y = _ground_y(c.x + 0.5)
@@ -1553,6 +1558,27 @@ func _draw_drops(font: Font) -> void:
 		for k in d:
 			total += int(d[k])
 		_label(font, p + Vector2(-6, -26 - i * 6), str(total), Color(1, 1, 1, 0.9))
+
+
+## Ящики с готовым у входа в производство: чем больше, тем выше стопка (до трёх);
+## на верхнем — значок продукта и сколько лежит (красным, когда склад полон).
+func _draw_output_crates(font: Font, d: Dictionary, bottom: Vector2, full: bool) -> void:
+	var total := 0
+	var key := ""
+	for k in d:
+		total += int(d[k])
+		if key.is_empty() or int(d[k]) > int(d.get(key, 0)):
+			key = k
+	var n := clampi(ceili(total / 34.0), 1, 3)
+	var w := TILE * 0.8
+	var h := TILE * 0.42
+	for i in n:
+		var box := Rect2(bottom.x - w * 0.5, bottom.y - 3 - h * (i + 1), w, h - 2)
+		_rbox(box, 3, CRATE, CRATE.darkened(0.45), 2)
+		draw_line(Vector2(box.position.x + 3, box.get_center().y), Vector2(box.end.x - 3, box.get_center().y), CRATE.darkened(0.3), 1.5)
+	var top := bottom - Vector2(0, 3 + h * n + 9)
+	ResIcon.draw(self, key, top, 8.0)
+	_label(font, top + Vector2(10, 4), str(total), Color(1.0, 0.45, 0.4) if full else Color(1, 1, 1, 0.9))
 
 
 ## Метан: зеленоватая дымка, гуще — опаснее.

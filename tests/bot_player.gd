@@ -239,7 +239,7 @@ func _slice() -> void:
 	for u in colony.units:
 		if u.state == Unit.State.IDLE and u.task == Unit.Task.NONE:
 			idle += 1
-	var keys := ["food", "berries", "wood", "stone", "clay", "coal", "iron", "copper", "brick", "metal", "methane",
+	var keys := ["food", "fish", "berries", "wood", "stone", "clay", "coal", "iron", "copper", "brick", "metal", "methane",
 		"silver", "gold", "diamond", "uranium", "oil", "diesel"]
 	var inv: PackedStringArray = []
 	for k in keys:
@@ -1073,11 +1073,16 @@ func _launch(pad: Project) -> bool:
 	var plan := [["wood", 60], ["food", 90], ["brick", 24], ["metal", 26]] if stat == "cold" \
 		else [["wood", 70], ["food", 100], ["metal", 30]]
 	for pair in plan:
-		var n := mini(int(pair[1]), int(colony.inventory.get(pair[0], 0)))
-		n = mini(n, RoomType.SHIP_HOLD - total)
-		if n > 0:
-			cargo[pair[0]] = n
-			total += n
+		# Еду берут любую: грибы, рыбу, ягоды.
+		var keys: Array = RoomType.FOOD_KEYS if pair[0] == "food" else [pair[0]]
+		var want: int = int(pair[1])
+		for k in keys:
+			var n := mini(want, int(colony.inventory.get(k, 0)))
+			n = mini(n, RoomType.SHIP_HOLD - total)
+			if n > 0:
+				cargo[k] = int(cargo.get(k, 0)) + n
+				total += n
+				want -= n
 	var flight := colony.launch(pad, target_planet, crew, cargo)
 	if flight.has("error"):
 		return false

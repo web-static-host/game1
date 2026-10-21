@@ -151,6 +151,11 @@ func _build_scene() -> void:
 	camera.paint_cancelled.connect(_clear_preview)
 	hud.mode_changed.connect(_set_mode)
 	hud.worlds_pressed.connect(_show_worlds)
+	hud.food_pressed.connect(func() -> void:
+		var parts: PackedStringArray = []
+		for k in RoomType.FOOD_KEYS:
+			parts.append("%s %d" % [Mat.resource_name(k).to_lower(), int(colony.inventory.get(k, 0))])
+		hud.log_event("Еда: " + " · ".join(parts), "info"))
 	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items(), _build_tool_locks()))
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
@@ -1268,7 +1273,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["", "зимой улов вдвое медленнее"])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
 		chips.append(["", "внутри %+d °C" % roundi(colony.room_temp(p))])
-		# Продукция и урожай лежат на полу, пока подсобные не унесут их на склад или в амбар.
+		# Готовое у производства — в его ящиках (до 100), пока подсобные не унесут.
+		if colony.is_producer(p):
+			var held := colony.output_held(p)
+			rows.append(_progress("Готовое в ящиках", float(held) / Colony.PRODUCE_CAP, "%d из %d%s" % [held, Colony.PRODUCE_CAP,
+				" — работа стоит, унесите в амбар или на склад" if held >= Colony.PRODUCE_CAP else ""],
+				Color(1.0, 0.5, 0.4) if held >= Colony.PRODUCE_CAP else Color(0.6, 0.8, 0.5)))
 		var lying := {}
 		for c: Vector2i in colony.drops:
 			if p.rect.has_point(c):
@@ -1278,7 +1288,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			var items := []
 			for k in lying:
 				items.append([k, lying[k], -1, true])
-			rows.append({"type": "resources", "label": "Лежит на полу", "items": items})
+			rows.append({"type": "resources", "label": "В ящиках" if colony.is_producer(p) else "Лежит на полу", "items": items})
 		if not p.stock.is_empty() and RoomType.RECIPES.has(p.purpose):
 			var st := []
 			for k in p.stock:

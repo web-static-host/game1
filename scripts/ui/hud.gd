@@ -10,6 +10,8 @@ signal room_options_changed(width: int, material: String)
 signal home_pressed
 ## «Миры»: Земля, колонии на планетах, ракеты в полёте.
 signal worlds_pressed
+## Нажали на бургер в строке ресурсов — показать, сколько какой еды.
+signal food_pressed
 ## Открыли меню стройки — main присылает плитки комнат (set_build_rooms).
 signal build_opened
 ## Выбрана скорость игры: номер кнопки (×1, ×10, ×20).
@@ -270,12 +272,16 @@ func set_worlds_visible(on: bool) -> void:
 
 ## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
-	var keys: Array = ["food", "berries", "wood", "stone"]
+	# Еда — одним бургером (сумма грибов, рыбы и ягод), остальное — по ресурсам.
+	var keys: Array = ["wood", "stone"]
 	var rest := inventory.keys().filter(func(k: String) -> bool:
-		return not keys.has(k) and not RoomType.BULK.has(k) and inventory[k] > 0)
+		return not keys.has(k) and not RoomType.BULK.has(k) and not RoomType.FOOD_KEYS.has(k) and inventory[k] > 0)
+	var food := 0
+	for k in RoomType.FOOD_KEYS:
+		food += int(inventory.get(k, 0))
 	rest.sort()
 	keys.append_array(rest)
-	var sig := "%d/%d/%d/%d|" % [people, hungry, power_made, power_used]
+	var sig := "%d/%d/%d/%d/%d|" % [people, hungry, power_made, power_used, food]
 	for k in keys:
 		sig += "%s=%d," % [k, inventory.get(k, 0)]
 	if sig == _res_sig:
@@ -288,6 +294,16 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made :
 	if power_known and (power_made > 0 or power_used > 0):
 		_res_box.add_child(_chip_plain("power", "%d/%d" % [power_made, power_used],
 			Color(1.0, 0.85, 0.3) if power_made >= power_used else Color(1.0, 0.55, 0.5)))
+	# Бургер нажимается: всплывает, сколько грибов, рыбы и ягод.
+	var meal := HBoxContainer.new()
+	meal.add_theme_constant_override("separation", 4)
+	meal.mouse_filter = Control.MOUSE_FILTER_STOP
+	meal.add_child(IconView.make("meal", 24))
+	meal.add_child(_label(Fmt.int_spaced(food), 19, Color(0.97, 0.92, 0.75)))
+	meal.gui_input.connect(func(e: InputEvent) -> void:
+		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
+			food_pressed.emit())
+	_res_box.add_child(meal)
 	for k in keys:
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)

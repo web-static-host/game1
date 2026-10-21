@@ -69,6 +69,7 @@ func _initialize() -> void:
 	test_stacked_mines()
 	test_lift_merge()
 	test_planet_balance()
+	test_food_and_output()
 	test_priority()
 	test_oil()
 	test_space()
@@ -2951,6 +2952,36 @@ func test_extend() -> void:
 	var lq := colony.extend_project(lift, Vector2i.DOWN, 4)
 	check(lq != null and lq.cost() == Project.lift_cost(lq.rect, false, false) and lq.cost()["iron"] < Project.lift_cost(lq.rect, false)["iron"],
 		"продолжение лифта без новой кабины")
+
+
+## Еда трёх видов (грибы, рыба, ягоды); производства держат готовое у себя до 100.
+func test_food_and_output() -> void:
+	var colony := _new_colony(31)
+	var x := _find_solid_column(colony.world, 40)
+	_start(colony, x)
+	colony.inventory = {"fish": 3}
+	check(colony.has_food() and colony.food_total() == 3 and RoomType.FOOD_KEYS.has("fish"), "рыба — тоже еда")
+	var u: Unit = colony.units[0]
+	u.satiety = 10.0
+	colony._eat_from(u, colony._take_store)
+	check(u.satiety > 10.0 and colony.inventory.get("fish", 0) < 3, "рыбу едят")
+	colony.inventory = {}
+	var lake := {"id": 1}
+	colony.fish[1] = 5.0
+	colony._catch_from(lake, null)
+	check(colony.inventory.get("fish", 0) == 2 and not colony.inventory.has("food"), "улов — рыба, а не грибы")
+	# Ферма: готовое — в ящиках у входа, при 100 работа встаёт.
+	var farm := _fake_room(colony, RoomType.FARM, x + 10, 6)
+	check(colony.is_producer(farm) and not colony.output_full(farm), "ферма — производство")
+	colony.drop_item(Colony.output_cell(farm), "food", Colony.PRODUCE_CAP)
+	check(colony.output_full(farm) and colony.producer_at(Colony.output_cell(farm)) == farm, "100 в ящиках — склад фермы полон")
+	var reach := colony.pathing.explore(u.cell())
+	u.workplace = farm.id
+	check(not colony._try_room_work(u, RoomType.FARM, Unit.Task.FARM, reach[0], reach[1]) and farm.blocked.begins_with("Склад постройки полон"),
+		"на полную ферму не идут: «%s»" % farm.blocked)
+	colony.drops.clear()
+	colony._mark_full(farm)
+	check(farm.blocked.is_empty(), "унесли — ферма снова работает")
 
 
 ## Баланс для планет: очаги складываются (не выше +30 °C), крепь из стали без дерева,
