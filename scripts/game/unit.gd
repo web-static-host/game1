@@ -98,6 +98,8 @@ var state := State.IDLE
 var task := Task.NONE
 var target := Vector2i.ZERO
 var project_id := 0
+## Стройка, где копал или строил в последний раз: туда возвращается первым делом.
+var last_project := 0
 var path: Array[Vector2i] = []
 var path_i := 0
 var retry := 0.0

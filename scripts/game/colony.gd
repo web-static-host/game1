@@ -4350,10 +4350,9 @@ func _task_order(u: Unit) -> Array[String]:
 		return ["workplace", "projects", "need", "haul"]
 	if u.profession == Unit.Prof.HAULER:
 		return ["haul", "projects", "need"]
-	# Шахтёры — сначала в шахты, строители — сначала на остальные стройки.
-	# Шахтёр только копает: сначала шахты, потом копка на других стройках.
+	# Шахтёр — только шахты (копает, крепит, чинит), строитель — остальные стройки.
 	if u.profession == Unit.Prof.MINER:
-		return ["mines", "projects"]
+		return ["mines"]
 	if u.profession == Unit.Prof.BUILDER:
 		return ["builds", "projects", "need"]
 	# Строители и свободные: сначала стройка, потом переноска.
@@ -4430,7 +4429,9 @@ func _assign(u: Unit) -> bool:
 ## only — только стройки этого вида, skip — кроме этого вида. Шахтёр вытесняет свободного
 ## из шахты, строитель — с остальных строек.
 func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, skip := -1) -> bool:
-	for p in projects:
+	var miners := has_crew(Unit.Prof.MINER)
+	var builders := has_crew(Unit.Prof.BUILDER)
+	for p in _projects_for(u):
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 			continue
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
@@ -4439,47 +4440,81 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 		if p.bored_by > 0:
 			continue
 		var mine := p.kind == Project.Kind.MINE
-		var priority := (u.profession == Unit.Prof.MINER and mine) or (u.profession == Unit.Prof.BUILDER and not mine)
+		var crew := _crew_ok(u, mine, miners, builders)
+		var priority := crew and builder_or_miner(u)
 		# На стройку с приоритетом её бригада (строители, у шахты — шахтёры) идёт вся.
 		if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
 				and not (p.priority and priority_crew(u, p)):
 			continue
 		# Дальняя стройка (глубоко в большой колонии) — путь к ней ищут прицельно.
 		_reach_far(u.cell(), p.rect, parents, dist)
-		# Шахтёр в шахте копает и ставит крепь, а дерево на крепь носит сам, только если
-		# нет свободных подсобных. На других стройках — только копает.
-		if u.profession == Unit.Prof.MINER and u.workplace == 0:
+		if crew:
 			if p.phase == Project.Phase.DIG:
-				if mine and _try_support(u, p, parents, dist):
+				if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
+						or _try_dig(u, p, parents, dist):
 					return true
-				if _try_dig(u, p, parents, dist):
-					return true
-			if mine and not free_hauler_exists() and _try_haul(u, p, parents, dist, true):
+			var task := Unit.Task.NONE
+			match p.phase:
+				Project.Phase.BUILD:
+					task = Unit.Task.BUILD if p.paid else Unit.Task.NONE
+				Project.Phase.EQUIP:
+					task = Unit.Task.EQUIP if p.equip_paid else Unit.Task.NONE
+				Project.Phase.DONE:
+					task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
+			if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
 				return true
-			continue
-		if p.phase == Project.Phase.DIG:
-			if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \
-					or _try_dig(u, p, parents, dist):
-				return true
-		var task := Unit.Task.NONE
-		match p.phase:
-			Project.Phase.BUILD:
-				task = Unit.Task.BUILD if p.paid else Unit.Task.NONE
-			Project.Phase.EQUIP:
-				task = Unit.Task.EQUIP if p.equip_paid else Unit.Task.NONE
-			Project.Phase.DONE:
-				task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
-		if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
-			return true
 		# Строители и шахтёры материалы не носят — это работа складов и подсобных.
 		# Строитель берёт сам только то, без чего его работа стоит прямо сейчас (дерево на крепь,
-		# материалы на оплату этапа), и ровно столько.
+		# материалы на оплату этапа), и ровно столько; шахтёр — дерево на крепь своей шахты,
+		# если нет свободных подсобных.
 		if builder_or_miner(u):
-			if u.profession == Unit.Prof.BUILDER and _try_haul(u, p, parents, dist, true):
+			if crew and (u.profession == Unit.Prof.BUILDER or not free_hauler_exists()) \
+					and _try_haul(u, p, parents, dist, true):
 				return true
 		elif (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
 			return true
 	return false
+
+
+## Кто копает и строит: шахты — шахтёры, остальное — строители. Остальные гаврики на стройках
+## только носят материалы. Если нужной бригады в колонии нет вовсе — берутся свободные
+## (шахту без шахтёров копают строители, а без них — свободные).
+func works_on(u: Unit, p: Project) -> bool:
+	return _crew_ok(u, p.kind == Project.Kind.MINE, has_crew(Unit.Prof.MINER), has_crew(Unit.Prof.BUILDER))
+
+
+static func _crew_ok(u: Unit, mine: bool, miners: bool, builders: bool) -> bool:
+	if u.workplace == 0:
+		if u.profession == Unit.Prof.MINER:
+			return mine
+		if u.profession == Unit.Prof.BUILDER:
+			return not mine or not miners
+	if mine:
+		return not miners and not builders
+	return not builders
+
+
+## Есть ли в колонии взрослый с этой профессией без места работы (строитель, шахтёр).
+func has_crew(prof: int) -> bool:
+	for o in units:
+		if o.profession == prof and o.workplace == 0 and not o.child:
+			return true
+	return false
+
+
+## Стройки по очереди для гаврика: сначала с приоритетом, потом та, где он только что
+## работал (докапывает и крепит свою, а не бежит на первую в списке), потом остальные.
+func _projects_for(u: Unit) -> Array[Project]:
+	var last := project_by_id(u.last_project) if u.last_project != 0 else null
+	if last == null or last.priority or not projects.has(last):
+		return projects
+	var out: Array[Project] = projects.duplicate()
+	out.erase(last)
+	var at := 0
+	while at < out.size() and out[at].priority:
+		at += 1
+	out.insert(at, last)
+	return out
 
 
 ## --- Приоритет стройки -------------------------------------------------------------
@@ -4577,6 +4612,8 @@ func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, par
 	u.path_i = 0
 	u.work_t = 0.0
 	u.state = Unit.State.MOVE
+	if pid != 0 and task in [Unit.Task.DIG, Unit.Task.SUPPORT, Unit.Task.BUILD, Unit.Task.EQUIP, Unit.Task.REPAIR]:
+		u.last_project = pid
 	var key = _reserve_key(u)
 	if key != null:
 		reserved[key] = u.id

@@ -70,6 +70,7 @@ func _initialize() -> void:
 	test_lift_merge()
 	test_lift_above_zero()
 	test_far_reach()
+	test_crew_roles()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3112,6 +3113,39 @@ func test_far_reach() -> void:
 	q.blocked = "Нет доступа — проложите тоннель к стройке"
 	colony._check_access()
 	check(q.blocked.is_empty() or colony.workers_on(q) > 0, "предупреждение «Нет доступа» снимается")
+
+
+## Шахтёр — только шахты, строитель — остальные стройки, прочие только носят; нет бригады —
+## берутся свободные. Гаврик возвращается на свою стройку, а не на первую в списке.
+func test_crew_roles() -> void:
+	var colony := _new_colony(38)
+	_start(colony, _find_solid_column(colony.world, 40))
+	var b: Unit = colony.units[0]
+	var m: Unit = colony.units[1]
+	var f: Unit = colony.units[2]
+	var room := Project.new()
+	room.id = 1201
+	room.kind = Project.Kind.ROOM
+	var mine := Project.new()
+	mine.id = 1202
+	mine.kind = Project.Kind.MINE
+	check(colony.works_on(f, room) and colony.works_on(f, mine), "без строителей и шахтёров строят свободные")
+	b.profession = Unit.Prof.BUILDER
+	check(colony.works_on(b, room) and colony.works_on(b, mine) and not colony.works_on(f, room) and not colony.works_on(f, mine),
+		"есть строитель — свободные не копают; шахту без шахтёров копает строитель")
+	m.profession = Unit.Prof.MINER
+	check(colony.works_on(m, mine) and not colony.works_on(m, room), "шахтёр — только шахты")
+	check(colony.works_on(b, room) and not colony.works_on(b, mine), "есть шахтёр — строитель шахты не копает")
+	var other := Project.new()
+	other.id = 1203
+	other.kind = Project.Kind.ROOM
+	colony.projects.append_array([other, room])
+	b.last_project = room.id
+	check(colony._projects_for(b)[0] == room, "сначала — своя стройка")
+	other.priority = true
+	colony.projects.erase(other)
+	colony.projects.push_front(other)
+	check(colony._projects_for(b)[0] == other and colony._projects_for(b)[1] == room, "приоритет важнее своей стройки")
 
 
 ## Лифты встык одного вида соединяются в один.
