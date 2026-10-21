@@ -71,6 +71,7 @@ func _initialize() -> void:
 	test_lift_above_zero()
 	test_far_reach()
 	test_crew_roles()
+	test_digger_stays()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3148,6 +3149,31 @@ func test_crew_roles() -> void:
 	check(colony._projects_for(b)[0] == other and colony._projects_for(b)[1] == room, "приоритет важнее своей стройки")
 
 
+## Узкий ствол копает один гаврик подряд: клетка, крепь, клетка — не уходит после каждой
+## клетки и не отдаёт следующую подошедшему.
+func test_digger_stays() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := 60
+	while not (w.gen.lake_at(x).is_empty() and w.gen.lake_at(x - 8).is_empty() and w.gen.lake_at(x + 8).is_empty() \
+			and w.gen.surface_y(x) == w.gen.surface_y(x + 1) and Mat.is_diggable(w.get_mat(x, w.gen.surface_y(x) + 6))):
+		x += 1
+	_start(colony, x - 6)
+	colony.inventory = {"wood": 60, "stone": 30, "food": 200}
+	colony.units[0].profession = Unit.Prof.BUILDER
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, w.gen.surface_y(x), 1, 8))
+	var diggers := {}
+	var time := 0.0
+	while colony.projects.has(t) and t.phase == Project.Phase.DIG and time < 400.0:
+		colony.update(0.1)
+		time += 0.1
+		for u in colony.units:
+			if u.project_id == t.id and (u.task == Unit.Task.DIG or u.task == Unit.Task.SUPPORT):
+				diggers[u.id] = true
+	check(t.phase != Project.Phase.DIG, "ствол выкопан (%.0f с)" % time)
+	check(diggers.size() <= 2, "ствол копает один-два гаврика, а не все по очереди (%d)" % diggers.size())
+
+
 ## Лифты встык одного вида соединяются в один.
 func test_lift_merge() -> void:
 	var colony := _new_colony(34)
@@ -3183,6 +3209,9 @@ func test_priority() -> void:
 		colony.set_profession(u, Unit.Prof.BUILDER)
 	var a := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 12), 6)
 	var b := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 4, w.gen.surface_y(x + 4), 1, 12), 1)
+	# Мест на второй нет вовсе: без приоритета туда не идут, с приоритетом — бригада идёт сверх.
+	if b != null:
+		b.workers = 0
 	check(a != null and b != null, "две стройки")
 	if a == null or b == null:
 		return
@@ -3190,7 +3219,7 @@ func test_priority() -> void:
 		colony.update(0.5)
 	var on_b := func() -> int:
 		return colony.units.filter(func(u: Unit) -> bool: return u.project_id == b.id).size()
-	check(on_b.call() <= 1, "без приоритета на второй — не больше её рабочих (%d)" % on_b.call())
+	check(on_b.call() == 0, "без приоритета на второй — не больше её рабочих (%d)" % on_b.call())
 	check(colony.can_prioritize(b), "стройке можно дать приоритет")
 	var on_a := colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).size()
 	colony.set_priority(b, true)
@@ -3201,7 +3230,8 @@ func test_priority() -> void:
 	for i in 60:
 		colony.update(0.5)
 		best = maxi(best, on_b.call())
-	check(best >= 2, "строители пришли сюда сверх числа рабочих (%d)" % best)
+
+	check(best >= 1, "строители пришли сюда сверх числа рабочих (%d)" % best)
 	b.phase = Project.Phase.DONE
 	colony._priority_tick()
 	check(not b.priority, "готово — приоритет снят")
