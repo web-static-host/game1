@@ -21,6 +21,7 @@ PROTO = os.path.join(HERE, 'prototype_chatgpt.png')
 HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
+RIM = 0.08             # скругление края «надутой» части (бока головы и рук), м
 PROFILE = 4.0          # как резко толщина упирается в DEPTH: больше — площе перед, туже края
 LOW = (1.25, 1.45)     # ниже — туловище из сечений (между — плавный переход к «надутому»)
 ARMS_X = 0.85          # дальше от середины — руки и кисти («надутые»)
@@ -190,7 +191,8 @@ def build_mesh():
     # Толще DEPTH не бывает — плоский перед под лицом.
     g = (np.maximum(g, 1e-6) ** -PROFILE + DEPTH ** -PROFILE) ** (-1.0 / PROFILE)
     Y = ys[None, :, None]
-    F_up = np.maximum(np.abs(Y) - g[:, None, :], d2[:, None, :])
+    # Край: где толщина и контур сходятся — скругляем (иначе по бокам две полоски-ребра).
+    F_up = _smax(np.abs(Y) - g[:, None, :], np.broadcast_to(d2[:, None, :], (len(xs), len(ys), len(zs))), RIM)
     X3, Y3, Z3 = np.meshgrid(xs, ys, zs, indexing='ij')
     F_up = _metric(F_up)
     w = _smooth((Z3 - LOW[0]) / (LOW[1] - LOW[0]))
