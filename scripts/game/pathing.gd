@@ -1,6 +1,6 @@
 class_name Pathing
 extends RefCounted
-## Передвижение жителей в разрезе мира.
+## Передвижение гавриков в разрезе мира.
 ## - ходят по открытым клеткам, под ногами — опора, над головой — свободно;
 ## - в выкопанных клетках и готовых постройках есть лестницы: можно лезть вверх/вниз;
 ## - по рельефу шагают на ступеньку в 1 м, залезают на уступ в 2 м;
@@ -210,15 +210,17 @@ func find_path(start: Vector2i, goals: Dictionary, limit := FAR_NODES) -> Array[
 	var g_cost := {start: 0}
 	# Двоичная куча: [оценка, клетка].
 	var heap: Array = [[_h(start, box), start]]
-	var seen := 0
-	while not heap.is_empty() and seen < limit:
+	var closed := {}
+	while not heap.is_empty() and closed.size() < limit:
 		var c: Vector2i = _heap_pop(heap)[1]
-		seen += 1
+		if closed.has(c):
+			continue
+		closed[c] = true
 		if goals.has(c):
 			return path_to(parents, c)
 		var d: int = g_cost[c] + 1
 		for n in neighbors(c):
-			if g_cost.has(n) and g_cost[n] <= d:
+			if closed.has(n) or (g_cost.has(n) and g_cost[n] <= d):
 				continue
 			g_cost[n] = d
 			parents[n] = c

@@ -1,6 +1,6 @@
 class_name SaveSystem
 extends RefCounted
-## Сохранение: seed мира + изменённые чанки + колония (жители, стройки, склад).
+## Сохранение: seed мира + изменённые чанки + колония (гаврики, стройки, склад).
 
 const VERSION := 2
 const DEFAULT_PATH := "user://save.json"

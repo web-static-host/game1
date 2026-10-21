@@ -1,6 +1,6 @@
 class_name CreatureArt
 extends RefCounted
-## Мультяшные жители без головы: глаза и рот прямо на туловище.
+## Мультяшные гаврики без головы: глаза и рот прямо на туловище.
 ## Стиль — как в Brawl Stars / Clash Royale, но без чёрной обводки: тело, руки и ноги —
 ## один сплошной силуэт одного цвета; объём даёт переход от светлого верха к тёмному низу,
 ## тень по нижним краям, светлый кант по верхним и блик.
@@ -8,7 +8,7 @@ extends RefCounted
 ## Внешность задаётся словарём:
 ##   color: Color — цвет тела; shape: Shape; eyes: 0..3; fingers: 1..7;
 ##   hair: bool — хохолок; fur: bool — шерсть; hair_color: Color (необязательно);
-##   super: bool — сверхюнит (цвет лого, сияние); mood: -1..1 — от грусти к радости;
+##   super: bool — супер-гаврик (цвет лого, сияние); mood: -1..1 — от грусти к радости;
 ##   мутации: glow — светится, gills — жабры, shell — панцирь, long_arms — длинные руки,
 ##   antennae — усики, horn — рог, size: 1 гигант / -1 кроха, albino — альбинос,
 ##   pattern: 1 полосы / 2 пятна, melanist — чёрный;
@@ -19,13 +19,13 @@ extends RefCounted
 ## TRIANGLE — перевёрнутый: широкий верх, острие внизу.
 enum Shape { TRIANGLE, SQUARE, ROUND }
 
-## Любимый цвет: градиент лого игры. Сверхюнит — цвет рядом с этим градиентом.
+## Любимый цвет: градиент лого игры. Супер-гаврик — цвет рядом с этим градиентом.
 const SUPER_A := Color8(44, 214, 193)
 const SUPER_B := Color8(9, 147, 179)
 const PUPIL := Color(0.13, 0.1, 0.18)
 
 
-## Рисует жителя: at — точка на земле между ступнями, w — ширина туловища в пикселях.
+## Рисует гаврика: at — точка на земле между ступнями, w — ширина туловища в пикселях.
 static func draw(ci, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
 	var col: Color = g.get("color", Color(0.9, 0.4, 0.3))
 	var shape: int = g.get("shape", Shape.TRIANGLE)
@@ -156,7 +156,7 @@ static func draw(ci, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
 		_sparkles(ci, base + Vector2(0, -h * 0.5), w, t)
 
 
-## Записать жителя в позе: потом быстро повторять (DrawRecorder.replay).
+## Записать гаврика в позе: потом быстро повторять (DrawRecorder.replay).
 static func record(w: float, g: Dictionary, t := 1.0) -> DrawRecorder:
 	var rec := DrawRecorder.new()
 	draw(rec, Vector2.ZERO, w, g, t)
@@ -186,7 +186,7 @@ static func hand_pos(w: float, g: Dictionary, sx: float) -> Vector2:
 	return p3 + Vector2(off.x * sx, off.y) * w
 
 
-## Высота жителя от ступней до макушки.
+## Высота гаврика от ступней до макушки.
 static func height_of(w: float, g: Dictionary) -> float:
 	var shape: int = g.get("shape", Shape.TRIANGLE)
 	match int(g.get("size", 0)):

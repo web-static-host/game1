@@ -56,7 +56,7 @@ func _process(_delta: float) -> bool:
 			u.health = 100.0
 			u.satiety = 90.0
 			u.energy = 90.0
-		# Для превью: без износа, светло, жители сыты и стоят в комнатах.
+		# Для превью: без износа, светло, гаврики сыты и стоят в комнатах.
 		colony.drops.clear()    # кучки на полу мешают разглядеть обстановку
 		for pr in colony.projects:
 			pr.wear = 0.0

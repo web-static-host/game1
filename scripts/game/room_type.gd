@@ -1,6 +1,6 @@
 class_name RoomType
 extends RefCounted
-## Назначения комнат. Оборудование стоит ресурсов, его ставят жители.
+## Назначения комнат. Оборудование стоит ресурсов, его ставят гаврики.
 
 enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN,
 	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD }
