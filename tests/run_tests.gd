@@ -68,6 +68,7 @@ func _initialize() -> void:
 	test_extend()
 	test_stacked_mines()
 	test_lift_merge()
+	test_lift_above_zero()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3046,6 +3047,31 @@ func test_planet_balance() -> void:
 	check(gold > 0 and gold * 3 < iron, "золото есть, но реже железа (%d против %d)" % [gold, iron])
 	var old := WorldData.new(WorldGen.new(7, 4))
 	check(old.gen._diamond_share == 0.04 and WorldGen.new(7).version == WorldGen.LATEST, "старые миры не меняются")
+
+
+## Лифт от поверхности: остановки с отрицательной координатой — кабина туда едет
+## и не «сбрасывается» на дно (раньше −1 значило «кабины нет», и жители ждали вечно).
+func test_lift_above_zero() -> void:
+	var colony := _new_colony(30)
+	var x := _find_solid_column(colony.world, 40)
+	_start(colony, x - 10)
+	_power_up(colony, x)
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, -8, 2, 20), 960)
+	var u: Unit = colony.units[0]
+	var path: Array[Vector2i] = [Vector2i(x, -9), Vector2i(x, -8), Vector2i(x, 0), Vector2i(x, 11)]
+	u.path = path
+	u.path_i = 1
+	u.state = Unit.State.MOVE
+	u.lift_id = lift.id
+	u.lift_board = 1
+	u.lift_exit = 3
+	colony._lifts_tick(0.1)
+	check(lift.lift_pos > 9.0 and lift.lift_pos <= 11.0, "кабина появилась на дне и поехала вверх (%.1f)" % lift.lift_pos)
+	for i in 200:
+		colony._lifts_tick(0.1)
+		if u.riding:
+			break
+	check(u.riding, "кабина поднялась к остановке выше нуля и забрала жителя (%.1f)" % lift.lift_pos)
 
 
 ## Лифты встык одного вида соединяются в один.

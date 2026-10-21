@@ -291,7 +291,7 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
 			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
 		var y := r.end.y - TILE
-		if p.lift_pos >= 0.0:
+		if p.lift_pos != Project.LIFT_UNSET:
 			y = view.cell_to_local(Vector2i(0, 0)).y + p.lift_pos * TILE
 		# Кабина — на высоту человека (2 м) над полом клетки, где стоит.
 		var cab := Rect2(r.position.x + 5, y - TILE + 2, r.size.x - 10, TILE * 2 - 2)
@@ -301,7 +301,7 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 		draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
 		draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
 		var x0 := r.position.x
-		if p.lift_pos >= 0.0:
+		if p.lift_pos != Project.LIFT_UNSET:
 			x0 = view.cell_to_local(Vector2i(0, 0)).x + p.lift_pos * TILE
 		var cab := Rect2(x0 - TILE * 0.5 + 2, r.end.y - TILE * 2 - 2, TILE * 2 - 4, TILE * 2)
 		_draw_cabin(cab, cab_col, p)
