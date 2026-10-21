@@ -1397,7 +1397,7 @@ func _lifts_tick(dt: float) -> void:
 		_cargo_check_t = 0.0
 	for p in lifts():
 		var ends := _lift_ends(p)
-		if p.lift_pos < 0.0:
+		if p.lift_pos == Project.LIFT_UNSET:
 			p.lift_pos = float(ends[1])
 		if p.cargo:
 			if check:
@@ -1443,14 +1443,15 @@ func _passenger_tick(p: Project, dt: float) -> void:
 		if (stopped or p.lift_dwell > 0.0) and riders.size() < LIFT_CAP and p.lift_dwell < LIFT_WAIT and _approaching(p, here):
 			p.lift_dwell += dt
 			return
-	var target := -1
+	# Координата остановки бывает и отрицательной (лифт от поверхности) — «нет цели» отдельно.
+	var target := 0
 	var best := 1 << 30
 	for u in (riders if not riders.is_empty() else waiting):
 		var a := _lift_axis(p, u.path[u.lift_exit if u.riding else u.lift_board])
 		if absi(a - here) < best:
 			best = absi(a - here)
 			target = a
-	if target < 0:
+	if best == 1 << 30:
 		p.lift_dwell = 0.0
 		return
 	if absf(float(target) - p.lift_pos) > 0.01:

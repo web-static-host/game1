@@ -63,7 +63,9 @@ var equip_ladder := false
 var cargo := false
 ## Кабина лифта: где она (координата по оси шахты; -1 — ещё не ставили), груз в ней,
 ## сколько стоит на остановке, грузы, ждущие у концов шахты [начало, конец].
-var lift_pos := -1.0
+## Кабина ещё не стояла (координата может быть и отрицательной — у поверхности).
+const LIFT_UNSET := -1.0e9
+var lift_pos := LIFT_UNSET
 ## Бур: куда едет (ноль — стоит), сколько метров осталось, сколько уже сверлит срез,
 ## ход, который он проходит, и где стоял, когда получил приказ.
 var drill_dir := Vector2i.ZERO
@@ -484,7 +486,10 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
 	p.cargo = bool(d.get("cargo", false))
-	p.lift_pos = float(d.get("lift_pos", -1.0))
+	p.lift_pos = float(d.get("lift_pos", LIFT_UNSET))
+	# В старых сохранениях «ещё не ставили» было −1 (кабина выше нуля тогда не держалась).
+	if p.lift_pos == -1.0:
+		p.lift_pos = LIFT_UNSET
 	p.lift_goal = int(d.get("lift_goal", -1))
 	var dd: Array = d.get("drill_dir", [0, 0])
 	p.drill_dir = Vector2i(int(dd[0]), int(dd[1]))
