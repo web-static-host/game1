@@ -103,6 +103,8 @@ var last_project := 0
 var last_work_t := -1.0e9
 ## Ждёт рядом следующей работы своей выработки.
 var waiting_own := false
+## Сколько накопилось с прошлой проверки стихий (вода, газ, жара, холод).
+var env_t := randf()
 var path: Array[Vector2i] = []
 var path_i := 0
 var retry := 0.0

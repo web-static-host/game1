@@ -291,10 +291,25 @@ func adults() -> int:
 
 # --- Стройки --------------------------------------------------------------------
 
+## Стройки по номеру: указатель пересобирается, когда меняется список.
+var _by_id := {}
+var _by_id_n := -1
+
+
 func project_by_id(pid: int) -> Project:
-	for p in projects:
-		if p.id == pid:
-			return p
+	if _by_id_n != projects.size():
+		_by_id.clear()
+		for q in projects:
+			_by_id[q.id] = q
+		_by_id_n = projects.size()
+	var p: Project = _by_id.get(pid)
+	if p != null:
+		return p
+	# Список поменяли без смены длины (убрали одну, добавили другую) — ищем честно.
+	for q in projects:
+		if q.id == pid:
+			_by_id_n = -1
+			return q
 	return null
 
 
@@ -427,6 +442,7 @@ func _carve_mines(r: Rect2i) -> void:
 		if m.kind != Project.Kind.MINE or not m.rect.intersects(r):
 			continue
 		projects.erase(m)
+		_by_id_n = -1
 		for c in m.cells():
 			if r.has_point(c):
 				interior.erase(c)
@@ -457,6 +473,7 @@ func _carve_passages(r: Rect2i) -> void:
 				or not m.rect.intersects(r):
 			continue
 		projects.erase(m)
+		_by_id_n = -1
 		for c in m.cells():
 			if r.has_point(c):
 				interior.erase(c)
@@ -555,28 +572,34 @@ func water_rects(start_x: int, end_x: int) -> Dictionary:
 	return out
 
 
-## Могут ли гаврики дойти до зоны (обход от каждого взрослого, кэш на полсекунды).
-var _reach_cache: Array = []
-var _reach_at := -100000
+## Могут ли гаврики дойти до зоны. Карта достижимости — один общий обход сразу от всех
+## взрослых (а не по обходу на каждого), обновляется раз в REACH_EVERY секунд игры.
+const REACH_EVERY := 3.0
+const REACH_CAP := 24000
+var _reach_map := {}
+var _reach_at := -INF
+var _reach_key := []
+
+
+func _refresh_reach() -> void:
+	# Новые ходы, лестницы, готовые постройки — пересчёт сразу; иначе — по таймеру.
+	var key := [pathing.climb_rev, interior.size(), room_cells.size(), deck.size(), units.size()]
+	if game_time - _reach_at < REACH_EVERY and key == _reach_key and not _reach_map.is_empty():
+		return
+	_reach_at = game_time
+	_reach_key = key
+	var starts: Array[Vector2i] = []
+	for u in units:
+		if not u.child:
+			starts.append(u.cell())
+	_reach_map = pathing.explore_multi(starts, REACH_CAP)
 
 
 func can_reach(r: Rect2i) -> bool:
-	var now := Time.get_ticks_msec()
-	if now - _reach_at > 500 or _reach_cache.is_empty() or offline:
-		_reach_cache.clear()
-		_reach_at = now
-		var seen := {}
-		for u in units:
-			if u.child or seen.has(u.cell()):
-				continue
-			seen[u.cell()] = true
-			_reach_cache.append(pathing.explore(u.cell())[1])
-	var cut := false
-	for dist in _reach_cache:
-		if _near_rect(r, dist) != null:
-			return true
-		cut = cut or Pathing.truncated(dist)
-	if not cut:
+	_refresh_reach()
+	if _near_rect(r, _reach_map) != null:
+		return true
+	if _reach_map.size() < REACH_CAP:
 		return false
 	# В большой колонии обход обрывается раньше дальних мест — ищем путь прицельно
 	# от ближайшего к зоне гаврика.
@@ -590,6 +613,7 @@ func can_reach(r: Rect2i) -> bool:
 	if near == null:
 		return false
 	# Прицельный поиск недешёв: не чаще раза в FAR_GAP мс (пока ждём — не пугаем «нет доступа»).
+	var now := Time.get_ticks_msec()
 	if not offline and now - _far_at < FAR_GAP:
 		return true
 	_far_at = now
@@ -901,6 +925,7 @@ func cancel_project(p: Project) -> void:
 		_refund(p.cost(), 1.0 - p.build_done / p.build_work())
 	_return_delivered(p)
 	projects.erase(p)
+	_by_id_n = -1
 	for c in p.cells():
 		room_cells.erase(c)
 	_restore_water_overlaps(p)
@@ -945,6 +970,7 @@ func demolish(p: Project) -> bool:
 	_return_delivered(p)
 	_release_beds(p)
 	projects.erase(p)
+	_by_id_n = -1
 	for c in p.cells():
 		room_cells.erase(c)
 		interior.erase(c)
@@ -1301,6 +1327,7 @@ func _end_bore(p: Project, arrived: bool) -> void:
 	var old := bore.cells()
 	if went <= 0 or r.size.x <= 0 or r.size.y <= 0:
 		projects.erase(bore)
+		_by_id_n = -1
 		_rebuild_climb()
 		_log("%s: остановлен, не пройдя ни метра" % p.title(), "info")
 		return
@@ -1423,9 +1450,9 @@ func _lift_ends(p: Project) -> Array:
 
 
 func _passenger_lift_at(c: Vector2i) -> Project:
-	for p in projects:
-		if p.kind == Project.Kind.LIFT and not p.cargo and p.phase == Project.Phase.DONE and p.has_cell(c):
-			return p
+	var p: Project = _lift_cells.get(c)
+	if p != null and p.kind == Project.Kind.LIFT and not p.cargo and p.phase == Project.Phase.DONE and p.has_cell(c):
+		return p
 	return null
 
 
@@ -1699,6 +1726,9 @@ func _cargo_route(key: String, dist: Dictionary, direct_d: int, only: Project = 
 
 
 ## Где можно лазить (pathing.ladders, pathing.sites): лестницы готовых построек и леса строек.
+var _lift_cells := {}
+
+
 func _rebuild_climb() -> void:
 	var lad := {}
 	var site := {}
@@ -1730,6 +1760,12 @@ func _rebuild_climb() -> void:
 				var a := Vector2i(x, p.rect.position.y - 1)
 				if interior.has(a) and interior[a] != p.id:
 					fl[a] = true
+	# Клетки пассажирских лифтов: у какой клетки садиться в кабину.
+	_lift_cells.clear()
+	for p in projects:
+		if p.kind == Project.Kind.LIFT and not p.cargo and p.phase == Project.Phase.DONE:
+			for c in p.cells():
+				_lift_cells[c] = p
 	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors:
 		pathing.ladders.clear()
 		pathing.ladders.merge(lad)
@@ -1854,6 +1890,7 @@ func _merge_extension(q: Project) -> bool:
 		if u.project_id == q.id:
 			_drop(u)
 	projects.erase(q)
+	_by_id_n = -1
 	host.rect = merged
 	host.needs_support.clear()
 	host.supported.clear()
@@ -1897,6 +1934,7 @@ func _merge_lifts(p: Project) -> void:
 			for k in spill:
 				drop_item(q.rect.get_center(), k, int(spill[k]))
 			projects.erase(q)
+			_by_id_n = -1
 			p.rect = r
 			p.wear = maxf(p.wear, q.wear)
 			p.lift_goal = -1
@@ -2082,10 +2120,16 @@ func diggable_now(p: Project) -> Array[Vector2i]:
 
 
 func remaining_dig(p: Project) -> Array[Vector2i]:
+	# Пока порода не менялась — тот же список (его спрашивают при каждом поиске работы).
+	if p.dig_rev == world.revision and p.dig_rect == p.rect:
+		return p.dig_left
 	var out: Array[Vector2i] = []
 	for c in p.cells():
 		if Mat.is_solid(world.get_mat(c.x, c.y)):
 			out.append(c)
+	p.dig_rev = world.revision
+	p.dig_rect = p.rect
+	p.dig_left = out
 	return out
 
 
@@ -3208,12 +3252,19 @@ func grow_plants(t: float) -> void:
 
 # --- Жизнь: потребности, взросление, семьи ---------------------------------------------
 
+const ENV_EVERY := 1.0
+
+
 func _life_tick(dt: float, offline: bool) -> void:
 	for u: Unit in units.duplicate():
 		if not offline:
-			elements.affect_unit(u, dt)
-			if not units.has(u):
-				continue
+			# Стихии (вода, газ, жара, холод) — раз в секунду: урон тот же, считать в 5 раз реже.
+			u.env_t += dt
+			if u.env_t >= ENV_EVERY:
+				elements.affect_unit(u, u.env_t)
+				u.env_t = 0.0
+				if not units.has(u):
+					continue
 		u.satiety = maxf(0.0, u.satiety - SATIETY_DECAY * dt * u.stat("appetite"))
 		# Без еды здоровье тает: примерно за двое суток — смерть (без игрока — только истощение).
 		if u.satiety <= 0.0 and not u.invulnerable():
@@ -3921,18 +3972,46 @@ func _needs_interrupt(u: Unit) -> bool:
 
 
 ## Замедление в тесном тоннеле: поток ограничен его шириной.
+var _occ := {}
+var _occ_at := -1.0
+
+
 func congestion(u: Unit) -> float:
-	var p := project_at(u.cell())
+	# Готовые ходы — по карте построек; перебор строек — только на лесах идущей стройки.
+	var c := u.cell()
+	var p: Project = null
+	var pid: int = interior.get(c, 0)
+	if pid != 0:
+		p = project_by_id(pid)
+	elif pathing.sites.has(c):
+		p = project_at(c)
 	if p == null or p.kind != Project.Kind.TUNNEL:
 		return 1.0
 	var vertical := p.rect.size.y > p.rect.size.x
+	# Кто где стоит — раз за шаг, а не перебором всех гавриков для каждого идущего.
+	if _occ_at != game_time:
+		_occ_at = game_time
+		_occ.clear()
+		for o in units:
+			var oc := o.cell()
+			if not _occ.has(oc):
+				_occ[oc] = []
+			_occ[oc].append(o)
 	var crowd := 1
-	for o in units:
-		if o == u or not p.has_cell(o.cell()):
-			continue
-		var d := absf(o.pos.y - u.pos.y) if vertical else absf(o.pos.x - u.pos.x)
-		if d <= 1.2:
-			crowd += 1
+	var r := p.rect
+	var xs := range(r.position.x, r.end.x) if vertical else range(c.x - 2, c.x + 3)
+	var ys := range(c.y - 2, c.y + 3) if vertical else range(r.position.y, r.end.y)
+	for y in ys:
+		for x in xs:
+			var q := Vector2i(x, y)
+			if not r.has_point(q) or not _occ.has(q):
+				continue
+			for o: Unit in _occ[q]:
+				if o == u:
+					continue
+				var d := absf(o.pos.y - u.pos.y) if vertical else absf(o.pos.x - u.pos.x)
+				if d <= 1.2:
+					crowd += 1
 	return minf(1.0, float(tunnel_lanes(p.rect)) / crowd)
 
 
@@ -4605,6 +4684,7 @@ func set_priority(p: Project, on: bool) -> void:
 	p.priority = on and can_prioritize(p)
 	if p.priority:
 		projects.erase(p)
+		_by_id_n = -1
 		projects.push_front(p)
 		_log("%s: приоритет — бригада идёт сюда в первую очередь" % p.title(), "info")
 	_priority_tick()
@@ -4868,11 +4948,10 @@ func _dig_deadlock(now: Array[Vector2i]) -> bool:
 	for c in now:
 		if reserved.has(c):
 			return false
+	_refresh_reach()
 	for c in now:
-		can_reach(Rect2i(c, Vector2i.ONE))
-		for dist in _reach_cache:
-			if _work_spot(c, dist)[0] != null:
-				return false
+		if _work_spot(c, _reach_map)[0] != null:
+			return false
 	return true
 
 
@@ -5926,6 +6005,7 @@ func collapse(p: Project, why: String) -> void:
 		_log("Под обломками пропало: %s" % ", ".join(lost), "danger")
 	_release_beds(p)
 	projects.erase(p)
+	_by_id_n = -1
 	for c in p.cells():
 		room_cells.erase(c)
 		interior.erase(c)

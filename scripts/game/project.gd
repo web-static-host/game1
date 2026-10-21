@@ -115,6 +115,10 @@ var support_paid := false
 var support_progress := 0.0
 ## Из чего оплачена крепь текущего среза ("wood" или "metal").
 var support_mat := ""
+## Кэш невыкопанных клеток (Colony.remaining_dig): ревизия мира и прямоугольник, к которым он относится.
+var dig_rev := -1
+var dig_rect := Rect2i()
+var dig_left: Array[Vector2i] = []
 ## Материалы, уже принесённые на стройку: ключ -> количество.
 var delivered := {}
 ## Сырьё, которое подсобные рабочие уже принесли в мастерскую.
@@ -284,10 +288,17 @@ func slice_of(c: Vector2i) -> int:
 
 
 func slice_cells(i: int) -> Array[Vector2i]:
+	# Срез считается прямо по прямоугольнику: перебирать все клетки дорого (длинная шахта).
 	var out: Array[Vector2i] = []
-	for c in cells():
-		if slice_of(c) == i:
-			out.append(c)
+	if i < 0:
+		return out
+	if vertical():
+		for y in range(rect.position.y + i * 2, mini(rect.position.y + i * 2 + 2, rect.end.y)):
+			for x in range(rect.position.x, rect.end.x):
+				out.append(Vector2i(x, y))
+	elif rect.position.x + i < rect.end.x:
+		for y in range(rect.position.y, rect.end.y):
+			out.append(Vector2i(rect.position.x + i, y))
 	return out
 
 

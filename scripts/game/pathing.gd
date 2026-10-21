@@ -191,6 +191,27 @@ func _explore(start: Vector2i, cap := MAX_NODES) -> Array:
 	return [parents, dist]
 
 
+## Обход сразу от многих стартов: куда может дойти хоть кто-то (без предела по горизонтали).
+## Возвращает расстояние от ближайшего старта.
+func explore_multi(starts: Array[Vector2i], cap: int) -> Dictionary:
+	var dist := {}
+	var queue: Array[Vector2i] = []
+	for st in starts:
+		if not dist.has(st) and node(st):
+			dist[st] = 0
+			queue.append(st)
+	var head := 0
+	while head < queue.size() and queue.size() < cap:
+		var c := queue[head]
+		head += 1
+		var d: int = dist[c] + 1
+		for n in neighbors(c):
+			if not dist.has(n):
+				dist[n] = d
+				queue.append(n)
+	return dist
+
+
 ## Обход упёрся в предел: дальнее (глубокий забой в большой колонии) в него не попало.
 static func truncated(dist: Dictionary) -> bool:
 	return dist.size() >= MAX_NODES
