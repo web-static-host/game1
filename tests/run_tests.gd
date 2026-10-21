@@ -3025,6 +3025,14 @@ func test_planet_balance() -> void:
 		w.set_material(x + 30, s + 24, Mat.AIR)
 		colony._rebuild_climb()
 		check(colony.pathing.climbable(Vector2i(x + 30, s + 24)), "по пещере на пути ствола лазят")
+	# Глубина без предела: с поверхности по стволу доходят и до 220 м.
+	var sx := x - 10
+	var ds := w.gen.surface_y(sx)
+	var deep := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(sx, ds, 1, 230), 953)
+	colony._rebuild_climb()
+	colony.pathing.clear_cache()
+	var far: Dictionary = colony.pathing.explore(Vector2i(sx, ds))[1]
+	check(deep != null and far.has(Vector2i(sx, ds + 220)), "по стволу доходят до забоя на 220 м (узлов %d)" % far.size())
 	var g := WorldData.new(WorldGen.new(7))
 	var gold := 0
 	var iron := 0

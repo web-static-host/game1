@@ -520,16 +520,18 @@ func _finish_purposes() -> void:
 			_pending_purpose.erase(p.id)
 
 
-## Как сделал бы игрок: очаг, к которому жителям не подойти (например, на крыше
-## подземной фермы), через пару минут отменяет и больше на это место не ставит.
-## (Комнаты у шахты ждут тоннеля — их не трогаем.)
+## Как сделал бы игрок: стройку, к которой жителям не подойти (например, очаг на крыше
+## подземной фермы или дегазацию в конце шахты), отменяет и больше на это место не ставит.
 func _drop_stuck() -> void:
 	for p in colony.projects.duplicate():
-		if _pending_purpose.get(p.id, -1) != RoomType.HEARTH or p.phase == Project.Phase.DONE or not p.blocked.begins_with("Нет доступа"):
+		# Комнаты у ствола ждут, пока до них докопают, — их не трогаем.
+		var at_shaft: bool = p.rect.position.x == shaft_x + 1 or p.rect.end.x == shaft_x
+		if not _pending_purpose.has(p.id) or at_shaft or p.phase == Project.Phase.DONE or not p.blocked.begins_with("Нет доступа"):
 			_stuck.erase(p.id)
 			continue
 		_stuck[p.id] = _stuck.get(p.id, 0.0) + 5.0
-		if _stuck[p.id] >= 120.0:
+		# Очаг бросают через 2 минуты, остальное — через 4.
+		if _stuck[p.id] >= (120.0 if _is_hearth(p) else 240.0):
 			_bad_rects.append(p.rect)
 			colony.cancel_project(p)
 			_pending_purpose.erase(p.id)
@@ -753,8 +755,8 @@ func _surface_room(purpose: int) -> bool:
 func _shaft() -> bool:
 	var s := world.gen.surface_y(shaft_x)
 	var want := _next_underground()
-	# Ствол на Земле — до 230 м (нефть лежит глубже 200 м).
-	if want < 0 and (shaft_bottom - s > 230 or planet != "earth"):
+	# Ствол на Земле идёт вглубь без предела, пока есть чем крепить; на планете — только под комнаты.
+	if want < 0 and planet != "earth":
 		return false
 	var top := shaft_bottom
 	var r := Rect2i(shaft_x, top, 1, 10)
@@ -899,6 +901,9 @@ func _production_room(has: Callable) -> int:
 			and colony.inventory.get("iron", 0) >= 4 and not _pending_purpose.values().has(RoomType.GENERATOR):
 		return RoomType.GENERATOR
 	var depth := shaft_bottom - world.gen.surface_y(shaft_x)
+	# Каждые 60 м — склад у ствола: добытое не таскают наверх.
+	if depth >= 50 and not _store_near(shaft_bottom, 60):
+		return RoomType.STORAGE
 	if colony.research.has("oil_drilling") and depth >= 205 and not has.call(RoomType.OIL_PUMP):
 		return RoomType.OIL_PUMP
 	if has.call(RoomType.OIL_PUMP) and not has.call(RoomType.OIL_TANK):
@@ -906,6 +911,15 @@ func _production_room(has: Callable) -> int:
 	if colony.research.has("refining") and has.call(RoomType.OIL_TANK) and not has.call(RoomType.REFINERY):
 		return RoomType.REFINERY
 	return -1
+
+
+## Есть ли склад (готовый или строящийся) у ствола не выше чем на rows от уровня y.
+func _store_near(y: int, rows: int) -> bool:
+	for p in colony.projects:
+		var store: bool = p.purpose == RoomType.STORAGE or _pending_purpose.get(p.id, -1) == RoomType.STORAGE
+		if store and absi(p.rect.get_center().x - shaft_x) <= 12 and y - p.rect.position.y >= 0 and y - p.rect.position.y <= rows:
+			return true
+	return false
 
 
 ## Шахты за рудой: видимая жила нужного металла (или кимберлит, если нужны алмазы) —

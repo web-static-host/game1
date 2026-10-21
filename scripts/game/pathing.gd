@@ -7,7 +7,9 @@ extends RefCounted
 ## - в озёра не заходят: водоём переходят только по мосту; подтопленную выработку
 ##   переплывают по поверхности (медленно); упавший в озеро выплывает к берегу.
 
-const MAX_NODES := 3000
+## Обход ограничен числом клеток и расстоянием по горизонтали; по вертикали — без предела,
+## чтобы с поверхности доходили до забоя на любой глубине (и обратно — к складу и в дом).
+const MAX_NODES := 6000
 const MAX_RADIUS := 140
 const UP := Vector2i(0, -1)
 const DOWN := Vector2i(0, 1)
@@ -181,7 +183,7 @@ func _explore(start: Vector2i) -> Array:
 		for n in neighbors(c):
 			if parents.has(n):
 				continue
-			if absi(n.x - start.x) > MAX_RADIUS or absi(n.y - start.y) > MAX_RADIUS:
+			if absi(n.x - start.x) > MAX_RADIUS:
 				continue
 			parents[n] = c
 			dist[n] = d
