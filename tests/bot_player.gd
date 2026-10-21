@@ -77,7 +77,7 @@ func report() -> void:
 	print("\nДействий игрока: %d (%.1f в минуту), рождений: %d" % [actions.size(), actions.size() / maxf(1.0, t / 60.0), births])
 
 
-## Подробный итог: что добыто, какие жители, сверхюниты, где колонии.
+## Подробный итог: что добыто, какие гаврики, супер-гаврики, где колонии.
 func _summary() -> void:
 	print("\n--- Добыто и сделано за игру ---")
 	var keys: Array = colony.produced.keys()
@@ -91,7 +91,7 @@ func _summary() -> void:
 		if int(colony.inventory[k]) > 0:
 			inv.append("%s %d" % [Mat.resource_name(k).to_lower(), colony.inventory[k]])
 	print("В запасе: %s" % (", ".join(inv) if not inv.is_empty() else "пусто"))
-	print("\n--- Жители (%d, детей %d) ---" % [colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size()])
+	print("\n--- Гаврики (%d, детей %d) ---" % [colony.units.size(), colony.units.filter(func(u: Unit) -> bool: return u.child).size()])
 	var cols := {}
 	var shapes := {}
 	var supers := 0
@@ -118,11 +118,11 @@ func _summary() -> void:
 	for k in shapes:
 		sl.append("%s %d" % [k, shapes[k]])
 	print("Формы: %s" % ", ".join(sl))
-	print("Сверхюниты (бирюзовые): %d · мутанты: %d" % [supers, mutants])
+	print("Супер-гаврики (бирюзовые): %d · мутанты: %d" % [supers, mutants])
 	print("Мир: %s" % world_name())
 
 
-## Цвет жителя словами: ближайший из основных.
+## Цвет гаврика словами: ближайший из основных.
 func _color_name(g: Dictionary) -> String:
 	if Genetics.has(g, "albino"):
 		return "альбиносы"
@@ -520,7 +520,7 @@ func _finish_purposes() -> void:
 			_pending_purpose.erase(p.id)
 
 
-## Как сделал бы игрок: стройку, к которой жителям не подойти (например, очаг на крыше
+## Как сделал бы игрок: стройку, к которой гаврикам не подойти (например, очаг на крыше
 ## подземной фермы или дегазацию в конце шахты), отменяет и больше на это место не ставит.
 func _drop_stuck() -> void:
 	for p in colony.projects.duplicate():
@@ -583,7 +583,7 @@ func _science() -> void:
 			return
 
 
-## Как играл бы человек: на каждое место работы — по жителю (лучшему из свободных),
+## Как играл бы человек: на каждое место работы — по гаврику (лучшему из свободных),
 ## один-два строителя и подсобных; остальные — свободные.
 func _professions() -> void:
 	var adults := colony.units.filter(func(u: Unit) -> bool: return not u.child)
@@ -734,7 +734,7 @@ func _need_home() -> bool:
 ## Комната 6×3 на земле у базы (ищем ровное место всё дальше).
 func _surface_room(purpose: int) -> bool:
 	var mat := _best_material()
-	# Материалы не нужны заранее: заложенная стройка сама позовёт жителей добыть недостающее.
+	# Материалы не нужны заранее: заложенная стройка сама позовёт гавриков добыть недостающее.
 	for d in range(0, 60):
 		for sx in [colony.home.x - 8 - d, colony.home.x + 6 + d]:
 			if absi(sx - shaft_x) < 8 and sx <= shaft_x + 7:
@@ -1101,7 +1101,7 @@ func _launch(pad: Project) -> bool:
 	if flight.has("error"):
 		return false
 	launched += 1
-	_milestone("launch%d" % launched, "СТАРТ ракеты на %s: жителей %d, груз %s" % [Planet.planet_name(target_planet), crew.size(), cargo])
+	_milestone("launch%d" % launched, "СТАРТ ракеты на %s: гавриков %d, груз %s" % [Planet.planet_name(target_planet), crew.size(), cargo])
 	if on_launch.is_valid():
 		on_launch.call(flight)
 	return true

@@ -44,7 +44,7 @@ var build_done := 0.0
 var found := {}
 ## Почему стройка стоит (пусто — всё в порядке).
 var blocked := ""
-## Сколько жителей одновременно работает на стройке.
+## Сколько гавриков одновременно работает на стройке.
 var workers := 1
 ## Лестница у левой стены (нужна, если пол комнаты ниже поверхности).
 var ladder := false
@@ -73,7 +73,7 @@ var drill_left := 0
 var drill_t := 0.0
 var bore_id := 0
 var bore_from := Rect2i()
-## Ход, который сверлит бур (id бура): жители его не копают.
+## Ход, который сверлит бур (id бура): гаврики его не копают.
 var bored_by := 0
 var lift_load := {}
 var lift_dwell := 0.0
@@ -136,7 +136,7 @@ var repair_paid := false
 var repair_done := 0.0
 var repair_need := {}
 var repair_work := 0.0
-## Склад: сколько жителей сами добывают ресурсы и какой запас держать.
+## Склад: сколько гавриков сами добывают ресурсы и какой запас держать.
 var gatherers := 0
 var targets := {}
 ## Что лежит именно в этом складе/амбаре (в дегазации — метан в баке): ключ -> количество.
@@ -244,7 +244,7 @@ static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 	return {}
 
 
-## Объём работ второго этапа, сек (для жителя с навыком 1).
+## Объём работ второго этапа, сек (для гаврика с навыком 1).
 static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 	var cells_n := r.size.x * r.size.y
 	if k == Kind.ROOM:

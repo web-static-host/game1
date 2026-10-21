@@ -8,7 +8,7 @@ signal arrived(planet: String, colony: Colony, new_world: bool)
 
 ## [{"planet": id, "world": WorldData, "colony": Colony}] — Земля всегда первая.
 var worlds: Array = []
-## Полёты: {"planet", "crew": [жители], "cargo": {ресурс: n}, "research": [...], "left": сек}.
+## Полёты: {"planet", "crew": [гаврики], "cargo": {ресурс: n}, "research": [...], "left": сек}.
 var flights: Array = []
 ## Семя Земли — от него семена других планет.
 var base_seed := 0
@@ -59,7 +59,7 @@ func _arrive(f: Dictionary) -> void:
 		arrived.emit(planet, e["colony"], false)
 
 
-## Колонии на планетах, где не осталось ни одного жителя (и туда никто не летит), убираем.
+## Колонии на планетах, где не осталось ни одного гаврика (и туда никто не летит), убираем.
 func prune_dead() -> Array[String]:
 	var gone: Array[String] = []
 	for e in worlds.duplicate():

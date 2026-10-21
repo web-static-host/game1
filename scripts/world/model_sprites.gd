@@ -1,10 +1,10 @@
 class_name ModelSprites
 extends Node
-## 3D-модель жителя из Blender (assets/models/blue_buddy.glb), отрисованная в позы.
+## 3D-модель гаврика из Blender (assets/models/blue_buddy.glb), отрисованная в позы.
 ## При запуске один раз ставим все позы рядом в отдельной 3D-сцене и снимаем два кадра:
 ## цветной (тело белое, лицо в своих цветах) и маску (где тело — там красим в цвет генов).
-## Дальше жители с такой моделью рисуются кусками атласа — так же дёшево, как 2D.
-## Модель — треугольник с одним глазом, без мутаций; остальные жители — рисованные.
+## Дальше гаврики с такой моделью рисуются кусками атласа — так же дёшево, как 2D.
+## Модель — треугольник с одним глазом, без мутаций; остальные гаврики — рисованные.
 
 signal baked
 
@@ -69,7 +69,7 @@ const POSES := {
 	"sleep": {"closed": true},
 }
 
-## Включены ли 3D-жители (настройка в меню) и общий экземпляр (его создаёт UnitLayer).
+## Включены ли 3D-гаврики (настройка в меню) и общий экземпляр (его создаёт UnitLayer).
 static var enabled := true
 static var shared: ModelSprites
 ## Что с моделью: готовится / готово / почему не вышло (показываем в «Меню»).
@@ -86,7 +86,7 @@ var material: ShaderMaterial
 var _vp: SubViewport
 
 
-## Подходит ли житель под модель: треугольник с одним глазом, без видимых мутаций.
+## Подходит ли гаврик под модель: треугольник с одним глазом, без видимых мутаций.
 static func fits(looks: Dictionary) -> bool:
 	if looks.is_empty() or int(looks.get("shape", -1)) != CreatureArt.Shape.TRIANGLE or int(looks.get("eyes", 0)) != 1:
 		return false
@@ -98,14 +98,14 @@ static func fits(looks: Dictionary) -> bool:
 	return true
 
 
-## Масштаб: пикселей экрана на пиксель атласа для жителя высотой h.
+## Масштаб: пикселей экрана на пиксель атласа для гаврика высотой h.
 static func draw_scale(h: float) -> float:
 	return h / HEIGHT / (CELL / SPAN)
 
 
 func _ready() -> void:
 	shared = self
-	# Без видеокарты (тесты, сервер) рисовать нечем — жители остаются рисованными.
+	# Без видеокарты (тесты, сервер) рисовать нечем — гаврики остаются рисованными.
 	if DisplayServer.get_name() == "headless":
 		status = "нет видеокарты"
 		return
@@ -323,8 +323,8 @@ func _exit_tree() -> void:
 		shared = null
 
 
-## Нарисовать жителя моделью, если она готова, включена и подходит ему; иначе false —
-## тогда рисуем как раньше (CreatureArt). w — ширина туловища, как у рисованного жителя.
+## Нарисовать гаврика моделью, если она готова, включена и подходит ему; иначе false —
+## тогда рисуем как раньше (CreatureArt). w — ширина туловища, как у рисованного гаврика.
 static func draw_creature(ci: CanvasItem, pose: String, at: Vector2, w: float, looks: Dictionary, t := 1.0) -> bool:
 	var m := shared
 	if m == null or not m.is_baked or not enabled or not fits(looks):
@@ -343,7 +343,7 @@ static func draw_creature(ci: CanvasItem, pose: String, at: Vector2, w: float, l
 	return true
 
 
-## Цвет тела, как у рисованного жителя.
+## Цвет тела, как у рисованного гаврика.
 static func body_color(looks: Dictionary) -> Color:
 	if looks.get("melanist", false):
 		return Color(0.16, 0.15, 0.19)
@@ -354,7 +354,7 @@ static func body_color(looks: Dictionary) -> Color:
 	return looks.get("color", Color(0.9, 0.4, 0.3))
 
 
-## Нарисовать жителя-модель: ступни в at, h — его высота в пикселях, col — цвет тела.
+## Нарисовать гаврика-модель: ступни в at, h — его высота в пикселях, col — цвет тела.
 func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, col: Color) -> void:
 	var f: Dictionary = frames.get(pose, frames["idle"])
 	var k := draw_scale(h)

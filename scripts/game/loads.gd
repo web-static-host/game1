@@ -196,7 +196,7 @@ func _quakes(dt: float) -> void:
 	quake_t -= dt * (1.0 + maxf(0.0, colony.deepest_y - colony.home.y) / 5000.0)
 	if quake_t <= FORESHOCK and not _foreshock_done:
 		_foreshock_done = true
-		colony._log("Земля дрожит — возможны толчки. Уведите жителей из шатких выработок", "warning")
+		colony._log("Земля дрожит — возможны толчки. Уведите гавриков из шатких выработок", "warning")
 	if quake_t > 0.0:
 		return
 	quake_t = _rng.randf_range(QUAKE_EVERY.x, QUAKE_EVERY.y)

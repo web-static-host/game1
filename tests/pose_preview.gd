@@ -1,5 +1,5 @@
 extends SceneTree
-## Все позы жителя (ModelSprites.POSES) для проверки модели до того, как класть её в игру:
+## Все позы гаврика (ModelSprites.POSES) для проверки модели до того, как класть её в игру:
 ## модель .glb грузится с диска, позы ставятся так же, как в игре; тело — синее.
 ##   xvfb-run godot --path . --resolution 1500x1000 -s res://tests/pose_preview.gd -- <модель.glb> <снимок.png>
 

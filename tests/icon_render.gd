@@ -1,5 +1,5 @@
 extends SceneTree
-## Иконка приложения: бирюзовый сверхюнит с одним глазом на тёплом фоне.
+## Иконка приложения: бирюзовый супер-гаврик с одним глазом на тёплом фоне.
 ##   xvfb-run godot --path . --resolution 512x512 -s res://tests/icon_render.gd -- <папка>
 
 var _node: Node2D

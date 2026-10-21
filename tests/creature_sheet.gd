@@ -1,5 +1,5 @@
 extends Node2D
-## Лист превью жителей (рисует CreatureArt). Какой лист — в sheet.
+## Лист превью гавриков (рисует CreatureArt). Какой лист — в sheet.
 
 var sheet := 0
 var t := 0.8
@@ -89,7 +89,7 @@ func _sheet_mutations(size: Vector2, part: int) -> void:
 			[_mutant(7, S.TRIANGLE, hsv.call(0.75), ["hair"], true), ""],
 			[_mutant(8, S.SQUARE, hsv.call(0.07), ["fur"]), ""],
 			[_mutant(9, S.TRIANGLE, hsv.call(0.33), ["long_arms"]), ""],
-			[_mutant(10, S.ROUND, hsv.call(0.9), [], true, 2), "Жительница ♀ (ресницы)"],
+			[_mutant(10, S.ROUND, hsv.call(0.9), [], true, 2), "Гаврик ♀ (ресницы)"],
 		]
 	else:
 		items = [
@@ -130,7 +130,7 @@ func _sheet_mutations(size: Vector2, part: int) -> void:
 			_text(Vector2(cx - 120, foot + 82), ab, 12, Color(0.4, 0.35, 0.45), 240)
 
 
-## Характеристики четырёх жителей: 14 полосок, характер и особенности.
+## Характеристики четырёх гавриков: 14 полосок, характер и особенности.
 func _sheet_stats(size: Vector2) -> void:
 	_text(Vector2(0, 40), "ХАРАКТЕРИСТИКИ И ХАРАКТЕР", 30, Color.WHITE, size.x)
 	var card := Rect2(16, 56, size.x - 32, size.y - 68)

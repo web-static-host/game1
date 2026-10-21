@@ -1,5 +1,5 @@
 extends SceneTree
-## Сравнение 3D-модели жителя с рисованными (нужен дисплей, напр. xvfb-run):
+## Сравнение 3D-модели гаврика с рисованными (нужен дисплей, напр. xvfb-run):
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/model_compare.gd -- <папка>
 ## Снимки: колония с моделью и без, лист поз «рисованный / 3D».
 
@@ -56,7 +56,7 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-## Лист поз: сверху рисованный житель, снизу 3D-модель; справа — оба в размере игры.
+## Лист поз: сверху рисованный гаврик, снизу 3D-модель; справа — оба в размере игры.
 func _build_sheet() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 100

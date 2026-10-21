@@ -1,5 +1,5 @@
 extends SceneTree
-## Превью жителей в PNG (нужен дисплей, напр. xvfb-run).
+## Превью гавриков в PNG (нужен дисплей, напр. xvfb-run).
 ##   xvfb-run godot --path . --resolution 1600x900 -s res://tests/creature_preview.gd -- <папка>
 
 var _node: Node2D

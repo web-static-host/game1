@@ -1,6 +1,6 @@
 extends SceneTree
 ## Плейтест: бот играет новую игру как человек несколько игровых суток и пишет отчёт —
-## чем заняты жители, сытость и бодрость, еда, застрявшие и простаивающие, сообщения игры.
+## чем заняты гаврики, сытость и бодрость, еда, застрявшие и простаивающие, сообщения игры.
 ##   godot --headless --path . -s res://tests/playtest.gd -- <seed> <суток>
 
 var colony: Colony
@@ -56,7 +56,7 @@ func _anomaly(text: String) -> void:
 	_anomalies[text] = _anomalies.get(text, 0) + 1
 
 
-## Житель долго стоит на месте не во сне и не за работой на месте — застрял?
+## Гаврик долго стоит на месте не во сне и не за работой на месте — застрял?
 func _watch(u: Unit, dt: float) -> void:
 	var c := u.cell()
 	if OS.get_environment("TRACE") == u.name and colony.game_time > Colony.DAY * 2.0 + Colony.DAY * 12.0 / 24.0 \

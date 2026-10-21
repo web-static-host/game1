@@ -1,12 +1,12 @@
 class_name UnitLayer
 extends Node2D
-## Рисует жителей — мультяшных существ (CreatureArt) по их генам.
-## Каждого жителя в каждой позе собираем один раз и кэшируем (DrawRecorder), а дальше
-## только двигаем узел: так дёшево даже для десятков жителей на телефоне.
+## Рисует гавриков — мультяшных существ (CreatureArt) по их генам.
+## Каждого гаврика в каждой позе собираем один раз и кэшируем (DrawRecorder), а дальше
+## только двигаем узел: так дёшево даже для десятков гавриков на телефоне.
 ## Поверх — значки нужд, имя выбранного, инструмент в руке, груз, «z» у спящих.
 
 const TILE := ChunkView.TILE
-## Ширина туловища взрослого жителя в пикселях.
+## Ширина туловища взрослого гаврика в пикселях.
 const BODY_W := 34.0
 const TOOL := Color(0.45, 0.45, 0.5)
 const HANDLE := Color(0.5, 0.35, 0.2)
@@ -44,7 +44,7 @@ var _overlay: Node2D
 var _models: ModelSprites
 
 
-## Узел одного жителя: хранит записанные позы и рисует текущую.
+## Узел одного гаврика: хранит записанные позы и рисует текущую.
 class CreatureSprite:
 	extends Node2D
 	var looks := {}
@@ -111,12 +111,12 @@ func refresh() -> void:
 		(_nodes[id] as CreatureSprite).queue_redraw()
 
 
-## Житель нарисован 3D-моделью.
+## Гаврик нарисован 3D-моделью.
 func _is_model(node: CreatureSprite) -> bool:
 	return _models.is_baked and ModelSprites.enabled and ModelSprites.fits(node.looks)
 
 
-## Точка ступней жителя в координатах слоя.
+## Точка ступней гаврика в координатах слоя.
 func foot_of(u: Unit) -> Vector2:
 	var foot := view.cell_to_local(Vector2i.ZERO) + (u.pos + Vector2(0.5, 1.0)) * TILE
 	# На естественном рельефе ноги ставим на сглаженную линию поверхности.
@@ -129,7 +129,7 @@ func foot_of(u: Unit) -> Vector2:
 	return foot
 
 
-## Кровать, в которой спит житель (как её рисует StructureLayer), или пустой прямоугольник.
+## Кровать, в которой спит гаврик (как её рисует StructureLayer), или пустой прямоугольник.
 func bed_rect(u: Unit) -> Rect2:
 	if u.task != Unit.Task.SLEEP or u.state != Unit.State.WORK or u.project_id == 0 or u.bed_index < 1:
 		return Rect2()

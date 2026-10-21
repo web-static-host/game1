@@ -259,7 +259,7 @@ func _underground(size: Vector2) -> void:
 	_pill(Vector2(plan.get_center().x + 26, plan.position.y - 22), "8/8", "stone", Color8(62, 150, 70))
 
 
-## Тьма поверх жителей: где нет света, всё тонет в синеватом мраке.
+## Тьма поверх гавриков: где нет света, всё тонет в синеватом мраке.
 func _darkness() -> void:
 	var dark := Color(0.03, 0.02, 0.1, 0.78)
 	var tunnel := Rect2(560, 460, 340, 80).grow(2)
@@ -531,7 +531,7 @@ func _creatures() -> void:
 	# Спящий: «Zzz».
 	_stext(Vector2(1226, 486), "z", 20, Color.WHITE)
 	_stext(Vector2(1240, 466), "Z", 26, Color.WHITE)
-	# Выбранный житель: кольцо и плашка с именем.
+	# Выбранный гаврик: кольцо и плашка с именем.
 	var sel := Vector2(1420, _sy(1420))
 	_ellipse_line(sel + Vector2(0, 2), Vector2(34, 10), Color8(255, 220, 60), 4.0)
 	_name_tag(sel + Vector2(0, -78), "Бубо", "строитель")
@@ -577,7 +577,7 @@ func _hud(size: Vector2) -> void:
 	# Нижнее меню.
 	var y := size.y - 104
 	_button(Rect2(24, y, 150, 84), "Стройка", "hammer", "amber")
-	var right := [["Жители", "people"], ["Наука", "flask"], ["К базе", "home"]]
+	var right := [["Гаврики", "people"], ["Наука", "flask"], ["К базе", "home"]]
 	var bx := size.x - 24 - 3 * 124 - 250 - 100 - 24
 	for b in right:
 		_button(Rect2(bx, y, 116, 84), b[0], b[1], "slate")

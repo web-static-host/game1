@@ -251,7 +251,7 @@ func test_pause_and_materials() -> void:
 	colony.set_paused(p, true)
 	check(colony.advance_offline(5000.0) == 0, "на паузе работы не идут")
 	colony.set_paused(p, false)
-	# Дерева нет — жители рубят по нужде: сначала отмеченное игроком.
+	# Дерева нет — гаврики рубят по нужде: сначала отмеченное игроком.
 	var tree := 0
 	for d in range(0, 200):
 		if w.feature_at(colony.home.x + d) == WorldGen.FEATURE_TREE:
@@ -279,13 +279,13 @@ func test_units_realtime() -> void:
 	while t < 3000.0 and drift.phase != Project.Phase.DONE:
 		colony.update(1.0)
 		t += 1.0
-	check(shaft.phase == Project.Phase.DONE, "жители выкопали и укрепили шахту")
-	check(drift.phase == Project.Phase.DONE, "жители прошли по шахте и сделали штрек (%.0f с)" % t)
+	check(shaft.phase == Project.Phase.DONE, "гаврики выкопали и укрепили шахту")
+	check(drift.phase == Project.Phase.DONE, "гаврики прошли по шахте и сделали штрек (%.0f с)" % t)
 	var below := 0
 	for u in colony.units:
 		if u.pos.y > s:
 			below += 1
-	check(below > 0, "жители спустились под землю")
+	check(below > 0, "гаврики спустились под землю")
 	for u in colony.units:
 		if u.state == Unit.State.MOVE:
 			continue # идущий может быть посреди шага или вброд
@@ -298,7 +298,7 @@ func test_units_realtime() -> void:
 			break
 	# Рубят отмеченное и носят на склад только работники склада.
 	var store := _fake_room(colony, RoomType.STORAGE, x - 10)
-	check(colony.assign_work(colony.units[0], store).is_empty(), "житель назначен на склад")
+	check(colony.assign_work(colony.units[0], store).is_empty(), "гаврик назначен на склад")
 	colony.toggle_harvest(tree)
 	var wood: int = colony.inventory.get("wood", 0)
 	t = 0.0
@@ -310,7 +310,7 @@ func test_units_realtime() -> void:
 		t += 0.2
 		if colony.drop_amount(colony._ground_cell(tree), "wood") > 0:
 			on_ground = true
-	check(felled.call() and on_ground, "житель срубил дерево, дрова лежат на месте рубки (%.0f с)" % t)
+	check(felled.call() and on_ground, "гаврик срубил дерево, дрова лежат на месте рубки (%.0f с)" % t)
 	t = 0.0
 	while t < 1500.0 and (colony.inventory.get("wood", 0) <= wood or colony.drop_total("wood") > 0):
 		colony.update(1.0)
@@ -319,7 +319,7 @@ func test_units_realtime() -> void:
 
 
 func test_room_from_surface_realtime() -> void:
-	# Раньше жители выкапывали верхний ряд комнаты и не могли спуститься внутрь.
+	# Раньше гаврики выкапывали верхний ряд комнаты и не могли спуститься внутрь.
 	for seed_value in [1, 2, 4]:
 		var colony := _new_colony(seed_value * 1000 + 6)
 		var w := colony.world
@@ -341,7 +341,7 @@ func test_room_from_surface_realtime() -> void:
 		while t < 2000.0 and drift.phase != Project.Phase.DONE:
 			colony.update(0.2)
 			t += 0.2
-		check(drift.phase == Project.Phase.DONE, "жители вышли из комнаты и прокопали тоннель (seed %d)" % seed_value)
+		check(drift.phase == Project.Phase.DONE, "гаврики вышли из комнаты и прокопали тоннель (seed %d)" % seed_value)
 	check(not _new_colony(3).has_access(Rect2i(0, 50, 4, 2)), "у зоны в толще породы нет доступа")
 
 
@@ -354,7 +354,7 @@ func test_workers_and_ladder() -> void:
 	var s := w.gen.surface_y(x)
 	check(Project.recommended_workers(Project.Kind.TUNNEL, Rect2i(0, 0, 1, 6), 5) == 1, "на шахту 1×6 рекомендуется 1 рабочий")
 	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 8, 4), 5) == 4, "на комнату 8×4 — 4 рабочих")
-	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 24, 8), 5) == 5, "не больше, чем жителей")
+	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 24, 8), 5) == 5, "не больше, чем гавриков")
 	var p := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 3, 8), 2)
 	var max_seen := 0
 	for i in 300:
@@ -431,7 +431,7 @@ func _colony_with_room(seed_value: int, purpose := -1, width := 6) -> Array:
 		colony.inventory = {"wood": 55, "stone": 55, "soil": 55, "food": 50}
 		colony.set_purpose(room, purpose)
 		colony.advance_offline(5000.0)
-	# Свободные жители сами еду не добывают — после долгой подготовки накормим и подлечим.
+	# Свободные гаврики сами еду не добывают — после долгой подготовки накормим и подлечим.
 	colony.inventory["food"] = maxi(50, colony.inventory.get("food", 0))
 	for u in colony.units:
 		u.satiety = 100.0
@@ -644,8 +644,8 @@ func test_needs_realtime() -> void:
 	while t < 60.0 and u.satiety < 50.0:
 		colony.update(0.5)
 		t += 0.5
-	check(u.satiety >= 50.0 and colony.inventory["food"] < 10, "голодный житель поел (%.0f с)" % t)
-	# Сна нет: жители не устают и не уходят спать, старый «спящий» сразу встаёт.
+	check(u.satiety >= 50.0 and colony.inventory["food"] < 10, "голодный гаврик поел (%.0f с)" % t)
+	# Сна нет: гаврики не устают и не уходят спать, старый «спящий» сразу встаёт.
 	var slept := false
 	u.task = Unit.Task.SLEEP
 	u.state = Unit.State.WORK
@@ -655,8 +655,8 @@ func test_needs_realtime() -> void:
 		t += 0.5
 		if u.task == Unit.Task.SLEEP:
 			slept = true
-	check(u.energy == 100.0 and not slept, "сна нет: жители не устают и не спят")
-	# Без сна мёрзнущий ослабевший житель сам идёт в тепло и там быстрее поправляется.
+	check(u.energy == 100.0 and not slept, "сна нет: гаврики не устают и не спят")
+	# Без сна мёрзнущий ослабевший гаврик сам идёт в тепло и там быстрее поправляется.
 	u.health = 40.0
 	u.task = Unit.Task.NONE
 	u.state = Unit.State.IDLE
@@ -676,7 +676,7 @@ func test_needs_realtime() -> void:
 func test_family() -> void:
 	var res := _colony_with_room(25, RoomType.HOME, 8)
 	var colony: Colony = res[0]
-	# Второй дом на поверхности — чтобы кроватей было больше, чем жителей.
+	# Второй дом на поверхности — чтобы кроватей было больше, чем гавриков.
 	var w := colony.world
 	var hx := 0
 	for tx in range(40, 400):
@@ -697,7 +697,7 @@ func test_family() -> void:
 	colony.inventory = {"wood": 50, "stone": 50, "food": 50}
 	colony.set_purpose(house, RoomType.HOME)
 	colony.advance_offline(3000.0)
-	check(colony.beds_total() >= 7, "кроватей больше, чем жителей (%d)" % colony.beds_total())
+	check(colony.beds_total() >= 7, "кроватей больше, чем гавриков (%d)" % colony.beds_total())
 	var before := colony.units.size()
 	var pairs := 0
 	for i in 20:
@@ -708,7 +708,7 @@ func test_family() -> void:
 			pairs += 1
 	check(pairs >= 2, "сложились пары (%d)" % pairs)
 	check(colony.units.size() > Colony.START_UNITS, "родились дети (%d → %d)" % [Colony.START_UNITS, colony.units.size()])
-	check(colony.units.size() <= colony.beds_total(), "жителей не больше, чем кроватей")
+	check(colony.units.size() <= colony.beds_total(), "гавриков не больше, чем кроватей")
 	var kid: Unit = colony.units[colony.units.size() - 1]
 	for i in 6:
 		colony.inventory["food"] = 100
@@ -721,11 +721,11 @@ func test_aging() -> void:
 	var x := _find_solid_column(colony.world)
 	colony.start_new(x)
 	var u: Unit = colony.units[0]
-	check(u.lifespan > Unit.LIFESPAN * 0.5, "у жителя есть срок жизни (%.0f с)" % u.lifespan)
+	check(u.lifespan > Unit.LIFESPAN * 0.5, "у гаврика есть срок жизни (%.0f с)" % u.lifespan)
 	check(not u.is_elder() and u.age >= Unit.CHILD_TIME, "основатели — взрослые, не старики")
 	u.age = u.lifespan * Unit.ELDER_AT - 0.1
 	colony.update(0.5)
-	check(u.is_elder() and u.age_factor() < 1.0, "житель состарился и работает медленнее")
+	check(u.is_elder() and u.age_factor() < 1.0, "гаврик состарился и работает медленнее")
 	var mother: Unit = null
 	var father: Unit = null
 	for o in colony.units:
@@ -1027,7 +1027,7 @@ func test_physics() -> void:
 	for x in range(f.x, f.x + 4):
 		w.set_dug(x, f.y)
 	check(not colony.physics.check_span(Vector2i(f.x + 1, f.y)), "4 м в граните держатся без крепи")
-	# Обломки ранят жителя.
+	# Обломки ранят гаврика.
 	_start(colony, 0)
 	var u := colony.units[0]
 	var g := c + Vector2i(-3, -4)
@@ -1036,7 +1036,7 @@ func test_physics() -> void:
 	w.set_dug(g.x, g.y + 1)
 	u.pos = Vector2(g.x, g.y)
 	colony.physics.on_opened(g)
-	check(u.health < 100.0, "житель ранен осыпью (%.0f)" % u.health)
+	check(u.health < 100.0, "гаврик ранен осыпью (%.0f)" % u.health)
 	# Простой стройки без крепи → обвал.
 	var colony2 := _new_colony(42)
 	colony2.inventory = {}
@@ -1119,7 +1119,7 @@ func test_nature() -> void:
 	check(colony.drop_amount(colony._ground_cell(bush), "berries") == 6, "ягоды лежат у куста")
 	colony.grow_plants(Colony.BERRY_REGEN * 3)
 	check(w.berries(bush) >= 2.9, "ягоды отрастают (%.1f)" % w.berries(bush))
-	# Голодный житель при пустом складе ест ягоды с куста.
+	# Голодный гаврик при пустом складе ест ягоды с куста.
 	colony.inventory = {}
 	w.set_berries(bush, 6.0)
 	colony._refresh_bushes()
@@ -1129,7 +1129,7 @@ func test_nature() -> void:
 	while t < 200.0 and u.satiety < 40.0:
 		colony.update(0.5)
 		t += 0.5
-	check(u.satiety >= 40.0, "голодный житель нашёл куст и поел (%.0f с)" % t)
+	check(u.satiety >= 40.0, "голодный гаврик нашёл куст и поел (%.0f с)" % t)
 	# Деревья: растут медленно, новые появляются рядом со старыми.
 	var trees_before := 0
 	for x in range(colony.home.x - 160, colony.home.x + 160):
@@ -1247,7 +1247,7 @@ func test_lakes_and_fishing() -> void:
 	var fish_full := c2.fish_in(lake)
 	for i in 300:
 		c2.update(1.0)
-	check(c2.fish_in(lake) >= fish_full - 0.01 and c2.inventory.get("food", 0) == 0, "сытые свободные жители рыбу сами не ловят")
+	check(c2.fish_in(lake) >= fish_full - 0.01 and c2.inventory.get("food", 0) == 0, "сытые свободные гаврики рыбу сами не ловят")
 	for u in c2.units:
 		u.satiety = 10.0
 	for bx in c2._bushes:
@@ -1257,11 +1257,11 @@ func test_lakes_and_fishing() -> void:
 		tt += 1.0
 	check(c2.fish_in(lake) < fish_full, "голодные поймали рыбу с берега (%.0f с)" % tt)
 	check(c2.inventory.get("food", 0) == 0, "улов съели сразу, а не понесли впрок")
-	# Разведка: жители открывают карту, где ходят.
+	# Разведка: гаврики открывают карту, где ходят.
 	var ex := c2.explored_max
 	c2.units[0].pos = Vector2(ex + 30, c2.units[0].pos.y)
 	c2.explore()
-	check(c2.explored_max >= ex + 30 and c2.is_explored(ex + 25), "карта открывается там, куда дошёл житель")
+	check(c2.explored_max >= ex + 30 and c2.is_explored(ex + 25), "карта открывается там, куда дошёл гаврик")
 
 
 func test_save_roundtrip() -> void:
@@ -1287,7 +1287,7 @@ func test_save_roundtrip() -> void:
 	for d in range(0, 4):
 		check(w2.is_dug(x, s + d), "раскопка %d восстановлена" % d)
 	check(c2.inventory == colony.inventory, "склад восстановлен")
-	check(c2.units.size() == 5 and c2.units[0].name == colony.units[0].name, "жители восстановлены")
+	check(c2.units.size() == 5 and c2.units[0].name == colony.units[0].name, "гаврики восстановлены")
 	check(c2.projects.size() == 2 and c2.projects[1].paused, "стройки и пауза восстановлены")
 	check(c2.interior.has(Vector2i(x, s + 1)), "готовые постройки восстановлены")
 	check(w2.feature_marks.has(x - 3), "отметки сбора восстановлены")
@@ -1356,7 +1356,7 @@ func test_hauling() -> void:
 			if e[1] > 0 and e[1] < e[2]:
 				partial = true
 	check(room.phase == Project.Phase.DONE, "материалы принесли, дом построен (%.0f с)" % t)
-	check(max_carry > 0 and max_carry <= Colony.CARRY, "жители носили материалы по %d" % max_carry)
+	check(max_carry > 0 and max_carry <= Colony.CARRY, "гаврики носили материалы по %d" % max_carry)
 	# Носильщиков может быть сколько угодно, но каждый несёт не больше CARRY — значит, ходили не раз.
 	var total := 0
 	for k in room.cost():
@@ -1610,7 +1610,7 @@ func test_seasons() -> void:
 	u.health = 100.0
 	u.pos = Vector2(top.x, top.y)
 	colony.elements.affect_unit(u, 10.0)
-	check(u.health < 100.0 or u.stat("cold") > 1.3, "на морозе житель мёрзнет (%.1f)" % u.health)
+	check(u.health < 100.0 or u.stat("cold") > 1.3, "на морозе гаврик мёрзнет (%.1f)" % u.health)
 	check(colony.winter_food_need() > 0.0, "колония знает, сколько еды нужно на зиму")
 
 
@@ -1642,7 +1642,7 @@ func test_darkness() -> void:
 	gg["glow"] = [true, true]
 	glow.set_genome(gg)
 	glow.pos = u.pos + Vector2(2, 0)
-	check(colony.light_factor(u) == 1.0, "светящийся житель освещает соседей")
+	check(colony.light_factor(u) == 1.0, "светящийся гаврик освещает соседей")
 	glow.pos = Vector2(x + 200, s - 1)
 	g["melanist"] = [true, true]
 	u.set_genome(g)
@@ -1739,7 +1739,7 @@ func test_elements() -> void:
 	u.pos = Vector2(o + Vector2i(2, 6))
 	u.health = 100.0
 	el.explode(o + Vector2i(2, 6))
-	check(u.health < 100.0, "взрыв метана ранит жителя рядом")
+	check(u.health < 100.0, "взрыв метана ранит гаврика рядом")
 	check(el.gas_at(o + Vector2i(2, 6)) == 0.0, "газ выгорел при взрыве")
 	el.release_gas(o + Vector2i(2, 5))
 	var vent := Project.new()
@@ -1762,7 +1762,7 @@ func test_elements() -> void:
 	check(total < 0.1, "дегазация собрала метан из выработок (%.2f)" % total)
 	check(colony.inventory.get("methane", 0) >= 1, "метан стал топливом (%d)" % colony.inventory.get("methane", 0))
 	colony.projects.erase(vent)
-	# Житель под водой всплывает туда, где можно дышать.
+	# Гаврик под водой всплывает туда, где можно дышать.
 	for c in [o + Vector2i(2, 6), o + Vector2i(2, 5), o + Vector2i(2, 4)]:
 		w.set_fluid(c.x, c.y, Mat.WATER)
 	u.pos = Vector2(o + Vector2i(2, 6))
@@ -1770,7 +1770,7 @@ func test_elements() -> void:
 	u.state = Unit.State.IDLE
 	for i in 60:
 		colony._update_unit(u, 0.2)
-	check(not colony._head_in_water(u) and u.health > 0.0, "житель выплыл из затопленной шахты")
+	check(not colony._head_in_water(u) and u.health > 0.0, "гаврик выплыл из затопленной шахты")
 	# Сохранение воды в выработках.
 	var data := SaveSystem.serialize(w, colony, Vector2i.ZERO)
 	var w2 := WorldData.new(WorldGen.new(61))
@@ -1809,7 +1809,7 @@ func test_elements() -> void:
 	check(not fp.paused and fp.hazard_pending.is_empty(), "дальняя вода — без тревоги даже при геологии IV")
 
 
-## Газовая тревога: метан у стройки останавливает работы, жители уходят из облака,
+## Газовая тревога: метан у стройки останавливает работы, гаврики уходят из облака,
 ## игрок может приказать продолжать; газ ушёл — работы идут сами.
 func test_gas_alarm() -> void:
 	var colony := _new_colony(63)
@@ -1843,7 +1843,7 @@ func test_gas_alarm() -> void:
 	u.state = Unit.State.IDLE
 	u.task = Unit.Task.NONE
 	el.affect_unit(u, 0.1)
-	check(u.task == Unit.Task.GOTO and el.gas_at(u.target) < Elements.GAS_CLEAR, "житель уходит из облака метана")
+	check(u.task == Unit.Task.GOTO and el.gas_at(u.target) < Elements.GAS_CLEAR, "гаврик уходит из облака метана")
 	colony.set_paused(room, false)
 	el._gas_alarm()
 	check(not room.paused and room.hazard_ack.has("methane"), "игрок приказал работать в газе — тревога молчит")
@@ -1858,14 +1858,14 @@ func test_gas_alarm() -> void:
 	colony.projects.erase(room)
 
 
-## Рядом нечего рубить — житель идёт к краю разведанного, карта раскрывается дальше.
+## Рядом нечего рубить — гаврик идёт к краю разведанного, карта раскрывается дальше.
 func test_scouting() -> void:
 	var colony := _new_colony(64)
 	_start(colony, 0)
 	var u := colony.units[0]
 	var reach := colony.pathing.explore(u.cell())
 	var before := colony.explored_max - colony.explored_min
-	check(colony._try_scout(u, reach[0], reach[1], "wood"), "житель пошёл на разведку")
+	check(colony._try_scout(u, reach[0], reach[1], "wood"), "гаврик пошёл на разведку")
 	check(u.task == Unit.Task.GOTO and (u.target.x >= colony.explored_max - 8 or u.target.x <= colony.explored_min + 8),
 		"идёт к краю разведанного")
 	check(not colony._try_scout(colony.units[1], reach[0], reach[1], "wood"), "разведчиков не шлют толпой")
@@ -1900,7 +1900,7 @@ func test_tech_tree() -> void:
 	check(cap == 0 or colony.storage_capacity("wood") > cap, "стеллажи расширили склады")
 
 
-## Генетика: яркие основатели, наследование копий, мутации ~1/10, сверхюнит по цвету лого.
+## Генетика: яркие основатели, наследование копий, мутации ~1/10, супер-гаврик по цвету лого.
 func test_genetics() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 11
@@ -1925,7 +1925,7 @@ func test_genetics() -> void:
 	check(Genetics.color_of(kid).v >= 0.95, "дети ярких родителей — яркие")
 	var logo := Genetics.founder(rng)
 	logo["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_B]
-	check(Genetics.is_super(logo) and Genetics.stats(logo)["vision"] >= 2.0, "цвет лого — сверхюнит, характеристики ×2")
+	check(Genetics.is_super(logo) and Genetics.stats(logo)["vision"] >= 2.0, "цвет лого — супер-гаврик, характеристики ×2")
 	var m := Genetics.founder(rng)
 	Genetics.mutate(m, rng, "eyes")
 	check(Genetics.is_mutant(m) and Genetics.mutation_text(m).begins_with("Мутант"), "мутант помечен: " + Genetics.mutation_text(m))
@@ -1948,12 +1948,12 @@ func test_genetics() -> void:
 	check(Genetics.has(melan, "melanist") and Genetics.stats(melan)["cold"] > 1.3, "меланист — чёрный, не мёрзнет")
 
 
-## Жители: гены и имена при рождении, сохранение генов, места работы, знакомства, сватовство.
+## Гаврики: гены и имена при рождении, сохранение генов, места работы, знакомства, сватовство.
 func test_residents() -> void:
 	var colony := _new_colony(66)
 	_start(colony, 0)
 	var u := colony.units[0]
-	check(not u.genome.is_empty() and not u.stats.is_empty(), "у жителя есть гены и характеристики")
+	check(not u.genome.is_empty() and not u.stats.is_empty(), "у гаврика есть гены и характеристики")
 	var names := {}
 	for o in colony.units:
 		names[o.name] = true
@@ -1982,7 +1982,7 @@ func test_residents() -> void:
 	farm.rect = Rect2i(5, colony.world.gen.surface_y(5) - 3, 6, 3)
 	colony.projects.append(farm)
 	var worker := colony.units[2]
-	check(colony.assign_work(worker, farm).is_empty() and worker.workplace == farm.id, "житель назначен на ферму")
+	check(colony.assign_work(worker, farm).is_empty() and worker.workplace == farm.id, "гаврик назначен на ферму")
 	check(colony._closed_for(colony.units[3], farm) and not colony._closed_for(worker, farm), "на ферме работают только назначенные")
 	check(not colony.assign_work(baby, farm).is_empty(), "детей не назначить")
 	colony.unassign_work(worker)
@@ -2179,7 +2179,7 @@ func test_drops_and_scouting() -> void:
 				dropped = true
 	check(shaft.phase == Project.Phase.DONE, "шахта выкопана")
 	check(dropped, "добытая порода падала на дно шахты")
-	# Оффлайн жители перетаскивают всё лежащее на склад.
+	# Оффлайн гаврики перетаскивают всё лежащее на склад.
 	colony.drop_item(Vector2i(x, s - 1), "stone", 4)
 	var st: int = colony.inventory.get("stone", 0)
 	colony.advance_offline(120.0)
@@ -2196,17 +2196,17 @@ func test_drops_and_scouting() -> void:
 		colony.update(0.5)
 		t += 0.5
 	check(hut != null and hut.phase == Project.Phase.DONE, "дом построен из дерева, лежавшего на земле (%.0f с)" % t)
-	# Разведка: житель идёт в указанную точку (сытый — голодный сначала пошёл бы за едой).
+	# Разведка: гаврик идёт в указанную точку (сытый — голодный сначала пошёл бы за едой).
 	var u := colony.units[0]
 	u.satiety = 100.0
 	u.energy = 100.0
 	var target := Vector2i(u.cell().x + 25, w.gen.surface_y(u.cell().x + 25) - 1)
 	var to = colony.send_unit(u, target)
-	check(to != null and u.task == Unit.Task.GOTO, "житель отправлен на разведку")
+	check(to != null and u.task == Unit.Task.GOTO, "гаврик отправлен на разведку")
 	var before := colony.explored_max
 	for i in 120:
 		colony.update(0.5)
-	check(absi(u.cell().x - target.x) <= 2 or colony.explored_max > before, "житель дошёл и разведал округу")
+	check(absi(u.cell().x - target.x) <= 2 or colony.explored_max > before, "гаврик дошёл и разведал округу")
 
 
 func test_food_balance() -> void:
@@ -2298,7 +2298,7 @@ func test_store_takes_drops_first() -> void:
 	colony.inventory = {}
 	colony._sync_held()
 	var worker := colony.units[0]
-	check(colony.assign_work(worker, gr).is_empty(), "житель назначен в амбар")
+	check(colony.assign_work(worker, gr).is_empty(), "гаврик назначен в амбар")
 	colony.drop_item(colony._ground_cell(hx - 2), "food", 12)
 	colony._drop(worker)
 	var reach := colony.pathing.explore(worker.cell())
@@ -2708,7 +2708,7 @@ func test_space() -> void:
 	check(colony.launch(pad, "mars", crew, {"food": 300}).has("error"), "больше 200 груза не взять")
 	var n0 := colony.units.size()
 	var flight := colony.launch(pad, "mars", crew, {"food": 100, "wood": 50})
-	check(not flight.has("error") and colony.units.size() == n0 - 3 and pad.rocket.is_empty(), "экспедиция улетела: 3 жителя, 150 груза")
+	check(not flight.has("error") and colony.units.size() == n0 - 3 and pad.rocket.is_empty(), "экспедиция улетела: 3 гаврика, 150 груза")
 	check(colony.inventory.get("food", 0) <= 20, "груз списан со склада")
 	var uni := Universe.new()
 	uni.base_seed = 40
@@ -2722,7 +2722,7 @@ func test_space() -> void:
 	if e.is_empty():
 		return
 	var mc: Colony = e["colony"]
-	check(mc.units.size() == 3 and mc.research.has("rocketry"), "на Марсе 3 жителя, знания с Земли")
+	check(mc.units.size() == 3 and mc.research.has("rocketry"), "на Марсе 3 гаврика, знания с Земли")
 	var ship := mc.rooms_of(RoomType.SHIP)
 	check(ship.size() == 1 and mc.held_in(ship[0], "food") == 100 and mc.held_in(ship[0], "wood") == 50, "корабль сел, груз в трюме")
 	check(mc.beds_total() == RoomType.SHIP_BEDS, "в корабле 10 спальных мест")
@@ -2876,7 +2876,7 @@ func test_drill() -> void:
 		if Mat.is_solid(w.get_mat(c.x, c.y)):
 			cells += 1
 	check(cells == 0, "весь ход 3×12 выкопан")
-	check(colony.drops.size() > 0 or colony.inventory.size() > 0, "порода выпала — её уносят жители")
+	check(colony.drops.size() > 0 or colony.inventory.size() > 0, "порода выпала — её уносят гаврики")
 	check(colony.validate(Project.Kind.LIFT, Rect2i(x, s, 2, 12), "wood").is_empty(), "по ходу бура можно ставить лифт")
 	# Вбок — ход как шахта (с местом, где стоял бур); остановили на полпути — пройденное осталось.
 	check(colony.start_drill(d, Vector2i.RIGHT, 10).is_empty(), "приказ: 10 м вправо")
@@ -3051,7 +3051,7 @@ func test_planet_balance() -> void:
 
 
 ## Лифт от поверхности: остановки с отрицательной координатой — кабина туда едет
-## и не «сбрасывается» на дно (раньше −1 значило «кабины нет», и жители ждали вечно).
+## и не «сбрасывается» на дно (раньше −1 значило «кабины нет», и гаврики ждали вечно).
 func test_lift_above_zero() -> void:
 	var colony := _new_colony(30)
 	var x := _find_solid_column(colony.world, 40)
@@ -3072,10 +3072,10 @@ func test_lift_above_zero() -> void:
 		colony._lifts_tick(0.1)
 		if u.riding:
 			break
-	check(u.riding, "кабина поднялась к остановке выше нуля и забрала жителя (%.1f)" % lift.lift_pos)
+	check(u.riding, "кабина поднялась к остановке выше нуля и забрала гаврика (%.1f)" % lift.lift_pos)
 
 
-## Большая колония: обход жителя обрывается раньше глубокого забоя — путь к стройке ищут
+## Большая колония: обход гаврика обрывается раньше глубокого забоя — путь к стройке ищут
 ## прицельно, и продолжение ствола копают, а не «Нет доступа».
 func test_far_reach() -> void:
 	var colony := _new_colony(37)
@@ -3102,7 +3102,7 @@ func test_far_reach() -> void:
 	if q == null:
 		return
 	var reach := colony.pathing.explore(u.cell())
-	check(Pathing.truncated(reach[1]) and colony._near_rect(q.rect, reach[1]) == null, "обход жителя до дна ствола не достаёт")
+	check(Pathing.truncated(reach[1]) and colony._near_rect(q.rect, reach[1]) == null, "обход гаврика до дна ствола не достаёт")
 	check(colony.can_reach(q.rect), "но дойти до продолжения можно — прицельный поиск нашёл путь")
 	for v in colony.units:
 		v.state = Unit.State.IDLE
@@ -3263,7 +3263,7 @@ func test_stop_by_meter() -> void:
 
 
 func test_lifts() -> void:
-	# Пассажирский лифт: житель садится наверху и едет вниз втрое быстрее, чем лез бы.
+	# Пассажирский лифт: гаврик садится наверху и едет вниз втрое быстрее, чем лез бы.
 	var colony := _new_colony(36)
 	var w := colony.world
 	var x := _find_solid_column(w, 40)
@@ -3275,7 +3275,7 @@ func test_lifts() -> void:
 	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "cargo").is_empty() \
 		or true, "грузовая — 3 м")
 	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 20), 900)
-	# Внизу — тоннель вбок: туда и едет житель.
+	# Внизу — тоннель вбок: туда и едет гаврик.
 	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 2, s + 18, 6, 2), 901)
 	colony._rebuild_climb()
 	colony._power_tick(0.1)
@@ -3299,7 +3299,7 @@ func test_lifts() -> void:
 		t += 0.1
 		if u.riding:
 			rode = true
-	check(rode, "житель ехал в кабине")
+	check(rode, "гаврик ехал в кабине")
 	check(u.cell().distance_to(goal) <= 1.5, "доехал вниз (%.1f с)" % t)
 	check(t < 20.0 / Colony.CLIMB_SPEED, "на лифте быстрее, чем по лестнице (%.1f с)" % t)
 	# Без энергии кабина стоит — по шахте лезут по аварийной лестнице.
@@ -3327,7 +3327,7 @@ func test_lifts() -> void:
 
 
 func test_collapse_losses() -> void:
-	# Рухнул склад: запасы пропали, кто внутри — погиб; сверхюнит выжил.
+	# Рухнул склад: запасы пропали, кто внутри — погиб; супер-гаврик выжил.
 	var res := _colony_with_room(34, RoomType.STORAGE)
 	var colony: Colony = res[0]
 	var st: Project = res[1]
@@ -3344,21 +3344,21 @@ func test_collapse_losses() -> void:
 	var g := b.genome.duplicate(true)
 	b.genome["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_A]
 	var b_super := Genetics.is_super(b.genome)
-	check(b_super, "бирюзовый — сверхюнит")
+	check(b_super, "бирюзовый — супер-гаврик")
 	var n0 := colony.units.size()
 	colony.collapse(st, "тест")
 	check(colony.inventory.get("wood", 0) == 0, "дерево из рухнувшего склада пропало")
 	check(not colony.units.has(a), "кто был внутри — погиб")
 	if b_super:
-		check(colony.units.has(b), "сверхюнит выжил под обломками")
+		check(colony.units.has(b), "супер-гаврик выжил под обломками")
 	check(colony.units.size() == n0 - (1 if b_super else 2), "погибли только те, кто внутри")
-	# Сверхюнит неуязвим: не мёрзнет, не голодает, не гибнет от ран.
+	# Супер-гаврик неуязвим: не мёрзнет, не голодает, не гибнет от ран.
 	if b_super:
 		b.satiety = 0.0
 		b.health = 50.0
 		colony._life_tick(5000.0, false)
 		colony.injure(b, 1000.0, "тест")
-		check(colony.units.has(b) and b.health > 0.0, "сверхюнита не убить ни голодом, ни ранами")
+		check(colony.units.has(b) and b.health > 0.0, "супер-гаврика не убить ни голодом, ни ранами")
 	b.genome = g
 	# Взрыв дегазации: всё вокруг на 3 м (малая комната) рушится, порода — в обломки.
 	var res2 := _colony_with_room(35, RoomType.DEGAS, 3)
@@ -3421,7 +3421,7 @@ func test_walk_floor_only() -> void:
 	u.pos = Vector2(c2)
 	u.state = Unit.State.IDLE
 	colony.update(0.1)
-	check(u.state == Unit.State.FALL or u.cell().y > c2.y, "житель в воздухе падает")
+	check(u.state == Unit.State.FALL or u.cell().y > c2.y, "гаврик в воздухе падает")
 
 
 func test_two_generators() -> void:
@@ -3511,7 +3511,7 @@ func test_lights() -> void:
 	var budget := colony.power_made
 	check(near.lit, "ближняя к генератору комната горит")
 	check(colony.power_used <= budget, "сам свет не берёт больше, чем есть (%d из %d)" % [colony.power_used, budget])
-	# Лампа на стройке — там, где житель работает.
+	# Лампа на стройке — там, где гаврик работает.
 	var u: Unit = colony.units[0]
 	var site := Project.new()
 	site.id = 953
@@ -3576,7 +3576,7 @@ func test_builders_dont_carry() -> void:
 
 
 func test_bridge_and_pier() -> void:
-	# Мост и пристань на одном озере не мешают друг другу; жители берутся за дело сразу.
+	# Мост и пристань на одном озере не мешают друг другу; гаврики берутся за дело сразу.
 	var colony := _new_colony(31)
 	var w := colony.world
 	_start(colony, 0)
@@ -3610,7 +3610,7 @@ func test_bridge_and_pier() -> void:
 	pier2.phase = Project.Phase.DONE
 	colony2._register_deck(pier2)
 	check(colony2.validate(Project.Kind.BRIDGE, br).is_empty(), "при пристани мост ставится: " + colony2.validate(Project.Kind.BRIDGE, br))
-	# Жители без дела берутся за новую стройку сразу.
+	# Гаврики без дела берутся за новую стройку сразу.
 	var u: Unit = colony2.units[0]
 	colony2._drop(u)
 	u.retry = 5.0
@@ -3648,7 +3648,7 @@ func test_miner_alone() -> void:
 
 
 func test_tunnel_from_mine() -> void:
-	# Тоннель вверх от конца шахты: житель из шахты начал срез у потолка шахты, над ним
+	# Тоннель вверх от конца шахты: гаврик из шахты начал срез у потолка шахты, над ним
 	# порода, сверху не прокопано — стройка не должна вставать навсегда («Нет доступа»).
 	var res := _colony_with_room(24)
 	var colony: Colony = res[0]

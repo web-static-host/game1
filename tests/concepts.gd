@@ -1,5 +1,5 @@
 extends SceneTree
-## Лист концептов жителей: 4 вида, у каждого самец и самка.
+## Лист концептов гавриков: 4 вида, у каждого самец и самка.
 ##   xvfb-run godot --path . -s res://tests/concepts.gd -- <файл.png>
 
 var _frame := 0

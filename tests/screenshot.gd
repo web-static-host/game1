@@ -193,7 +193,7 @@ func _prepare_base() -> void:
 	_feed(colony)
 	colony.inventory["food"] = 40
 	colony.units[0].energy = 5.0
-	# Новая стройка в процессе — чтобы видеть жителей за работой.
+	# Новая стройка в процессе — чтобы видеть гавриков за работой.
 	colony.create_project(T, Rect2i(x0 + 8, s + 4, 8, 2))
 	# Наземный дом, на который носят материалы (камня нет — плашка красная).
 	colony.inventory = {"wood": 30, "food": 40}
@@ -271,7 +271,7 @@ func _shot(name: String) -> void:
 	print("скриншот: ", path)
 
 
-## Для снимков — сытые и здоровые жители (холодная ферма зимой еды не даёт).
+## Для снимков — сытые и здоровые гаврики (холодная ферма зимой еды не даёт).
 func _feed(colony: Colony) -> void:
 	colony.inventory["food"] = maxi(200, colony.inventory.get("food", 0))
 	for u in colony.units:

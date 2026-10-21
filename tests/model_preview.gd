@@ -1,5 +1,5 @@
 extends SceneTree
-## Рендер 3D-модели жителя из art_src (glb) в PNG: спереди, вполоборота и сбоку.
+## Рендер 3D-модели гаврика из art_src (glb) в PNG: спереди, вполоборота и сбоку.
 ##   xvfb-run godot --path . --resolution 1500x700 -s res://tests/model_preview.gd -- <glb> <png>
 
 var _frame := 0

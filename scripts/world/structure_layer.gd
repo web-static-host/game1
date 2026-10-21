@@ -548,7 +548,7 @@ const BED_COLORS := ["blue", "pink", "green", "yellow"]
 const HOME_DECOR := ["shelf_plant", "shelf_toy", "shelf_vine", "picture_mountain", "picture_sun", "picture_leaf"]
 
 
-## Жилая из картинок: кровать на каждые 2 м (там же, где спят жители — bed_rect), над ней
+## Жилая из картинок: кровать на каждые 2 м (там же, где спят гаврики — bed_rect), над ней
 ## полка или картинка — не на стойке стены и без повторов в комнате; в свободной клетке —
 ## тумбочка или шкаф.
 func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:

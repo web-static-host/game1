@@ -270,7 +270,7 @@ func set_worlds_visible(on: bool) -> void:
 		_worlds_btn.visible = on
 
 
-## Строка ресурсов: жители и запасы значками. Перестраивается только при изменениях.
+## Строка ресурсов: гаврики и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
 	# Еда — одним бургером (сумма грибов, рыбы и ягод), остальное — по ресурсам.
 	var keys: Array = ["wood", "stone"]
@@ -317,7 +317,7 @@ func _chip_plain(glyph: String, text: String, col: Color) -> HBoxContainer:
 	var item := HBoxContainer.new()
 	item.add_theme_constant_override("separation", 4)
 	item.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Житель и молния — картинками, если они есть; иначе значок кодом в цвет текста.
+	# Гаврик и молния — картинками, если они есть; иначе значок кодом в цвет текста.
 	item.add_child(IconView.make(glyph, 24) if ResIcon.texture(glyph) != null else IconView.make("", 22, glyph, col))
 	item.add_child(_label(text, 19, col))
 	return item
@@ -386,7 +386,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_child(fill)
-	var people := IconButton.make("people", "Жители")
+	var people := IconButton.make("people", "Гаврики")
 	people.pressed.connect(func() -> void: people_pressed.emit())
 	bar.add_child(people)
 	var science := IconButton.make("flask", "Наука")
@@ -815,7 +815,7 @@ func _row(row: Dictionary) -> Control:
 			h.add_child(BarView.make(row["value"], row.get("color", Color(0.45, 0.85, 0.4)), row.get("text", "")))
 			return h
 		"portrait":
-			# Портрет жителя и плашки рядом (пол, характер, мутации).
+			# Портрет гаврика и плашки рядом (пол, характер, мутации).
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 12)
 			h.add_child(PortraitView.make(row["looks"], 150, 74))
@@ -932,7 +932,7 @@ func _build_checks(st: Dictionary) -> void:
 		flow.add_child(b)
 
 
-## Список жителей с кнопкой: {"type": "people", "label", "empty"?, "items": [{"looks", "name", "info",
+## Список гавриков с кнопкой: {"type": "people", "label", "empty"?, "items": [{"looks", "name", "info",
 ## "button"?, "pick": Callable, "style"?}]} — назначить на работу и т. п.
 func _build_people(st: Dictionary) -> void:
 	_controls.add_child(_label(st["label"], 16, MUTED))
@@ -1671,12 +1671,12 @@ func _build_menu(center: CenterContainer) -> void:
 	_background.add_theme_font_size_override("font_size", 22)
 	_background.toggled.connect(func(on: bool) -> void: background_toggled.emit(on))
 	v.add_child(_background)
-	var bg_hint := _label("Включено — пока вас нет, жители работают (до 1 часа). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
+	var bg_hint := _label("Включено — пока вас нет, гаврики работают (до 1 часа). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
 	bg_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bg_hint.custom_minimum_size = Vector2(380, 0)
 	v.add_child(bg_hint)
 	var models := CheckButton.new()
-	models.text = "3D-модель жителей"
+	models.text = "3D-модель гавриков"
 	models.button_pressed = ModelSprites.enabled
 	models.focus_mode = Control.FOCUS_NONE
 	models.add_theme_font_size_override("font_size", 22)

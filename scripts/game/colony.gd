@@ -1,7 +1,7 @@
 class_name Colony
 extends RefCounted
-## Колония: жители, стройки, комнаты, склад.
-## Жители сами разбирают работу: сначала потребности (сон, еда), потом работа
+## Колония: гаврики, стройки, комнаты, склад.
+## Гаврики сами разбирают работу: сначала потребности (сон, еда), потом работа
 ## по профессии, потом любая другая. Онлайн они ходят и работают по-настоящему
 ## (update), оффлайн — упрощённо (advance_offline).
 
@@ -32,18 +32,18 @@ const HAZARD_TEXT := {
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
 
-# Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — жители не
+# Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — гаврики не
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
 const SATIETY_DECAY := 100.0 / 600.0 * 0.85
-## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока житель
+## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока гаврик
 ## отогревается в тепле — втрое быстрее (как раньше во сне).
 const HEAL_TIME := 2400.0
-## Ниже этого здоровья житель, которому холодно (или жарко), бросает дела и идёт греться.
+## Ниже этого здоровья гаврик, которому холодно (или жарко), бросает дела и идёт греться.
 const WARM_HEALTH := 60.0
 ## Греется, пока здоровье не станет таким (или не пройдёт WARM_MAX секунд).
 const WARM_UNTIL := 90.0
 const WARM_MAX := 300.0
-## За сколько секунд полный голод убивает здорового жителя (5 минут).
+## За сколько секунд полный голод убивает здорового гаврика (5 минут).
 const STARVE_TIME := 300.0
 const EAT_TIME := 6.0
 const HUNGRY := 35.0
@@ -74,13 +74,13 @@ const FISH_REGEN := 60.0
 const EAT_BUSH := -1
 ## Источник еды: еда, лежащая на земле.
 const EAT_DROP := -2
-## Сколько единиц ресурса житель уносит за раз.
+## Сколько единиц ресурса гаврик уносит за раз.
 const CARRY := 5
 ## Оффлайн одна ходка за материалами занимает столько секунд.
 const OFFLINE_HAUL_TIME := 20.0
 # Игровое время: сутки — 20 секунд, месяц — 10 минут, год — 2 часа игры.
 const DAY := 20.0
-## Смена дня и ночи (выключена; сна у жителей нет).
+## Смена дня и ночи (выключена; сна у гавриков нет).
 const DAY_NIGHT := false
 ## Ночь: с 22:00 до 6:00.
 const NIGHT_FROM := 22.0
@@ -102,7 +102,7 @@ const HEAT := 18.0
 const HEARTH_ON_BELOW := 18.0
 ## Ферма растит грибы только в тепле.
 const FARM_MIN_TEMP := 15.0
-## Ниже этой температуры обычному жителю холодно (синие и пушистые терпят больше).
+## Ниже этой температуры обычному гаврику холодно (синие и пушистые терпят больше).
 const COLD := 0.0
 ## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
 const WINTER_FISH_SLOWDOWN := 2.0
@@ -112,7 +112,7 @@ const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
 const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "metal": 0.6}
 ## Предупреждения об износе.
 const WEAR_WARN := [0.7, 0.9]
-## Ресурсы, которые жители склада добывают сами: ресурс -> объект поверхности.
+## Ресурсы, которые гаврики склада добывают сами: ресурс -> объект поверхности.
 ## −1 — еду (рыбу) не собирают с объектов, а ловят.
 const GATHER_SOURCES := {"wood": WorldGen.FEATURE_TREE, "stone": WorldGen.FEATURE_BOULDER, "berries": WorldGen.FEATURE_BUSH, "fish": -1}
 ## Сытость за единицу: ягоды — лёгкий перекус, рыба и грибы с фермы — настоящая еда.
@@ -152,7 +152,7 @@ var known_resources := {}
 var interior := {}
 ## Клетки комнат, где ходят по полу (без колонны лестницы). Vector2i -> id проекта.
 var room_cells := {}
-## Занятые цели: ключ -> id жителя.
+## Занятые цели: ключ -> id гаврика.
 var reserved := {}
 ## Прогресс копки клеток, сек: Vector2i -> float.
 var dig_progress := {}
@@ -175,7 +175,7 @@ var _climb_t := 0.0
 ## Кусты в полосе вокруг базы (обновляется при росте растений).
 var _bushes: Array[int] = []
 var _shore_progress := {}
-## Разведанная часть мира: столбцы, куда доходили жители, и глубина/высота работ.
+## Разведанная часть мира: столбцы, куда доходили гаврики, и глубина/высота работ.
 const EXPLORE_RADIUS := 30
 ## Поверхность у базы видна сразу на столько метров в обе стороны.
 const START_VIEW := 60
@@ -188,14 +188,14 @@ var _access_t := 0
 var _full_warned := {}
 ## Игровое время с начала колонии, сек.
 var game_time := 0.0
-## Когда житель последний раз уходил из облака метана: id -> время игры.
+## Когда гаврик последний раз уходил из облака метана: id -> время игры.
 var _fled := {}
 ## Знакомства: "id1,id2" -> сколько секунд провели рядом (с поправкой на общительность).
 var acquaint := {}
 ## Когда последний раз сообщали о газовой тревоге на стройке: id -> время игры.
 var _gas_logged := {}
 const GAS_LOG_EVERY := 300.0
-## Когда последний раз посылали жителя на разведку за сырьём (время игры).
+## Когда последний раз посылали гаврика на разведку за сырьём (время игры).
 var _scout_at := -100.0
 ## Прогресс оффлайн-работ без своего места хранения (ходки за материалами, ремонт).
 var _offline_progress := {}
@@ -262,7 +262,7 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 	return u
 
 
-## Своё имя из слогов, не занятое другими жителями.
+## Своё имя из слогов, не занятое другими гавриками.
 func _free_name(sex: int) -> String:
 	var used := {}
 	for u in units:
@@ -298,7 +298,7 @@ func project_by_id(pid: int) -> Project:
 	return null
 
 
-## Игрок что-то поручил — жители без дела ищут работу сразу, а не через несколько секунд.
+## Игрок что-то поручил — гаврики без дела ищут работу сразу, а не через несколько секунд.
 func wake_idle() -> void:
 	for u in units:
 		if u.state == Unit.State.IDLE:
@@ -345,7 +345,7 @@ func available_materials() -> Array[String]:
 	return out
 
 
-## Сколько жителей могут одновременно пройти тоннелем (по его ширине).
+## Сколько гавриков могут одновременно пройти тоннелем (по его ширине).
 static func tunnel_lanes(r: Rect2i) -> int:
 	if r.size.y > r.size.x:
 		return maxi(1, r.size.x)
@@ -541,7 +541,7 @@ func water_rects(start_x: int, end_x: int) -> Dictionary:
 		right -= 1
 	out["bridge"] = Rect2i(left, row, right - left + 1, 1)
 	# Пристань: от ближайшего к началу берега, длиной как провели (3–10 м).
-	# Если до того берега жителям не дойти — от другого.
+	# Если до того берега гаврикам не дойти — от другого.
 	var length := clampi(absi(end_x - start_x) + 1, 3, 10)
 	var l_pier := Rect2i(left, row, mini(length, right - left), 1)
 	var rl := maxi(left + 1, right - length + 1)
@@ -555,7 +555,7 @@ func water_rects(start_x: int, end_x: int) -> Dictionary:
 	return out
 
 
-## Могут ли жители дойти до зоны (обход от каждого взрослого, кэш на полсекунды).
+## Могут ли гаврики дойти до зоны (обход от каждого взрослого, кэш на полсекунды).
 var _reach_cache: Array = []
 var _reach_at := -100000
 
@@ -579,7 +579,7 @@ func can_reach(r: Rect2i) -> bool:
 	if not cut:
 		return false
 	# В большой колонии обход обрывается раньше дальних мест — ищем путь прицельно
-	# от ближайшего к зоне жителя.
+	# от ближайшего к зоне гаврика.
 	var near: Unit = null
 	var best := INF
 	for u in units:
@@ -598,9 +598,9 @@ func can_reach(r: Rect2i) -> bool:
 
 
 ## --- Дальние стройки ------------------------------------------------------------------
-## Обход жителя ограничен (Pathing.MAX_NODES): в большой колонии глубокий забой в него не
+## Обход гаврика ограничен (Pathing.MAX_NODES): в большой колонии глубокий забой в него не
 ## попадает, и стройка висела бы «Нет доступа». Тогда путь к ней ищут прицельно и дописывают
-## в обход жителя (вместе с клетками вокруг стройки). Неудачу помнят FAR_RETRY секунд.
+## в обход гаврика (вместе с клетками вокруг стройки). Неудачу помнят FAR_RETRY секунд.
 const FAR_RETRY := 20.0
 const FAR_GAP := 300
 var _far_fail := {}
@@ -643,7 +643,7 @@ func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionar
 	return true
 
 
-## Раз в несколько секунд: до каких строек жителям не дойти — предупреждение.
+## Раз в несколько секунд: до каких строек гаврикам не дойти — предупреждение.
 func _check_access() -> void:
 	for p in projects:
 		var working := p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD \
@@ -657,7 +657,7 @@ func _check_access() -> void:
 			if blocked_access:
 				p.blocked = ""
 		elif not blocked_access:
-			p.blocked = "Нет доступа — жители не могут дойти до стройки" if p.is_water_structure() \
+			p.blocked = "Нет доступа — гаврики не могут дойти до стройки" if p.is_water_structure() \
 				else "Нет доступа — проложите тоннель к стройке"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
 
@@ -846,7 +846,7 @@ func gas_stop(p: Project) -> void:
 			_drop(u)
 
 
-## Житель почуял взрывоопасный метан и уходит к ближайшему чистому воздуху.
+## Гаврик почуял взрывоопасный метан и уходит к ближайшему чистому воздуху.
 ## Кто работает на стройке, где игрок велел продолжать в газе, — остаётся.
 func flee_gas(u: Unit) -> void:
 	if u.task == Unit.Task.GOTO or u.state == Unit.State.FALL or game_time - float(_fled.get(u.id, -100.0)) < 20.0:
@@ -1113,7 +1113,7 @@ func _check_supply(p: Project) -> void:
 # --- Бур ------------------------------------------------------------------------------
 ## Бур — машина 3×3. Её ставят (место выкапывают), собирают из железа и меди, а потом
 ## в карточке велят пройти n м вниз, влево или вправо: бур сам едет и сверлит ход 3 м
-## шириной втрое быстрее жителя (на энергии, после «Двигателей внутреннего сгорания» — и на
+## шириной втрое быстрее гаврика (на энергии, после «Двигателей внутреннего сгорания» — и на
 ## дизеле). За ним остаётся тоннель (вниз) или ход как шахта (вбок), где можно ставить лифт
 ## и комнаты. Дошёл — стоит в конце хода и ждёт нового приказа.
 const DRILL_POWER := 10
@@ -1429,7 +1429,7 @@ func _passenger_lift_at(c: Vector2i) -> Project:
 	return null
 
 
-## Житель подошёл к лифту: если ехать по шахте далеко — встаёт ждать кабину.
+## Гаврик подошёл к лифту: если ехать по шахте далеко — встаёт ждать кабину.
 func _try_board(u: Unit) -> bool:
 	var nxt: Vector2i = u.path[u.path_i]
 	var p := _passenger_lift_at(nxt)
@@ -2086,7 +2086,7 @@ func remaining_dig(p: Project) -> Array[Vector2i]:
 	return out
 
 
-## Базовое время копки клетки (для жителя с навыком 1).
+## Базовое время копки клетки (для гаврика с навыком 1).
 func dig_time(c: Vector2i) -> float:
 	var m := world.get_mat(c.x, c.y)
 	var t := Mat.hardness(m) * Env.heat_work_factor(world.gen.temperature(c.y, world.gen.surface_y(c.x)))
@@ -2330,7 +2330,7 @@ static func rocket_reaches(engine: String, planet_id: String) -> bool:
 	return engine == "nuclear" or need == engine
 
 
-## Отправить экспедицию: до 10 жителей и до 200 груза (не топливо — его не возят).
+## Отправить экспедицию: до 10 гавриков и до 200 груза (не топливо — его не возят).
 ## Возвращает полёт (словарь для Universe) или ошибку {"error": текст}.
 func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Dictionary:
 	if p.rocket.is_empty():
@@ -2338,7 +2338,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	if not rocket_reaches(p.rocket, planet_id):
 		return {"error": "Для полёта на %s нужен %s двигатель" % [Planet.planet_name(planet_id), Planet.engine_name(Planet.data(planet_id)["engine"])]}
 	if crew.size() > RoomType.SHIP_BEDS:
-		return {"error": "В ракете — до %d жителей" % RoomType.SHIP_BEDS}
+		return {"error": "В ракете — до %d гавриков" % RoomType.SHIP_BEDS}
 	var total := 0
 	for k in cargo:
 		total += int(cargo[k])
@@ -2353,7 +2353,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	var crew_data := []
 	for u: Unit in crew:
 		if not units.has(u) or u.child:
-			return {"error": "Лететь могут только взрослые жители колонии"}
+			return {"error": "Лететь могут только взрослые гаврики колонии"}
 	for u: Unit in crew:
 		_drop(u)
 		u.workplace = 0
@@ -2366,7 +2366,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	for k in cargo:
 		_remove(k, int(cargo[k]))
 	p.rocket = ""
-	_log("Старт! Экспедиция на %s: жителей %d, груза %d. Лететь %d мес." % [Planet.planet_name(planet_id), crew_data.size(), total,
+	_log("Старт! Экспедиция на %s: гавриков %d, груза %d. Лететь %d мес." % [Planet.planet_name(planet_id), crew_data.size(), total,
 		int(Planet.data(planet_id)["travel"])], "good")
 	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
 		"left": float(Planet.data(planet_id)["travel"]) * MONTH}
@@ -2386,7 +2386,7 @@ func start_planet(x: int, flight: Dictionary) -> void:
 
 
 ## Прилетела ракета: корабль садится рядом с колонией (или на месте первой высадки),
-## жители и груз — в корабле.
+## гаврики и груз — в корабле.
 func receive_flight(flight: Dictionary) -> void:
 	var ship := _land_ship()
 	var ids := {}
@@ -2414,7 +2414,7 @@ func receive_flight(flight: Dictionary) -> void:
 		var put := _add(k, n, ship)
 		if put < n:
 			_add(k, n - put)
-	_log("Посадка на %s! Корабль — жильё на %d человек; прибыло жителей %d. Копайте вниз прямо из корабля." % [
+	_log("Посадка на %s! Корабль — жильё на %d человек; прибыло гавриков %d. Копайте вниз прямо из корабля." % [
 		Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good")
 
 
@@ -2799,7 +2799,7 @@ func _take_store(key: String, n: int) -> int:
 	return _remove(key, n)
 
 
-## Без игрока жители берут и со склада, и с куч на земле (склада может не быть).
+## Без игрока гаврики берут и со склада, и с куч на земле (склада может не быть).
 func _take_any(key: String, n: int) -> int:
 	var t := _take_store(key, n)
 	for c: Vector2i in drops.keys():
@@ -2860,7 +2860,7 @@ func _clearing_project(x: int) -> Project:
 	return null
 
 
-## room — склад, для которого житель добывал: добычу он несёт туда сам.
+## room — склад, для которого гаврик добывал: добычу он несёт туда сам.
 func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 	var y: Array = feature_yield(x)
 	var kind := world.feature_at(x)
@@ -2898,7 +2898,7 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 				what = "разбила валун" if fem else "разбил валун"
 			_:
 				what = "собрала ягоды" if fem else "собрал ягоды"
-		_log("%s %s: +%d %s" % [u.name if u != null else "Жители", what, y[1], Mat.resource_name(y[0]).to_lower()], "info")
+		_log("%s %s: +%d %s" % [u.name if u != null else "Гаврики", what, y[1], Mat.resource_name(y[0]).to_lower()], "info")
 	for p in projects:
 		if p.phase == Project.Phase.DIG:
 			_check_phase(p)
@@ -2923,7 +2923,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
 			_log("%s %s: %s ×%d (глубина %s)" % [
-				u.name if u != null else "Жители", "нашла" if u != null and u.sex == Unit.Sex.FEMALE else "нашёл",
+				u.name if u != null else "Гаврики", "нашла" if u != null and u.sex == Unit.Sex.FEMALE else "нашёл",
 				Mat.resource_name(key).to_lower(), amount, _depth_text(c)], "good")
 	_note_discovery(m, c)
 	# Дерево или валун над выкопанной клеткой падают.
@@ -2987,7 +2987,7 @@ func on_collapse(c: Vector2i, span: int, limit: int, m: int) -> void:
 		_depth_text(c), Mat.name_of(m).to_lower(), span, limit], "danger")
 
 
-## Порода упала из src в land: задевает жителей по пути, засыпает стройку.
+## Порода упала из src в land: задевает гавриков по пути, засыпает стройку.
 func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 	dig_progress.erase(land)
 	elements.on_opened(src)
@@ -3019,7 +3019,7 @@ func injure(u: Unit, dmg: float, why: String) -> void:
 		_log("%s: %s, здоровье %d%%" % [u.name, why, roundi(u.health)], "danger")
 		return
 	if offline:
-		# Пока игрока нет, жители не гибнут — только тяжело ранены.
+		# Пока игрока нет, гаврики не гибнут — только тяжело ранены.
 		u.health = 1.0
 		_log("%s: %s, тяжело ранен(а)" % [u.name, why], "danger")
 		return
@@ -3092,7 +3092,7 @@ func _catch_from(lake: Dictionary, u: Unit) -> void:
 		return
 	fish[int(lake["id"])] = left - 1.0
 	if u != null and u.workplace == 0:
-		# Свободный житель ловил от голода — съедает улов на месте, остаток оставляет на берегу.
+		# Свободный гаврик ловил от голода — съедает улов на месте, остаток оставляет на берегу.
 		var catch := {"fish": 2}
 		_eat_from(u, func(key: String, n: int) -> int:
 			var t := mini(n, int(catch.get(key, 0)))
@@ -3231,7 +3231,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			* (3.0 if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
-			# Оффлайн жители сами едят и спят по расписанию.
+			# Оффлайн гаврики сами едят и спят по расписанию.
 			if u.satiety < HUNGRY + 5.0 and _have_any("food") + _have_any("fish") + _have_any("berries") > 0:
 				_eat_from(u, _take_any, DINING_BONUS if not rooms_of(RoomType.DINING).is_empty() else 1.0)
 			elif u.satiety < HUNGRY + 5.0:
@@ -3323,14 +3323,14 @@ func _birth(mother: Unit) -> void:
 	var parents := mother.name + (" и " + father.name if father != null else "")
 	_log("Родился ребёнок: %s (%s %s)" % [baby.name, who, parents], "good")
 	if Genetics.is_super(genome):
-		_log("Родился СВЕРХЮНИТ: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good")
+		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good")
 	elif Genetics.is_mutant(genome):
 		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info")
 
 
-# --- Места работы: игрок ставит конкретных жителей (как в Fallout Shelter) ---------------
+# --- Места работы: игрок ставит конкретных гавриков (как в Fallout Shelter) ---------------
 
-## Куда можно назначить жителя: ферма, лаборатория, печь, кузница, склад, пристань.
+## Куда можно назначить гаврика: ферма, лаборатория, печь, кузница, склад, пристань.
 func is_workplace(p: Project) -> bool:
 	if p == null or p.phase != Project.Phase.DONE:
 		return false
@@ -3378,7 +3378,7 @@ func assign_work(u: Unit, p: Project) -> String:
 	return ""
 
 
-## Роль жителя без места работы: свободный, строитель или подсобный рабочий.
+## Роль гаврика без места работы: свободный, строитель или подсобный рабочий.
 func set_profession(u: Unit, prof: int) -> String:
 	wake_idle()
 	if u.child:
@@ -3486,7 +3486,7 @@ func work_skill(p: Project) -> String:
 	return "build"
 
 
-## Насколько характеристики жителя подходят для работы (1.0 — обычный).
+## Насколько характеристики гаврика подходят для работы (1.0 — обычный).
 func stat_fit(u: Unit, task: int) -> float:
 	if u.genome.is_empty() or not JOB_STATS.has(task):
 		return 1.0
@@ -3494,7 +3494,7 @@ func stat_fit(u: Unit, task: int) -> float:
 	return maxf(0.3, u.stat(st[0]) * (1.0 + 0.5 * (u.stat(st[1]) - 1.0)))
 
 
-## Основная работа жителя: место работы или роль (строитель, шахтёр, подсобный); -1 — нет.
+## Основная работа гаврика: место работы или роль (строитель, шахтёр, подсобный); -1 — нет.
 func job_task(u: Unit) -> int:
 	if u.workplace != 0:
 		var p := project_by_id(u.workplace)
@@ -3520,7 +3520,7 @@ func calling_of(u: Unit, task := -2) -> int:
 	return 1 if f >= CALLING_HI else (-1 if f <= CALLING_LO else 0)
 
 
-## Насколько житель хорош на этом месте (1.0 — обычный).
+## Насколько гаврик хорош на этом месте (1.0 — обычный).
 func suitability(u: Unit, p: Project) -> float:
 	return stat_fit(u, work_task(p)) * u.speed(work_skill(p)) * float(u.ability("work"))
 
@@ -3577,7 +3577,7 @@ func acquaintance(a: Unit, b: Unit) -> float:
 	return acquaint.get(_acq_key(a.id, b.id), 0.0)
 
 
-## Знакомство растёт, когда жители рядом. Быстро — у тех, кто работает на одном месте
+## Знакомство растёт, когда гаврики рядом. Быстро — у тех, кто работает на одном месте
 ## или на соседних, на одной стройке или живёт в одной комнате: так игрок сводит пары.
 ## Просто встречаясь где-то ещё, знакомятся медленно. Общительные — быстрее.
 const ACQUAINT_TOGETHER := 1.5
@@ -3615,7 +3615,7 @@ func works_together(a: Unit, b: Unit) -> bool:
 	return pa != null and pb != null and pa.rect.grow(1).intersects(pb.rect)
 
 
-## Лучшие знакомые жителя: [[житель, знакомство]].
+## Лучшие знакомые гаврика: [[гаврик, знакомство]].
 func best_friends(u: Unit, n := 3) -> Array:
 	var out := []
 	for o in units:
@@ -3677,7 +3677,7 @@ func update(dt: float) -> void:
 					_log("%s: вода ушла, работы продолжаются" % p.title(), "good")
 
 
-## Жители открывают карту вокруг себя.
+## Гаврики открывают карту вокруг себя.
 func explore() -> void:
 	for u in units:
 		explored_min = mini(explored_min, roundi(u.pos.x) - EXPLORE_RADIUS)
@@ -3753,7 +3753,7 @@ func _update_unit(u: Unit, dt: float) -> void:
 			_work(u, dt)
 
 
-## Рядом (в той же клетке) стоит другой житель без дела.
+## Рядом (в той же клетке) стоит другой гаврик без дела.
 func _crowded(u: Unit) -> bool:
 	for o in units:
 		if o != u and o.state == Unit.State.IDLE and absf(o.pos.x - u.pos.x) < 0.8 and absf(o.pos.y - u.pos.y) < 0.5:
@@ -3761,7 +3761,7 @@ func _crowded(u: Unit) -> bool:
 	return false
 
 
-## Житель без дела отходит на свободное место: в свою спальню, а если до неё
+## Гаврик без дела отходит на свободное место: в свою спальню, а если до неё
 ## не дойти — в ближайшую комнату, где никто не стоит.
 func _stroll(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
@@ -3802,7 +3802,7 @@ func _land(u: Unit, c: Vector2i) -> void:
 		injure(u, (height - 4.0) * 12.0, "упал(а) с высоты %d м" % roundi(height))
 
 
-## Жителя засыпало породой: выбирается в ближайшую пустоту или гибнет.
+## Гаврика засыпало породой: выбирается в ближайшую пустоту или гибнет.
 func _unbury(u: Unit) -> void:
 	var start := u.cell()
 	for r in range(1, 6):
@@ -3822,7 +3822,7 @@ func _head_in_water(u: Unit) -> bool:
 	return world.get_mat(h.x, h.y) == Mat.WATER
 
 
-## Житель под водой: плывёт к ближайшему месту, где можно встать и дышать.
+## Гаврик под водой: плывёт к ближайшему месту, где можно встать и дышать.
 func _start_swim(u: Unit) -> void:
 	var start := u.cell()
 	var parents := {start: start}
@@ -3855,7 +3855,7 @@ const SCOUT_WAIT := 15.0
 const SCOUT_EVERY := 30.0
 
 
-## Отправить жителя в точку target (или как можно ближе к ней). Возвращает, куда он пойдёт.
+## Отправить гаврика в точку target (или как можно ближе к ней). Возвращает, куда он пойдёт.
 func send_unit(u: Unit, target: Vector2i) -> Variant:
 	var reach := pathing.explore(u.cell())
 	var dist: Dictionary = reach[1]
@@ -3878,18 +3878,18 @@ func on_flooded(p: Project, _c: Vector2i) -> void:
 	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
 
 
-## Удобно ли жителю в клетке: не холоднее и не жарче, чем он терпит.
+## Удобно ли гаврику в клетке: не холоднее и не жарче, чем он терпит.
 func comfortable(u: Unit, c: Vector2i) -> bool:
 	var t := elements.temperature(c)
 	return t >= cold_limit(u) and t <= elements.heat_limit(u)
 
 
-## Житель мёрзнет (или перегрелся) и уже заметно ослаб — пора в тепло.
+## Гаврик мёрзнет (или перегрелся) и уже заметно ослаб — пора в тепло.
 func needs_warmth(u: Unit) -> bool:
 	return u.health < WARM_HEALTH and not u.invulnerable() and not comfortable(u, u.cell())
 
 
-## Ближайшее место, где жителю не холодно и не жарко (с запасом 3 °C), — туда греться.
+## Ближайшее место, где гаврику не холодно и не жарко (с запасом 3 °C), — туда греться.
 func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	var best = null
 	var best_d := 1 << 30
@@ -3978,12 +3978,12 @@ func _move(u: Unit, dt: float) -> void:
 const DARK_WORK := 0.7
 ## Как глубоко солнце проникает в открытую сверху шахту.
 const SUN_SHAFT := 8
-## Светящийся житель освещает всё вокруг себя.
+## Светящийся гаврик освещает всё вокруг себя.
 const GLOW_RADIUS := 4
 
 
 ## Светло ли в клетке: над землёй, в открытой шахте недалеко от неба, в комнате, где горит свет,
-## у лампы на стройке, рядом со светящимся жителем.
+## у лампы на стройке, рядом со светящимся гавриком.
 func is_lit(c: Vector2i) -> bool:
 	if sunlit(c):
 		return true
@@ -4088,7 +4088,7 @@ static func soft(v: float) -> float:
 	return 1.0 + (v - 1.0) * 0.6
 
 
-## Насколько быстро житель делает эту работу — от характеристик, умений и мутаций.
+## Насколько быстро гаврик делает эту работу — от характеристик, умений и мутаций.
 ## Без глаз — всё очень медленно, но руду в тёмной глубине добывает вдвое быстрее.
 func work_factor(u: Unit, task: int, c: Vector2i) -> float:
 	if u.genome.is_empty():
@@ -4302,7 +4302,7 @@ func _drop(u: Unit) -> void:
 	var key = _reserve_key(u)
 	if key != null and reserved.get(key) == u.id:
 		reserved.erase(key)
-	# Брошенный груз остаётся лежать, где житель его бросил.
+	# Брошенный груз остаётся лежать, где гаврик его бросил.
 	if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
 		drop_item(u.cell(), u.carry_key, u.carry_amount)
 	u.carry_key = ""
@@ -4339,10 +4339,10 @@ func _reserve_key(u: Unit) -> Variant:
 	return null
 
 
-## Порядок занятий жителя: сначала его профессия, затем общая очередь.
+## Порядок занятий гаврика: сначала его профессия, затем общая очередь.
 ## Порядок дел. Назначенный — сначала своё место работы. Остальное — только нужное
 ## колонии: стройки (копка, укрепление, стройка, доставка материалов) и сбор по нужде
-## (не хватает материалов на стройку, нечего есть). Сами по себе свободные жители не
+## (не хватает материалов на стройку, нечего есть). Сами по себе свободные гаврики не
 ## рубят, не ловят рыбу, не фермерствуют и ничего не носят на хранение.
 func _task_order(u: Unit) -> Array[String]:
 	# need — добыть то, чего не хватает стройке: это тоже стройка, она важнее переноски.
@@ -4360,7 +4360,7 @@ func _task_order(u: Unit) -> Array[String]:
 	return ["projects", "need", "haul"]
 
 
-## Ищет занятие для жителя. true — назначено.
+## Ищет занятие для гаврика. true — назначено.
 func _assign(u: Unit) -> bool:
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
@@ -4435,7 +4435,7 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 			continue
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
 			continue
-		# Ход, который сверлит бур, жители не копают.
+		# Ход, который сверлит бур, гаврики не копают.
 		if p.bored_by > 0:
 			continue
 		var mine := p.kind == Project.Kind.MINE
@@ -4706,7 +4706,7 @@ func _lake_near(x: int) -> Dictionary:
 	return {}
 
 
-## Откуда житель может работать с клеткой c: стоя рядом (ноги или голова у клетки).
+## Откуда гаврик может работать с клеткой c: стоя рядом (ноги или голова у клетки).
 func _work_spot(c: Vector2i, dist: Dictionary) -> Array:
 	var best := [null, 1 << 30]
 	for d in DIRS4:
@@ -4808,7 +4808,7 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 	return false
 
 
-## Крепь выкопанного среза: житель встаёт в срезе или рядом.
+## Крепь выкопанного среза: гаврик встаёт в срезе или рядом.
 func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
 	var i := slice_to_support(p)
 	if i < 0 or not _pay_support(p, i):
@@ -4962,7 +4962,7 @@ func _claimed_drop(c: Vector2i, key: String) -> int:
 # --- Добыча на земле ----------------------------------------------------------------------
 
 ## Добытое ложится там, где добыто (падает на пол). Пустая порода — сразу в отвал,
-## оффлайн жители успевают всё перетаскать — сразу на склад.
+## оффлайн гаврики успевают всё перетаскать — сразу на склад.
 ## site — стройка, на которой добыто (расчистка, копка): что ей нужно, остаётся
 ## на месте и сразу идёт в её материалы; на склад уносят только излишек.
 func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
@@ -4981,7 +4981,7 @@ func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 			n -= use
 			if n <= 0:
 				return
-	# Без игрока жители успевают донести — но только туда, где есть работник склада.
+	# Без игрока гаврики успевают донести — но только туда, где есть работник склада.
 	if RoomType.BULK.has(key) or (offline and can_store(key)):
 		_add(key, n)
 		return
@@ -5116,7 +5116,7 @@ func _store_target(key: String, dist: Dictionary, only: Project = null) -> Varia
 	return best
 
 
-## Ближайшая к жителю клетка пола комнаты.
+## Ближайшая к гаврику клетка пола комнаты.
 func _room_stand(room: Project, dist: Dictionary) -> Variant:
 	var best = null
 	for x in range(RoomType.floor_start(room), room.rect.end.x):
@@ -5142,7 +5142,7 @@ func can_store(key: String) -> bool:
 	return false
 
 
-## Свободный житель уносит лежащее на земле на склад (если там есть место).
+## Свободный гаврик уносит лежащее на земле на склад (если там есть место).
 func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
 	var may_mine := mine_hauler(u)
 	var best = null
@@ -5199,7 +5199,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	return true
 
 
-## Житель берёт ресурс с кучи c (рядом с ним) и несёт на склад.
+## Гаврик берёт ресурс с кучи c (рядом с ним) и несёт на склад.
 func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
 	if not can_store(key):
 		return
@@ -5409,7 +5409,7 @@ func _construction_recheck(u: Unit, dt: float) -> void:
 	u.work_t = saved[13]
 
 
-## Житель у склада или кучи: берёт ресурс и несёт к стройке или на склад.
+## Гаврик у склада или кучи: берёт ресурс и несёт к стройке или на склад.
 func _haul_pickup(u: Unit) -> void:
 	var p := project_by_id(u.project_id)
 	if p == null and not u.to_store:
@@ -5462,7 +5462,7 @@ func _haul_pickup(u: Unit) -> void:
 	u.state = Unit.State.MOVE
 
 
-## Житель донёс груз: на стройку — в её запас, на склад — в общий.
+## Гаврик донёс груз: на стройку — в её запас, на склад — в общий.
 func _haul_deliver(u: Unit) -> void:
 	var p := project_by_id(u.project_id)
 	var k := u.carry_key
@@ -5488,7 +5488,7 @@ func _haul_deliver(u: Unit) -> void:
 	_try_pay(p)
 
 
-## Житель с добычей идёт на склад room_id.
+## Гаврик с добычей идёт на склад room_id.
 func _carry_to(u: Unit, room_id: int, key: String, amount: int) -> void:
 	var room := project_by_id(room_id)
 	var stand = null
@@ -5511,7 +5511,7 @@ func _carry_to(u: Unit, room_id: int, key: String, amount: int) -> void:
 	u.state = Unit.State.MOVE
 
 
-# --- Склад: жители сами добывают ресурсы до нормы -----------------------------------------
+# --- Склад: гаврики сами добывают ресурсы до нормы -----------------------------------------
 
 func gatherers_on(p: Project) -> int:
 	var n := 0
@@ -5557,7 +5557,7 @@ func _try_storage(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	return false
 
 
-## Подходит ли объект для добычи жителями склада (метка игрока не нужна).
+## Подходит ли объект для добычи гавриками склада (метка игрока не нужна).
 func _gather_ok(x: int, kind: int) -> bool:
 	if world.feature_at(x) != kind or reserved.has("h%d" % x) or _in_clearing(x):
 		return false
@@ -5599,7 +5599,7 @@ func _try_gather(u: Unit, key: String, room: Project, parents: Dictionary, dist:
 	return true
 
 
-## Рядом не осталось чего добыть — житель идёт по поверхности к краю разведанного:
+## Рядом не осталось чего добыть — гаврик идёт по поверхности к краю разведанного:
 ## дальше могут быть деревья, валуны и кусты. Не чаще раза в SCOUT_EVERY секунд.
 func _try_scout(u: Unit, parents: Dictionary, dist: Dictionary, key: String) -> bool:
 	if game_time - _scout_at < SCOUT_EVERY:
@@ -5622,7 +5622,7 @@ func _try_scout(u: Unit, parents: Dictionary, dist: Dictionary, key: String) -> 
 	return true
 
 
-## Стройке не хватает дерева, камня или еды нет совсем — жители сами отмечают
+## Стройке не хватает дерева, камня или еды нет совсем — гаврики сами отмечают
 ## ближайшее дерево, валун или куст и добывают.
 func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	var keys := {}
@@ -5800,7 +5800,7 @@ func _cancel_repair(p: Project) -> void:
 
 
 ## Постройка рухнула: всё, что в ней лежало, пропадает, кто был внутри — гибнет (кроме
-## сверхюнитов), падают верхние этажи, порода может обвалиться. Дегазация взрывается.
+## супер-гавриков), падают верхние этажи, порода может обвалиться. Дегазация взрывается.
 func collapse(p: Project, why: String) -> void:
 	if not projects.has(p):
 		return
@@ -5830,7 +5830,7 @@ func collapse(p: Project, why: String) -> void:
 		var c := u.cell()
 		if p.rect.has_point(c) or p.rect.has_point(c + Vector2i(0, -1)):
 			if p.is_water_structure():
-				# Настил рухнул в воду — житель выбирается на берег.
+				# Настил рухнул в воду — гаврик выбирается на берег.
 				_drop(u)
 				u.pos = Vector2(_ground_cell(p.rect.position.x - 1))
 				u.state = Unit.State.IDLE
@@ -5871,7 +5871,7 @@ func collapse(p: Project, why: String) -> void:
 
 
 ## Взрыв рухнувшей дегазации: всё вокруг на 3, 6 или 9 м (по размеру комнаты) рушится,
-## порода трескается в обломки, кто рядом — гибнет (кроме сверхюнитов).
+## порода трескается в обломки, кто рядом — гибнет (кроме супер-гавриков).
 func _explode(p: Project) -> void:
 	var rad: int = [3, 6, 9][clampi(RoomType.blocks(p), 1, 3) - 1]
 	var area := p.rect.grow(rad)
@@ -5906,7 +5906,7 @@ func _room_supported(q: Project) -> bool:
 # --- Экономика: мастерские, наука, энергия --------------------------------------------
 
 ## Хватает ли сырья на цикл мастерской.
-## Сколько сырья k есть у мастерской: принесённое; без игрока жители берут и со склада.
+## Сколько сырья k есть у мастерской: принесённое; без игрока гаврики берут и со склада.
 func _input_have(p: Project, k: String) -> int:
 	# Нефть — по трубам прямо из хранилища.
 	if RoomType.PIPED.has(k):
@@ -6088,7 +6088,7 @@ func automation_bonus() -> float:
 	return 1.5 if research.has("automation") else 1.0
 
 
-## Сколько житель уносит за раз.
+## Сколько гаврик уносит за раз.
 func carry_cap() -> int:
 	return 8 if research.has("carts") else CARRY
 
@@ -6309,7 +6309,7 @@ func _season_tick() -> void:
 		if not first:
 			match sn:
 				Season.WINTER:
-					_log("Пришла зима: ягоды не растут, озёра замёрзли — рыба только с пристани, вдвое медленнее. Фермам и жителям нужно тепло — очаг", "warning")
+					_log("Пришла зима: ягоды не растут, озёра замёрзли — рыба только с пристани, вдвое медленнее. Фермам и гаврикам нужно тепло — очаг", "warning")
 				Season.SPRING:
 					_log("Весна: снова растут ягоды, озёра оттаяли", "good")
 				Season.SUMMER:
@@ -6336,7 +6336,7 @@ func room_temp(p: Project) -> float:
 	return elements.temperature(p.rect.get_center())
 
 
-## Ниже какой температуры жителю холодно: синим и пушистым — ниже, красным — выше.
+## Ниже какой температуры гаврику холодно: синим и пушистым — ниже, красным — выше.
 static func cold_limit(u: Unit) -> float:
 	return COLD - (u.stat("cold") - 1.0) * 30.0
 
@@ -6371,14 +6371,14 @@ static func game_span(seconds: float) -> String:
 
 # --- Оффлайн-симуляция --------------------------------------------------------------
 
-## Упрощённая модель: жители не ходят, а сразу работают с меньшей эффективностью
+## Упрощённая модель: гаврики не ходят, а сразу работают с меньшей эффективностью
 ## (часть времени уходит на сон и еду). Возвращает число выкопанных клеток.
 func advance_offline(dt: float) -> int:
 	offline = true
 	_sync_held()
 	for u in units:
 		_drop(u)
-	# Пока игрока нет, жители перетаскивают добытое на склад.
+	# Пока игрока нет, гаврики перетаскивают добытое на склад.
 	for c in drops:
 		for k in drops[c]:
 			_add(k, int(drops[c][k]))
@@ -6392,7 +6392,7 @@ func advance_offline(dt: float) -> int:
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
-		# цель -> [вид, суммарная скорость, первый житель, проект]
+		# цель -> [вид, суммарная скорость, первый гаврик, проект]
 		var jobs := {}
 		var taken := {}
 		for u in units:
@@ -6965,7 +6965,7 @@ func to_dict() -> Dictionary:
 	var us := []
 	for u in units:
 		us.append(u.to_dict())
-	# Груз в руках жителей сохраняем как запас склада.
+	# Груз в руках гавриков сохраняем как запас склада.
 	var inv := inventory.duplicate()
 	for u in units:
 		if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0:
@@ -7046,7 +7046,7 @@ func load_dict(d: Dictionary) -> void:
 	for ud in d.get("units", []):
 		var u := Unit.from_dict(ud)
 		if u.genome.is_empty():
-			# Старое сохранение: жителям — гены основателей, пол прежний.
+			# Старое сохранение: гаврикам — гены основателей, пол прежний.
 			var g := Genetics.founder(rng)
 			g["female"] = u.sex == Unit.Sex.FEMALE
 			u.set_genome(g)

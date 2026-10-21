@@ -29,7 +29,7 @@ var _autosave := 0.0
 var _status_timer := 0.0
 var _home := Vector2i.ZERO
 var _paused_at := 0.0
-## Игра в фоне: пока игрок вышел, жители работают (оффлайн-прогресс). По умолчанию — нет.
+## Игра в фоне: пока игрок вышел, гаврики работают (оффлайн-прогресс). По умолчанию — нет.
 var _background := false
 ## Приложение свёрнуто — симуляция стоит.
 var _away := false
@@ -53,7 +53,7 @@ var _send_unit := 0
 ## Выбранный в карточке материал для перестройки стен: id комнаты -> материал.
 ## На сколько метров продлевать шахту, тоннель или лифт (кнопки «Продлить»).
 var _extend_len := 5
-## Фильтры в списках выбора жителей: только без пары, только по призванию.
+## Фильтры в списках выбора гавриков: только без пары, только по призванию.
 var _pick_filters := {"single": false, "calling": false}
 ## На сколько метров сверлить буром.
 var _drill_len := 10
@@ -80,7 +80,7 @@ func _ready() -> void:
 	if data.is_empty():
 		colony.disasters = _new_game_settings().get("disasters", true)
 		colony.start_new(_home.x)
-		hud.log_event("У вас 5 жителей и пустой склад. Начните со «Сбора»: кусты с ягодами — еда, деревья и валуны — дерево и камень.", "info")
+		hud.log_event("У вас 5 гавриков и пустой склад. Начните со «Сбора»: кусты с ягодами — еда, деревья и валуны — дерево и камень.", "info")
 	else:
 		SaveSystem.apply(data, world, colony)
 		var cam: Array = data.get("camera", [])
@@ -326,10 +326,10 @@ func _switch_world(planet: String) -> void:
 	_apply_planet_sky()
 	_sky_ground = NAN
 	_update_status()
-	hud.log_event("%s: жителей %d" % [Planet.planet_name(planet), colony.units.size()], "info")
+	hud.log_event("%s: гавриков %d" % [Planet.planet_name(planet), colony.units.size()], "info")
 
 
-## «Миры»: где колонии и сколько в них жителей, какие ракеты летят и когда сядут.
+## «Миры»: где колонии и сколько в них гавриков, какие ракеты летят и когда сядут.
 func _show_worlds() -> void:
 	_info_target = []
 	var items := []
@@ -339,7 +339,7 @@ func _show_worlds() -> void:
 		var here: bool = p == _planet
 		var kids := c.units.filter(func(u: Unit) -> bool: return u.child).size()
 		items.append({"name": Planet.planet_name(p) + (" — вы здесь" if here else ""),
-			"info": "жителей %d%s · %s" % [c.units.size(), (" (детей %d)" % kids) if kids > 0 else "",
+			"info": "гавриков %d%s · %s" % [c.units.size(), (" (детей %d)" % kids) if kids > 0 else "",
 				Planet.data(p)["desc"]],
 			"button": "" if here else "Перейти", "pick": func() -> void:
 				_switch_world(p)})
@@ -349,9 +349,9 @@ func _show_worlds() -> void:
 		for k in f["cargo"]:
 			cargo += int(f["cargo"][k])
 		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
-			"info": "жителей %d, груза %d · сядет через %d дн." % [f["crew"].size(), cargo, days]})
+			"info": "гавриков %d, груза %d · сядет через %d дн." % [f["crew"].size(), cargo, days]})
 	hud.show_panel({"title": "Миры", "subtitle": "время идёт во всех мирах сразу",
-		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракетостроение»): до 10 жителей и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
+		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракетостроение»): до 10 гавриков и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
 		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
 		"actions": [["Закрыть", func() -> void: hud.hide_info()]]})
 
@@ -385,7 +385,7 @@ func _launch_pick_planet(pad: Project) -> void:
 		var ok := Colony.rocket_reaches(pad.rocket, id)
 		var col := universe.entry(id)
 		var info := "%s Лететь %d мес.%s" % [d["desc"], int(d["travel"]),
-			(" · там колония: жителей %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
+			(" · там колония: гавриков %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
 		if not ok:
 			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]
 		items.append({"name": d["name"], "info": info, "button": "Сюда" if ok else "", "pick": func() -> void:
@@ -410,19 +410,19 @@ func _launch_crew() -> void:
 		var stat := "жара" if hot else "холод"
 		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
 			"info": "%s · %s %d%% · %s%s" % [_family_text(u), stat, roundi(u.stat("heat" if hot else "cold") * 100),
-				colony.role_name(u).to_lower(), " · СВЕРХЮНИТ" if u.invulnerable() else ""],
+				colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
 				if crew.has(u):
 					crew.erase(u)
 				elif crew.size() < RoomType.SHIP_BEDS:
 					crew.append(u)
 				else:
-					hud.log_event("В ракете — до %d жителей" % RoomType.SHIP_BEDS, "warning")
+					hud.log_event("В ракете — до %d гавриков" % RoomType.SHIP_BEDS, "warning")
 				_launch_crew()})
 	hud.show_panel({"title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
 		"subtitle": Planet.data(planet)["desc"],
 		"controls": [{"type": "people", "label": "Кто летит (важно: %s):" % ("стойкость к жаре" if hot else "стойкость к холоду"),
-			"items": items, "empty": "Нет взрослых жителей."}],
+			"items": items, "empty": "Нет взрослых гавриков."}],
 		"actions": [["Дальше: груз", _launch_cargo, "primary"], ["Назад", func() -> void: _launch_pick_planet(_launch["pad"])]]})
 
 
@@ -505,7 +505,7 @@ func _apply_offline(since_unix: float) -> void:
 	universe.update(simulated)
 	var lines: PackedStringArray = ["Вас не было %s." % Fmt.duration(away)]
 	if away > OFFLINE_CAP_SEC:
-		lines.append("Жители работали первые %s — дальше им нужны ваши указания." % Fmt.duration(OFFLINE_CAP_SEC))
+		lines.append("Гаврики работали первые %s — дальше им нужны ваши указания." % Fmt.duration(OFFLINE_CAP_SEC))
 	var built := _done_count() - built_before
 	if dug == 0 and built == 0 and inv_before == colony.inventory:
 		lines.append("Работы стояли: нет заданий.")
@@ -526,7 +526,7 @@ func _apply_offline(since_unix: float) -> void:
 		if u.satiety < 25.0:
 			hungry += 1
 	if hungry > 0:
-		lines.append("Голодают жителей: %d — нужна еда (ягоды, ферма)." % hungry)
+		lines.append("Голодают гавриков: %d — нужна еда (ягоды, ферма)." % hungry)
 	var worn := 0
 	for p in colony.projects:
 		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
@@ -616,7 +616,7 @@ func _show_feature(x: int) -> void:
 	var y: Array = colony.feature_yield(x)
 	if y[1] > 0:
 		rows.append({"type": "resources", "label": "Даст", "items": [[y[0], y[1], -1, true]]})
-	rows.append({"type": "text", "text": "Добытое ляжет здесь же, жители отнесут его на склад."})
+	rows.append({"type": "text", "text": "Добытое ляжет здесь же, гаврики отнесут его на склад."})
 	var actions := [
 		["Отменить" if marked else names[1], func() -> void:
 			var err := colony.toggle_harvest(x)
@@ -671,11 +671,11 @@ func _show_unit(u: Unit) -> void:
 			hud.hide_info()
 			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"],
 			["Работа", func() -> void: _pick_workplace(u)],
-			["Жители", _show_people]]
+			["Гаврики", _show_people]]
 	hud.show_panel(spec)
 
 
-## Выбор места работы для жителя: где есть места и насколько он там хорош.
+## Выбор места работы для гаврика: где есть места и насколько он там хорош.
 func _pick_workplace(u: Unit) -> void:
 	# Список выбора не обновляем каждую секунду — иначе его перезапишет карточка.
 	_info_target = []
@@ -738,7 +738,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])
 		if Genetics.is_super(g):
-			tags.append(["СВЕРХЮНИТ — все характеристики ×2, неуязвим: умирает только от старости", Color(0.3, 0.9, 0.85)])
+			tags.append(["СУПЕР-ГАВРИК — все характеристики ×2, неуязвим: умирает только от старости", Color(0.3, 0.9, 0.85)])
 		var mt := Genetics.mutation_text(g)
 		if not mt.is_empty():
 			var rarity_cols := [Color(0.6, 0.85, 0.6), Color(0.5, 0.75, 1.0), Color(0.8, 0.6, 1.0), Color(1.0, 0.8, 0.3)]
@@ -758,7 +758,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
 		rows.append({"type": "resources", "label": "Несёт", "items": [[u.carry_key, u.carry_amount, -1, true]]})
 	if not u.stats.is_empty():
-		rows.append({"type": "section", "text": "Характеристики (100% — обычный житель)"})
+		rows.append({"type": "section", "text": "Характеристики (100% — обычный гаврик)"})
 		var items := []
 		for k in Genetics.STATS:
 			var v: float = u.stat(k)
@@ -1014,7 +1014,7 @@ func _family_text(u: Unit) -> String:
 	return out
 
 
-## Нужные для работы характеристики жителя: «сила 130% + выносливость 90%».
+## Нужные для работы характеристики гаврика: «сила 130% + выносливость 90%».
 func _fit_text(u: Unit, task: int) -> String:
 	var st: Array = Colony.JOB_STATS.get(task, [])
 	if st.is_empty():
@@ -1087,7 +1087,7 @@ func _pick_worker(p: Project) -> void:
 		"actions": [["Назад", func() -> void: _show_project(p)]]})
 
 
-## Переключатели фильтров над списком выбора жителей (по умолчанию выключены).
+## Переключатели фильтров над списком выбора гавриков (по умолчанию выключены).
 func _pick_filter_control(refresh: Callable) -> Dictionary:
 	return {"type": "checks", "label": "Показать только:", "items": [
 		["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]]],
@@ -1096,7 +1096,7 @@ func _pick_filter_control(refresh: Callable) -> Dictionary:
 			refresh.call()}
 
 
-## Проходит ли житель включённые фильтры (для работы task).
+## Проходит ли гаврик включённые фильтры (для работы task).
 func _pick_pass(u: Unit, task: int) -> bool:
 	if _pick_filters["single"] and u.partner_id != 0:
 		return false
@@ -1227,12 +1227,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				var all := went + p.drill_left
 				rows.append(_progress("Пройдено", float(went) / maxf(1.0, all), "%d из %d м" % [went, all], Color(0.6, 0.7, 0.8)))
 			if colony.drilling(p):
-				rows.append({"type": "text", "text": "Бур едет и сверлит ход 3 м шириной втрое быстрее жителя. Породу уносят жители. «Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
+				rows.append({"type": "text", "text": "Бур едет и сверлит ход 3 м шириной втрое быстрее гаврика. Породу уносят гаврики. «Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
 			if p.phase == Project.Phase.DONE and not colony.drilling(p):
 				var diesel := colony.research.has("combustion")
 				chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else ("нет — на дизеле" if diesel else "нет — бур стоит"))])
-				chips.append(["", "скорость ×%.1f от жителя" % colony.drill_speed(true)])
-				rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее жителя, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят жители. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
+				chips.append(["", "скорость ×%.1f от гаврика" % colony.drill_speed(true)])
+				rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее гаврика, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят гаврики. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
 					" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
 			else:
 				rows.append({"type": "text", "text": "Место под бур выкапывают, потом собирают машину. Готовым буром командуют из его карточки: куда и сколько сверлить."})
@@ -1325,7 +1325,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					Fmt.int_spaced(roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * (1.5 if colony.research.has("shelving") else 1.0))),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				if colony.assigned_to(p).is_empty():
-					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у жителя)."})
+					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у гаврика)."})
 				var lacking := colony.storage_deficit(p)
 				if not colony.assigned_to(p).is_empty() and not lacking.is_empty():
 					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())
@@ -1367,7 +1367,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					minds += w.stat("intellect") * w.speed("science")
 				chips.append(["", "скорость науки %d%% (интеллект учёных)" % roundi(minds * 100.0)])
 				if colony.assigned_to(p).is_empty():
-					rows.append({"type": "warning", "text": "Нет учёных — назначьте жителя («Назначить»): исследуют только назначенные, быстрее — умные."})
+					rows.append({"type": "warning", "text": "Нет учёных — назначьте гаврика («Назначить»): исследуют только назначенные, быстрее — умные."})
 				var cur := colony.research.current
 				if cur.is_empty():
 					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
@@ -1490,9 +1490,9 @@ func _cost_items(cost: Dictionary) -> Array:
 	return out
 
 
-# --- Жители: кто чем занят, строители и подсобные -----------------------------------------
+# --- Гаврики: кто чем занят, строители и подсобные -----------------------------------------
 
-## Что житель делает прямо сейчас.
+## Что гаврик делает прямо сейчас.
 func _doing(u: Unit) -> String:
 	var t: String = Unit.TASK_NAMES[u.task]
 	if u.task == Unit.Task.HAUL and u.carry_amount > 0:
@@ -1512,7 +1512,7 @@ func _people_spec() -> Dictionary:
 	var chips := []
 	for d in counts:
 		chips.append(["", "%s: %d" % [d, counts[d]]])
-	return {"title": "Жители", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
+	return {"title": "Гаврики", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
 		"rows": [{"type": "chips", "label": "Сейчас", "items": chips},
 			{"type": "text", "text": "В шахты первыми идут шахтёры, на остальные стройки — строители, потом свободные. Шахтёры носят только дерево на крепь своей шахты (если нет свободных подсобных), строители — только то, без чего их работа стоит прямо сейчас; добытое и материалы носят работники складов, подсобные и свободные."}]}
 
@@ -1897,7 +1897,7 @@ func _pending_spec() -> Dictionary:
 	if not colony.has_access(r):
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
 	elif not colony.can_reach(r):
-		rows.append({"type": "warning", "text": "Жители не могут сюда дойти — стройка не начнётся."})
+		rows.append({"type": "warning", "text": "Гаврики не могут сюда дойти — стройка не начнётся."})
 	var title := "%s %d×%d" % [("Грузовой лифт" if _pending_material == "cargo" else "Лифт") if kind == Project.Kind.LIFT
 		else Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
@@ -2015,7 +2015,7 @@ func _cell_spec(c: Vector2i) -> Dictionary:
 				title = "Куст с ягодами"
 				rows.append(_progress("Ягоды", world.berries(c.x) / WorldData.BUSH_BERRIES,
 					"%d из %d" % [floori(world.berries(c.x)), int(WorldData.BUSH_BERRIES)], Color(0.85, 0.3, 0.35)))
-				rows.append({"type": "text", "text": "Ягоды отрастают. Голодные жители едят прямо с куста."})
+				rows.append({"type": "text", "text": "Ягоды отрастают. Голодные гаврики едят прямо с куста."})
 			WorldGen.FEATURE_BOULDER:
 				title = "Валун"
 				rows.append({"type": "resources", "label": "Даст", "items": [["stone", colony.feature_yield(c.x)[1], -1, true]]})
@@ -2076,7 +2076,7 @@ func _update_status() -> void:
 		hud.set_date("%s · %+d °C" % [colony.date_text(), roundi(Env.SURFACE_TEMP + colony.season_delta())], _weather_icon())
 
 
-## Камера не уходит дальше разведанного: по бокам — куда доходили жители,
+## Камера не уходит дальше разведанного: по бокам — куда доходили гаврики,
 ## вниз — до самых глубоких работ, вверх — чуть выше самых высоких построек.
 func _clamp_camera() -> void:
 	var o := Vector2(world_view.origin)
