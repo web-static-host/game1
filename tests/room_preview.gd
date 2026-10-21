@@ -2,13 +2,14 @@ extends SceneTree
 ## Снимки комнат из разных материалов: жилые, склады, амбары, фермы — новые картинки и как было.
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка> [2]
 ## С «2» — второй набор: очаги (камень, кирпич, газ), столовые, лаборатории; с «3» — генераторы
-## (уголь, метан), обжиговые, насосные, дегазация.
+## (уголь, метан), обжиговые, насосные, дегазация; с «4» — вентиляция и кузницы.
 
 var _main: Node
 var _frame := 0
 var _out := "user://"
 var _set2 := false
 var _set3 := false
+var _set4 := false
 
 
 func _initialize() -> void:
@@ -17,6 +18,7 @@ func _initialize() -> void:
 		_out = args[0]
 	_set2 = args.size() > 1 and args[1] == "2"
 	_set3 = args.size() > 1 and args[1] == "3"
+	_set4 = args.size() > 1 and args[1] == "4"
 	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
 	_main = load("res://scenes/main.tscn").instantiate()
@@ -70,6 +72,9 @@ func _process(_delta: float) -> bool:
 				if _set3:
 					pr.purpose = {2: RoomType.GENERATOR, 5: RoomType.KILN if left else RoomType.PUMP,
 						8: RoomType.GAS_GEN if left else RoomType.DEGAS, 11: RoomType.DEGAS if left else RoomType.KILN}[row]
+				if _set4:
+					pr.purpose = {2: RoomType.VENT, 5: RoomType.FORGE if left else RoomType.VENT,
+						8: RoomType.VENT if left else RoomType.FORGE, 11: RoomType.FORGE if left else RoomType.VENT}[row]
 				# Склады одной ширины: кирпичный с лестницей, каменный без — должны выглядеть одинаково.
 				if pr.material == "stone":
 					pr.ladder = false
@@ -90,6 +95,7 @@ func _process(_delta: float) -> bool:
 	if _frame in [38, 44]:
 		_stage()
 	if _frame == 40:
+		_stage()
 		_shot("room_new")
 		_main.world_view.focus_cell(Vector2i(_main._home.x + 7, _main.world.gen.surface_y(_main._home.x + 2) + 11))
 	if _frame == 46:
