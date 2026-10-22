@@ -919,6 +919,8 @@ func _show_project(p: Project) -> void:
 			else:
 				controls.append({"label": "Продлить на, м", "value": _extend_len, "min": 1, "max": Colony.EXTEND_MAX,
 					"changed": func(v: int) -> void: _extend_len = v})
+				# push_front переворачивает порядок: идём справа налево, чтобы «← Продлить» встал слева.
+				dirs.reverse()
 				for d: Vector2i in dirs:
 					var label: String = {Vector2i.LEFT: "← Продлить", Vector2i.DOWN: "Продлить ↓", Vector2i.RIGHT: "Продлить →"}[d]
 					actions.push_front([label, func() -> void:

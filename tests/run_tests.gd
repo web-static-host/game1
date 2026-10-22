@@ -91,6 +91,10 @@ func _initialize() -> void:
 	test_bridge_and_pier()
 	test_miner_alone()
 	test_tunnel_from_mine()
+	test_mine_caves()
+	test_water_levels()
+	test_old_metal_to_ore()
+	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
 	test_environment()
 	test_generation_speed()
@@ -1714,7 +1718,8 @@ func test_elements() -> void:
 	pump.kind = Project.Kind.ROOM
 	pump.phase = Project.Phase.DONE
 	pump.purpose = RoomType.PUMP
-	pump.rect = Rect2i(o.x + 12, o.y + 5, 3, 3)
+	# 6 м — радиус 20 (3 м — 10, 9 м — 40, как у дегазации).
+	pump.rect = Rect2i(o.x + 12, o.y + 5, 6, 3)
 	colony.projects.append(pump)
 	for i in 10:
 		el.update(1.0)
@@ -3054,7 +3059,8 @@ func test_planet_balance() -> void:
 				gold += 1
 			elif m == Mat.IRON_ORE:
 				iron += 1
-	check(gold > 0 and gold * 3 < iron, "золото есть, но реже железа (%d против %d)" % [gold, iron])
+	# С версии 6 золото ещё и на дне подземных вод — но всё равно реже железа.
+	check(gold > 0 and gold < iron, "золото есть, но реже железа (%d против %d)" % [gold, iron])
 	var old := WorldData.new(WorldGen.new(7, 4))
 	check(old.gen._diamond_share == 0.04 and WorldGen.new(7).version == WorldGen.LATEST, "старые миры не меняются")
 
@@ -3955,3 +3961,169 @@ func test_tunnel_from_mine() -> void:
 		var rr := Rect2i(mm.rect.position.x, mm.rect.position.y, 3, 3)
 		var nr := colony.create_project(Project.Kind.ROOM, rr, -1, "wood")
 		check(nr != null and nr.needs_support.is_empty() and nr.support_wood == 0, "комната в готовой шахте не требует крепи")
+
+
+## Пещера: закрыть клетки r как неизведанную природную полость.
+func _hidden_cave(w: WorldData, r: Rect2i) -> void:
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			w.set_material(x, y, Mat.AIR)
+			var c := w._chunk_at(x, y)
+			var i := ChunkData.idx(x & WorldData.MASK, y & WorldData.MASK)
+			c.flags[i] = (c.flags[i] & ~ChunkData.F_REVEALED) | ChunkData.F_CAVE
+
+
+## Шахта над пещерой, падение в неизведанную пустоту, лестница через пещеру, продление шахты.
+func test_mine_caves() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var mine := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 4, 6, 3), 980)
+	_hidden_cave(w, Rect2i(x - 2, s + 7, 10, 4))
+	for xx in range(x - 2, x + 8):
+		w.reveal(xx, s + 7)
+	colony._rebuild_climb()
+	check(colony.pathing.standable(Vector2i(x + 2, s + 6)), "пол шахты над пещерой держит")
+	# Падение в пещеру: низ полости не открыт — гаврик всё равно долетает до дна и встаёт.
+	var u: Unit = colony.units[0]
+	u.pos = Vector2(x - 1, s + 7)
+	u.state = Unit.State.FALL
+	u.fall_from = u.pos.y
+	for i in 40:
+		colony._update_unit(u, 0.1)
+	check(u.state != Unit.State.FALL and u.cell().y == s + 10, "упавший в пещеру встал на дно (y %d, ждали %d)" % [u.cell().y, s + 10])
+	check(w.is_open(x + 4, s + 9), "пещера открылась целиком")
+	# Ствол через пещеру: лестницу ставят и там, где копать не нужно.
+	var x2 := _find_solid_column(w, x + 30)
+	var s2 := w.gen.surface_y(x2)
+	_hidden_cave(w, Rect2i(x2 - 2, s2 + 5, 6, 3))
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x2, s2, 1, 12))
+	check(t != null and t.needs_support.size() == t.slice_count(), "ствол: лестница во всех срезах, и в пещере (%s из %d)" % [t.needs_support if t != null else [], t.slice_count() if t != null else 0])
+	# Короткая шахта (2×3) продлевается вбок.
+	var short := Project.new()
+	short.kind = Project.Kind.MINE
+	short.rect = Rect2i(0, 0, 2, 3)
+	check(Colony.extend_dirs(short) == [Vector2i.LEFT, Vector2i.RIGHT], "шахта 2×3 продлевается влево и вправо")
+
+
+## Тоннель, у которого пол — на уровне свода шахты: из шахты до него дотягиваются.
+func test_tunnel_at_mine_ceiling() -> void:
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var w := colony.world
+	var x := room.rect.position.x - 1
+	var s := w.gen.surface_y(x)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s + 6, 1, 4))
+	colony.advance_offline(20000.0)
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	var mine := colony.create_project(Project.Kind.MINE, Rect2i(x - 12, s + 7, 12, 3))
+	colony.advance_offline(30000.0)
+	check(mine != null and mine.phase == Project.Phase.DONE, "шахта для проверки готова")
+	if mine == null or mine.phase != Project.Phase.DONE:
+		return
+	colony.inventory = {"wood": 200, "stone": 100, "food": 200}
+	var r := Rect2i(mine.rect.position.x - 3, mine.rect.position.y - 2, 4, 3)
+	var t := colony.create_project(Project.Kind.TUNNEL, r)
+	check(t != null, "тоннель у свода шахты заложен (%s)" % colony.validate(Project.Kind.TUNNEL, r, "wood", true))
+	if t == null:
+		return
+	check(colony.can_reach(t.rect), "до тоннеля у свода шахты есть доступ")
+	for u in colony.units:
+		u.satiety = 100.0
+		u.energy = 100.0
+		colony._drop(u)
+	var t0 := 0.0
+	while t0 < 1500.0 and t.phase != Project.Phase.DONE:
+		colony.update(0.5)
+		t0 += 0.5
+	check(t.phase == Project.Phase.DONE, "тоннель у свода шахты построен (%.0f с, %s)" % [t0, t.blocked])
+
+
+## Вода ищет нижнюю точку: «лесенка» и «стенка» растекаются ровно; насос — радиус по размеру;
+## на дне подземных вод (новые миры) часто золото.
+func test_water_levels() -> void:
+	var colony := _new_colony(62)
+	var w := colony.world
+	_start(colony, 0)
+	var el := colony.elements
+	var o := Vector2i(300, w.gen.surface_y(300) + 40)
+	_granite_box(w, o, Vector2i(16, 10))
+	var hole := []
+	for y in range(o.y + 1, o.y + 9):
+		for x in range(o.x + 1, o.x + 15):
+			hole.append(Vector2i(x, y))
+	_dig_cells(w, hole)
+	# Полость закреплена (как готовая выработка) — свод не осыпается, проверяем только воду.
+	for c in hole:
+		colony.interior[c] = 999
+	# Лесенка: в столбце x воды на (14 - x) клеток — как после откачки у края.
+	var total := 0
+	for i in 8:
+		for k in range(8 - i):
+			w.set_fluid(o.x + 1 + i, o.y + 8 - k, Mat.WATER)
+			el.active[Vector2i(o.x + 1 + i, o.y + 8 - k)] = true
+			total += 1
+	for i in 600:
+		el.update(0.2)
+	var lo := 99
+	var hi := 0
+	for x in range(o.x + 1, o.x + 15):
+		var n := _count(w, Rect2i(x, o.y + 1, 1, 8), Mat.WATER)
+		lo = mini(lo, n)
+		hi = maxi(hi, n)
+	check(hi - lo <= 1, "вода растеклась ровно, без лесенки (в столбцах от %d до %d)" % [lo, hi])
+	check(_count(w, Rect2i(o.x, o.y, 16, 10), Mat.WATER) == total, "воды не убавилось и не прибавилось")
+	# Застывшую воду (старое сохранение, ничего не «активно») будит обход чанков.
+	el.active.clear()
+	for c in hole:
+		if w.get_mat(c.x, c.y) == Mat.WATER:
+			w.clear_fluid(c.x, c.y)
+	for k in 6:
+		w.set_fluid(o.x + 1, o.y + 8 - k, Mat.WATER)
+	for i in 600:
+		el.update(0.2)
+	check(_count(w, Rect2i(o.x + 1, o.y + 1, 1, 6), Mat.WATER) <= 1, "старая «стенка» воды сама растеклась")
+	# Насос: радиус как у дегазации.
+	var pump := Project.new()
+	pump.purpose = RoomType.PUMP
+	var radii := []
+	for wd in [3, 6, 9]:
+		pump.rect = Rect2i(0, 0, wd, 3)
+		radii.append(RoomType.effect_radius(pump))
+	check(radii == [10, 20, 40], "радиус насоса 3/6/9 м — 10/20/40 (%s)" % [radii])
+	# Золото на дне подземных вод.
+	var g := WorldGen.new(7)
+	var bottom := 0
+	var gold := 0
+	for x in range(-300, 300):
+		var surf := g.surface_y(x)
+		for y in range(surf + 40, surf + 400):
+			if g.material_at(x, y - 1) == Mat.WATER and Mat.is_solid(g.material_at(x, y)):
+				bottom += 1
+				if g.material_at(x, y) == Mat.GOLD_ORE:
+					gold += 1
+	check(bottom > 0 and gold * 4 > bottom, "на дне подземных вод часто золото (%d из %d)" % [gold, bottom])
+
+
+## Старое сохранение: металл, добытый до руды, становится рудой.
+func test_old_metal_to_ore() -> void:
+	var colony := _new_colony(63)
+	_start(colony, 0)
+	colony.inventory["iron"] = 7
+	colony.inventory["gold"] = 2
+	colony.drops[Vector2i(3, 4)] = {"copper": 5}
+	var d := colony.to_dict()
+	d.erase("ores_v")
+	var back := Colony.new(colony.world)
+	back.load_dict(d)
+	check(int(back.inventory.get("iron_ore", 0)) == 7 and not back.inventory.has("iron") and int(back.inventory.get("gold_ore", 0)) == 2,
+		"железо и золото со склада стали рудой")
+	check(back.drops[Vector2i(3, 4)].get("copper_ore", 0) == 5, "куча меди стала рудой")
+	var d2 := back.to_dict()
+	var again := Colony.new(colony.world)
+	again.load_dict(d2)
+	check(int(again.inventory.get("iron_ore", 0)) == 7, "новое сохранение второй раз не переделывается")

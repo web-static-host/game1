@@ -93,6 +93,10 @@ func update(dt: float) -> void:
 	while _gas_t >= GAS_STEP:
 		_gas_t -= GAS_STEP
 		_gas_tick()
+	_settle_t += dt
+	if _settle_t >= SETTLE_TIME:
+		_settle_t = 0.0
+		_settle()
 	_pump_t += dt
 	while _pump_t >= PUMP_TIME:
 		_pump_t -= PUMP_TIME
@@ -160,14 +164,60 @@ func _target(c: Vector2i, kind: int) -> Variant:
 	var order: Array[Vector2i] = SIDES.duplicate()
 	if _rng.randf() < 0.5:
 		order.reverse()
+	# Вода ищет нижнюю точку: течёт вбок, если по ряду дальше есть куда пролиться вниз
+	# (иначе после откачки или на склоне пещеры она стояла бы лесенкой или стенкой).
 	for d in order:
-		if _accepts(c + d) and _accepts(c + d + DOWN):
+		if _drop_ahead(c, d):
 			return c + d
 	if world.get_mat(c.x, c.y - 1) == kind:
 		for d in order:
 			if _accepts(c + d):
 				return c + d
 	return null
+
+
+## Подземная вода, застывшая лесенкой или стенкой (старые сохранения, вода у края откачки):
+## понемногу обходим загруженные чанки и будим воду, у которой сбоку или снизу пусто.
+const SETTLE_TIME := 2.0
+const SETTLE_CHUNKS := 4
+var _settle_t := 0.0
+var _settle_keys: Array = []
+
+
+func _settle() -> void:
+	if _settle_keys.is_empty():
+		_settle_keys = world.chunks.keys()
+	for k in SETTLE_CHUNKS:
+		if _settle_keys.is_empty():
+			return
+		var key: Vector2i = _settle_keys.pop_back()
+		var ch: ChunkData = world.chunks.get(key)
+		if ch == null:
+			continue
+		for i in ch.mat.size():
+			if ch.effective(i) != Mat.WATER:
+				continue
+			var c := Vector2i(key.x * ChunkData.SIZE + (i & ChunkData.MASK), key.y * ChunkData.SIZE + (i >> ChunkData.SHIFT))
+			if c.y <= world.gen.surface_y(c.x) or active.has(c):
+				continue
+			if _accepts(c + DOWN) or _accepts(c + SIDES[0]) or _accepts(c + SIDES[1]):
+				active[c] = true
+
+
+## Как далеко вода «видит» по ряду, куда можно стечь.
+const FLOW_REACH := 24
+
+
+## По ряду в сторону d — пустые клетки, и за ними (не дальше FLOW_REACH) есть куда упасть.
+func _drop_ahead(c: Vector2i, d: Vector2i) -> bool:
+	var t := c
+	for i in FLOW_REACH:
+		t += d
+		if not _accepts(t):
+			return false
+		if _accepts(t + DOWN):
+			return true
+	return false
 
 
 func _move(from: Vector2i, to: Vector2i, kind: int) -> void:

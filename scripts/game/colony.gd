@@ -597,7 +597,7 @@ func _refresh_reach() -> void:
 
 func can_reach(r: Rect2i) -> bool:
 	_refresh_reach()
-	if _near_rect(r, _reach_map) != null:
+	if _near_rect(r, _reach_map, true) != null:
 		return true
 	if _reach_map.size() < REACH_CAP:
 		return false
@@ -632,7 +632,7 @@ var _far_at := -100000
 
 
 func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionary) -> bool:
-	if _near_rect(r, dist) != null:
+	if _near_rect(r, dist, true) != null:
 		return true
 	if not Pathing.truncated(dist):
 		return false
@@ -641,6 +641,7 @@ func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionar
 		return false
 	var goals := {}
 	var area := r.grow(1)
+	area.size.y += 1
 	for y in range(area.position.y, area.end.y):
 		for x in range(area.position.x, area.end.x):
 			var c := Vector2i(x, y)
@@ -807,9 +808,11 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood", che
 	p.support_wood = support_needed(kind, r)
 	# Срезы, где есть порода: их копают по одному и сразу крепят.
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT:
+		# Вертикальный ход — лестница по всей длине: через пещеру не копают, но лестницу ставят.
+		var ladder_all := kind == Project.Kind.TUNNEL and p.vertical()
 		for i in p.slice_count():
 			for c in p.slice_cells(i):
-				if Mat.is_solid(world.get_mat(c.x, c.y)):
+				if ladder_all or Mat.is_solid(world.get_mat(c.x, c.y)):
 					p.needs_support.append(i)
 					break
 	# Всё уже выкопано и закреплено (комната в готовой шахте) — крепь не нужна.
@@ -1736,6 +1739,8 @@ func _rebuild_climb() -> void:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			for c in p.cells():
 				site[c] = true
+			if p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE or p.kind == Project.Kind.LIFT:
+				_scaffold_down(p, lad)
 	for p in projects:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			continue
@@ -1760,6 +1765,15 @@ func _rebuild_climb() -> void:
 				var a := Vector2i(x, p.rect.position.y - 1)
 				if interior.has(a) and interior[a] != p.id:
 					fl[a] = true
+		# Шахта и горизонтальный тоннель над пещерой: пол на крепи — из них не проваливаются.
+		var flat := p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical())
+		if flat:
+			for i in p.slice_count():
+				if p.phase != Project.Phase.DONE and not p.supported.has(i):
+					continue
+				for c in p.slice_cells(i):
+					if c.y == p.rect.end.y - 1 and not Mat.is_solid(world.get_mat(c.x, c.y + 1)):
+						fl[c] = true
 	# Клетки пассажирских лифтов: у какой клетки садиться в кабину.
 	_lift_cells.clear()
 	for p in projects:
@@ -1774,6 +1788,27 @@ func _rebuild_climb() -> void:
 		pathing.floors.clear()
 		pathing.floors.merge(fl)
 		pathing.climb_rev += 1
+
+
+## Леса стройки, начатой из готовой выработки (тоннель у свода шахты): от открытых клеток
+## стройки — лестница вниз до пола той выработки, чтобы до забоя было долезть.
+const SCAFFOLD_DEPTH := 4
+
+
+func _scaffold_down(p: Project, lad: Dictionary) -> void:
+	for c in p.cells():
+		if not world.is_open(c.x, c.y) or not interior.has(c) and not interior.has(c + Vector2i.DOWN):
+			continue
+		if p.rect.has_point(c + Vector2i.DOWN) and not interior.has(c + Vector2i.DOWN):
+			continue
+		if interior.has(c):
+			lad[c] = true
+		var d := c + Vector2i.DOWN
+		for i in SCAFFOLD_DEPTH:
+			if not world.is_open(d.x, d.y) or not interior.has(d) or room_cells.has(d):
+				break
+			lad[d] = true
+			d += Vector2i.DOWN
 
 
 ## Лестница у стены комнаты (side -1 — левой, 1 — правой): построенная (или строится),
@@ -1831,7 +1866,8 @@ static func extend_dirs(p: Project) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	if p.kind != Project.Kind.MINE and p.kind != Project.Kind.TUNNEL and p.kind != Project.Kind.LIFT:
 		return out
-	if p.rect.size.y > p.rect.size.x:
+	# Шахта всегда горизонтальная (3 м в высоту) — даже короткая 2×3 продлевается вбок.
+	if p.kind != Project.Kind.MINE and p.rect.size.y > p.rect.size.x:
 		out.append(Vector2i.DOWN)
 	else:
 		out.append_array([Vector2i.LEFT, Vector2i.RIGHT])
@@ -3808,6 +3844,10 @@ func _update_unit(u: Unit, dt: float) -> void:
 			# Падает до первой опоры — сквозь породу не проваливается.
 			var to_y := u.pos.y + FALL_SPEED * dt
 			while k.y <= floori(to_y):
+				# Падает в неизведанную пустоту — видит, что под ним (иначе «зависнет» над ней).
+				if not world.is_revealed(k.x, k.y + 1):
+					for n in world.reveal_around(k.x, k.y, 1):
+						_note_discovery(world.get_mat(n.x, n.y), n)
 				if pathing.standable(k) or not pathing.passable(k + Vector2i(0, 1)):
 					_land(u, k)
 					return
@@ -4071,6 +4111,14 @@ func _move(u: Unit, dt: float) -> void:
 		if u.task == Unit.Task.DIG or u.task == Unit.Task.HARVEST:
 			if u.target.x != u.cell().x:
 				u.facing = 1 if u.target.x > u.cell().x else -1
+		elif u.task == Unit.Task.FISH:
+			# Рыбак смотрит на воду — к середине озера.
+			var lake := _lake_near(u.cell().x)
+			if not lake.is_empty():
+				var span := world.gen.lake_water_span(lake)
+				var mid := (span.x + span.y) * 0.5
+				if absf(mid - u.pos.x) > 0.01:
+					u.facing = 1 if mid > u.pos.x else -1
 
 
 ## Смягчённая характеристика: +30% силы — это +18% к скорости работы.
@@ -4941,7 +4989,8 @@ func _lake_near(x: int) -> Dictionary:
 	return {}
 
 
-## Откуда гаврик может работать с клеткой c: стоя рядом (ноги или голова у клетки).
+## Откуда гаврик может работать с клеткой c: стоя рядом (ноги или голова у клетки) или
+## дотянувшись на клетку выше головы (под ней пусто — например, свод шахты над полом).
 func _work_spot(c: Vector2i, dist: Dictionary) -> Array:
 	var best := [null, 1 << 30]
 	for d in DIRS4:
@@ -4949,6 +4998,9 @@ func _work_spot(c: Vector2i, dist: Dictionary) -> Array:
 		for stand in [n, n + Vector2i(0, 1)]:
 			if dist.has(stand) and dist[stand] < best[1]:
 				best = [stand, dist[stand]]
+		var reach := n + Vector2i(0, 2)
+		if dist.has(reach) and dist[reach] < best[1] and pathing.passable(n) and pathing.passable(n + Vector2i(0, 1)):
+			best = [reach, dist[reach]]
 	return best
 
 
@@ -5150,8 +5202,11 @@ func _try_build(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dicti
 
 
 ## Ближайшая доступная клетка в зоне или вплотную к ней (или null).
-func _near_rect(r: Rect2i, dist: Dictionary) -> Variant:
+## reach — для копки: на клетку ниже обычного, дотягиваются до клетки над головой (см. _work_spot).
+func _near_rect(r: Rect2i, dist: Dictionary, reach := false) -> Variant:
 	var area := r.grow(1)
+	if reach:
+		area.size.y += 1
 	var best = null
 	var best_d := 1 << 30
 	for y in range(area.position.y, area.end.y):
@@ -7347,6 +7402,30 @@ func _migrate_stores() -> void:
 			inventory[k] = int(inventory[k]) - extra
 
 
+## До руды шахты давали готовый металл — в старом сохранении он становится рудой
+## (1 к 1), её переплавляют в кузнице.
+const OLD_METAL_ORE := {"iron": "iron_ore", "copper": "copper_ore", "silver": "silver_ore",
+	"gold": "gold_ore", "uranium": "uranium_ore"}
+
+
+func _migrate_ores() -> void:
+	var swap := func(dict: Dictionary) -> void:
+		for k in OLD_METAL_ORE:
+			if dict.has(k):
+				var ore: String = OLD_METAL_ORE[k]
+				dict[ore] = int(dict.get(ore, 0)) + int(dict[k])
+				dict.erase(k)
+	swap.call(inventory)
+	for k in OLD_METAL_ORE:
+		if known_resources.has(k):
+			known_resources[OLD_METAL_ORE[k]] = true
+	for p in projects:
+		swap.call(p.held)
+		swap.call(p.lift_load)
+	for c in drops:
+		swap.call(drops[c])
+
+
 func _sync_held() -> void:
 	for k in inventory.keys():
 		_clamp_held(k)
@@ -7462,6 +7541,7 @@ func to_dict() -> Dictionary:
 		"drops": _drops_list(),
 		"store_targets": store_targets,
 		"stores_v": 1,
+		"ores_v": 1,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
@@ -7554,6 +7634,8 @@ func load_dict(d: Dictionary) -> void:
 	research.load_dict(d.get("research", {}))
 	if int(d.get("stores_v", 0)) < 1:
 		_migrate_stores()
+	if int(d.get("ores_v", 0)) < 1:
+		_migrate_ores()
 	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
 	# материалы возвращаются на склад.
 	for p in projects.duplicate():

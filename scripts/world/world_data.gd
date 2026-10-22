@@ -5,7 +5,7 @@ extends RefCounted
 const SIZE := ChunkData.SIZE
 const SHIFT := ChunkData.SHIFT
 const MASK := ChunkData.MASK
-const MAX_CAVE_REVEAL := 4000
+const MAX_CAVE_REVEAL := 8000
 const DIRS4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 var gen: WorldGen
@@ -270,7 +270,8 @@ func _flood_reveal_cave(start: Vector2i) -> Array[Vector2i]:
 	var queue: Array[Vector2i] = [start]
 	var seen := {start: true}
 	var head := 0
-	while head < queue.size() and seen.size() < MAX_CAVE_REVEAL:
+	# Предел — по клеткам самой полости (большую пещеру открываем целиком).
+	while head < queue.size() and head < MAX_CAVE_REVEAL:
 		var p := queue[head]
 		head += 1
 		for dy in range(-1, 2):

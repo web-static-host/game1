@@ -25,8 +25,10 @@ var planet: Dictionary = {}
 ## Версия генерации: старые сохранения продолжают на своей, чтобы мир не поменялся под ними.
 ## 2 — кусты в 3 раза реже, озёра в 1,5 раза чаще; 3 — деревьев вдвое больше;
 ## 4 — озёра ещё чаще и одно — недалеко от базы; 5 — серебро, золото и алмазы чаще
-## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди.
-const LATEST := 5
+## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди;
+## 6 — подземная вода в полостях ровная (уровень общий на участок, без «стенок»),
+## на дне подземных вод часто золото.
+const LATEST := 6
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
@@ -318,7 +320,23 @@ func airless() -> bool:
 
 
 func _water_table(x: int, surf: int) -> int:
+	if version >= 6:
+		# Ровный уровень на участок в WATER_SEG м: вода в пещере не стоит наклонно.
+		var xc := (x >> WATER_SEG_SHIFT << WATER_SEG_SHIFT) + (1 << WATER_SEG_SHIFT >> 1)
+		return surface_y(xc) + 30 + int(_n_water_table.get_noise_1d(xc) * 20.0)
 	return surf + 30 + int(_n_water_table.get_noise_1d(x) * 20.0)
+
+
+## Ширина участка с общим уровнем подземных вод: 2^6 = 64 м.
+const WATER_SEG_SHIFT := 6
+## Доля клеток породы на дне подземных вод, где лежит золото.
+const GOLD_UNDER_WATER := 0.4
+
+
+## Затоплена ли полость в клетке (версия 6: всё ниже уровня грунтовых вод).
+func _flooded_cave(x: int, y: int, surf: int, water_table: int) -> bool:
+	var d := y - surf
+	return planet["lakes"] and y > water_table and d > 12 and d < CAVE_MAX_DEPTH and _is_cave(x, y, d)
 
 
 ## Материал клетки (без учёта действий игрока).
@@ -352,9 +370,15 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 		return Mat.GRAVEL
 	if d > 12 and d < CAVE_MAX_DEPTH and _is_cave(x, y, d):
 		# Полости ниже уровня грунтовых вод затоплены.
+		if version >= 6:
+			return Mat.WATER if planet["lakes"] and y > water_table else Mat.AIR
 		if planet["lakes"] and y > water_table and hash01(x >> 4, y >> 4, world_seed + 77) < 0.75:
 			return Mat.WATER
 		return Mat.AIR
+	# Дно подземных вод: вода веками намывала золото — прямо под водой.
+	if version >= 6 and y > water_table + 1 and hash01(x, y, world_seed + 91) < GOLD_UNDER_WATER \
+			and _flooded_cave(x, y - 1, surf, water_table):
+		return Mat.GOLD_ORE
 	return _rock(x, y, d, sed, kimb)
 
 
