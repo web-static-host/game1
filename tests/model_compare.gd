@@ -1,6 +1,6 @@
 extends SceneTree
 ## Сравнение 3D-модели гаврика с рисованными (нужен дисплей, напр. xvfb-run):
-##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/model_compare.gd -- <папка> [форма для листа: 0 — треугольник, 1 — квадрат]
+##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/model_compare.gd -- <папка> [форма для листа: 0 — треугольник, 1 — квадрат, 2 — круг]
 ## Снимки: колония с моделью и без, лист поз «рисованный / 3D».
 
 var _main: Node
@@ -25,12 +25,12 @@ func _process(_delta: float) -> bool:
 	_frame += 1
 	if _frame == 5:
 		ModelSprites.enabled = true
-		# Трое из пяти — треугольник, квадрат, треугольник с одним глазом (модель), двое — как выпали.
+		# Трое из пяти — треугольник, квадрат и круг с одним глазом (модель), двое — как выпали.
 		var cols := [Color(0.95, 0.25, 0.2), Color(0.2, 0.45, 1.0), Color(1.0, 0.8, 0.1)]
 		for i in 3:
 			var u: Unit = _main.colony.units[i * 2]
 			var g: Dictionary = u.genome.duplicate(true)
-			g["shape"] = [i % 2, i % 2]
+			g["shape"] = [i, i]
 			g["eyes"] = [1, 1]
 			g["color"] = [cols[i], cols[i]]
 			u.set_genome(g)

@@ -18,7 +18,8 @@ from skimage import measure
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROTO = os.path.join(HERE, 'prototype_chatgpt.png')
-# Форма: triangle — как на прототипе; square — туловище прямоугольником (BODY_SHAPE=square).
+# Форма: triangle — как на прототипе; square — туловище прямоугольником (BODY_SHAPE=square);
+# round — туловище шире, низ полукругом (BODY_SHAPE=round).
 SHAPE = os.environ.get('BODY_SHAPE', 'triangle')
 SQ_HALF = 0.62         # квадратный: полуширина туловища, м
 SQ_BOTTOM = 0.6        # низ прямоугольника (у паха), м
@@ -26,6 +27,9 @@ SQ_LEGS = 0.42         # внешний край ног у паха (как у �
 SQ_TOP = 1.72          # выше — голова и плечи как у треугольного
 SQ_ROUND = 0.24        # скругление низа к ногам, м
 SQ_FILLET = 0.14       # скругление вогнутых углов под головой, м
+RD_HALF = 0.78         # круглый: полуширина живота (шире — касается кистей), м
+RD_CENTER = 1.0        # высота самого широкого места живота, м
+RD_RZ = 0.5            # полувысота овала живота (выше — уже туловище у лица), м
 HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
@@ -77,6 +81,8 @@ def silhouette():
         sym[t:top[c] + 1, c] = True if top[c] >= 0 and t < top[c] else sym[t:top[c] + 1, c]
     if SHAPE == 'square':
         sym = _square_torso(sym, scale, w, ys.max())
+    elif SHAPE == 'round':
+        sym = _round_torso(sym, scale, w, ys.max())
     return sym, scale, w, ys.max()
 
 
@@ -106,6 +112,31 @@ def _square_torso(sym, scale, w, bottom):
     # Только у туловища (кисти и пальцы не трогаем — иначе пальцы слипнутся).
     near = (x < SQ_HALF + 0.3) & (z > z0 - 0.05) & (z < SQ_TOP + 0.25)
     out = np.where(near, closed, out)
+    return ndimage.gaussian_filter(out.astype(np.float32), 3.0) > 0.5
+
+
+def _round_torso(sym, scale, w, bottom):
+    """Круглый гаврик: живот — широкий овал, из-под которого выходят ноги (как у рисованного низ
+    полукругом). Выше живота (лицо, голова, плечи, руки, кисти) и ноги — как у треугольного: там
+    толщина «надутая» по силуэту, и шире туловище у лица дало бы ступеньку и спрятало румянец."""
+    H, W = sym.shape
+    rr, cc = np.mgrid[0:H, 0:W]
+    z = (bottom - rr) * scale
+    x = np.abs(cc - w) * scale
+    R, zc, rz = RD_HALF, RD_CENTER, RD_RZ
+    z0 = zc - rz * np.sqrt(1.0 - (SQ_LEGS / R) ** 2)     # где овал встречает ноги
+    t = np.clip((z - zc) / rz, -1.0, 1.0)
+    belly = (x <= R * np.sqrt(1.0 - t * t)) & (z >= z0) & (np.abs(z - zc) <= rz)
+    out = sym | belly
+    # Вогнутые углы (живот — с туловищем сверху и с ногами снизу) — мягко. Руки висят близко к
+    # животу — их при этом убираем, иначе щель между рукой и животом зальётся.
+    arms = (x > R + 0.08) & (z < SQ_TOP + 0.05)
+    k = max(1, int(round(SQ_FILLET / scale)))
+    disk = np.hypot(*np.mgrid[-k:k + 1, -k:k + 1]) <= k
+    closed = np.pad(out & ~arms, k + 2)
+    closed = ndimage.binary_erosion(ndimage.binary_dilation(closed, disk), disk)[k + 2:-k - 2, k + 2:-k - 2]
+    near = (x < R + 0.08) & (z > z0 - 0.15) & (z < zc + rz + 0.15) & ((x > SQ_LEGS - 0.1) | (z > z0 + 0.1))
+    out = out | (closed & near)
     return ndimage.gaussian_filter(out.astype(np.float32), 3.0) > 0.5
 
 
@@ -177,7 +208,8 @@ def _leg_profiles(mask, s, cxp, bottom):
         if len(on) == 0:
             continue
         zs.append(z)
-        outs.append((np.abs(on).max() + 0.5) * s)
+        # Туловище — сплошной кусок от середины (живот круглого шире 0,75 м); ноги — в окне.
+        outs.append(_center_halfwidth(mask, s, cxp, bottom, z) if row[cxp] else (np.abs(on).max() + 0.5) * s)
         ins.append((np.abs(on).min() - 0.5) * s if not row[cxp] else 0.0)
     zs, outs, ins = np.array(zs), np.array(outs), np.array(ins)
     leg = zs < 0.55
@@ -256,6 +288,11 @@ def build_mesh():
     a3 = ((oc - h) / 2)[None, None, :]
     t = _smooth((zz - (CROTCH_Z - 0.1)) / (LOW[1] - CROTCH_Z + 0.1))[None, None, :]
     b3 = LEG_R + (LOW_DEPTH - LEG_R) * t
+    if SHAPE == 'round':
+        # Живот круглого низко и широко — и в профиле он овал: толщина растёт по эллипсу от ног
+        # (иначе тонкая «юбка» или плоское дно с полкой).
+        e = np.clip((RD_CENTER - zz) / RD_RZ, 0.0, 1.0)
+        b3 = np.maximum(b3, (LOW_DEPTH * np.sqrt(1.0 - e * e))[None, None, :])
     n3 = 2.0 + (LOW_N - 2.0) * t
     u = np.sqrt(X3 * X3 + E * E) - c3
     q = (np.abs(u) / a3) ** n3 + (np.abs(Y3) / b3) ** n3

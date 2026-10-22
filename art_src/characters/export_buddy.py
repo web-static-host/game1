@@ -58,6 +58,23 @@ if NEW:
         bpy.ops.object.modifier_apply(modifier='DT')
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
     bpy.data.objects.remove(old)
+    # Живот круглого шире старого тела — ближе к рукам, чем к старому туловищу, и брал бы их веса
+    # (живот тянулся бы за рукой). Ниже плеч и ближе к середине, чем висят руки, — без весов рук.
+    arm_groups = [g.index for g in body.vertex_groups if g.name.split('.')[0] in ('UpperArm', 'Forearm', 'Hand') or g.name.startswith(('Finger', 'Thumb'))]
+    stripped = 0
+    for v in me.vertices:
+        if abs(v.co.x) < 0.9 and v.co.z < 1.65 and v.co.z > 0.5:
+            hit = [g.group for g in v.groups if g.group in arm_groups and g.weight > 0.0]
+            for gi in hit:
+                body.vertex_groups[gi].remove([v.index])
+            if hit:
+                stripped += 1
+                if not any(g.weight > 0.0 for g in v.groups):
+                    body.vertex_groups['Body'].add([v.index], 1.0, 'REPLACE')
+    if stripped:
+        with bpy.context.temp_override(object=body, active_object=body, selected_objects=[body], selected_editable_objects=[body]):
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+    print('arm weights stripped from torso', stripped, flush=True)
     me.shade_smooth()
     print('new body', len(me.vertices), 'verts,', len(body.vertex_groups), 'groups', [m.type for m in body.modifiers], flush=True)
 # Внешние пальцы (у бока) автовеса зацепили кость Body — палец тянулся за телом.
