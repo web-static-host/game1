@@ -8,7 +8,7 @@ signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
 signal home_pressed
-## «Миры»: Земля, колонии на планетах, ракеты в полёте.
+## «Планеты»: Земля, колонии на планетах, ракеты в полёте.
 signal worlds_pressed
 ## Нажали на бургер в строке ресурсов — показать, сколько какой еды.
 signal food_pressed
@@ -19,9 +19,10 @@ signal speed_selected(index: int)
 signal science_pressed
 signal people_pressed
 signal save_pressed
-signal new_game_confirmed(disasters: bool)
-signal models_toggled(on: bool)
-signal background_toggled(on: bool)
+signal load_requested(sid: String)
+## Выйти в главное меню; save — сохраниться перед выходом.
+signal exit_requested(save: bool)
+signal setting_changed(key: String, value: Variant)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
@@ -88,11 +89,12 @@ var _tool_lock := {}
 ## Под что строится комната из меню (0 — пустая, назначение потом).
 var _room_purpose := 0
 var _menu: PanelContainer
-var _menu_new: Button
-var _models_hint: Label
-var _background: CheckButton
-var _new_game: PanelContainer
-var _disasters: CheckButton
+var _menu_load: Button
+## Окно поверх меню: «Загрузить», «Настройки», «Выйти в меню».
+var _sub: PanelContainer
+var _sub_box: VBoxContainer
+## Мир, в который играем (его сохранения — в «Загрузить»); пусто — без миров.
+var world_id := ""
 var _log: VBoxContainer
 var _info_panel: PanelContainer
 var _title: Label
@@ -117,7 +119,7 @@ var _dialog_text: Label
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	theme = _make_theme()
+	theme = make_theme()
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -148,7 +150,7 @@ func _ready() -> void:
 	_build_dialog()
 
 
-func _make_theme() -> Theme:
+static func make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font = Fonts.bold()
 	t.default_font_size = 20
@@ -264,7 +266,7 @@ static func _outlined(text: String, fs: int, col: Color) -> Label:
 var _worlds_btn: Control
 
 
-## «Миры» — только когда есть куда лететь (изучено ракетостроение) или уже летали.
+## «Планеты» — только когда есть куда лететь (изучено ракетостроение) или уже летали.
 func set_worlds_visible(on: bool) -> void:
 	if _worlds_btn != null and _worlds_btn.visible != on:
 		_worlds_btn.visible = on
@@ -392,7 +394,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var science := IconButton.make("flask", "Наука")
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
-	var worlds := IconButton.make("planet", "Миры")
+	var worlds := IconButton.make("planet", "Планеты")
 	worlds.pressed.connect(func() -> void: worlds_pressed.emit())
 	worlds.visible = false
 	_worlds_btn = worlds
@@ -429,9 +431,9 @@ func _build_bottom(box: VBoxContainer) -> void:
 	bar.add_child(menu)
 	home.pressed.connect(func() -> void: home_pressed.emit())
 	menu.pressed.connect(func() -> void:
-		var open := not _menu.visible
+		var open := not _menu.visible and not _sub.visible
 		close_overlays()
-		_models_hint.text = "Гаврики — из 3D-моделей (пока лист мутации снимается — рисованные). Модель: %s." % ModelSprites.status
+		_menu_load.visible = not world_id.is_empty()
 		_menu.visible = open)
 
 
@@ -458,7 +460,7 @@ func _on_build_toggled(on: bool) -> void:
 func close_overlays() -> void:
 	hide_info()
 	_menu.visible = false
-	_new_game.visible = false
+	_sub.visible = false
 	if not _placing:
 		_build_row.visible = false
 		_build_btn.set_pressed_no_signal(false)
@@ -701,7 +703,7 @@ func _build_panel() -> void:
 ## Управление controls: шаговые переключатели, галочки, нормы запаса (см. _build_control).
 func show_panel(spec: Dictionary) -> void:
 	_menu.visible = false
-	_new_game.visible = false
+	_sub.visible = false
 	if not _placing:
 		_build_row.visible = false
 		_build_btn.set_pressed_no_signal(false)
@@ -1376,7 +1378,7 @@ func _build_tree_panel() -> void:
 ## "state": done|current|available|locked, "needs": [id], "pick": Callable}]}.
 func show_tech_tree(spec: Dictionary) -> void:
 	_menu.visible = false
-	_new_game.visible = false
+	_sub.visible = false
 	_info_panel.visible = false
 	var first := not _tree_panel.visible
 	_tree_panel.visible = true
@@ -1657,79 +1659,118 @@ func _build_menu(center: CenterContainer) -> void:
 	v.add_child(title)
 	var resume := _menu_button(v, "Продолжить")
 	resume.pressed.connect(func() -> void: _menu.visible = false)
-	var save := _menu_button(v, "Сохранить игру")
+	var save := _menu_button(v, "Сохранить")
 	save.pressed.connect(func() -> void:
 		save_pressed.emit()
 		_menu.visible = false)
-	_menu_new = _menu_button(v, "Новая игра")
-	_menu_new.pressed.connect(func() -> void:
-		_menu.visible = false
-		_new_game.visible = true)
-	_background = CheckButton.new()
-	_background.text = "Игра в фоне"
-	_background.focus_mode = Control.FOCUS_NONE
-	_background.add_theme_font_size_override("font_size", 22)
-	_background.toggled.connect(func(on: bool) -> void: background_toggled.emit(on))
-	v.add_child(_background)
-	var bg_hint := _label("Включено — пока вас нет, гаврики работают (до 1 часа). Выключено — игра на паузе, пока вы не вернётесь.", 16, MUTED)
-	bg_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	bg_hint.custom_minimum_size = Vector2(380, 0)
-	v.add_child(bg_hint)
-	var models := CheckButton.new()
-	models.text = "3D-модель гавриков"
-	models.button_pressed = ModelSprites.enabled
-	models.focus_mode = Control.FOCUS_NONE
-	models.add_theme_font_size_override("font_size", 22)
-	models.toggled.connect(func(on: bool) -> void: models_toggled.emit(on))
-	v.add_child(models)
-	_models_hint = _label("", 16, MUTED)
-	_models_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_models_hint.custom_minimum_size = Vector2(380, 0)
-	v.add_child(_models_hint)
-	_build_new_game(center)
+	_menu_load = _menu_button(v, "Загрузить")
+	_menu_load.pressed.connect(_open_load)
+	var settings := _menu_button(v, "Настройки")
+	settings.pressed.connect(_open_settings)
+	var quit := _menu_button(v, "Выйти в меню")
+	quit.pressed.connect(_ask_exit)
+	_sub = PanelContainer.new()
+	_sub.visible = false
+	_sub.custom_minimum_size = Vector2(640, 0)
+	center.add_child(_sub)
+	_sub_box = VBoxContainer.new()
+	_sub_box.add_theme_constant_override("separation", 12)
+	_sub.add_child(_sub_box)
 
 
-## Окно новой игры: настройки и подтверждение (текущий прогресс пропадёт).
-func _build_new_game(center: CenterContainer) -> void:
-	_new_game = PanelContainer.new()
-	_new_game.visible = false
-	_new_game.custom_minimum_size = Vector2(560, 0)
-	center.add_child(_new_game)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 12)
-	_new_game.add_child(v)
-	var title := _label("Новая игра", 28, Color.WHITE)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title)
-	_disasters = CheckButton.new()
-	_disasters.text = "Стихийные бедствия"
-	_disasters.button_pressed = true
-	_disasters.focus_mode = Control.FOCUS_NONE
-	_disasters.add_theme_font_size_override("font_size", 22)
-	v.add_child(_disasters)
-	var hint := _label("Очень редкие бури (раз в 4–10 часов игры) и землетрясения (раз в 12–30 часов), с предупреждением и только пока вы в игре.", 17, MUTED)
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.custom_minimum_size = Vector2(520, 0)
-	v.add_child(hint)
-	var warn := _label("Текущая колония будет удалена.", 18, Color(1.0, 0.6, 0.5))
-	v.add_child(warn)
+## Окно поверх меню: заголовок, содержимое (с прокруткой) и кнопки внизу.
+func _open_sub(title: String, body: Control, buttons: Array) -> void:
+	for c in _sub_box.get_children():
+		_sub_box.remove_child(c)
+		c.queue_free()
+	var t := _label(title, 28, Color.WHITE)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sub_box.add_child(t)
+	if body != null:
+		var sc := ScrollContainer.new()
+		sc.custom_minimum_size = Vector2(0, minf(340.0, size.y - 250.0))
+		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sc.add_child(body)
+		_sub_box.add_child(sc)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
-	v.add_child(row)
-	var start := _menu_button(row, "Начать")
-	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	start.add_theme_stylebox_override("normal", btn_box(ACCENT))
-	var cancel := _menu_button(row, "Отмена")
-	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	start.pressed.connect(func() -> void:
-		_new_game.visible = false
-		new_game_confirmed.emit(_disasters.button_pressed))
-	cancel.pressed.connect(func() -> void: _new_game.visible = false)
+	_sub_box.add_child(row)
+	for bt in buttons:
+		var b := _menu_button(row, bt[0])
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if bt.size() > 2:
+			b.add_theme_stylebox_override("normal", btn_box(bt[2]))
+		b.pressed.connect(bt[1])
+	_menu.visible = false
+	_sub.visible = true
 
 
-## Положение переключателя «Игра в фоне» (из настроек).
-func set_background(on: bool) -> void:
-	_background.set_pressed_no_signal(on)
+func _back_to_menu() -> void:
+	_sub.visible = false
+	_menu.visible = true
+
+
+func _open_load() -> void:
+	var sv := SavesView.new()
+	sv.show_world(world_id)
+	sv.load_requested.connect(func(sid: String) -> void:
+		_sub.visible = false
+		load_requested.emit(sid))
+	_open_sub("Загрузить", sv, [["Назад", _back_to_menu]])
+	var warn := _label("Несохранённый прогресс пропадёт — сначала «Сохранить», если он нужен.", 16, MUTED)
+	warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	warn.custom_minimum_size = Vector2(600, 0)
+	_sub_box.add_child(warn)
+	_sub_box.move_child(warn, 1)
+
+
+func _open_settings() -> void:
+	var box := VBoxContainer.new()
+	var sv := SettingsView.new()
+	sv.changed.connect(func(key: String, value: Variant) -> void: setting_changed.emit(key, value))
+	box.add_child(sv)
+	var st := _label("3D-модель: %s." % ModelSprites.status, 15, MUTED)
+	st.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	st.custom_minimum_size = Vector2(SettingsView.HINT_W, 0)
+	box.add_child(st)
+	_open_sub("Настройки", box, [["Назад", _back_to_menu]])
+
+
+## Выйти в главное меню: с сохранением при выходе — сразу, без него — спросить.
+func _ask_exit() -> void:
+	if bool(Settings.get_value("save_on_exit")):
+		_menu.visible = false
+		exit_requested.emit(true)
+		return
+	var text := _label("Сохранение при выходе выключено. Сохранить игру перед выходом?", 20, Color(0.9, 0.92, 0.96))
+	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.custom_minimum_size = Vector2(600, 0)
+	_open_sub("Выйти в меню", null, [
+		["Сохранить и выйти", func() -> void:
+			_sub.visible = false
+			exit_requested.emit(true), GREEN],
+		["Без сохранения", func() -> void:
+			_sub.visible = false
+			exit_requested.emit(false), RED],
+		["Отмена", _back_to_menu]])
+	_sub_box.add_child(text)
+	_sub_box.move_child(text, 1)
+
+
+## «Назад» на телефоне: закрыть верхнее окно, а если ничего не открыто — открыть меню.
+func back_pressed() -> void:
+	if _sub.visible:
+		_back_to_menu()
+	elif _menu.visible:
+		_menu.visible = false
+	elif _dialog.visible:
+		_dialog.visible = false
+	elif _info_panel.visible or _build_row.visible:
+		close_overlays()
+	else:
+		_menu_load.visible = not world_id.is_empty()
+		_menu.visible = true
 
 
 func _menu_button(parent: Control, text: String) -> Button:

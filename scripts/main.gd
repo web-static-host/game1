@@ -38,6 +38,8 @@ var _background := false
 ## Приложение свёрнуто — симуляция стоит.
 var _away := false
 var _restarting := false
+## Мир (отдельная игра), в который играем; пусто — старый режим одного файла.
+var _world_id := ""
 ## Варианты постройки над водой: [[вид, рамка], ...].
 var _water_options := []
 var _drag_start := Vector2i.ZERO
@@ -66,10 +68,17 @@ var _wall_choice := {}
 func _ready() -> void:
 	# Шрифт игры — и для подписей в мире (они берут шрифт по умолчанию).
 	ThemeDB.fallback_font = Fonts.bold()
-	ModelSprites.enabled = bool(_settings().get("models", true))
-	_background = bool(_settings().get("background", false))
-	var data := SaveSystem.load_data()
-	var seed_value := int(data["seed"]) if data.has("seed") else _new_seed()
+	ModelSprites.enabled = bool(Settings.get_value("models"))
+	_background = bool(Settings.get_value("background"))
+	# Что запускаем: мир и сохранение из меню; без меню (инструменты) — один файл, как раньше.
+	_world_id = str(Worlds.launch.get("world", ""))
+	var meta := Worlds.meta(_world_id) if not _world_id.is_empty() else {}
+	var data := {}
+	if _world_id.is_empty():
+		data = SaveSystem.load_data()
+	elif not str(Worlds.launch.get("save", "")).is_empty():
+		data = Worlds.load_save(_world_id, Worlds.launch["save"])
+	var seed_value := int(data["seed"]) if data.has("seed") else int(meta.get("seed", _new_seed()))
 	# Старые сохранения (без версии генерации) — на первой версии, чтобы мир не изменился.
 	var gen_version := int(data.get("gen", 1)) if data.has("seed") else WorldGen.LATEST
 	world = WorldData.new(WorldGen.new(seed_value, gen_version))
@@ -82,7 +91,7 @@ func _ready() -> void:
 
 	var start := _home + Vector2i(0, -3)
 	if data.is_empty():
-		colony.disasters = _new_game_settings().get("disasters", true)
+		colony.disasters = bool(meta.get("disasters", true))
 		colony.start_new(_home.x)
 		hud.log_event("У вас 5 гавриков и пустой склад. Начните со «Сбора»: кусты с ягодами — еда, деревья и валуны — дерево и камень.", "info")
 	else:
@@ -97,16 +106,23 @@ func _ready() -> void:
 		for k in data.get("cameras", {}):
 			var cc: Array = data["cameras"][k]
 			_cameras[str(k)] = Vector2i(int(cc[0]), int(cc[1]))
-		_apply_offline(float(data.get("saved_at", 0.0)))
+		# Время отсутствия засчитывается, только когда продолжают с автосохранения
+		# (вышли и вернулись), а не когда загружают старое сохранение.
+		if _world_id.is_empty() or bool(Worlds.launch.get("offline", false)):
+			_apply_offline(float(data.get("saved_at", 0.0)))
+	hud.world_id = _world_id
 	world_view.focus_cell(start)
 	_update_status()
 	if data.get("active", "earth") != "earth":
 		_switch_world(str(data["active"]))
+	# Новый мир сразу получает автосохранение — он появится в «Продолжить».
+	if data.is_empty() and not _world_id.is_empty():
+		_save()
 
 
 ## Игру закрыли (любым способом) — сохраняем последнее состояние.
 func _exit_tree() -> void:
-	if world != null:
+	if world != null and bool(Settings.get_value("save_on_exit")):
 		_save()
 
 
@@ -164,19 +180,16 @@ func _build_scene() -> void:
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.save_pressed.connect(func() -> void:
-		_save()
-		hud.log_event("Игра сохранена", "good"))
-	hud.new_game_confirmed.connect(_new_game)
+		if _world_id.is_empty():
+			_save()
+			hud.log_event("Игра сохранена", "good")
+			return
+		hud.log_event("Сохранено: %s" % _save(true), "good"))
+	hud.load_requested.connect(_load_save)
+	hud.exit_requested.connect(_exit_to_menu)
 	hud.science_pressed.connect(_show_science)
 	hud.people_pressed.connect(_show_people)
-	hud.models_toggled.connect(func(on: bool) -> void:
-		ModelSprites.enabled = on
-		_save_setting("models", on)
-		world_view.units_layer.refresh())
-	hud.set_background(_background)
-	hud.background_toggled.connect(func(on: bool) -> void:
-		_background = on
-		_save_setting("background", on))
+	hud.setting_changed.connect(_on_setting)
 	hud.room_options_changed.connect(_on_room_options)
 
 
@@ -214,19 +227,24 @@ func _process(delta: float) -> void:
 				_switch_world("earth")
 		_update_status()
 		_refresh_info()
-	_autosave += delta
-	if _autosave >= AUTOSAVE_SEC:
-		_autosave = 0.0
-		_save()
+	# Автосохранение — раз в столько минут, сколько выбрано в настройках (0 — выключено).
+	var every := int(Settings.get_value("autosave_min")) * 60.0 if _world_id.is_empty() == false else AUTOSAVE_SEC
+	if every > 0.0 and not _away:
+		_autosave += delta
+		if _autosave >= every:
+			_autosave = 0.0
+			_save()
 
 
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT:
-			# Вышли из игры — она на паузе (а с «Игрой в фоне» — посчитаем, сколько успели).
+			# Свернули — игра на паузе (а с «Игрой в фоне» — посчитаем, сколько успели).
+			# Сохраняемся: свёрнутую игру система может выгрузить.
 			if world != null and not _away:
 				_away = true
-				_save()
+				if bool(Settings.get_value("save_on_exit")):
+					_save()
 				_paused_at = Time.get_unix_time_from_system()
 		NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN:
 			if world != null and _away:
@@ -234,55 +252,46 @@ func _notification(what: int) -> void:
 				if _paused_at > 0.0:
 					_apply_offline(_paused_at)
 				_paused_at = 0.0
-		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_WM_GO_BACK_REQUEST:
-			# «Назад» на Android закрывает игру сразу — сохраняем в этот момент.
-			if world != null:
+		NOTIFICATION_WM_GO_BACK_REQUEST:
+			# «Назад» на Android не закрывает игру: закрывает окно, а если окон нет — меню.
+			if hud != null:
+				hud.back_pressed()
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			if world != null and bool(Settings.get_value("save_on_exit")):
 				_save()
 
 
-const NEW_GAME_PATH := "user://new_game.json"
-const SETTINGS_PATH := "user://settings.json"
+## Настройку поменяли в меню игры.
+func _on_setting(key: String, value: Variant) -> void:
+	match key:
+		"models":
+			ModelSprites.enabled = bool(value)
+			world_view.units_layer.refresh()
+		"background":
+			_background = bool(value)
+		"autosave_min":
+			_autosave = 0.0
 
 
-func _save_setting(key: String, value: Variant) -> void:
-	var d := _settings()
-	d[key] = value
-	var f := FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(d))
-
-
-## Настройки игры (не колонии): переживают новую игру.
-func _settings() -> Dictionary:
-	if not FileAccess.file_exists(SETTINGS_PATH):
-		return {}
-	var d = JSON.parse_string(FileAccess.get_file_as_string(SETTINGS_PATH))
-	return d if typeof(d) == TYPE_DICTIONARY else {}
-
-
-## Настройки новой игры, выбранные в меню (читаются один раз).
-func _new_game_settings() -> Dictionary:
-	if not FileAccess.file_exists(NEW_GAME_PATH):
-		return {}
-	var d = JSON.parse_string(FileAccess.get_file_as_string(NEW_GAME_PATH))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(NEW_GAME_PATH))
-	return d if typeof(d) == TYPE_DICTIONARY else {}
-
-
-func _new_game(disasters: bool) -> void:
-	var f := FileAccess.open(NEW_GAME_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify({"disasters": disasters}))
-		f.close()
+## Выйти в главное меню (сохранившись, если так настроено).
+func _exit_to_menu(save: bool) -> void:
+	if save:
+		_save()
 	_restarting = true
-	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
+	get_tree().change_scene_to_file("res://scenes/menu.tscn")
+
+
+## Загрузить другое сохранение этого мира: сцена собирается заново.
+func _load_save(sid: String) -> void:
+	_restarting = true
+	Worlds.launch = {"world": _world_id, "save": sid, "offline": false}
 	get_tree().reload_current_scene()
 
 
-func _save() -> void:
+## Сохранить: в автосохранение мира или (manual) в новое сохранение игрока.
+func _save(manual := false) -> String:
 	if _restarting:
-		return
+		return ""
 	_cameras[_planet] = world_view.camera_cell()
 	var earth: Dictionary = universe.worlds[0]
 	var data := SaveSystem.serialize(earth["world"], earth["colony"], _cameras.get("earth", world_view.camera_cell()))
@@ -292,7 +301,20 @@ func _save() -> void:
 	for k in _cameras:
 		cams[k] = [_cameras[k].x, _cameras[k].y]
 	data["cameras"] = cams
-	SaveSystem.write(data)
+	if _world_id.is_empty():
+		SaveSystem.write(data)
+		return ""
+	var earth_colony: Colony = earth["colony"]
+	var info := {"units": earth_colony.units.size(), "date": earth_colony.date_text().split(" · ")[-1],
+		"depth": maxi(0, earth_colony.deepest_y - _home.y)}
+	if manual:
+		var ns := Worlds.new_save_id(_world_id)
+		info["name"] = ns[1]
+		Worlds.write_save(_world_id, ns[0], data, info)
+		return ns[1]
+	info["name"] = "Автосохранение"
+	Worlds.write_save(_world_id, Worlds.AUTO, data, info)
+	return info["name"]
 
 
 ## События колонии — в журнал; с других планет — только важное, с названием планеты.
@@ -312,7 +334,7 @@ func _hook(e: Dictionary) -> void:
 func _on_arrived(planet: String, c: Colony, new_world: bool) -> void:
 	if new_world:
 		_hook(universe.entry(planet))
-	hud.log_event("Ракета долетела: %s! Откройте «Миры», чтобы перейти туда." % Planet.planet_name(planet), "good")
+	hud.log_event("Ракета долетела: %s! Откройте «Планеты», чтобы перейти туда." % Planet.planet_name(planet), "good")
 	if new_world and c == colony:
 		pass
 
@@ -341,7 +363,7 @@ func _switch_world(planet: String) -> void:
 	hud.log_event("%s: гавриков %d" % [Planet.planet_name(planet), colony.units.size()], "info")
 
 
-## «Миры»: где колонии и сколько в них гавриков, какие ракеты летят и когда сядут.
+## «Планеты»: где колонии и сколько в них гавриков, какие ракеты летят и когда сядут.
 func _show_worlds() -> void:
 	_info_target = []
 	var items := []
@@ -362,7 +384,7 @@ func _show_worlds() -> void:
 			cargo += int(f["cargo"][k])
 		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
 			"info": "гавриков %d, груза %d · сядет через %d дн." % [f["crew"].size(), cargo, days]})
-	hud.show_panel({"title": "Миры", "subtitle": "время идёт во всех мирах сразу",
+	hud.show_panel({"title": "Планеты", "subtitle": "время идёт на всех планетах сразу",
 		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракетостроение»): до 10 гавриков и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
 		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
 		"actions": [["Закрыть", func() -> void: hud.hide_info()]]})
