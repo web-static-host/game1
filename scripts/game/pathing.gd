@@ -116,29 +116,33 @@ func _pass_m(c: Vector2i) -> bool:
 
 func neighbors(c: Vector2i) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
+	# Сначала — вверх и вниз по лестнице: при равной длине пути лезут прямо, а не петляют.
+	var on_ladder := climbable(c)
+	var up := c + UP
+	if on_ladder and _node_m(up):
+		out.append(up)
+	var down := c + DOWN
+	if climbable(down) and _node_m(down):
+		out.append(down)
 	for dx in [-1, 1]:
 		var side := c + Vector2i(dx, 0)
 		if _node_m(side):
 			out.append(side)
 		else:
 			var step_up := c + Vector2i(dx, -1)
+			var ledge := c + Vector2i(dx, -2)
 			if _pass_m(c + UP * 2) and _node_m(step_up):
 				out.append(step_up)
-			elif _pass_m(c + UP * 2) and _pass_m(c + UP * 3) and _node_m(c + Vector2i(dx, -2)):
-				# Уступ в 2 м — залезают.
-				out.append(c + Vector2i(dx, -2))
+			elif _pass_m(c + UP * 2) and _pass_m(c + UP * 3) and _node_m(ledge) and not climbable(ledge):
+				# Уступ в 2 м — залезают (на лестницу так не прыгают: по ней лезут).
+				out.append(ledge)
 			var step_down := c + Vector2i(dx, 1)
+			var drop := c + Vector2i(dx, 2)
 			if _pass_m(side) and _node_m(step_down):
 				out.append(step_down)
-			elif _pass_m(side) and _pass_m(side + DOWN) and _node_m(c + Vector2i(dx, 2)):
-				# Спрыгивают с уступа в 2 м.
-				out.append(c + Vector2i(dx, 2))
-	var up := c + UP
-	if climbable(c) and _node_m(up):
-		out.append(up)
-	var down := c + DOWN
-	if climbable(down) and _node_m(down):
-		out.append(down)
+			elif not on_ladder and _pass_m(side) and _pass_m(side + DOWN) and _node_m(drop) and not climbable(drop):
+				# Спрыгивают с уступа в 2 м (с лестницы и на лестницу — нет: по ней слезают).
+				out.append(drop)
 	return out
 
 

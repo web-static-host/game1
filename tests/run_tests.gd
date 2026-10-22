@@ -78,6 +78,7 @@ func _initialize() -> void:
 	test_hearth_on_demand()
 	test_forge_ores()
 	test_uranium()
+	test_ladder_straight()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3341,6 +3342,33 @@ func test_uranium() -> void:
 	check(kinds.size() == Genetics.MUTATIONS.size() and int(kinds.get("glow", 0)) > 8, "любая мутация с равной вероятностью, и самые редкие тоже (%d видов)" % kinds.size())
 	var u := Unit.from_dict(mom.to_dict())
 	check(u.irradiated, "облучение сохраняется")
+
+
+## По стволу с лестницей лезут прямо, а не заходят по пути в соседнюю шахту или комнату
+## (прыжок на уступ в 2 м из шахты обратно на лестницу не должен быть «короче»).
+func test_ladder_straight() -> void:
+	var colony := _new_colony(35)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var shaft := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x, s, 1, 16), 970)
+	_dug_project(colony, Project.Kind.MINE, Rect2i(x + 1, s + 6, 8, 3), 971)
+	_dug_project(colony, Project.Kind.MINE, Rect2i(x - 8, s + 10, 8, 3), 972)
+	# И комната вплотную к стволу.
+	var room := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 1, s + 11, 6, 3), 973)
+	room.purpose = RoomType.HOME
+	colony._register_room(room)
+	colony._rebuild_climb()
+	var bottom := Vector2i(x, s + 15)
+	var reach := colony.pathing.explore(bottom)
+	var path := Pathing.path_to(reach[0], Vector2i(x, s + 1))
+	var off := path.filter(func(c: Vector2i) -> bool: return c.x != x)
+	check(not path.is_empty() and off.is_empty(), "снизу вверх — прямо по лестнице (в сторону шагов: %d)" % off.size())
+	reach = colony.pathing.explore(Vector2i(x, s + 1))
+	path = Pathing.path_to(reach[0], bottom)
+	off = path.filter(func(c: Vector2i) -> bool: return c.x != x)
+	check(not path.is_empty() and off.is_empty(), "сверху вниз — тоже прямо (в сторону шагов: %d)" % off.size())
 
 
 ## Лифты встык одного вида соединяются в один.
