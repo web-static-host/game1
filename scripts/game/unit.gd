@@ -103,6 +103,9 @@ var last_project := 0
 var last_work_t := -1.0e9
 ## Ждёт рядом следующей работы своей выработки.
 var waiting_own := false
+## Строитель идёт сменить помощника (его id); помощника идёт сменять гаврик takeover_by.
+var takeover := 0
+var takeover_by := 0
 ## Сколько накопилось с прошлой проверки стихий (вода, газ, жара, холод).
 var env_t := randf()
 var path: Array[Vector2i] = []
