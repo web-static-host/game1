@@ -1113,7 +1113,9 @@ var _clay_tries := 0
 
 
 func _clay_mine() -> bool:
-	if planet != "earth" or colony.known_resources.has("clay") or _clay_tries >= 2 or colony.units.size() < 5:
+	# Глина нужна, когда дело дошло до кузницы (плавка руды) — не раньше фермы и лаборатории.
+	if planet != "earth" or colony.known_resources.has("clay") or _clay_tries >= 2 or colony.units.size() < 8 \
+			or not colony.research.has("smelting"):
 		return false
 	var s := world.gen.surface_y(shaft_x)
 	if shaft_bottom < s + 10:
