@@ -307,6 +307,8 @@ func _play() -> void:
 		return
 	if _space_program():
 		return
+	if _clay_mine():
+		return
 	_mine_program()
 	if _busy() >= 2:
 		return
@@ -617,14 +619,36 @@ func _professions() -> void:
 	for p in colony.projects:
 		if p.is_water_structure() and p.phase == Project.Phase.DONE and (colony.can_fish_from(p) or p.kind == Project.Kind.PIER):
 			places.append(p)
+	# Ферма и лаборатория без работника, а свободных нет — снимаем со склада или амбара
+	# (без еды и науки колония не выживет, а склад подождёт).
+	for t in [RoomType.FARM, RoomType.LAB]:
+		for p in colony.rooms_of(t):
+			if not colony.assigned_to(p).is_empty() or free.size() > 0:
+				continue
+			for st in colony.store_rooms():
+				var w: Array = colony.assigned_to(st)
+				if not w.is_empty():
+					colony.unassign_work(w[0])
+					free.append(w[0])
+					_act("перевод на ферму/в лабораторию")
+					break
+	var unstaffed_core := func() -> bool:
+		for t in [RoomType.FARM, RoomType.LAB]:
+			for q in colony.rooms_of(t):
+				if colony.assigned_to(q).is_empty():
+					return true
+		return false
 	# Свободные нужны на стройки и подноску, но не в ущерб еде и науке.
 	var keep_free := 0 if adults.size() < 8 else adults.size() / 5
 	for p in places:
+		# Пока ферма или лаборатория без работника — на склады не назначаем.
+		if RoomType.is_store(p.purpose) and adults.size() < 8 and unstaffed_core.call():
+			continue
 		# Склад и амбар — по одному работнику (склад — когда людей хватает), остальное — сколько мест.
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
 		# Склад и амбар без работника не наполняются — по одному всегда.
 		if p.purpose == RoomType.FARM:
-			slots = mini(slots, 1 if adults.size() < 7 else 2)
+			slots = mini(slots, 1) if adults.size() < 7 else slots
 		if p.purpose == RoomType.LAB and adults.size() < 8:
 			slots = 1
 		while colony.assigned_to(p).size() < slots and free.size() > keep_free:
@@ -756,6 +780,9 @@ func _opening() -> bool:
 	var have := {}
 	for p in colony.projects:
 		var purpose: int = _pending_purpose.get(p.id, p.purpose)
+		# Пока обустраивают — назначения ещё нет, но комната уже под него.
+		if purpose == RoomType.NONE and p.phase == Project.Phase.EQUIP:
+			purpose = RoomType.base_type(p.equip_target)
 		if p.kind != Project.Kind.ROOM or purpose == RoomType.NONE:
 			continue
 		var key := "%d,%d" % [purpose, p.rect.size.x]
@@ -868,7 +895,8 @@ func _next_underground() -> int:
 				return RoomType.GRANARY if k == "food" else RoomType.STORAGE
 	if not has.call(RoomType.LAB):
 		return RoomType.LAB
-	if colony.units.size() >= 7 and colony.rooms_of(RoomType.FARM).size() < colony.units.size() / 5:
+	# Ферма на каждые четыре рта (зимой фермы под очагом еле справляются).
+	if colony.units.size() >= 7 and colony.rooms_of(RoomType.FARM).size() < (colony.units.size() + 3) / 4:
 		return RoomType.FARM
 	if not has.call(RoomType.DINING):
 		return RoomType.DINING
@@ -1075,6 +1103,28 @@ func _explore_mine(diamonds: bool) -> bool:
 		if colony.extend_error(m, dir, 30).is_empty() and colony.extend_project(m, dir, 30) != null:
 			_ext[m.id] = int(_ext.get(m.id, 0)) + 1
 			_act("разведка дальше")
+			return true
+	return false
+
+
+## Глина нужна на кирпич (печь → кузница → металл → ракета). Не нашли её — неглубокая
+## шахта в подпочве у ствола, по одной в каждую сторону.
+var _clay_tries := 0
+
+
+func _clay_mine() -> bool:
+	if planet != "earth" or colony.known_resources.has("clay") or _clay_tries >= 2 or colony.units.size() < 5:
+		return false
+	var s := world.gen.surface_y(shaft_x)
+	if shaft_bottom < s + 10:
+		return false
+	var sd := 1 if _clay_tries == 0 else -1
+	_clay_tries += 1
+	for d in [5, 7, 4, 8]:
+		var r := Rect2i(shaft_x + 1, s + d, 20, 3) if sd > 0 else Rect2i(shaft_x - 20, s + d, 20, 3)
+		if colony.validate(Project.Kind.MINE, r).is_empty() and colony.create_project(Project.Kind.MINE, r, 3) != null:
+			_act("шахта за глиной")
+			_milestone("clay_mine", "Шахта за глиной")
 			return true
 	return false
 
