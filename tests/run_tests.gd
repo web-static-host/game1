@@ -93,6 +93,7 @@ func _initialize() -> void:
 	test_tunnel_from_mine()
 	test_mine_caves()
 	test_water_levels()
+	test_new_science()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -602,7 +603,7 @@ func test_room_purposes() -> void:
 	hcol.advance_offline(3000.0)
 	check(hroom.purpose == RoomType.HEARTH and not hroom.brick_stoves, "каменный очаг готов")
 	check(not hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "без обжига кирпича улучшить нельзя")
-	hcol.research.done.append("bricks")
+	hcol.research.done.append("pottery")
 	hcol.inventory["brick"] = 40
 	check(hcol.set_purpose(hroom, RoomType.HEARTH_BRICK), "улучшение до кирпичных печей начато")
 	hcol.cancel_project(hroom)
@@ -1582,7 +1583,7 @@ func test_seasons() -> void:
 	var hc := RoomType.equip_cost(RoomType.HEARTH, hearth)
 	check(hc.get("stone", 0) == 24 and not hc.has("brick"), "три каменные печи — 24 камня (%s)" % str(hc))
 	check(RoomType.equip_cost(RoomType.HEARTH_BRICK, hearth).get("brick", 0) == 18, "три кирпичные — 18 кирпичей")
-	check(not RoomType.REQUIRES.has(RoomType.HEARTH) and RoomType.REQUIRES[RoomType.HEARTH_BRICK] == "bricks",
+	check(not RoomType.REQUIRES.has(RoomType.HEARTH) and RoomType.REQUIRES[RoomType.HEARTH_BRICK] == "pottery",
 		"каменный очаг — сразу, кирпичный — после обжига кирпича")
 	# Кирпичные печи: тепло дальше в 1.5 раза, служат вдвое дольше.
 	var stone_zone := RoomType.heat_zone(hearth)
@@ -1908,7 +1909,7 @@ func test_tech_tree() -> void:
 					break
 		r.add(10000.0)
 	check(r.done.size() == Research.TECHS.size(), "все %d технологий можно изучить (%d)" % [Research.TECHS.size(), r.done.size()])
-	check(colony.dig_bonus() == 2.0 and dig == 1.0, "глубинное бурение: копка вдвое быстрее")
+	check(colony.dig_bonus() == 1.5 and dig == 1.0, "стальной инструмент: копка в полтора раза быстрее")
 	check(colony.carry_cap() == 8 and colony.build_bonus() == 1.5 and colony.automation_bonus() == 1.5, "тачки, плотники, автоматика")
 	check(colony.farm_bonus() >= 1.25, "агрономия прибавила урожай")
 	check(cap == 0 or colony.storage_capacity("wood") > cap, "стеллажи расширили склады")
@@ -2109,18 +2110,18 @@ func test_economy() -> void:
 	check(lab.purpose == RoomType.LAB, "лаборатория обустроена")
 	check(not colony.set_purpose(lab, RoomType.KILN), "печь нельзя без исследования")
 	check(not colony.available_materials().has("brick"), "кирпичных стен пока нет")
-	check(colony.research.start("bricks"), "начали изучать обжиг кирпича")
-	check(not colony.research.available("metallurgy"), "металлургия — только после кирпича")
+	check(colony.research.start("pottery"), "начали изучать гончарное дело")
+	check(not colony.research.available("gas_heating"), "газовое отопление — только после кирпича")
 	for u in colony.units:
 		colony.assign_work(u, lab)
 	check(colony.assigned_to(lab).size() == colony.work_slots(lab), "учёные назначены по числу мест")
 	var t := 0.0
-	while t < 2000.0 and not colony.research.has("bricks"):
+	while t < 2000.0 and not colony.research.has("pottery"):
 		colony.update(1.0)
 		t += 1.0
-	check(colony.research.has("bricks"), "учёные изучили обжиг кирпича (%.0f с)" % t)
+	check(colony.research.has("pottery"), "учёные изучили гончарное дело (%.0f с)" % t)
 	check(colony.available_materials().has("brick"), "открылись кирпичные стены")
-	check(colony.research.available("metallurgy"), "открылась металлургия")
+	check(not colony.research.available("gas_heating") and colony.research.available("gas_masks"), "газовому отоплению нужен ещё газосборник")
 	# Печь делает кирпич (оффлайн тоже).
 	colony.inventory = {"wood": 40, "stone": 40, "clay": 40, "food": 50}
 	check(colony.set_purpose(lab, RoomType.KILN), "лабораторию переделали в печь")
@@ -2144,13 +2145,13 @@ func test_economy() -> void:
 	check(colony.inventory.get("coal", 0) == 0, "уголь сгорел")
 	# Бурение ускоряет копку.
 	var before := colony.dig_bonus()
-	colony.research.done.append("drilling")
-	check(colony.dig_bonus() > before, "бурение ускоряет копку")
+	colony.research.done.append("tools")
+	check(colony.dig_bonus() > before, "стальной инструмент ускоряет копку")
 	# Сохранение науки.
 	var d := colony.to_dict()
 	var c2 := Colony.new(WorldData.new(WorldGen.new(81)))
 	c2.load_dict(JSON.parse_string(JSON.stringify(d)))
-	check(c2.research.has("bricks") and c2.research.has("drilling"), "исследования сохраняются")
+	check(c2.research.has("pottery") and c2.research.has("tools"), "исследования сохраняются")
 
 
 func test_drops_and_scouting() -> void:
@@ -2497,7 +2498,7 @@ func test_job_stats() -> void:
 	colony._work(a, 1.0)
 	colony._work(b, 1.0)
 	colony.dig_progress.clear()
-	check(absf(a.skills["dig"] - before_a - 1.5 * (2.0 if colony.research.has("education") else 1.0)) < 0.01, "по призванию навык растёт в 1,5 раза быстрее")
+	check(absf(a.skills["dig"] - before_a - 1.5) < 0.01, "по призванию навык растёт в 1,5 раза быстрее")
 	check(absf(b.skills["dig"] - 0.5) < 0.01, "не по душе — вдвое медленнее")
 	a.task = Unit.Task.NONE
 	b.task = Unit.Task.NONE
@@ -2659,7 +2660,7 @@ func _dug_project(colony: Colony, kind: int, r: Rect2i, id: int) -> Project:
 
 
 func _power_up(colony: Colony, x: int) -> void:
-	colony.research.done.append_array(["electricity", "metallurgy", "lifts", "cargo_lifts"])
+	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "lifts", "cargo_lifts"])
 	var gen := Project.new()
 	gen.id = 899
 	gen.kind = Project.Kind.ROOM
@@ -2688,7 +2689,7 @@ func test_space() -> void:
 	var w := colony.world
 	var x := _flat_x(w, 80)
 	_start(colony, x - 10)
-	colony.research.done.append_array(["electricity", "metallurgy", "rocketry", "oil_drilling", "refining", "combustion", "automation"])
+	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "rocketry", "oil_drilling", "refining", "combustion", "electronics"])
 	var s := w.gen.surface_y(x)
 	var pad := Project.new()
 	pad.id = 920
@@ -2771,7 +2772,7 @@ func test_oil() -> void:
 	var x := _find_solid_column(w, 60)
 	_start(colony, x - 25)
 	var s := w.gen.surface_y(x)
-	colony.research.done.append_array(["electricity", "metallurgy", "drilling", "drill_rig", "oil_drilling", "refining", "combustion"])
+	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "tools", "drill_rig", "oil_drilling", "refining", "combustion"])
 	check(colony._add("oil", 5) == 0, "без нефтехранилища нефть хранить негде")
 	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 4, 6, 3), 910)
 	tank.purpose = RoomType.OIL_TANK
@@ -2841,7 +2842,7 @@ func test_drill() -> void:
 	_start(colony, x - 25)
 	var s := w.gen.surface_y(x)
 	_power_up(colony, x)
-	colony.research.done.append_array(["drilling", "drill_rig"])
+	colony.research.done.append_array(["tools", "drill_rig"])
 	# Ровное сухое место под бур.
 	for dx in 60:
 		var xx := x + dx
@@ -3024,7 +3025,7 @@ func test_planet_balance() -> void:
 		"два очага греют сильнее одного, но не выше +30 (%.1f → %.1f → %.1f)" % [base, one, two])
 	# Пустую комнату сразу под очаг с кирпичными печами (раньше падало).
 	var hb := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 12, s + 18, 3, 3), 952)
-	colony.research.done.append("bricks")
+	colony.research.done.append_array(["pottery", "steel_frame"])
 	check(colony.set_purpose(hb, RoomType.HEARTH_BRICK) and hb.equip_target == RoomType.HEARTH_BRICK, "комнату сразу под кирпичный очаг")
 	# Крепь из стали.
 	colony.inventory = {"metal": 10}
@@ -4127,3 +4128,82 @@ func test_old_metal_to_ore() -> void:
 	var again := Colony.new(colony.world)
 	again.load_dict(d2)
 	check(int(again.inventory.get("iron_ore", 0)) == 7, "новое сохранение второй раз не переделывается")
+
+
+## Новая наука: раскладка по веткам, пауза, перевод старых сохранений, новые эффекты.
+func test_new_science() -> void:
+	# Раскладка: клетки не повторяются, каждая ветка начинается слева, связи — внутри ветки
+	# или с соседней веткой и всегда слева направо.
+	var cells := {}
+	var starts := {}
+	var bad := []
+	for id in Research.TECHS:
+		var t: Array = Research.TECHS[id]
+		var cell := Vector2i(t[5], t[6])
+		if cells.has(cell):
+			bad.append("%s и %s в одной клетке" % [id, cells[cell]])
+		cells[cell] = id
+		if t[6] == 0:
+			starts[t[4]] = true
+		for need in t[3]:
+			var n: Array = Research.TECHS[need]
+			if absi(int(n[4]) - int(t[4])) > 1:
+				bad.append("%s ← %s: ветки не соседние" % [id, need])
+			if int(n[6]) >= int(t[6]):
+				bad.append("%s ← %s: не слева" % [id, need])
+	check(bad.is_empty(), "раскладка дерева в порядке %s" % [bad])
+	check(starts.size() == Research.BRANCHES.size(), "каждая ветка начинается с первой колонки")
+	# Пауза: переключились — очки по прежней остались.
+	var r := Research.new()
+	check(r.start("mushrooms"), "начали грибоводство")
+	r.add(25.0)
+	check(r.start("pottery") and r.points("mushrooms") == 25.0 and r.progress == 0.0, "переключились — грибоводство на паузе с 25 очками")
+	r.add(10.0)
+	check(r.start("mushrooms") and r.progress == 25.0, "вернулись — продолжили с 25")
+	check(r.add(15.0) == "mushrooms" and r.has("mushrooms"), "доучили до конца")
+	var back := Research.new()
+	r.start("pottery")
+	back.load_dict(JSON.parse_string(JSON.stringify(r.to_dict())))
+	check(back.current == "pottery" and back.points("pottery") == 10.0 and back.has("mushrooms"), "пауза и изученное сохраняются")
+	# Старое сохранение: изученное переводится в новые технологии вместе с требованиями.
+	var old := Research.new()
+	old.load_dict({"done": ["bricks", "metallurgy", "lifts", "steam", "medicine"], "current": "drilling", "progress": 30.0})
+	check(old.has("pottery") and old.has("smelting") and old.has("steel") and old.has("steel_frame"), "кирпич и металлургия → гончарное дело, плавка руды и стали, каркас")
+	check(old.has("lifts") and old.has("ropes") and old.has("electricity") and old.has("nature") and old.has("mechanics"),
+		"лифты и турбины → электролифт и механика со всем, что им нужно")
+	check(old.current == "tools" and old.progress == 30.0, "начатое бурение → стальной инструмент, очки не пропали")
+	# Эффекты.
+	var colony := _new_colony(64)
+	_start(colony, 0)
+	var u: Unit = colony.units[0]
+	check(colony._track_factor(u, true) == 1.0, "без канатов лезут как раньше")
+	colony.research.learn("ropes")
+	check(colony._track_factor(u, true) == 1.5, "канаты: по лестницам в полтора раза быстрее")
+	var forge := Project.new()
+	forge.purpose = RoomType.FORGE
+	forge.targets = {"metal": 10}
+	colony.inventory["iron"] = 10
+	colony.inventory["coal"] = 10
+	check(colony.forge_pick(forge) == "", "сталь без «Плавки стали» не плавят")
+	colony.research.learn("steel")
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge) == "metal", "после «Плавки стали» — плавят")
+	var hearth := Project.new()
+	hearth.purpose = RoomType.HEARTH
+	hearth.rect = Rect2i(0, 0, 6, 3)
+	check(RoomType.heat_zone(hearth, true) == RoomType.heat_zone(hearth) * 2, "теплоизоляция: очаг греет вдвое дальше")
+	check(RoomType.REQUIRES[RoomType.GAS_GEN] == "chemistry" and RoomType.REQUIRES[RoomType.ENRICHMENT] == "nuclear"
+		and RoomType.REQUIRES[RoomType.FORGE] == "smelting" and RoomType.REQUIRES[RoomType.KILN] == "pottery", "постройки открывают новые технологии")
+	# Ученичество: родитель копает — у ребёнка растёт навык копки.
+	var mom: Unit = colony.units[1]
+	var kid: Unit = colony.units[2]
+	kid.child = true
+	kid.mother_id = mom.id
+	mom.state = Unit.State.WORK
+	mom.task = Unit.Task.DIG
+	var before: float = kid.skills["dig"]
+	colony._apprentice(kid, 10.0)
+	check(kid.skills["dig"] == before, "без ученичества ребёнок не учится у родителей")
+	colony.research.learn("apprentice")
+	colony._apprentice(kid, 10.0)
+	check(kid.skills["dig"] > before, "ученичество: пока мама копает, ребёнок учится копать (%.2f)" % kid.skills["dig"])

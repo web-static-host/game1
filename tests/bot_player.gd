@@ -676,7 +676,7 @@ func _heat_rooms(rooms: Array, need: float) -> bool:
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, hm)
 				if p != null:
 					# Кирпичные печи жгут и уголь (на планете дров нет — только из груза).
-					var brick: bool = planet != "earth" and colony.research.has("bricks") and colony.inventory.get("brick", 0) >= 6
+					var brick: bool = planet != "earth" and colony.research.has("pottery") and colony.inventory.get("brick", 0) >= 6
 					_pending_purpose[p.id] = RoomType.HEARTH_BRICK if brick else RoomType.HEARTH
 					_act("очаг")
 					return true
@@ -816,7 +816,7 @@ func _next_underground() -> int:
 			labs += 1
 	if colony.units.size() >= 9 and labs < clampi(colony.units.size() / 5, 2, 4) and not colony.research.current.is_empty():
 		return RoomType.LAB
-	if colony.research.has("bricks") and not has.call(RoomType.KILN) and colony.known_resources.has("clay"):
+	if colony.research.has("pottery") and not has.call(RoomType.KILN) and colony.known_resources.has("clay"):
 		return RoomType.KILN
 	if colony.research.has("electricity") and not has.call(RoomType.GENERATOR) \
 			and colony.inventory.get("copper", 0) >= 4 and colony.inventory.get("iron", 0) >= 4:
@@ -827,7 +827,7 @@ func _next_underground() -> int:
 			return prod
 	if not colony.elements.gas.is_empty() and not has.call(RoomType.DEGAS):
 		return RoomType.DEGAS
-	if colony.research.has("electricity") and has.call(RoomType.DEGAS) and not has.call(RoomType.GAS_GEN) \
+	if colony.research.has("chemistry") and has.call(RoomType.DEGAS) and not has.call(RoomType.GAS_GEN) \
 			and colony.inventory.get("methane", 0) >= 20 \
 			and colony.inventory.get("copper", 0) >= 4 and colony.inventory.get("iron", 0) >= 4:
 		return RoomType.GAS_GEN
@@ -861,8 +861,9 @@ func _more_storage() -> void:
 
 # --- Путь к ракете (Земля) ------------------------------------------------------------
 ## Цепочка исследований до ракетостроения — в первую очередь.
-const ROCKET_PATH := ["agronomy", "electricity", "bricks", "geology", "carts", "metallurgy", "medicine", "geology2",
-	"drilling", "education", "steam", "drill_rig", "automation", "oil_drilling", "refining", "combustion", "rocketry"]
+const ROCKET_PATH := ["mushrooms", "pottery", "geology", "carts", "apprentice", "smelting", "nature", "electricity",
+	"scaffolding", "steel", "tools", "gas_masks", "gas_collector", "gas_heating", "geology2", "rails", "drill_rig",
+	"mechanics", "oil_drilling", "refining", "combustion", "rocketry"]
 ## Уровни разведочных шахт (м от поверхности): по 40 м в обе стороны от ствола.
 const EXPLORE_LEVELS := [30, 55, 80, 105, 130, 155, 185, 215]
 ## Куда лететь (задаёт запускающий скрипт) и как отправить ракету: on_launch(flight).
@@ -890,7 +891,7 @@ func rocket_need() -> Dictionary:
 
 ## Мастерские на пути к ракете: печь, кузница, нефть, завод, генераторы.
 func _production_room(has: Callable) -> int:
-	if colony.research.has("metallurgy") and has.call(RoomType.KILN) and not has.call(RoomType.FORGE) \
+	if colony.research.has("smelting") and has.call(RoomType.KILN) and not has.call(RoomType.FORGE) \
 			and colony.inventory.get("brick", 0) >= 8:
 		return RoomType.FORGE
 	if colony.research.has("electricity") and colony.power_used > colony.power_made \

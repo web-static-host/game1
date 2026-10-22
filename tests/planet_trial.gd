@@ -6,9 +6,9 @@ extends SceneTree
 const BotPlayer := preload("res://tests/bot_player.gd")
 
 ## Что обычно изучено к запуску ракеты: вся цепочка до ракетостроения и кое-что рядом.
-const RESEARCH := ["agronomy", "carts", "bricks", "geology", "geology2", "electricity", "carpentry", "medicine",
-	"metallurgy", "hydroponics", "education", "drilling", "steam", "drill_rig", "oil_drilling", "refining",
-	"combustion", "automation", "rocketry", "gas_masks", "maintenance", "shelving"]
+const RESEARCH := ["mushrooms", "carts", "pottery", "geology", "geology2", "apprentice", "nature", "electricity",
+	"scaffolding", "smelting", "steel", "steel_frame", "hydroponics", "tools", "mechanics", "drill_rig", "oil_drilling", "refining",
+	"rails", "combustion", "chemistry", "electronics", "rocketry", "gas_masks", "gas_collector", "shelving"]
 ## Груз (до 200): дерево, еда (её хватает, пока не заработает ферма) и сталь на крепь;
 ## на холодную — кирпич на печи (они жгут местный уголь).
 const CARGO := {

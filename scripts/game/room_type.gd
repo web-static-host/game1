@@ -39,12 +39,12 @@ const HINTS := [
 ## Взрываются при обрушении (бак газа; потом — хранилище нефти).
 const EXPLOSIVE := [DEGAS, OIL_TANK]
 ## Назначения, которые нужно сначала изучить.
-const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
-	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", ENRICHMENT: "nuclear_engine", SHIP: "_ship", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
+const REQUIRES := {KILN: "pottery", FORGE: "smelting", GENERATOR: "electricity", GAS_GEN: "chemistry", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
+	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", ENRICHMENT: "nuclear", SHIP: "_ship", HEARTH_BRICK: "pottery", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
-## Улучшение очага: железные газовые котлы над печами (готовая комната — HEARTH с gas_boiler).
+## Улучшение очага: кирпичные газовые котлы над печами (готовая комната — HEARTH с gas_boiler).
 ## Только котёл жжёт метан; без метана печи под ним топят углём и дровами.
 const HEARTH_GAS := 101
 ## Кирпичные печи против каменных: дров в 1.5 раза меньше, тепло в 1.5 раза дальше,
@@ -129,7 +129,8 @@ static func stoves(p: Project) -> int:
 
 ## Очаг греет от стен комнаты: полное тепло в пределах full клеток, дальше слабеет до reach.
 ## Больше печей — греет дальше. Генератор (любой) греет как одна печь.
-static func heat_zone(p: Project) -> Vector2i:
+## insulated — изучена «Теплоизоляция»: очаг греет вдвое дальше.
+static func heat_zone(p: Project, insulated := false) -> Vector2i:
 	if p.purpose == SHIP:
 		return Vector2i(3, 6)
 	var n := stoves(p) if p.purpose == HEARTH else 1
@@ -139,6 +140,8 @@ static func heat_zone(p: Project) -> Vector2i:
 	# Котёл на газу жарче.
 	if p.purpose == HEARTH and p.gas_boiler and p.on_gas:
 		z += Vector2i(1, 2)
+	if insulated and p.purpose == HEARTH:
+		z *= 2
 	return z
 
 
@@ -186,7 +189,7 @@ static func purpose_name(t: int) -> String:
 
 static func purpose_hint(t: int) -> String:
 	if t == HEARTH_GAS:
-		return "железные котлы над печами жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше; без метана печи топят углём и дровами"
+		return "кирпичные котлы над печами жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше; без метана печи топят углём и дровами"
 	if t == HEARTH_BRICK:
 		return "отопление: кирпичные печи — дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше, топятся и углём"
 	return HINTS[t]
@@ -248,7 +251,7 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		HEARTH_BRICK:
 			return {"brick": 6 * stoves(p)}
 		HEARTH_GAS:
-			return {"iron": 4 * stoves(p)}
+			return {"brick": 4 * stoves(p)}
 	return {}
 
 

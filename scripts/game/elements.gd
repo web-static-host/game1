@@ -319,8 +319,13 @@ func _spring(c: Vector2i) -> void:
 		springs.erase(c)
 
 
-## Насосы откачивают воду: по клетке с поверхности ближайшего затопления.
+## Насосы откачивают воду: по клетке с поверхности ближайшего затопления («Дренаж» — по две).
 func _pumps() -> void:
+	for i in (2 if colony.research.has("drainage") else 1):
+		_pump_once()
+
+
+func _pump_once() -> void:
 	for p in colony.rooms_of(RoomType.PUMP):
 		if p.paused:
 			continue
@@ -412,7 +417,8 @@ func _gas_tick() -> void:
 			if absi(c.x - center.x) <= dr and absi(c.y - center.y) <= dr:
 				var take: float = next[c] * DEGAS_TAKE
 				next[c] -= take
-				_captured += take
+				# «Газосборник» — вдвое больше метана с того же газа.
+				_captured += take * (2.0 if colony.research.has("gas_collector") else 1.0)
 	while _captured >= 1.0:
 		_captured -= 1.0
 		colony._add("methane", 1)
@@ -522,7 +528,7 @@ func _temperature(c: Vector2i) -> float:
 		var dx := maxi(0, maxi(r.position.x - c.x, c.x - (r.end.x - 1)))
 		var dy := maxi(0, maxi(r.position.y - c.y, c.y - (r.end.y - 1)))
 		var d := maxi(dx, dy)
-		var zone := RoomType.heat_zone(p)
+		var zone := RoomType.heat_zone(p, colony.research.has("insulation"))
 		if d <= zone.y:
 			fire += Colony.HEAT * clampf(float(zone.y + 1 - d) / (zone.y + 1 - zone.x), 0.0, 1.0)
 	if fire > 0.0:
@@ -536,14 +542,14 @@ func _temperature(c: Vector2i) -> float:
 		var center := p.rect.get_center()
 		var vr := RoomType.effect_radius(p)
 		if absi(c.x - center.x) <= vr and absi(c.y - center.y) <= vr:
-			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("cooling") else 1.0)
+			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("climate") else 1.0)
 			break
 	return t
 
 
 ## Выше какой температуры гаврику жарко: красным — выше, с кондиционированием — на 15 °C.
 func heat_limit(u: Unit) -> float:
-	return HOT + (15.0 if colony.research.has("cooling") else 0.0) + (u.stat("heat") - 1.0) * 30.0
+	return HOT + (15.0 if colony.research.has("climate") else 0.0) + (u.stat("heat") - 1.0) * 30.0
 
 
 ## Воздействие стихий на гаврика за dt секунд.

@@ -353,9 +353,9 @@ func available_materials() -> Array[String]:
 	var out: Array[String] = ["wood"]
 	if known_resources.has("stone"):
 		out.append("stone")
-	if research.has("bricks"):
+	if research.has("pottery"):
 		out.append("brick")
-	if research.has("metallurgy"):
+	if research.has("steel_frame"):
 		out.append("metal")
 	return out
 
@@ -1020,7 +1020,8 @@ func support_key(p: Project) -> String:
 		return "metal"
 	if int(inventory.get("wood", 0)) + drop_total("wood") + int(p.delivered.get("wood", 0)) >= wood:
 		return "wood"
-	if int(inventory.get("metal", 0)) + int(p.delivered.get("metal", 0)) >= metal:
+	# Стальная крепь — после «Стального каркаса».
+	if research.has("steel_frame") and int(inventory.get("metal", 0)) + int(p.delivered.get("metal", 0)) >= metal:
 		return "metal"
 	return "wood"
 
@@ -1157,8 +1158,8 @@ const DRILL_CASING_M := 4
 
 
 func drill_speed(diesel := false) -> float:
-	return DRILL_SPEED * dig_bonus() * (1.5 if research.has("diamond_bits") else 1.0) \
-		* (1.5 if research.has("heavy_drill") else 1.0) * (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
+	return DRILL_SPEED * dig_bonus() * (2.0 if research.has("diamond_bits") else 1.0) \
+		* (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
 
 
 ## Бур сверлит (едет по приказу).
@@ -1436,7 +1437,7 @@ func lift_powered(p: Project) -> bool:
 
 
 func lift_speed(p: Project) -> float:
-	var s := WALK_SPEED * 3.0 * (1.5 if research.has("fast_lifts") else 1.0) * (1.5 if research.has("fast_lifts2") else 1.0)
+	var s := WALK_SPEED * 3.0 * (2.0 if research.has("fast_lifts") else 1.0)
 	return s * clampf(power_ratio, 0.0, 1.0)
 
 
@@ -3319,7 +3320,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 		elif u.satiety > 30.0:
 			u.starving_warned = false
 		u.energy = 100.0
-		var heal := 100.0 / HEAL_TIME * (2.0 if research.has("medicine") else 1.0) \
+		var heal := 100.0 / HEAL_TIME \
 			* (3.0 if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
@@ -3334,6 +3335,8 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.energy = maxf(u.energy, 60.0)
 		var was_elder := u.is_elder()
 		u.age += dt
+		if u.child:
+			_apprentice(u, dt)
 		if u.child and u.age >= Unit.CHILD_TIME:
 			u.child = false
 			_log("%s %s — теперь может работать" % [u.name, "выросла" if u.sex == Unit.Sex.FEMALE else "вырос"], "good")
@@ -4028,6 +4031,40 @@ func _needs_interrupt(u: Unit) -> bool:
 	return (u.satiety < 15.0 and has_food()) or needs_warmth(u)
 
 
+## «Канаты и блоки» — по лестницам быстрее; «Рельсы» — с грузом по шахтам и горизонтальным
+## тоннелям быстрее.
+func _track_factor(u: Unit, climbing: bool) -> float:
+	if climbing:
+		return 1.5 if research.has("ropes") else 1.0
+	if not research.has("rails") or u.carry_amount <= 0:
+		return 1.0
+	var pid: int = interior.get(u.cell(), 0)
+	if pid == 0:
+		return 1.0
+	var p := project_by_id(pid)
+	if p != null and (p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical())):
+		return 1.5
+	return 1.0
+
+
+## «Ученичество»: пока родитель работает, у ребёнка растёт навык этой работы.
+const APPRENTICE_RATE := 0.15
+
+
+func _apprentice(u: Unit, dt: float) -> void:
+	if not research.has("apprentice"):
+		return
+	for pid in [u.mother_id, u.father_id]:
+		if pid == 0:
+			continue
+		var parent := _unit_by_id(pid)
+		if parent == null or parent.state != Unit.State.WORK:
+			continue
+		var skill := Unit.skill_for(parent.task)
+		if not skill.is_empty():
+			u.skills[skill] = float(u.skills.get(skill, 0.0)) + dt * APPRENTICE_RATE * u.stat("learning")
+
+
 ## Замедление в тесном тоннеле: поток ограничен его шириной.
 var _occ := {}
 var _occ_at := -1.0
@@ -4087,7 +4124,8 @@ func _move(u: Unit, dt: float) -> void:
 			return
 		var next := Vector2(u.path[u.path_i])
 		var delta := next - u.pos
-		var spd := (CLIMB_SPEED if absf(delta.y) > absf(delta.x) else WALK_SPEED) * jam * u.move_factor()
+		var climbing := absf(delta.y) > absf(delta.x)
+		var spd := (CLIMB_SPEED if climbing else WALK_SPEED) * jam * u.move_factor() * _track_factor(u, climbing)
 		if u.child:
 			spd *= 0.8
 		if world.get_mat(u.cell().x, u.cell().y) == Mat.WATER:
@@ -4265,7 +4303,7 @@ func _work(u: Unit, dt: float) -> void:
 		var before := u.level(skill)
 		# По призванию навык растёт быстрее, не по душе — медленнее.
 		var grow: float = [0.5, 1.0, 1.5][calling_of(u, u.task) + 1]
-		u.skills[skill] += dt * (2.0 if research.has("education") else 1.0) * u.stat("learning") * grow
+		u.skills[skill] += dt * u.stat("learning") * grow
 		if u.level(skill) > before:
 			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
 		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor() * light_factor(u)
@@ -6124,10 +6162,8 @@ func service_years(p: Project) -> float:
 		# В жаре глубоких шахт дерево и металл портятся ещё быстрее.
 		var c := p.rect.get_center()
 		var t := world.gen.temperature(c.y, world.gen.surface_y(c.x))
-		if m != "stone" and t > 40.0:
+		if m != "stone" and t > 40.0 and not research.has("heatproof"):
 			years /= 1.0 + (t - 40.0) / 60.0
-	if research.has("maintenance"):
-		years /= 0.7
 	# Кирпичные печи держат очаг вдвое дольше.
 	if p.purpose == RoomType.HEARTH and p.brick_stoves:
 		years *= 2.0
@@ -6369,7 +6405,7 @@ func forge_pick(p: Project) -> String:
 	var best_r := INF
 	for k in RoomType.FORGE_RECIPES:
 		var norm := int(p.targets.get(k, 0))
-		if norm <= 0:
+		if norm <= 0 or (k == "metal" and not research.has("steel")):
 			continue
 		var have := _have_any(k)
 		if have >= norm:
@@ -6530,7 +6566,7 @@ func _reveal_known() -> void:
 
 func _research(work: float) -> void:
 	var lab_power := 1.0 + 0.5 * power_ratio if research.has("electricity") and power_made > 0 else 1.0
-	var finished := research.add(work * Research.POINTS_PER_SEC * lab_power)
+	var finished := research.add(work * Research.POINTS_PER_SEC * lab_power * (1.25 if research.has("nature") else 1.0))
 	if finished.is_empty():
 		return
 	_log("Изучено: %s. %s" % [Research.tech_name(finished), Research.TECHS[finished][1]], "good")
@@ -6545,22 +6581,20 @@ func powered() -> bool:
 
 
 func farm_bonus() -> float:
-	var k := 1.25 if research.has("agronomy") else 1.0
+	var k := 1.25 if research.has("mushrooms") else 1.0
 	return k * (1.0 + 0.5 * power_ratio if research.has("hydroponics") and powered() else 1.0)
 
 
 func dig_bonus() -> float:
-	if research.has("deep_drilling"):
-		return 2.0
-	return 1.5 if research.has("drilling") else 1.0
+	return 1.5 if research.has("tools") else 1.0
 
 
 func build_bonus() -> float:
-	return 1.5 if research.has("carpentry") else 1.0
+	return 1.5 if research.has("scaffolding") else 1.0
 
 
 func automation_bonus() -> float:
-	return 1.5 if research.has("automation") else 1.0
+	return 1.5 if research.has("electronics") else 1.0
 
 
 ## Сколько гаврик уносит за раз.
@@ -6640,7 +6674,7 @@ func hearth_needed(p: Project) -> bool:
 
 
 func _someone_near(h: Project) -> bool:
-	var area := h.rect.grow(RoomType.heat_zone(h).y + 2)
+	var area := h.rect.grow(RoomType.heat_zone(h, research.has("insulation")).y + 2)
 	for u in units:
 		if area.has_point(u.cell()):
 			return true
@@ -6711,7 +6745,7 @@ func _power_tick(dt: float) -> void:
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true
-			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("steam") else 1.0) * (1.5 if diesel else 1.0))
+			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("mechanics") else 1.0) * (1.5 if diesel else 1.0))
 			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана") or p.blocked.begins_with("Нет дизеля"):
 				p.blocked = ""
 		elif p.blocked.is_empty():

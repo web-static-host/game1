@@ -334,7 +334,7 @@ func _draw_zone(p: Project) -> void:
 		_dashed_rect(zr, Color(col, 0.85), 3.0)
 		return
 	if p.purpose == RoomType.HEARTH or p.purpose in RoomType.GENERATORS:
-		var zone := RoomType.heat_zone(p)
+		var zone := RoomType.heat_zone(p, colony.research.has("insulation"))
 		var reach := _rect_px(p.rect.grow(zone.y))
 		var full := _rect_px(p.rect.grow(zone.x))
 		draw_rect(reach, Color(1.0, 0.6, 0.2, 0.09))

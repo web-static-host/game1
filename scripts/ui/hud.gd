@@ -1306,10 +1306,26 @@ var _tree_selected := ""
 
 
 class TreeCanvas extends Control:
-	## [[от, до, цвет]] в координатах холста.
+	## [[от, до, цвет]] в координатах холста (старое дерево без раскладки — плавные «S»).
 	var edges: Array = []
+	## [[точки ломаной, цвет]] — связи по раскладке веток.
+	var lines: Array = []
+	## [[Rect2, цвет, название]] — полосы веток.
+	var bands: Array = []
 
 	func _draw() -> void:
+		var font := ThemeDB.fallback_font
+		for b in bands:
+			var r: Rect2 = b[0]
+			var col: Color = b[1]
+			draw_rect(r, Color(col, 0.13))
+			draw_rect(Rect2(r.position, Vector2(5, r.size.y)), col)
+			# Название ветки — вертикально у левого края полосы.
+			var name: String = b[2]
+			var w := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
+			draw_set_transform(Vector2(r.position.x + 30, r.position.y + r.size.y * 0.5 + w * 0.5), -PI * 0.5)
+			draw_string(font, Vector2.ZERO, name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, col)
+			draw_set_transform(Vector2.ZERO)
 		for e in edges:
 			var a: Vector2 = e[0]
 			var b: Vector2 = e[1]
@@ -1321,6 +1337,12 @@ class TreeCanvas extends Control:
 				var p := a.bezier_interpolate(Vector2(mx, a.y), Vector2(mx, b.y), b, t)
 				pts.append(p)
 			draw_polyline(pts, e[2], 3.0, true)
+		for l in lines:
+			var pts: PackedVector2Array = l[0]
+			var col: Color = l[1]
+			draw_polyline(pts, col, 3.0, true)
+			var tip := pts[pts.size() - 1]
+			draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(-10, -7), tip + Vector2(-10, 7)]), col)
 
 
 func _build_tree_panel() -> void:
@@ -1473,6 +1495,11 @@ func _build_tree_nodes() -> void:
 	for c in _tree_canvas.get_children():
 		_tree_canvas.remove_child(c)
 		c.queue_free()
+	_tree_canvas.lines = []
+	_tree_canvas.bands = []
+	if not _tree_items.is_empty() and _tree_items[0].has("row"):
+		_build_branch_tree(by_id)
+		return
 	var edges := []
 	for it in _tree_items:
 		var p: Vector2 = pos[it["id"]]
@@ -1494,6 +1521,89 @@ func _build_tree_nodes() -> void:
 	_fill_tree_detail()
 
 
+## Ветки — полосы сверху вниз; у узла своя клетка (ряд, колонка) из Research. Связи — ломаными
+## по промежуткам между узлами: из узла вправо, вниз или вверх в промежутке, в узел слева.
+const BAND_PAD := 40.0
+const BRANCH_COLORS := {"Наука": Color(0.43, 0.7, 1.0), "Транспорт": Color(0.47, 0.8, 0.51),
+	"Добыча": Color(0.84, 0.47, 0.35), "Строительство": Color(0.96, 0.65, 0.16)}
+
+
+func _build_branch_tree(by_id: Dictionary) -> void:
+	var pos := {}
+	var cells := {}
+	var max_c := 0
+	var max_r := 0
+	var band_rows := {}
+	for it in _tree_items:
+		var r: int = it["row"]
+		var c: int = it["col"]
+		pos[it["id"]] = Vector2(BAND_PAD + c * (NODE_W + COL_GAP), r * (NODE_H + ROW_GAP * 2.0))
+		cells[Vector2i(r, c)] = it["id"]
+		max_c = maxi(max_c, c)
+		max_r = maxi(max_r, r)
+		var br: String = it["branch"]
+		var span: Vector2i = band_rows.get(br, Vector2i(r, r))
+		band_rows[br] = Vector2i(mini(span.x, r), maxi(span.y, r))
+	var width := BAND_PAD + (max_c + 1) * (NODE_W + COL_GAP)
+	for br in band_rows:
+		var span: Vector2i = band_rows[br]
+		var top := span.x * (NODE_H + ROW_GAP * 2.0) - ROW_GAP * 0.8
+		var bottom := span.y * (NODE_H + ROW_GAP * 2.0) + NODE_H + ROW_GAP * 0.8
+		_tree_canvas.bands.append([Rect2(0, top, width, bottom - top), BRANCH_COLORS.get(br, MUTED), br])
+	var lanes := {}
+	for it in _tree_items:
+		var needs: Array = it["needs"]
+		for k in needs.size():
+			var n: String = needs[k]
+			if not pos.has(n):
+				continue
+			var a: Dictionary = by_id[n]
+			var src: Vector2 = pos[n] + Vector2(NODE_W, NODE_H * 0.5)
+			var dst: Vector2 = pos[it["id"]] + Vector2(0, NODE_H * 0.5 + (0.0 if needs.size() == 1 else (-12.0 if k == 0 else 12.0)))
+			var col: Color = BRANCH_COLORS.get(a["branch"], MUTED)
+			col = Color(col, 0.95 if a["state"] == "done" else 0.5)
+			if not _tree_selected.is_empty() and (it["id"] == _tree_selected or n == _tree_selected):
+				col = ACCENT
+			var pts := PackedVector2Array()
+			if a["row"] == it["row"] and needs.size() == 1:
+				pts = PackedVector2Array([src, dst])
+			else:
+				# Ряд источника между узлами занят — поворачиваем сразу за источником.
+				var blocked := false
+				for c in range(int(a["col"]) + 1, int(it["col"])):
+					if cells.has(Vector2i(a["row"], c)):
+						blocked = true
+				var g := (src.x + COL_GAP * 0.5) if blocked else (dst.x - COL_GAP * 0.5)
+				g += _lane(lanes, roundi(g), src.y, dst.y, n)
+				pts = PackedVector2Array([src, Vector2(g, src.y), Vector2(g, dst.y), dst])
+			_tree_canvas.lines.append([pts, col])
+	for it in _tree_items:
+		_tree_canvas.add_child(_tree_node(it, pos[it["id"]]))
+	_tree_canvas.custom_minimum_size = Vector2(width, (max_r + 1) * (NODE_H + ROW_GAP * 2.0))
+	_tree_canvas.size = _tree_canvas.custom_minimum_size
+	_tree_canvas.queue_redraw()
+	_clamp_tree_pan()
+	_fill_tree_detail()
+
+
+## Сдвиг вертикали в промежутке, чтобы связи разных узлов не сливались.
+static func _lane(lanes: Dictionary, g: int, y1: float, y2: float, src: String) -> float:
+	var lo := minf(y1, y2)
+	var hi := maxf(y1, y2)
+	for o in [0.0, -10.0, 10.0, -20.0, 20.0]:
+		var ok := true
+		for e in lanes.get(g, []):
+			if e[3] == o and e[2] != src and not (hi < e[0] - 4.0 or lo > e[1] + 4.0):
+				ok = false
+				break
+		if ok:
+			var l: Array = lanes.get(g, [])
+			l.append([lo, hi, src, o])
+			lanes[g] = l
+			return o
+	return 0.0
+
+
 static func _avg_row(needs: Array, row_of: Dictionary) -> float:
 	var s := 0.0
 	var n := 0
@@ -1511,7 +1621,8 @@ func _tree_node(it: Dictionary, p: Vector2) -> Control:
 	b.size = Vector2(NODE_W, NODE_H)
 	b.custom_minimum_size = b.size
 	b.clip_text = true
-	b.text = "%s\n%d очков" % [it["name"], it["cost"]]
+	var spent: int = it.get("spent", 0)
+	b.text = "%s\n%s" % [it["name"], ("на паузе %d / %d" % [spent, it["cost"]]) if spent > 0 and it["state"] != "current" else "%d очков" % it["cost"]]
 	b.add_theme_font_size_override("font_size", 16)
 	# Узлы непрозрачные — линии под ними не просвечивают.
 	var bg := Color(0.26, 0.22, 0.25)
@@ -1554,12 +1665,15 @@ func _fill_tree_detail() -> void:
 		if it["id"] == _tree_selected:
 			sel = it
 	if sel == null:
-		var hint := _label("Нажмите на исследование, чтобы прочитать и начать.\n\nЛистайте дерево пальцем: левее — основы, правее — то, что открывается после них.\n\nЗелёное — изучено, синее — изучается, с оранжевой рамкой — можно начать.", 16, MUTED)
+		var hint := _label("Нажмите на исследование, чтобы прочитать и начать.\n\nЛистайте дерево пальцем: левее — основы, правее — то, что открывается после них.\n\nЗелёное — изучено, синее — изучается, с оранжевой рамкой — можно начать. Переключились на другое — начатое ставится на паузу, очки не пропадают.", 16, MUTED)
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hint.custom_minimum_size = Vector2(320, 0)
 		_tree_detail.add_child(hint)
 		return
-	var t := _label("%s · %d очков" % [sel["name"], sel["cost"]], 20, Color.WHITE)
+	var head := "%s · %d очков" % [sel["name"], sel["cost"]]
+	if sel.has("branch"):
+		head = "%s\n%s" % [head, sel["branch"]]
+	var t := _label(head, 20, Color.WHITE)
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	t.custom_minimum_size = Vector2(320, 0)
 	_tree_detail.add_child(t)
@@ -1579,7 +1693,8 @@ func _fill_tree_detail() -> void:
 			b.text = "Изучается"
 			b.disabled = true
 		"available":
-			b.text = "Изучать"
+			var spent: int = sel.get("spent", 0)
+			b.text = ("Продолжить (%d / %d)" % [spent, sel["cost"]]) if spent > 0 else "Изучать"
 			b.add_theme_stylebox_override("normal", btn_box(ACCENT))
 			b.pressed.connect(sel["pick"])
 		_:
