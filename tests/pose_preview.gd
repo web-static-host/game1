@@ -71,7 +71,8 @@ func _initialize() -> void:
 		var skel: Skeleton3D = model.find_children("*", "Skeleton3D", true, false)[0]
 		_todo.append([skel, pose.get("bones", [])])
 		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
-			if mi.name == "Buddy_FinalBody":
+			# Закрытый глаз — как в игре: белок цвета тела (веко), зрачка нет; ресницы игра дорисовывает.
+			if mi.name == "Buddy_FinalBody" or (pose.get("closed", false) and mi.name == "Approved_EyeWhite"):
 				mi.material_override = blue
 			elif pose.get("closed", false) and mi.name in ModelSprites.FACE_PARTS:
 				mi.visible = false
