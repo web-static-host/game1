@@ -9,7 +9,7 @@ uniform vec3 albedo : source_color = vec3(1.0);
 // Сдвиг по нормали (м) и добавка к нему на макушке.
 uniform float grow = 0.0;
 uniform float top_grow = 0.0;
-// Шерсть: доля оболочки (0 — у кожи, 1 — кончики).
+// Шерсть: доля оболочки (0 — у кожи, 1 — кончики); у волос 1 — купол.
 uniform float shell = 0.0;
 // Тело без пальцев: 1 — палец убран (x — Finger1, … w — Finger4).
 uniform vec4 hide_fingers = vec4(0.0);
@@ -47,7 +47,7 @@ float hex_edge(vec2 p) {
 }
 
 void vertex() {
-	if (effect == 7) {
+	if (effect == 5 || effect == 7) {
 		rest = vec3(UV, 0.0);
 	} else {
 		rest = vec3(UV, UV2.x);
@@ -57,6 +57,8 @@ void vertex() {
 
 void fragment() {
 	vec3 c = albedo;
+	// Насколько красить в цвет (в маске — доля G): 1 — полностью, меньше — светлее.
+	float tintk = 1.0;
 	vec2 p = rest.xy;
 	bool torso = abs(p.x) < 0.86 && p.y > 0.62 && p.y < 2.39;
 	if (effect == 1) {
@@ -106,16 +108,14 @@ void fragment() {
 		}
 		c *= mix(0.7, 1.0, shell);
 	} else if (effect == 5) {
-		// Волосы: шапка по голове, внизу пряди — посередине чёлка короче, по бокам длиннее.
-		float hw = 0.97;
-		float k = clamp(p.x / hw, -1.0, 1.0);
-		float len = 2.25 * (0.1 + 0.26 * pow(abs(k), 3.0));
-		float t = abs(fract((k + 1.0) * 4.5) - 0.5) * 2.0;
-		float line = 2.41 - len * (1.0 - 0.5 * t);
-		if (p.y < line || abs(p.x) > hw + 0.1) {
-			discard;
-		}
-		c *= 0.86 + 0.14 * sin(p.x * 38.0 + p.y * 6.0);
+		// Волосы (купол и пряди, UV.x — вокруг жгута, UV.y — вдоль): у корней светлее, к кончикам
+		// темнее, по прядям — мягкие блики.
+		// Красим не в полную силу — волосы светлее цвета генов, как у рисованного; блики (дуга на
+		// макушке и полоски по прядям) — ещё светлее.
+		c *= mix(1.0, 0.86, smoothstep(0.3, 1.0, p.y));
+		// shell = 1 — купол: у него блик дугой поперёк макушки.
+		float shine = shell > 0.5 ? 1.0 - smoothstep(0.0, 0.035, abs(p.y - 0.22)) : smoothstep(0.6, 1.0, sin(p.x * 6.2831 * 3.0)) * 0.5;
+		tintk = mix(0.8, 0.35, shine);
 	} else if (effect == 6) {
 		// Панцирь: каёмка вокруг туловища и головы (руки и ноги — без), шестиугольные пластины.
 		if ((abs(p.x) > 0.95 && p.y < 2.05) || p.y < 0.55) {
@@ -139,7 +139,7 @@ void fragment() {
 		c *= ring ? 0.68 : 1.0;
 	}
 #ifdef MASK
-	ALBEDO = albedo;
+	ALBEDO = vec3(albedo.r, albedo.g * tintk, albedo.b);
 #else
 	ALBEDO = c;
 	ROUGHNESS = 0.55;
