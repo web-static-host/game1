@@ -56,9 +56,23 @@ const FUEL_VALUE := {"methane": 3.0, "coal": 2.0, "wood": 1.0}
 ## Мастерские: [сырьё, продукция, секунд работы на цикл].
 const RECIPES := {
 	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
-	FORGE: [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
+	FORGE: [{"iron_ore": 1}, {"iron": 3}, 20.0],
 	REFINERY: [{"oil": 2}, {"diesel": 1}, 20.0],
 }
+## Кузница: из любой руды — 3 единицы готового металла; сталь — из железа и угля.
+## Что плавить, решают нормы в карточке кузницы: держать столько-то каждого металла.
+const FORGE_RECIPES := {
+	"iron": [{"iron_ore": 1}, {"iron": 3}, 20.0],
+	"copper": [{"copper_ore": 1}, {"copper": 3}, 20.0],
+	"silver": [{"silver_ore": 1}, {"silver": 3}, 25.0],
+	"gold": [{"gold_ore": 1}, {"gold": 3}, 25.0],
+	"uranium": [{"uranium_ore": 1}, {"uranium": 3}, 30.0],
+	"metal": [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
+}
+## Нормы кузницы по умолчанию.
+const FORGE_TARGETS := {"iron": 30, "copper": 20, "metal": 10, "silver": 0, "gold": 0, "uranium": 0}
+const ORES := ["iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore"]
+
 ## Генераторы: на дровах и угле или на метане.
 const GENERATORS := [GENERATOR, GAS_GEN, DIESEL_GEN]
 ## Корабль: сколько в нём спальных мест, сколько каждого груза держит трюм, сколько энергии

@@ -676,7 +676,8 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 	return NAN
 
 
-const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone"]
+const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone",
+	"iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore"]
 ## Полки стеллажа: верх планок над полом (м, печатает art_src/rooms/cut_sheets.py для rack_tall),
 ## по три ящика на полку — между массивными стойками 1,64 м. Всё нарисовано строго спереди, как комната.
 const RACK_LEVELS := [0.219, 0.836]
@@ -1580,6 +1581,8 @@ const RES_COLORS := {
 	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
 	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
 	"soil": Color(0.36, 0.25, 0.16), "sand": Color(0.85, 0.75, 0.52), "gravel": Color(0.55, 0.52, 0.47),
+	"iron_ore": Color(0.52, 0.28, 0.18), "copper_ore": Color(0.2, 0.52, 0.44), "silver_ore": Color(0.63, 0.65, 0.69),
+	"gold_ore": Color(0.72, 0.6, 0.21), "uranium_ore": Color(0.4, 0.65, 0.24),
 }
 
 

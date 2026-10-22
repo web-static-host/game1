@@ -76,6 +76,7 @@ func _initialize() -> void:
 	test_worlds()
 	test_crew_takeover()
 	test_hearth_on_demand()
+	test_forge_ores()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3290,6 +3291,29 @@ func test_hearth_on_demand() -> void:
 	colony._hearth_need_at = -INF
 	colony._hearth_tick(0.5)
 	check(not hearth.burning and hearth.farm_progress == left, "ушёл — очаг погас, недогоревшее осталось")
+
+
+## Из шахты — руда; в кузнице 1 руда — 3 металла. Что плавить — по нормам кузницы.
+func test_forge_ores() -> void:
+	check(Mat.resource(Mat.IRON_ORE) == "iron_ore" and Mat.resource_name("iron_ore") == "Железная руда", "из шахты идёт руда, а не металл")
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var forge: Project = res[1]
+	forge.purpose = RoomType.FORGE
+	colony.inventory = {"copper_ore": 1, "food": 50}
+	forge.stock = {"iron_ore": 2}
+	colony.drops.clear()
+	forge.targets = {"iron": 30, "copper": 10, "metal": 0, "silver": 0, "gold": 0, "uranium": 0}
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge) == "iron", "плавит то, чего меньше всего до нормы (железо 0/30 — как медь 0/10, первым — железо)")
+	colony._craft(forge)
+	check(colony.drop_total("iron") == 3 and int(forge.stock.get("iron_ore", 0)) == 1, "1 руда — 3 железа (в ящиках кузницы)")
+	forge.targets["iron"] = 3
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge) == "copper", "железо по норме — плавит медь")
+	forge.targets["copper"] = 0
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge).is_empty() and colony.recipe(forge).is_empty(), "всё по норме — кузница стоит")
 
 
 ## Лифты встык одного вида соединяются в один.

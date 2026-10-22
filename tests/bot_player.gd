@@ -605,12 +605,9 @@ func _professions() -> void:
 	var places: Array[Project] = []
 	for t in order:
 		places.append_array(colony.rooms_of(t))
-	# Кузница переводит железо в сталь, пока стали меньше нужного (железо нужно и само).
+	# Кузница плавит руду в металл и железо в сталь — по нормам (под ракету и стройки).
 	for f in colony.rooms_of(RoomType.FORGE):
-		if colony.inventory.get("metal", 0) >= 55 or colony.inventory.get("iron", 0) < 20:
-			for u in colony.assigned_to(f):
-				colony.unassign_work(u)
-			places.erase(f)
+		f.targets = {"iron": 120, "copper": 60, "metal": 55, "silver": 12, "gold": 12, "uranium": 22}
 	for p in colony.projects:
 		if p.is_water_structure() and p.phase == Project.Phase.DONE and (colony.can_fish_from(p) or p.kind == Project.Kind.PIER):
 			places.append(p)

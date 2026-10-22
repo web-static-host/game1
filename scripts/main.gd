@@ -865,6 +865,8 @@ func _show_project(p: Project) -> void:
 				colony.cancel_project(p)
 				_select(null, null), "danger"])
 		controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
+	if p.purpose == RoomType.FORGE and p.phase == Project.Phase.DONE:
+		controls.append_array(_forge_controls(p))
 	# Приоритет: бригада бросает другие стройки и идёт сюда.
 	if colony.can_prioritize(p):
 		actions.push_front(["Снять приоритет" if p.priority else "Приоритет", func() -> void:
@@ -1180,6 +1182,28 @@ func _storage_control(p: Project) -> Dictionary:
 			colony.wake_idle()}
 
 
+## Кузница: что плавит сейчас и нормы — сколько держать каждого металла (как на складе).
+func _forge_rows(p: Project, rows: Array) -> void:
+	var key := colony.forge_pick(p)
+	rows.append({"type": "text", "text": "Из любой руды — 3 единицы металла; сталь — из 2 железа и 1 угля. Плавит то, чего меньше всего до нормы и для чего есть руда. Нормы — ниже. Сейчас: %s." % (
+		Mat.resource_name(key).to_lower() if not key.is_empty() else "ничего — всё по норме или нет руды")})
+
+
+## Нормы кузницы — по ступеньке на каждый металл.
+func _forge_controls(p: Project) -> Array:
+	var controls := []
+	for k in RoomType.FORGE_RECIPES:
+		var src: String = RoomType.FORGE_RECIPES[k][0].keys()[0]
+		controls.append({"label": "%s: есть %d, руды %d" % [Mat.resource_name(k), colony._have_any(k),
+				colony._have_any(src) if src.ends_with("_ore") else colony._have_any("iron")],
+			"value": int(p.targets.get(k, 0)), "min": 0, "max": 500, "step": 10,
+			"changed": func(v: int) -> void:
+				p.targets[k] = v
+				p.forge_at = -INF
+				colony.wake_idle()})
+	return controls
+
+
 func _workers_stepper(value: int, changed: Callable) -> Dictionary:
 	return {"label": "Рабочих", "value": value, "min": 1, "max": maxi(1, colony.adults()), "changed": changed}
 
@@ -1372,7 +1396,11 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
 			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
-				var recipe: Array = RoomType.RECIPES[p.purpose]
+				var recipe: Array = colony.recipe(p)
+				if p.purpose == RoomType.FORGE:
+					_forge_rows(p, rows)
+				if recipe.is_empty():
+					recipe = RoomType.FORGE_RECIPES["iron"]
 				if p.purpose == RoomType.REFINERY:
 					rows.append({"type": "text", "text": "Нефть берёт по трубам из нефтехранилища, дизель туда же и отдаёт — носить ничего не надо. Нужны мастер и энергия."})
 					if colony.rooms_of(RoomType.OIL_TANK).is_empty():

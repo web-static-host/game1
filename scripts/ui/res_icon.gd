@@ -11,6 +11,8 @@ const COLORS := {
 	"oil": Color(0.12, 0.1, 0.08), "limestone": Color(0.83, 0.8, 0.7),
 	"brick": Color(0.72, 0.3, 0.22), "metal": Color(0.62, 0.66, 0.72), "methane": Color(0.55, 0.8, 0.3),
 	"diesel": Color(0.95, 0.65, 0.15),
+	"iron_ore": Color(0.55, 0.3, 0.2), "copper_ore": Color(0.22, 0.55, 0.47), "silver_ore": Color(0.66, 0.68, 0.72),
+	"gold_ore": Color(0.75, 0.62, 0.22), "uranium_ore": Color(0.42, 0.68, 0.26),
 	"soil": Color(0.42, 0.29, 0.18), "sand": Color(0.87, 0.77, 0.53), "gravel": Color(0.58, 0.55, 0.5),
 }
 
@@ -44,7 +46,7 @@ static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
 			ci.draw_circle(c + Vector2(r * 0.55, 0), r * 0.48, col.lightened(0.35))
 			ci.draw_arc(c + Vector2(r * 0.55, 0), r * 0.25, 0, TAU, 12, dark, maxf(1.0, r * 0.1))
 			ci.draw_line(c + Vector2(-r * 0.8, -r * 0.1), c + Vector2(r * 0.2, -r * 0.1), dark, maxf(1.0, r * 0.1))
-		"stone", "limestone", "coal", "salt":
+		"stone", "limestone", "coal", "salt", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore":
 			var pts := PackedVector2Array([
 				c + Vector2(-r * 0.9, r * 0.55), c + Vector2(-r * 0.7, -r * 0.3), c + Vector2(-r * 0.15, -r * 0.75),
 				c + Vector2(r * 0.6, -r * 0.5), c + Vector2(r * 0.95, r * 0.15), c + Vector2(r * 0.6, r * 0.6)])

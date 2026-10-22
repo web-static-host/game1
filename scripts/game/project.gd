@@ -115,6 +115,9 @@ var support_paid := false
 var support_progress := 0.0
 ## Из чего оплачена крепь текущего среза ("wood" или "metal").
 var support_mat := ""
+## Кузница: что плавит сейчас (ключ продукции) и когда выбирала.
+var forge_key := ""
+var forge_at := -INF
 ## Кэш невыкопанных клеток (Colony.remaining_dig): ревизия мира и прямоугольник, к которым он относится.
 var dig_rev := -1
 var dig_rect := Rect2i()

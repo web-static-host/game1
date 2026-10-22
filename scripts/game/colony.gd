@@ -30,7 +30,7 @@ const HAZARD_TEXT := {
 	"methane": "Метан в выработке! Искра от кирки — взрыв. Работы стоят, пока газ не уйдёт (поможет дегазация). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
-const NOTABLE := ["coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "oil"]
+const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil"]
 
 # Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — гаврики не
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
@@ -4256,8 +4256,12 @@ func _work(u: Unit, dt: float) -> void:
 			if _mark_full(cp):
 				_drop(u)
 				return
+			var cr := recipe(cp)
+			if cr.is_empty():
+				_drop(u)
+				return
 			cp.farm_progress += rate * automation_bonus()
-			if cp.farm_progress >= RoomType.RECIPES[cp.purpose][2]:
+			if cp.farm_progress >= cr[2]:
 				cp.farm_progress = 0.0
 				_craft(cp)
 			u.work_t += dt
@@ -5633,7 +5637,10 @@ func _incoming_to(p: Project, key: String) -> int:
 func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
 	if _near_rect(p.rect, dist) == null:
 		return false
-	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	var r := recipe(p)
+	if r.is_empty():
+		return false
+	var need: Dictionary = r[0]
 	for k in need:
 		if RoomType.PIPED.has(k):
 			continue
@@ -6263,10 +6270,51 @@ func _input_have(p: Project, k: String) -> int:
 	return p.stock.get(k, 0) + (inventory.get(k, 0) if offline else 0)
 
 
+## Рецепт мастерской сейчас: [сырьё, продукция, секунд]. У кузницы — по нормам (что ниже
+## нормы и есть из чего); нечего делать — пусто.
+func recipe(p: Project) -> Array:
+	if p.purpose != RoomType.FORGE:
+		return RoomType.RECIPES.get(p.purpose, [])
+	var key := forge_pick(p)
+	return RoomType.FORGE_RECIPES[key] if not key.is_empty() else []
+
+
+## Что кузнице плавить: металл ниже нормы (меньше всего от нормы), сырьё для которого есть.
+## Начатый цикл доводится до конца. Пересчёт — раз в секунду.
+func forge_pick(p: Project) -> String:
+	if p.targets.is_empty():
+		p.targets = RoomType.FORGE_TARGETS.duplicate()
+	if p.farm_progress > 0.0 and not p.forge_key.is_empty():
+		return p.forge_key
+	if game_time - p.forge_at < 1.0:
+		return p.forge_key
+	p.forge_at = game_time
+	var best := ""
+	var best_r := INF
+	for k in RoomType.FORGE_RECIPES:
+		var norm := int(p.targets.get(k, 0))
+		if norm <= 0:
+			continue
+		var have := _have_any(k)
+		if have >= norm:
+			continue
+		var ok := true
+		var need: Dictionary = RoomType.FORGE_RECIPES[k][0]
+		for i in need:
+			if int(p.stock.get(i, 0)) + _have_any(i) < int(need[i]):
+				ok = false
+		if ok and float(have) / norm < best_r:
+			best_r = float(have) / norm
+			best = k
+	p.forge_key = best
+	return best
+
+
 func has_inputs(p: Project) -> bool:
-	if not RoomType.RECIPES.has(p.purpose):
+	var r := recipe(p)
+	if r.is_empty():
 		return false
-	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	var need: Dictionary = r[0]
 	for k in need:
 		if _input_have(p, k) < need[k]:
 			return false
@@ -6298,9 +6346,10 @@ func _burn_fuel(p: Project) -> void:
 ## Чего не хватает мастерской (пусто — всё есть).
 func missing_inputs(p: Project) -> Dictionary:
 	var out := {}
-	if not RoomType.RECIPES.has(p.purpose):
+	var r := recipe(p)
+	if r.is_empty():
 		return out
-	var need: Dictionary = RoomType.RECIPES[p.purpose][0]
+	var need: Dictionary = r[0]
 	for k in need:
 		if _input_have(p, k) < need[k]:
 			out[k] = need[k]
@@ -6369,15 +6418,16 @@ func _produce(p: Project, k: String, n: int) -> void:
 func _craft(p: Project) -> void:
 	if not has_inputs(p):
 		return
-	var recipe: Array = RoomType.RECIPES[p.purpose]
-	for k in recipe[0]:
-		var from_stock := mini(p.stock.get(k, 0), recipe[0][k])
+	var r := recipe(p)
+	for k in r[0]:
+		var from_stock := mini(p.stock.get(k, 0), r[0][k])
 		p.stock[k] = p.stock.get(k, 0) - from_stock
-		_remove(k, recipe[0][k] - from_stock)
+		_remove(k, r[0][k] - from_stock)
 	if RoomType.FUELED.has(p.purpose):
 		_burn_fuel(p)
-	for k in recipe[1]:
-		_produce(p, k, recipe[1][k])
+	for k in r[1]:
+		_produce(p, k, r[1][k])
+	p.forge_at = -INF
 
 
 ## Уровень геологоразведки (0–4).
@@ -6842,11 +6892,19 @@ func advance_offline(dt: float) -> int:
 						_finish_equip(p)
 				Unit.Task.CRAFT:
 					var p: Project = j[3]
+					var cr := recipe(p)
+					if cr.is_empty():
+						continue
 					p.farm_progress += j[1] * step
-					var need: float = RoomType.RECIPES[p.purpose][2]
+					var need: float = cr[2]
 					while p.farm_progress >= need and has_inputs(p) and not output_full(p):
 						p.farm_progress -= need
 						_craft(p)
+						p.forge_at = -INF
+						cr = recipe(p)
+						if cr.is_empty():
+							break
+						need = cr[2]
 					p.farm_progress = minf(p.farm_progress, need)
 				Unit.Task.RESEARCH:
 					_research(j[1] * step)
