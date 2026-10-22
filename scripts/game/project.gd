@@ -341,9 +341,18 @@ func fish_time() -> float:
 
 
 ## Рекомендуемое число рабочих: примерно один на 6–8 клеток площади.
+## Сколько помощников имеет смысл звать: столько, сколько разом может работать.
+## Узкий ход копают с одного конца — один копает, второй крепит; комнату — несколько разом.
 static func recommended_workers(k: int, r: Rect2i, max_workers: int) -> int:
-	var per := 8.0 if k == Kind.ROOM else 6.0
-	return clampi(ceili(r.size.x * r.size.y / per), 1, maxi(1, max_workers))
+	var n := 3
+	match k:
+		Kind.TUNNEL, Kind.LIFT:
+			n = mini(r.size.x, r.size.y) + 1
+		Kind.MINE:
+			n = 4
+		Kind.ROOM:
+			n = clampi(ceili(r.size.x * r.size.y / 6.0), 3, 6)
+	return clampi(n, 1, maxi(1, max_workers))
 
 
 ## Проверка размеров. Остальные проверки (пересечения, опора) — в Colony.

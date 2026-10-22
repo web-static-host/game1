@@ -4049,6 +4049,8 @@ func _move(u: Unit, dt: float) -> void:
 	if u.path_i >= u.path.size():
 		u.state = Unit.State.WORK
 		u.work_t = 0.0
+		if u.takeover != 0:
+			_arrive_takeover(u)
 		if u.task == Unit.Task.DIG or u.task == Unit.Task.HARVEST:
 			if u.target.x != u.cell().x:
 				u.facing = 1 if u.target.x > u.cell().x else -1
@@ -4399,6 +4401,12 @@ func _drop(u: Unit) -> void:
 	u.lift_id = 0
 	u.riding = false
 	u.cargo_end = -1
+	if u.takeover != 0:
+		var o := _unit_by_id(u.takeover)
+		if o != null and o.takeover_by == u.id:
+			o.takeover_by = 0
+		u.takeover = 0
+	u.takeover_by = 0
 	u.task = Unit.Task.NONE
 	u.project_id = 0
 	u.path.clear()
@@ -4527,7 +4535,7 @@ func _assign(u: Unit) -> bool:
 func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, skip := -1) -> bool:
 	var miners := has_crew(Unit.Prof.MINER)
 	var builders := has_crew(Unit.Prof.BUILDER)
-	for p in _projects_for(u):
+	for p in _projects_for(u, dist):
 		if (only >= 0 and p.kind != only) or (skip >= 0 and p.kind == skip):
 			continue
 		if _try_project(u, p, parents, dist, miners, builders):
@@ -4544,13 +4552,10 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 		return false
 	var mine := p.kind == Project.Kind.MINE
 	var crew := _crew_ok(u, mine, miners, builders)
-	var priority := crew and builder_or_miner(u)
-	# Помощник (не своя бригада) берётся, только если своя бригада не стоит без дела.
-	if crew and not priority and _crew_idle(mine):
-		crew = false
-	# На стройку с приоритетом её бригада (строители, у шахты — шахтёры) идёт вся.
-	if workers_on(p) >= p.workers and not (priority and _bump_free_worker(p)) \
-			and not (p.priority and priority_crew(u, p)):
+	# Своя бригада (строители, у шахты — шахтёры) идёт без ограничения мест; места в карточке —
+	# для помощников. Помощник уступает клетку подошедшему строителю (см. _takeover).
+	var own_crew := crew and builder_or_miner(u)
+	if not own_crew and workers_on(p) >= p.workers:
 		return false
 	# Дальняя стройка (глубоко в большой колонии) — путь к ней ищут прицельно.
 	_reach_far(u.cell(), p.rect, parents, dist)
@@ -4577,7 +4582,7 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 		if crew and (u.profession == Unit.Prof.BUILDER or not free_hauler_exists()) \
 				and _try_haul(u, p, parents, dist, true):
 			return true
-	elif (not mine or mine_hauler(u)) and _try_haul(u, p, parents, dist):
+	elif (not mine or may_haul_mine(u)) and _try_haul(u, p, parents, dist):
 		return true
 	return false
 
@@ -4609,7 +4614,7 @@ func _own_project(u: Unit) -> Project:
 	var p := project_by_id(u.last_project)
 	if p == null or p.paused or p.phase != Project.Phase.DIG or not p.blocked.is_empty() or p.bored_by > 0:
 		return null
-	if not works_on(u, p) or workers_on(p) >= p.workers:
+	if not works_on(u, p) or (not builder_or_miner(u) and workers_on(p) >= p.workers):
 		return null
 	# Стройка с приоритетом важнее своей.
 	for q in projects:
@@ -4642,18 +4647,6 @@ static func _crew_ok(u: Unit, mine: bool, miners: bool, _builders: bool) -> bool
 	return true
 
 
-## Стоит ли без дела кто-то из бригады этой стройки (шахтёр — для шахты, строитель — для прочих).
-func _crew_idle(mine: bool) -> bool:
-	var prof := Unit.Prof.MINER if mine else Unit.Prof.BUILDER
-	for o in units:
-		if o.profession == prof and o.workplace == 0 and not o.child and o.state == Unit.State.IDLE \
-				and (o.task == Unit.Task.NONE or o.task == Unit.Task.STROLL) and not o.waiting_own \
-				and o.idle_fails < 3:
-			# Кто уже несколько раз не нашёл себе дела, сюда, видно, не дойдёт — не ждём его.
-			return true
-	return false
-
-
 ## Есть ли в колонии взрослый с этой профессией без места работы (строитель, шахтёр).
 func has_crew(prof: int) -> bool:
 	for o in units:
@@ -4664,16 +4657,23 @@ func has_crew(prof: int) -> bool:
 
 ## Стройки по очереди для гаврика: сначала с приоритетом, потом та, где он только что
 ## работал (докапывает и крепит свою, а не бежит на первую в списке), потом остальные.
-func _projects_for(u: Unit) -> Array[Project]:
+func _projects_for(u: Unit, dist: Dictionary = {}) -> Array[Project]:
 	var last := project_by_id(u.last_project) if u.last_project != 0 else null
-	if last == null or last.priority or not projects.has(last):
-		return projects
-	var out: Array[Project] = projects.duplicate()
-	out.erase(last)
-	var at := 0
-	while at < out.size() and out[at].priority:
-		at += 1
-	out.insert(at, last)
+	var near := {}
+	var out: Array[Project] = []
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		out.append(p)
+		var c = _near_rect(p.rect, dist) if not dist.is_empty() else null
+		near[p.id] = dist[c] if c != null else 1 << 30
+	# Приоритетные — первыми, потом своя, потом ближайшие: на работу идут те, кто рядом.
+	out.sort_custom(func(a: Project, b: Project) -> bool:
+		if a.priority != b.priority:
+			return a.priority
+		if (a == last) != (b == last):
+			return a == last
+		return near[a.id] < near[b.id])
 	return out
 
 
@@ -4746,6 +4746,19 @@ func mine_hauler(u: Unit) -> bool:
 		return true
 	var w := project_by_id(u.workplace)
 	return w != null and w.purpose == RoomType.STORAGE
+
+
+## Носить в шахту и из шахты: работники складов и подсобные, а если их в колонии нет —
+## любой свободный (иначе добытое в шахте лежало бы вечно).
+func may_haul_mine(u: Unit) -> bool:
+	if mine_hauler(u):
+		return true
+	if builder_or_miner(u):
+		return false
+	for o in units:
+		if not o.child and mine_hauler(o):
+			return false
+	return true
 
 
 ## Куча в шахте (или у её края).
@@ -4943,6 +4956,39 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 				best_d = spot[1]
 				best_cell = c
 				best_stand = spot[0]
+	# Свободных клеток нет, а строитель (шахтёр) к своей клетке ещё далеко идёт — помощник,
+	# который ближе, копает её, пока тот не дойдёт (дойдёт — сменит).
+	if best_cell == null and not builder_or_miner(u):
+		for c in now:
+			var o := _unit_by_id(int(reserved.get(c, 0)))
+			if o == null or o.task != Unit.Task.DIG or o.state != Unit.State.MOVE or o.takeover != 0 \
+					or not builder_or_miner(o):
+				continue
+			var spot := _work_spot(c, dist)
+			if spot[0] != null and spot[1] + CREW_LEAD < o.path.size() - o.path_i and spot[1] < best_d:
+				best_d = spot[1]
+				best_cell = c
+				best_stand = spot[0]
+		if best_cell != null:
+			var crew := _unit_by_id(int(reserved[best_cell]))
+			_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
+			crew.takeover = u.id
+			u.takeover_by = crew.id
+			return true
+	# Свободных клеток нет: строитель (шахтёр) идёт к клетке, которую копает помощник, —
+	# дойдёт и сменит его.
+	var helper := 0
+	if best_cell == null and builder_or_miner(u):
+		for c in now:
+			var o := _unit_by_id(int(reserved.get(c, 0)))
+			if o == null or o.takeover_by != 0 or builder_or_miner(o) or o.task != Unit.Task.DIG:
+				continue
+			var spot := _work_spot(c, dist)
+			if spot[0] != null and spot[1] < best_d:
+				best_d = spot[1]
+				best_cell = c
+				best_stand = spot[0]
+				helper = o.id
 	if best_cell == null:
 		# «Нет доступа» — только если к стройке вообще никто не подобрался.
 		if any_free and workers_on(p) == 0 and p.blocked.is_empty():
@@ -4950,9 +4996,10 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 		return false
 	if p.blocked.begins_with("Нет доступа"):
 		p.blocked = ""
-	if _hazard_stop(p, best_cell):
+	if helper == 0 and _hazard_stop(p, best_cell):
 		return false
 	_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
+	_mark_takeover(u, helper)
 	return true
 
 
@@ -5008,9 +5055,13 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 
 ## Крепь выкопанного среза: гаврик встаёт в срезе или рядом.
 func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
-	# Крепь среза ставит один гаврик.
+	# Крепь среза ставит один гаврик; помощника сменяет подошедший строитель (шахтёр).
+	var helper := 0
 	if reserved.has("s%d" % p.id):
-		return false
+		var o := _unit_by_id(int(reserved["s%d" % p.id]))
+		if not builder_or_miner(u) or o == null or o.takeover_by != 0 or builder_or_miner(o) or o.task != Unit.Task.SUPPORT:
+			return false
+		helper = o.id
 	var i := slice_to_support(p)
 	if i < 0 or not _pay_support(p, i):
 		return false
@@ -5024,7 +5075,47 @@ func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) ->
 	if best == null:
 		return false
 	_start(u, Unit.Task.SUPPORT, p.slice_cells(i)[0], best, p.id, parents)
+	_mark_takeover(u, helper)
 	return true
+
+
+## Насколько ближе (шагов) должен быть помощник, чтобы начать вместо идущего строителя.
+const CREW_LEAD := 6
+
+
+## Строитель идёт сменить помощника helper (0 — никого): тот работает, пока смена не дойдёт.
+func _mark_takeover(u: Unit, helper: int) -> void:
+	u.takeover = helper
+	var o := _unit_by_id(helper)
+	if o != null:
+		o.takeover_by = u.id
+		# Место за помощником, пока смена в пути: его бросить нельзя (снимут с работы).
+		var key = _reserve_key(o)
+		if key != null:
+			reserved[key] = o.id
+
+
+## Смена дошла: помощник уступает работу и идёт искать другое дело.
+func _arrive_takeover(u: Unit) -> void:
+	var o := _unit_by_id(u.takeover)
+	u.takeover = 0
+	if o == null:
+		return
+	o.takeover_by = 0
+	if o.task == u.task and o.project_id == u.project_id and (o.target == u.target or u.task == Unit.Task.SUPPORT):
+		_drop(o)
+	var key = _reserve_key(u)
+	if key != null:
+		reserved[key] = u.id
+
+
+func _unit_by_id(uid: int) -> Unit:
+	if uid == 0:
+		return null
+	for o in units:
+		if o.id == uid:
+			return o
+	return null
 
 
 func _try_build(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dictionary) -> bool:
@@ -5347,12 +5438,10 @@ func _room_stand(room: Project, dist: Dictionary) -> Variant:
 	return best
 
 
-## Склад (амбар) принимает добро, только когда на него назначен работник.
+## Склад (амбар) принимает добро, пока он не на паузе — работник не нужен (работник склада
+## сам добывает недостающее и в первую очередь разносит добытое).
 func store_staffed(room: Project) -> bool:
-	# Трюм корабля принимает всегда — экипаж на месте.
-	if room.purpose == RoomType.SHIP:
-		return true
-	return not room.paused and not assigned_to(room).is_empty()
+	return room.purpose == RoomType.SHIP or not room.paused
 
 
 ## Есть ли куда нести ресурс: склад или амбар для него с назначенным работником.
@@ -5365,7 +5454,7 @@ func can_store(key: String) -> bool:
 
 ## Свободный гаврик уносит лежащее на земле на склад (если там есть место).
 func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
-	var may_mine := mine_hauler(u)
+	var may_mine := may_haul_mine(u)
 	var best = null
 	var best_c := Vector2i.ZERO
 	var best_k := ""
@@ -5464,11 +5553,13 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_o
 	if now_only:
 		# Только то, что нужно прямо сейчас и ещё не принесено и не несут.
 		var now := _needed_now(p)
+		var rest := remaining(p)
 		left = {}
 		for k in now:
 			var n: int = now[k] - int(p.delivered.get(k, 0)) - in_transit(p, k)
 			if n > 0:
-				left[k] = n
+				# Раз уж пошёл — берёт на несколько срезов вперёд (полную ношу), а не одно бревно.
+				left[k] = maxi(n, mini(carry_cap(), int(rest.get(k, 0))))
 	if left.is_empty() or _near_rect(p.rect, dist) == null:
 		return false
 	# Сначала то, без чего стройка стоит прямо сейчас.
@@ -5504,10 +5595,18 @@ func _is_supply(p: Project) -> bool:
 
 ## Переноска: материалы на стройки, сырьё в мастерские, продукция и добыча — на склад и в амбар.
 func _try_logistics(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	# Сначала — крепь туда, где копка стоит без дерева: иначе копатель пойдёт за ним сам.
+	for p in projects:
+		if p.paused or p.phase != Project.Phase.DIG or _needed_now(p).is_empty():
+			continue
+		if p.kind == Project.Kind.MINE and not may_haul_mine(u):
+			continue
+		if _try_haul(u, p, parents, dist):
+			return true
 	for p in projects:
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 			continue
-		if p.kind == Project.Kind.MINE and not mine_hauler(u):
+		if p.kind == Project.Kind.MINE and not may_haul_mine(u):
 			continue
 		if _try_haul(u, p, parents, dist):
 			return true
@@ -5569,15 +5668,6 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 				u.to_store = false
 				_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
 				return true
-	return false
-
-
-## Строитель пришёл, а все места на стройке заняты свободными — один из них уступает.
-func _bump_free_worker(p: Project) -> bool:
-	for o in units:
-		if o.project_id == p.id and is_free(o) and o.task not in [Unit.Task.SLEEP, Unit.Task.EAT, Unit.Task.HAUL]:
-			_drop(o)
-			return true
 	return false
 
 

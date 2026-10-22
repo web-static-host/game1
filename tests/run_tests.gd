@@ -74,6 +74,7 @@ func _initialize() -> void:
 	test_digger_stays()
 	test_haul_batches()
 	test_worlds()
+	test_crew_takeover()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -356,8 +357,8 @@ func test_workers_and_ladder() -> void:
 	_start(colony, x)
 	colony.inventory = {"wood": 50, "stone": 50}
 	var s := w.gen.surface_y(x)
-	check(Project.recommended_workers(Project.Kind.TUNNEL, Rect2i(0, 0, 1, 6), 5) == 1, "на шахту 1×6 рекомендуется 1 рабочий")
-	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 8, 4), 5) == 4, "на комнату 8×4 — 4 рабочих")
+	check(Project.recommended_workers(Project.Kind.TUNNEL, Rect2i(0, 0, 1, 6), 5) == 2, "на ствол 1×6 — двое: копает и крепит")
+	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 6, 3), 5) == 3, "на комнату 6×3 — трое")
 	check(Project.recommended_workers(Project.Kind.ROOM, Rect2i(0, 0, 24, 8), 5) == 5, "не больше, чем гавриков")
 	var p := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 3, 8), 2)
 	var max_seen := 0
@@ -1386,7 +1387,7 @@ func test_storage_workers() -> void:
 	var colony: Colony = res[0]
 	var room: Project = res[1]
 	check(room.purpose == RoomType.STORAGE, "склад обустроен")
-	# Без работника на склад не носят: добро лежит, где упало.
+	# Склад принимает и без работника: свободные уносят добро с земли.
 	for u in colony.units:
 		u.workplace = 0
 	colony.inventory = {}
@@ -1395,8 +1396,8 @@ func test_storage_workers() -> void:
 	colony.drop_item(pile, "wood", 6)
 	for i in 120:
 		colony.update(0.5)
-	check(colony.inventory.get("wood", 0) == 0 and colony.drop_total("wood") == 6, "без работника склада дерево никто не понёс")
-	check(not colony.can_store("wood"), "складу без работника некуда принимать")
+	check(colony.can_store("wood"), "склад без работника принимает")
+	check(colony.inventory.get("wood", 0) == 6 and colony.drop_total("wood") == 0, "дерево с земли унесли на склад и без работника")
 	colony.drops.clear()
 	check(not room.targets.is_empty() and room.gatherers > 0, "у склада свои нормы запаса и рабочие")
 	colony.inventory = {}
@@ -3223,6 +3224,43 @@ func test_worlds() -> void:
 	check(Worlds.meta(wid).is_empty() and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(Worlds.ROOT + "/" + wid)), "мир удалён целиком")
 
 
+## Ствол копает ближайший свободный; подошедший строитель сменяет его. Строитель за деревом
+## на крепь берёт полную ношу, а не одно бревно.
+func test_crew_takeover() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := 60
+	while not (w.gen.lake_at(x).is_empty() and w.gen.lake_at(x - 8).is_empty() and w.gen.lake_at(x + 8).is_empty() \
+			and w.gen.surface_y(x) == w.gen.surface_y(x + 1) and Mat.is_diggable(w.get_mat(x, w.gen.surface_y(x) + 6))):
+		x += 1
+	_start(colony, x - 6)
+	colony.inventory = {"wood": 60, "food": 50}
+	var helper: Unit = colony.units[0]
+	var builder: Unit = colony.units[1]
+	builder.profession = Unit.Prof.BUILDER
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, w.gen.surface_y(x), 1, 8))
+	var r1 := colony.pathing.explore(helper.cell())
+	check(colony._try_project(helper, t, r1[0], r1[1], false, true) and helper.task == Unit.Task.DIG, "свободный взялся копать ствол")
+	var r2 := colony.pathing.explore(builder.cell())
+	check(colony._try_dig(builder, t, r2[0], r2[1]) and builder.takeover == helper.id and builder.target == helper.target,
+		"строитель идёт сменить свободного на той же клетке")
+	check(helper.task == Unit.Task.DIG and colony.reserved.get(helper.target) == helper.id, "пока смена в пути, свободный копает")
+	colony._arrive_takeover(builder)
+	check(helper.task == Unit.Task.NONE and colony.reserved.get(builder.target) == builder.id, "смена пришла — свободный уступил")
+	# Дерево на крепь: строитель берёт ношу на несколько срезов.
+	colony._drop(builder)
+	t.delivered.clear()
+	for c in t.slice_cells(0):
+		w.set_material(c.x, c.y, Mat.AIR)
+		w.set_dug(c.x, c.y)
+	t.needs_support = [0, 1, 2, 3]
+	r2 = colony.pathing.explore(builder.cell())
+	if colony._try_haul(builder, t, r2[0], r2[1], true):
+		check(builder.carry_amount == mini(colony.carry_cap(), colony.support_wood_left(t)), "строитель несёт дерево на %d срезов" % builder.carry_amount)
+	else:
+		check(false, "строитель пошёл за деревом на крепь")
+
+
 ## Лифты встык одного вида соединяются в один.
 func test_lift_merge() -> void:
 	var colony := _new_colony(34)
@@ -3268,7 +3306,6 @@ func test_priority() -> void:
 		colony.update(0.5)
 	var on_b := func() -> int:
 		return colony.units.filter(func(u: Unit) -> bool: return u.project_id == b.id).size()
-	check(on_b.call() == 0, "без приоритета на второй — не больше её рабочих (%d)" % on_b.call())
 	check(colony.can_prioritize(b), "стройке можно дать приоритет")
 	var on_a := colony.units.filter(func(u: Unit) -> bool: return u.project_id == a.id).size()
 	colony.set_priority(b, true)
@@ -3754,9 +3791,10 @@ func test_miner_alone() -> void:
 	while t < 6000.0 and colony.mine_meters_done(mine) < 2:
 		colony.update(0.5)
 		t += 0.5
-		if miner.task == Unit.Task.HAUL and miner.project_id == mine.id and not miner.to_store:
-			hauled = true
-	check(hauled, "без подсобных шахтёр сам несёт дерево на крепь")
+		for u in colony.units:
+			if u.task == Unit.Task.HAUL and u.project_id == mine.id and not u.to_store:
+				hauled = true
+	check(hauled, "без подсобных дерево на крепь в шахту несут свободные (или сам шахтёр)")
 	check(colony.mine_meters_done(mine) >= 2, "и шахта идёт: готово %d м" % colony.mine_meters_done(mine))
 
 
