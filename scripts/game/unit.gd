@@ -103,6 +103,8 @@ var last_project := 0
 var last_work_t := -1.0e9
 ## Ждёт рядом следующей работы своей выработки.
 var waiting_own := false
+## Облучён ураном: живёт на 10% меньше, дети — всегда с мутацией.
+var irradiated := false
 ## Строитель идёт сменить помощника (его id); помощника идёт сменять гаврик takeover_by.
 var takeover := 0
 var takeover_by := 0
@@ -258,7 +260,7 @@ func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": name, "sex": sex, "pos": [pos.x, pos.y], "skills": skills, "look": look,
 		"energy": energy, "satiety": satiety, "profession": profession, "child": child, "age": age,
-		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index,
+		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index, "irradiated": irradiated,
 		"health": health, "genome": Genetics.to_save(genome) if not genome.is_empty() else {},
 		"mother_id": mother_id, "father_id": father_id, "mother_name": mother_name, "father_name": father_name,
 		"workplace": workplace, "lifespan": lifespan, "generation": generation,
@@ -288,6 +290,7 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.age = float(d.get("age", 0.0))
 	u.partner_id = int(d.get("partner_id", 0))
 	u.pregnancy = float(d.get("pregnancy", -1.0))
+	u.irradiated = bool(d.get("irradiated", false))
 	u.bed_room = int(d.get("bed_room", 0))
 	u.bed_index = int(d.get("bed_index", 0))
 	u.health = float(d.get("health", 100.0))

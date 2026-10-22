@@ -768,6 +768,8 @@ func _unit_spec(u: Unit) -> Dictionary:
 		tags.append([age_line, Color.WHITE])
 		if u.is_elder():
 			tags.append(["Пожилой — работает и ходит медленнее, детей не будет", Color(1.0, 0.75, 0.5)])
+		if u.irradiated:
+			tags.append(["Облучён ураном — живёт на 10% меньше, дети будут мутантами", Color(0.6, 1.0, 0.35)])
 		var pers: String = g.get("personality", "")
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])
@@ -1395,8 +1397,10 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
-			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
+			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
 				var recipe: Array = colony.recipe(p)
+				if p.purpose == RoomType.ENRICHMENT:
+					rows.append({"type": "warning", "text": "Уран радиоактивен: мастер фабрики, носильщики урана и кто копает урановую руду облучаются — живут на 10% меньше, а их дети всегда рождаются с мутацией."})
 				if p.purpose == RoomType.FORGE:
 					_forge_rows(p, rows)
 				if recipe.is_empty():
@@ -2000,7 +2004,7 @@ const ROOM_PICS := {
 	RoomType.PUMP: "pump/pump_on", RoomType.VENT: "degas/compressor", RoomType.DEGAS: "degas/tank_2",
 	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
 	RoomType.GAS_GEN: "generator/gas_on", RoomType.OIL_PUMP: "pump/pump_on", RoomType.OIL_TANK: "degas/tank_3",
-	RoomType.REFINERY: "lab/still", RoomType.DIESEL_GEN: "generator/coal_on",
+	RoomType.REFINERY: "lab/still", RoomType.DIESEL_GEN: "generator/coal_on", RoomType.ENRICHMENT: "lab/crystal",
 }
 
 
@@ -2018,7 +2022,7 @@ func _build_room_items() -> Array:
 	var order := [RoomType.NONE, RoomType.HOME, RoomType.STORAGE, RoomType.GRANARY, RoomType.FARM, RoomType.DINING,
 		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
 		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN,
-		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN, RoomType.LAUNCHPAD]
+		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN, RoomType.ENRICHMENT, RoomType.LAUNCHPAD]
 	var out := []
 	for t in order:
 		var need: String = RoomType.REQUIRES.get(t, "")

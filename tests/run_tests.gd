@@ -77,6 +77,7 @@ func _initialize() -> void:
 	test_crew_takeover()
 	test_hearth_on_demand()
 	test_forge_ores()
+	test_uranium()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3314,6 +3315,32 @@ func test_forge_ores() -> void:
 	forge.targets["copper"] = 0
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge).is_empty() and colony.recipe(forge).is_empty(), "всё по норме — кузница стоит")
+
+
+## Уран: обогащают только на фабрике; облучённый живёт на 10% меньше, его дети — мутанты.
+func test_uranium() -> void:
+	check(not RoomType.FORGE_RECIPES.has("uranium") and RoomType.RECIPES[RoomType.ENRICHMENT][0].has("uranium_ore"),
+		"урановую руду обогащает только фабрика")
+	var colony := _new_colony(33)
+	_start(colony, _find_solid_column(colony.world, 40))
+	var mom: Unit = colony.units[0]
+	var dad: Unit = colony.units[1]
+	mom.lifespan = 1000.0
+	colony.irradiate(mom)
+	colony.irradiate(mom)
+	check(mom.irradiated and is_equal_approx(mom.lifespan, 900.0), "облучение — один раз: жизнь на 10%% короче (%.0f)" % mom.lifespan)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var kinds := {}
+	var all := true
+	for i in 400:
+		var g := Genetics.child(mom.genome, dad.genome, rng, true)
+		all = all and Genetics.is_mutant(g)
+		kinds[g["mutations"][-1]] = int(kinds.get(g["mutations"][-1], 0)) + 1
+	check(all, "у облучённых родителей дети всегда мутанты")
+	check(kinds.size() == Genetics.MUTATIONS.size() and int(kinds.get("glow", 0)) > 8, "любая мутация с равной вероятностью, и самые редкие тоже (%d видов)" % kinds.size())
+	var u := Unit.from_dict(mom.to_dict())
+	check(u.irradiated, "облучение сохраняется")
 
 
 ## Лифты встык одного вида соединяются в один.

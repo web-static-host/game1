@@ -3,12 +3,12 @@ extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят гаврики.
 
 enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN,
-	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD }
+	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD, ENRICHMENT }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
 	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор",
 	"Нефтекачалка", "Нефтехранилище", "Нефтезавод", "Дизельный генератор",
-	"Корабль", "Космодром"]
+	"Корабль", "Космодром", "Обогатительная фабрика"]
 ## Еда хранится в амбаре, всё остальное — на складе.
 ## Еда: грибы с фермы ("food" — ключ с тех пор, как еда была одна), рыба и ягоды.
 const FOOD_KEYS := ["food", "fish", "berries"]
@@ -22,7 +22,7 @@ const HINTS := [
 	"охлаждает воздух вокруг (20 м)",
 	"учёные открывают технологии",
 	"обжиг: 2 глины + топливо (1 дерево или ½ угля) → 2 кирпича",
-	"плавка: 2 железа + 1 уголь → 1 сталь",
+	"плавка: 1 руда → 3 металла (железо, медь, серебро, золото; уран — только на обогатительной фабрике), 2 железа + 1 уголь → 1 сталь",
 	"энергия: сжигает уголь или дрова",
 	"собирает метан вокруг (10, 20 или 40 м — чем больше комната, тем дальше) в свой бак — топливо для газового генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
@@ -34,12 +34,13 @@ const HINTS := [
 	"энергия: сжигает дизельное топливо — мощнее и вдвое дольше на единице",
 	"приземлившийся корабль: жильё на 10 человек, воздух, тепло, свет и трюм с грузом",
 	"стартовый стол на поверхности: здесь собирают ракету и отправляют экспедицию на другую планету",
+	"обогащение урана: 1 урановая руда → 3 урана; нужна энергия. Уран радиоактивен: кто с ним работает, живёт на 10% меньше, а его дети — всегда мутанты",
 ]
 ## Взрываются при обрушении (бак газа; потом — хранилище нефти).
 const EXPLOSIVE := [DEGAS, OIL_TANK]
 ## Назначения, которые нужно сначала изучить.
 const REQUIRES := {KILN: "bricks", FORGE: "metallurgy", GENERATOR: "electricity", GAS_GEN: "electricity", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
-	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", SHIP: "_ship", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
+	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", ENRICHMENT: "nuclear_engine", SHIP: "_ship", HEARTH_BRICK: "bricks", HEARTH_GAS: "gas_heating"}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
@@ -58,19 +59,21 @@ const RECIPES := {
 	KILN: [{"clay": 2}, {"brick": 2}, 20.0],
 	FORGE: [{"iron_ore": 1}, {"iron": 3}, 20.0],
 	REFINERY: [{"oil": 2}, {"diesel": 1}, 20.0],
+	ENRICHMENT: [{"uranium_ore": 1}, {"uranium": 3}, 40.0],
 }
-## Кузница: из любой руды — 3 единицы готового металла; сталь — из железа и угля.
+## Кузница: из любой руды (кроме урановой) — 3 единицы готового металла; сталь — из железа и угля.
 ## Что плавить, решают нормы в карточке кузницы: держать столько-то каждого металла.
 const FORGE_RECIPES := {
 	"iron": [{"iron_ore": 1}, {"iron": 3}, 20.0],
 	"copper": [{"copper_ore": 1}, {"copper": 3}, 20.0],
 	"silver": [{"silver_ore": 1}, {"silver": 3}, 25.0],
 	"gold": [{"gold_ore": 1}, {"gold": 3}, 25.0],
-	"uranium": [{"uranium_ore": 1}, {"uranium": 3}, 30.0],
 	"metal": [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
 }
 ## Нормы кузницы по умолчанию.
-const FORGE_TARGETS := {"iron": 30, "copper": 20, "metal": 10, "silver": 0, "gold": 0, "uranium": 0}
+const FORGE_TARGETS := {"iron": 30, "copper": 20, "metal": 10, "silver": 0, "gold": 0}
+## Радиоактивное: кто копает, носит или обогащает — облучается.
+const RADIOACTIVE := ["uranium_ore", "uranium"]
 const ORES := ["iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore"]
 
 ## Генераторы: на дровах и угле или на метане.
@@ -92,7 +95,7 @@ const PIPED := ["methane", "oil", "diesel"]
 ## Нефтехранилище: сколько нефти (и отдельно дизеля) держит на метр ширины.
 const OIL_PER_CELL := 40
 ## Сколько энергии берут потребители и даёт генератор (условные единицы).
-const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5, OIL_PUMP: 10, REFINERY: 10}
+const POWER_USE := {PUMP: 5, VENT: 5, LAB: 5, FARM: 5, OIL_PUMP: 10, REFINERY: 10, ENRICHMENT: 10}
 const POWER_MAKE := 20
 ## На сколько секунд хватает 1 метана, 1 угля или 2 дров.
 const FUEL_TIME := 40.0
@@ -231,6 +234,8 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 			return {"iron": 4 * blocks(p), "stone": 6}
 		REFINERY:
 			return {"iron": 12, "copper": 6, "brick": 8}
+		ENRICHMENT:
+			return {"metal": 12, "copper": 8, "brick": 10}
 		DIESEL_GEN:
 			return {"iron": 10, "copper": 6, "metal": 4}
 		LAUNCHPAD:

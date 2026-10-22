@@ -2966,6 +2966,8 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 			var depth := c.y - world.gen.surface_y(c.x)
 			amount = 1 + int(WorldGen.hash01(c.x, c.y, 17) * (2.0 + depth / 250.0))
 		drop_item(c, key, amount, p)
+		if RoomType.RADIOACTIVE.has(key):
+			irradiate(u)
 		if p != null:
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
@@ -3357,7 +3359,8 @@ func _birth(mother: Unit) -> void:
 	mother.pregnancy = -1.0
 	var father := unit_by_id(mother.partner_id)
 	# Гены: по копии от мамы и от папы, иногда мутация.
-	var genome := Genetics.child(mother.genome, father.genome if father != null else mother.genome, rng)
+	var rad := mother.irradiated or (father != null and father.irradiated)
+	var genome := Genetics.child(mother.genome, father.genome if father != null else mother.genome, rng, rad)
 	var baby := _new_unit(Unit.Sex.MALE, mother.pos, genome)
 	baby.child = true
 	baby.age = 0.0
@@ -3382,6 +3385,20 @@ func _birth(mother: Unit) -> void:
 		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info")
 
 
+## Уран радиоактивен: кто его копает, носит или обогащает — облучён (один раз): живёт на
+## 10% меньше, а дети его — всегда с мутацией.
+const RADIATION_LIFE := 0.9
+
+
+func irradiate(u: Unit) -> void:
+	if u == null or u.irradiated:
+		return
+	u.irradiated = true
+	if u.lifespan > 0.0:
+		u.lifespan *= RADIATION_LIFE
+	_log("%s %s ураном — проживёт на 10%% меньше, дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning")
+
+
 # --- Места работы: игрок ставит конкретных гавриков (как в Fallout Shelter) ---------------
 
 ## Куда можно назначить гаврика: ферма, лаборатория, печь, кузница, склад, пристань.
@@ -3390,7 +3407,7 @@ func is_workplace(p: Project) -> bool:
 		return false
 	if p.is_water_structure():
 		return true
-	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY,
+	return p.kind == Project.Kind.ROOM and p.purpose in [RoomType.FARM, RoomType.LAB, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT,
 		RoomType.STORAGE, RoomType.GRANARY]
 
 
@@ -3511,7 +3528,7 @@ func work_task(p: Project) -> int:
 			return Unit.Task.FARM
 		RoomType.LAB:
 			return Unit.Task.RESEARCH
-		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
 			return Unit.Task.CRAFT
 		RoomType.STORAGE:
 			return Unit.Task.HARVEST
@@ -3594,7 +3611,7 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
-		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
 			# Нет сырья — мастер сам приносит его со склада в свою мастерскую.
 			if has_inputs(p):
 				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
@@ -4260,6 +4277,8 @@ func _work(u: Unit, dt: float) -> void:
 			if cr.is_empty():
 				_drop(u)
 				return
+			if cp.purpose == RoomType.ENRICHMENT:
+				irradiate(u)
 			cp.farm_progress += rate * automation_bonus()
 			if cp.farm_progress >= cr[2]:
 				cp.farm_progress = 0.0
@@ -5783,6 +5802,8 @@ func _haul_pickup(u: Unit) -> void:
 	if take <= 0:
 		_drop(u)
 		return
+	if RoomType.RADIOACTIVE.has(u.carry_key):
+		irradiate(u)
 	u.carry_amount = take
 	u.haul_stage = 1
 	var reach := pathing.explore(u.cell())
@@ -7173,7 +7194,7 @@ func _offline_workplace(u: Unit, taken: Dictionary) -> Array:
 			if not research.current.is_empty():
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.RESEARCH, p]
-		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY:
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
 			if has_inputs(p):
 				taken[slot] = taken.get(slot, 0) + 1
 				return ["c%d" % p.id, Unit.Task.CRAFT, p]

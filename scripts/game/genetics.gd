@@ -100,7 +100,9 @@ static func _personality(rng: RandomNumberGenerator) -> String:
 
 
 ## Ребёнок двух родителей.
-static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+## irradiated — кто-то из родителей облучён ураном: мутация у ребёнка всегда, любая
+## с одинаковой вероятностью (без учёта редкости).
+static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGenerator, irradiated := false) -> Dictionary:
 	var g := {"mutations": []}
 	for gene in ["color", "shape", "eyes", "fingers", "size", "pattern", "hair_color"] + DOMINANT + RECESSIVE:
 		var a: Array = mother[gene]
@@ -113,7 +115,10 @@ static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGener
 	g["size_pick"] = rng.randi() % 2
 	g["female"] = rng.randf() < 0.5
 	g["personality"] = _personality(rng)
-	if rng.randf() < MUTATION_CHANCE:
+	if irradiated:
+		var kinds := MUTATIONS.keys()
+		mutate(g, rng, kinds[rng.randi() % kinds.size()])
+	elif rng.randf() < MUTATION_CHANCE:
 		mutate(g, rng)
 	return g
 
