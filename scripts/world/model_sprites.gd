@@ -362,11 +362,8 @@ func _bake(key: String, attempt: int):
 				var a := 0.72 if kind == "pattern" else 0.45
 				parts.append([_dup(body), _fx(eff, false, Color(a, a, a), prm), _fx(eff, true, Color(1, 1, 0), prm)])
 			"hair":
-				var hair := _hair_meshes()
-				for j in hair.size():
-					# Первый — купол (на нём дуга блика), остальные — пряди.
-					var prm := {"shell": 1.0 if j == 0 else 0.0}
-					parts.append([_copy(model, hair[j], Transform3D()), _fx(5, false, Color(1, 1, 1), prm, false), _fx(5, true, Color(1, 1, 0), prm, false)])
+				for mesh: Mesh in _hair_meshes():
+					parts.append([_copy(model, mesh, Transform3D()), _fx(5, false, Color(1, 1, 1), {}, false), _fx(5, true, Color(1, 1, 0), {}, false)])
 			"horn":
 				parts.append([_copy(model, _horn_mesh(), Transform3D()), _fx(7, false, Color(0.98, 0.93, 0.8), {}, false), kept])
 			"antennae":
@@ -581,56 +578,45 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 	return [parts, pts, er]
 
 
-## Причёска, как у рисованного: пышный купол над макушкой и пряди — посередине чёлка короче,
-## по бокам длиннее; сзади и по бокам пряди закрывают края головы.
+## Причёска по прототипу автора (art_src/characters/hair/prototype_hair.png): «цветок» из семи
+## гладких загнутых лепестков из одной точки на макушке — средний вверх с кончиком вправо, по паре
+## вверх-в стороны и вбок, нижняя пара спадает вперёд по бокам лба. Лепестки: [корень, изгиб,
+## кончик (м, оси модели), полуширина] — сняты с картинки (ширина причёски — 1,6 м), сзади вперёд.
+const HAIR_PETALS := [
+	[Vector3(-0.049, 2.384, 0.0), Vector3(-0.348, 2.82, 0.025), Vector3(-0.65, 2.652, 0.05), 0.11],
+	[Vector3(0.073, 2.425, 0.0), Vector3(0.357, 2.778, 0.025), Vector3(0.609, 2.595, 0.05), 0.11],
+	[Vector3(-0.122, 2.36, 0.12), Vector3(-0.593, 2.682, 0.21), Vector3(-0.804, 2.173, 0.3), 0.11],
+	[Vector3(0.171, 2.376, 0.12), Vector3(0.573, 2.67, 0.21), Vector3(0.796, 2.181, 0.3), 0.11],
+	[Vector3(0.0, 2.36, 0.2), Vector3(-0.171, 2.713, 0.22), Vector3(0.341, 2.823, 0.24), 0.16],
+	[Vector3(-0.057, 2.352, 0.3), Vector3(-0.406, 2.558, 0.39), Vector3(-0.463, 2.035, 0.48), 0.11],
+	[Vector3(0.057, 2.352, 0.3), Vector3(0.364, 2.582, 0.39), Vector3(0.414, 2.051, 0.48), 0.11],
+]
+
+
 func _hair_meshes() -> Array:
 	if _uv_meshes.has("hair"):
 		return _uv_meshes["hair"]
 	var out := []
-	# Купол: полусфера-шапка (низ уходит в голову), чуть выпуклая вперёд над лбом.
-	var dome := SphereMesh.new()
-	dome.radius = 1.0
-	dome.height = 2.0
-	var st := SurfaceTool.new()
-	st.create_from(dome, 0)
-	var arr := st.commit_to_arrays()
-	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-	var nrm: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
-	for i in v.size():
-		var q := v[i]
-		v[i] = Vector3(q.x * 1.04, 2.42 + q.y * 0.44, q.z * 0.5)
-		nrm[i] = Vector3(q.x / 1.04, q.y / 0.44, q.z / 0.5).normalized()
-	arr[Mesh.ARRAY_VERTEX] = v
-	arr[Mesh.ARRAY_NORMAL] = nrm
-	var dm := ArrayMesh.new()
-	dm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	out.append(dm)
-	# Пряди спереди: от купола вниз по лбу и бокам головы, острые кончики.
-	var locks := 9
-	for i in locks:
-		var k := (i - (locks - 1) * 0.5) / ((locks - 1) * 0.5)
-		var len := ART_W * (0.1 + 0.26 * pow(absf(k), 3.0))
-		var root := Vector3(k * 0.86, 2.56, 0.32 - 0.12 * k * k)
-		var tip := Vector3(k * 0.98, 2.41 - len, 0.42 - 0.3 * k * k)
-		out.append(_lock(root, tip, 0.11 + 0.04 * absf(k), Vector3(0, 0, 0.09)))
-	# Пряди по бокам и сзади — края головы под волосами.
-	for sx in [-1.0, 1.0]:
-		for j in 3:
-			var z := 0.1 - j * 0.22
-			out.append(_lock(Vector3(sx * 0.8, 2.5, z), Vector3(sx * 1.02, 1.62 + j * 0.05, z - 0.05), 0.18, Vector3(sx * 0.1, 0, 0)))
+	# Голова в игре повёрнута — по ширине причёску чуть растягиваем, чтобы смотрелась как на картинке.
+	var k := Vector3(1.1, 1.0, 1.0)
+	for t in HAIR_PETALS:
+		out.append(_petal(t[0] * k, t[1] * k, t[2] * k, t[3] * 1.3))
 	_uv_meshes["hair"] = out
 	return out
 
 
-## Прядь: изогнутый сужающийся жгут от корня к острому кончику (bulge — куда выгнута).
-static func _lock(root: Vector3, tip: Vector3, r: float, bulge: Vector3) -> ArrayMesh:
+## Лепесток: плоский жгут по дуге корень → изгиб → кончик; у корня узкий (все сходятся в одну
+## точку), толще всего на трети длины, к кончику острый.
+static func _petal(root: Vector3, mid: Vector3, tip: Vector3, hw: float) -> ArrayMesh:
 	var pts := PackedVector3Array()
 	var rs := PackedFloat32Array()
-	for j in 11:
-		var t := j / 10.0
-		pts.append(root.lerp(tip, t) + bulge * sin(PI * t))
-		rs.append(r * pow(1.0 - t, 0.7) + 0.006)
-	return _tube_mesh(pts, rs)
+	var n := 18
+	for j in n + 1:
+		var t := float(j) / n
+		var u := 1.0 - t
+		pts.append(root * u * u + mid * 2.0 * u * t + tip * t * t)
+		rs.append(hw * 2.5 * sqrt(t + 0.01) * pow(1.0 - t, 0.9) + 0.004)
+	return _tube_mesh(pts, rs, 0.75)
 
 
 ## Рог: изогнутый конус на макушке (кольца рисует шейдер).
@@ -644,8 +630,9 @@ func _horn_mesh() -> ArrayMesh:
 	return _tube_mesh(pts, rs)
 
 
-## Трубка по линии pts с радиусами rs и крышками; UV.y — доля длины.
-static func _tube_mesh(pts: PackedVector3Array, rs: PackedFloat32Array) -> ArrayMesh:
+## Трубка по линии pts с радиусами rs и крышками; UV.y — доля длины. flat — во сколько раз она
+## тоньше к зрителю, чем поперёк (плоские пряди).
+static func _tube_mesh(pts: PackedVector3Array, rs: PackedFloat32Array, flat := 1.0) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var n := 16
@@ -660,8 +647,8 @@ static func _tube_mesh(pts: PackedVector3Array, rs: PackedFloat32Array) -> Array
 		var ring := []
 		for j in n + 1:
 			var a := TAU * j / n
-			var nrm := side * cos(a) + up * sin(a)
-			ring.append([pts[i] + nrm * rs[i], nrm, Vector2(float(j) / n, float(i) / (pts.size() - 1))])
+			var nrm := (side * cos(a) + up * sin(a) / flat).normalized()
+			ring.append([pts[i] + (side * cos(a) + up * sin(a) * flat) * rs[i], nrm, Vector2(float(j) / n, float(i) / (pts.size() - 1))])
 		rings.append(ring)
 	for i in pts.size() - 1:
 		for j in n:

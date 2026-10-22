@@ -9,7 +9,7 @@ uniform vec3 albedo : source_color = vec3(1.0);
 // Сдвиг по нормали (м) и добавка к нему на макушке.
 uniform float grow = 0.0;
 uniform float top_grow = 0.0;
-// Шерсть: доля оболочки (0 — у кожи, 1 — кончики); у волос 1 — купол.
+// Шерсть: доля оболочки (0 — у кожи, 1 — кончики).
 uniform float shell = 0.0;
 // Тело без пальцев: 1 — палец убран (x — Finger1, … w — Finger4).
 uniform vec4 hide_fingers = vec4(0.0);
@@ -59,6 +59,8 @@ void fragment() {
 	vec3 c = albedo;
 	// Насколько красить в цвет (в маске — доля G): 1 — полностью, меньше — светлее.
 	float tintk = 1.0;
+	float rough = 0.55;
+	float spec = 0.35;
 	vec2 p = rest.xy;
 	bool torso = abs(p.x) < 0.86 && p.y > 0.62 && p.y < 2.39;
 	if (effect == 1) {
@@ -108,14 +110,10 @@ void fragment() {
 		}
 		c *= mix(0.7, 1.0, shell);
 	} else if (effect == 5) {
-		// Волосы (купол и пряди, UV.x — вокруг жгута, UV.y — вдоль): у корней светлее, к кончикам
-		// темнее, по прядям — мягкие блики.
-		// Красим не в полную силу — волосы светлее цвета генов, как у рисованного; блики (дуга на
-		// макушке и полоски по прядям) — ещё светлее.
-		c *= mix(1.0, 0.86, smoothstep(0.3, 1.0, p.y));
-		// shell = 1 — купол: у него блик дугой поперёк макушки.
-		float shine = shell > 0.5 ? 1.0 - smoothstep(0.0, 0.035, abs(p.y - 0.22)) : smoothstep(0.6, 1.0, sin(p.x * 6.2831 * 3.0)) * 0.5;
-		tintk = mix(0.8, 0.35, shine);
+		// Волосы — гладкие матовые лепестки; красим чуть не в полную силу — светлее и мягче тела.
+		tintk = 0.9;
+		rough = 0.7;
+		spec = 0.25;
 	} else if (effect == 6) {
 		// Панцирь: каёмка вокруг туловища и головы (руки и ноги — без), шестиугольные пластины.
 		if ((abs(p.x) > 0.95 && p.y < 2.05) || p.y < 0.55) {
@@ -142,7 +140,7 @@ void fragment() {
 	ALBEDO = vec3(albedo.r, albedo.g * tintk, albedo.b);
 #else
 	ALBEDO = c;
-	ROUGHNESS = 0.55;
-	SPECULAR = 0.35;
+	ROUGHNESS = rough;
+	SPECULAR = spec;
 #endif
 }
