@@ -431,7 +431,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	menu.pressed.connect(func() -> void:
 		var open := not _menu.visible
 		close_overlays()
-		_models_hint.text = "Одноглазые без мутаций — из 3D-моделей, остальные рисованные. Модель: %s." % ModelSprites.status
+		_models_hint.text = "Гаврики — из 3D-моделей (пока лист мутации снимается — рисованные). Модель: %s." % ModelSprites.status
 		_menu.visible = open)
 
 
