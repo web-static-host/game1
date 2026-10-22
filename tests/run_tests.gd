@@ -73,6 +73,7 @@ func _initialize() -> void:
 	test_crew_roles()
 	test_digger_stays()
 	test_haul_batches()
+	test_worlds()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3198,6 +3199,28 @@ func test_haul_batches() -> void:
 	colony.drop_item(src, "stone", 1)
 	colony.drop_born[src] = colony.game_time - Colony.DROP_WAIT - 1.0
 	check(colony._try_cleanup(u, reach[0], reach[1]), "пролежала долго — несут и одну")
+
+
+## Миры — отдельные игры со своими сохранениями; автосохранение одно и перезаписывается.
+func test_worlds() -> void:
+	var wid := Worlds.create("Проверка", false, 77)
+	var m := Worlds.meta(wid)
+	check(m.get("name") == "Проверка" and int(m.get("seed")) == 77 and not bool(m.get("disasters")), "мир создан: имя, зерно, бедствия")
+	var data := {"version": SaveSystem.VERSION, "seed": 77, "gen": WorldGen.LATEST, "colony": {}}
+	check(Worlds.write_save(wid, Worlds.AUTO, data, {"name": "Автосохранение", "units": 5}), "автосохранение записано")
+	Worlds.write_save(wid, Worlds.AUTO, data, {"name": "Автосохранение", "units": 6})
+	var ns := Worlds.new_save_id(wid)
+	Worlds.write_save(wid, ns[0], data, {"name": ns[1], "units": 7})
+	var saves := Worlds.saves(wid)
+	check(saves.size() == 2 and ns[1] == "Сохранение 1", "автосохранение одно, плюс сохранение игрока (%d)" % saves.size())
+	check(int(Worlds.load_save(wid, ns[0]).get("seed", 0)) == 77, "сохранение читается")
+	check(Worlds.latest().get("world") == wid, "последнее сохранение — в этом мире")
+	Worlds.rename(wid, "Новое имя")
+	check(Worlds.meta(wid)["name"] == "Новое имя", "мир переименован")
+	Worlds.delete_save(wid, ns[0])
+	check(Worlds.saves(wid).size() == 1, "сохранение удалено")
+	Worlds.delete(wid)
+	check(Worlds.meta(wid).is_empty() and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(Worlds.ROOT + "/" + wid)), "мир удалён целиком")
 
 
 ## Лифты встык одного вида соединяются в один.
