@@ -275,14 +275,14 @@ func _draw_overlay() -> void:
 			# Груз над головой в поднятых руках.
 			var top := -h - 8 * sc
 			if _is_model(node):
-				top = _models.hand_pos(pose, h / sc).y * sc - 4 * sc
+				top = _models.hand_pos(pose, h / sc, int(node.looks.get("shape", 0))).y * sc - 4 * sc
 			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, top), 10)
 		elif u.state == Unit.State.WORK and u.task != Unit.Task.EAT:
 			var g := node.looks.duplicate()
 			g["pose"] = POSES.get(pose, {})
 			var hand := CreatureArt.hand_pos(BODY_W, g, 1.0) * sc
 			if _is_model(node):
-				hand = _models.hand_pos(pose, h / sc) * sc
+				hand = _models.hand_pos(pose, h / sc, int(node.looks.get("shape", 0))) * sc
 			hand.x *= u.facing
 			_draw_tool(u, foot + hand, float(u.facing))
 		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))

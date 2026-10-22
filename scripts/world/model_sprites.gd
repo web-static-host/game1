@@ -1,18 +1,25 @@
 class_name ModelSprites
 extends Node
-## 3D-модель гаврика из Blender (assets/models/blue_buddy.glb), отрисованная в позы.
+## 3D-модели гавриков из Blender (assets/models/*.glb, по одной на форму тела), отрисованные в позы.
 ## При запуске один раз ставим все позы рядом в отдельной 3D-сцене и снимаем два кадра:
 ## цветной (тело белое, лицо в своих цветах) и маску (где тело — там красим в цвет генов).
 ## Дальше гаврики с такой моделью рисуются кусками атласа — так же дёшево, как 2D.
-## Модель — треугольник с одним глазом, без мутаций; остальные гаврики — рисованные.
+## Модели — треугольник и квадрат с одним глазом, без мутаций; остальные гаврики — рисованные.
+## Тела у моделей разные, а скелет, лицо и позы — общие.
 
 signal baked
 
-const MODEL := "res://assets/models/blue_buddy.glb"
+## Форма тела -> модель.
+const MODELS := {
+	CreatureArt.Shape.TRIANGLE: "res://assets/models/blue_buddy.glb",
+	CreatureArt.Shape.SQUARE: "res://assets/models/buddy_square.glb",
+}
 ## Сторона клетки атласа, пикселей.
 const CELL := 200
 ## Сколько метров модели помещается в клетку и где в ней ступни (от низа).
 const SPAN := 5.0
+## Клеток атласа в ряду.
+const COLS := 6
 const FOOT := 0.45
 ## Высота модели от ступней до макушки, м.
 const HEIGHT := 2.4
@@ -75,9 +82,10 @@ static var shared: ModelSprites
 ## Что с моделью: готовится / готово / почему не вышло (показываем в «Меню»).
 static var status := "готовится…"
 
+## Один атлас на все модели: у каждой формы свои ряды клеток.
 var atlas: Texture2D
 var mask: Texture2D
-## Поза -> {region: Rect2 в атласе, foot: Vector2 — ступни в клетке, hand: Vector2 — правая кисть
+## Форма -> поза -> {region: Rect2 в атласе, foot: Vector2 — ступни в клетке, hand: Vector2 — правая кисть
 ## от ступней, eye: Vector2 — глаз от ступней} (всё в пикселях атласа).
 var frames := {}
 var is_baked := false
@@ -86,9 +94,11 @@ var material: ShaderMaterial
 var _vp: SubViewport
 
 
-## Подходит ли гаврик под модель: треугольник с одним глазом, без видимых мутаций.
+## Подходит ли гаврик под модель: форма, для которой есть модель, один глаз, без видимых мутаций.
 static func fits(looks: Dictionary) -> bool:
-	if looks.is_empty() or int(looks.get("shape", -1)) != CreatureArt.Shape.TRIANGLE or int(looks.get("eyes", 0)) != 1:
+	if looks.is_empty() or int(looks.get("eyes", 0)) != 1:
+		return false
+	if shared == null or not shared.frames.has(int(looks.get("shape", -1))):
 		return false
 	if int(looks.get("pattern", 0)) != 0:
 		return false
@@ -109,7 +119,7 @@ func _ready() -> void:
 	if DisplayServer.get_name() == "headless":
 		status = "нет видеокарты"
 		return
-	if not ResourceLoader.exists(MODEL):
+	if not ResourceLoader.exists(MODELS[CreatureArt.Shape.TRIANGLE]):
 		status = "нет файла модели"
 		return
 	material = ShaderMaterial.new()
@@ -127,12 +137,45 @@ func _bake() -> void:
 	push_warning("ModelSprites: " + status)
 
 
-## Снять атлас. Прозрачность берём не из альфа-канала кадра (на части телефонов 3D в
-## отдельном окне отдаёт его пустым), а из кадра-маски: R — силуэт, G — где красить тело.
-## Оба кадра — в 2 раза крупнее и потом уменьшаются: так края гладкие без MSAA.
+## Снять атлас: каждую модель отдельно (окно поменьше), потом склеить кадры в один.
+## Прозрачность берём не из альфа-канала кадра (на части телефонов 3D в отдельном окне
+## отдаёт его пустым), а из кадра-маски: R — силуэт, G — где красить тело.
 func _bake_once(attempt: int) -> bool:
+	var shapes := []
+	for s in MODELS:
+		if ResourceLoader.exists(MODELS[s]):
+			shapes.append(s)
+	var rows := ceili(POSES.size() / float(COLS))
+	var size := Vector2i(COLS * CELL, rows * CELL * shapes.size())
+	var color := Image.create_empty(size.x, size.y, false, Image.FORMAT_RGBA8)
+	var shape := Image.create_empty(size.x, size.y, false, Image.FORMAT_RGBA8)
+	frames.clear()
+	for i in shapes.size():
+		var shot = await _bake_model(shapes[i], rows * i, attempt)
+		if shot == null:
+			frames.clear()
+			return false
+		var at := Vector2i(0, rows * CELL * i)
+		color.blit_rect(shot[0], Rect2i(Vector2i.ZERO, shot[0].get_size()), at)
+		shape.blit_rect(shot[1], Rect2i(Vector2i.ZERO, shot[1].get_size()), at)
+	color.generate_mipmaps()
+	shape.generate_mipmaps()
+	atlas = ImageTexture.create_from_image(color)
+	mask = ImageTexture.create_from_image(shape)
+	material.set_shader_parameter("mask", mask)
+	for s in shapes:
+		if not await _selftest(s):
+			frames.clear()
+			return false
+	return true
+
+
+## Снять все позы одной модели: [цветной кадр, маска] размером COLS x rows клеток; кадры
+## поз — в frames[form], клетки считаются с ряда row0 общего атласа.
+## Оба кадра — в 2 раза крупнее и потом уменьшаются: так края гладкие без MSAA.
+func _bake_model(form: int, row0: int, attempt: int):
 	var names: Array = POSES.keys()
-	var cols := 6
+	var cols := COLS
 	var rows := ceili(names.size() / float(cols))
 	var ss := 2
 	_vp = SubViewport.new()
@@ -176,9 +219,9 @@ func _bake_once(attempt: int) -> bool:
 	var flat_face := StandardMaterial3D.new()
 	flat_face.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	flat_face.albedo_color = Color(1, 0, 0)
-	var scene: PackedScene = load(MODEL)
+	var scene: PackedScene = load(MODELS[form])
 	var meshes := []
-	frames.clear()
+	var poses := {}
 	for i in names.size():
 		var pose: Dictionary = POSES[names[i]]
 		var c := i % cols
@@ -199,7 +242,8 @@ func _bake_once(attempt: int) -> bool:
 		var hand := cam.unproject_position(skel.to_global(skel.get_bone_global_pose(skel.find_bone("Hand.R")).origin)) / ss
 		var eye := cam.unproject_position(model.to_global(EYE)) / ss
 		var cell := Vector2(c * CELL, r * CELL)
-		frames[names[i]] = {"region": Rect2(cell, Vector2(CELL, CELL)), "foot": foot - cell, "hand": hand - foot, "eye": eye - foot}
+		poses[names[i]] = {"region": Rect2(cell + Vector2(0, row0 * CELL), Vector2(CELL, CELL)), "foot": foot - cell,
+			"hand": hand - foot, "eye": eye - foot}
 
 	for m in meshes:
 		(m[0] as MeshInstance3D).material_override = m[1]
@@ -215,30 +259,26 @@ func _bake_once(attempt: int) -> bool:
 	_vp = null
 	if color == null or shape == null or color.is_empty() or shape.is_empty():
 		status = "не удалось снять кадр модели"
-		return false
+		return null
 	var size := Vector2i(cols * CELL, rows * CELL)
 	for img: Image in [color, shape]:
 		img.convert(Image.FORMAT_RGBA8)
 		img.resize(size.x, size.y, Image.INTERPOLATE_BILINEAR)
 	# Проверка: в середине тела позы покоя — тело (R и G), в глазу — не тело (только R).
-	var idle: Dictionary = frames["idle"]
-	var at: Vector2 = (idle["region"] as Rect2).position + (idle["foot"] as Vector2)
+	var idle: Dictionary = poses["idle"]
+	var at: Vector2 = (idle["region"] as Rect2).position - Vector2(0, row0 * CELL) + (idle["foot"] as Vector2)
 	var body_px := shape.get_pixelv(Vector2i(at + Vector2(0, -1.0 * CELL / SPAN)))
 	var eye_px := shape.get_pixelv(Vector2i(at + (idle["eye"] as Vector2)))
 	if body_px.r < 0.5 or body_px.g < 0.5 or eye_px.r < 0.5 or eye_px.g > 0.5:
 		status = "кадр модели пустой (тело %.2f/%.2f, глаз %.2f/%.2f)" % [body_px.r, body_px.g, eye_px.r, eye_px.g]
-		return false
-	color.generate_mipmaps()
-	shape.generate_mipmaps()
-	atlas = ImageTexture.create_from_image(color)
-	mask = ImageTexture.create_from_image(shape)
-	material.set_shader_parameter("mask", mask)
-	return await _selftest()
+		return null
+	frames[form] = poses
+	return [color, shape]
 
 
 ## Самопроверка всей цепочки (атлас + маска + шейдер): рисуем позу покоя белым в маленькое
 ## окно на чёрном фоне и смотрим, что середина тела светлая, а угол клетки — чёрный.
-func _selftest() -> bool:
+func _selftest(form: int) -> bool:
 	var n := 64
 	var vp := SubViewport.new()
 	vp.size = Vector2i(n, n)
@@ -249,7 +289,7 @@ func _selftest() -> bool:
 	bg.color = Color.BLACK
 	bg.size = Vector2(n, n)
 	vp.add_child(bg)
-	var idle: Dictionary = frames["idle"]
+	var idle: Dictionary = frames[form]["idle"]
 	var k := float(n) / CELL
 	var node := Node2D.new()
 	node.material = material
@@ -337,7 +377,7 @@ static func draw_creature(ci: CanvasItem, pose: String, at: Vector2, w: float, l
 	CreatureArt._ellipse(ci, at + Vector2(0, w * 0.015), Vector2(w * 0.5, w * 0.08), Color(0, 0, 0, 0.2))
 	if is_super:
 		CreatureArt._aura(ci, at + Vector2(0, -h * 0.55), w, t)
-	m.draw(ci, pose, at, h, body_color(looks))
+	m.draw(ci, pose, at, h, body_color(looks), int(looks.get("shape", 0)))
 	if is_super:
 		CreatureArt._sparkles(ci, at + Vector2(0, -h * 0.55), w, t)
 	return true
@@ -354,9 +394,9 @@ static func body_color(looks: Dictionary) -> Color:
 	return looks.get("color", Color(0.9, 0.4, 0.3))
 
 
-## Нарисовать гаврика-модель: ступни в at, h — его высота в пикселях, col — цвет тела.
-func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, col: Color) -> void:
-	var f: Dictionary = frames.get(pose, frames["idle"])
+## Нарисовать гаврика-модель формы form: ступни в at, h — его высота в пикселях, col — цвет тела.
+func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, col: Color, form: int) -> void:
+	var f := _frame(pose, form)
 	var k := draw_scale(h)
 	var region: Rect2 = f["region"]
 	var foot: Vector2 = f["foot"]
@@ -369,6 +409,10 @@ func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, col: Color) -> vo
 
 
 ## Где правая кисть относительно ступней (пиксели экрана) — для инструмента в руке.
-func hand_pos(pose: String, h: float) -> Vector2:
-	var f: Dictionary = frames.get(pose, frames["idle"])
-	return (f["hand"] as Vector2) * draw_scale(h)
+func hand_pos(pose: String, h: float, form: int) -> Vector2:
+	return (_frame(pose, form)["hand"] as Vector2) * draw_scale(h)
+
+
+func _frame(pose: String, form: int) -> Dictionary:
+	var by_pose: Dictionary = frames.get(form, frames[CreatureArt.Shape.TRIANGLE])
+	return by_pose.get(pose, by_pose["idle"])

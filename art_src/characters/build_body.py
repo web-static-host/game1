@@ -18,6 +18,14 @@ from skimage import measure
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROTO = os.path.join(HERE, 'prototype_chatgpt.png')
+# Форма: triangle — как на прототипе; square — туловище прямоугольником (BODY_SHAPE=square).
+SHAPE = os.environ.get('BODY_SHAPE', 'triangle')
+SQ_HALF = 0.62         # квадратный: полуширина туловища, м
+SQ_BOTTOM = 0.6        # низ прямоугольника (у паха), м
+SQ_LEGS = 0.42         # внешний край ног у паха (как у треугольного), м
+SQ_TOP = 1.72          # выше — голова и плечи как у треугольного
+SQ_ROUND = 0.24        # скругление низа к ногам, м
+SQ_FILLET = 0.14       # скругление вогнутых углов под головой, м
 HEIGHT = 2.41          # от пола до макушки, м
 STEP = 0.01            # шаг 3D-сетки, м
 DEPTH = 0.385          # полутолщина туловища (лицо — чуть впереди, на y ≈ -0.40)
@@ -67,7 +75,38 @@ def silhouette():
         t = int(round(t * k + top[c] * (1 - k))) if top[c] >= 0 else t
         sym[:t, c] = False
         sym[t:top[c] + 1, c] = True if top[c] >= 0 and t < top[c] else sym[t:top[c] + 1, c]
+    if SHAPE == 'square':
+        sym = _square_torso(sym, scale, w, ys.max())
     return sym, scale, w, ys.max()
+
+
+def _square_torso(sym, scale, w, bottom):
+    """Квадратный гаврик: туловище — прямой прямоугольник (не сужается книзу), низ скруглён к
+    ногам, вверху плавно переходит под голову. Голова, руки, кисти, ноги — как у треугольного."""
+    H, W = sym.shape
+    rr, cc = np.mgrid[0:H, 0:W]
+    z = (bottom - rr) * scale
+    x = np.abs(cc - w) * scale
+    # Половина ширины прямоугольника по высоте: внизу — скругление к ногам.
+    z0, r = SQ_BOTTOM, SQ_ROUND
+    # Ноги у паха — как у треугольного (снаружи ~0.42 м); прямоугольник книзу плавно (четверть
+    # эллипса) сужается ровно до них — ноги идут прямо, без перехвата.
+    legs = SQ_LEGS
+    t = np.clip((z0 + r - z) / r, 0.0, 1.0)
+    half = legs + (SQ_HALF - legs) * np.sqrt(1.0 - t * t)
+    rect = (x <= half) & (z >= z0) & (z <= SQ_TOP)
+    # Прежнее туловище между ногами и головой убираем (руки дальше от середины не трогаем).
+    band = (z > z0) & (z < SQ_TOP) & (x < SQ_HALF + 0.12)
+    out = (sym & ~band) | rect
+    # Вогнутые углы под головой — мягко (закрытие = расширение + сужение).
+    k = max(1, int(round(SQ_FILLET / scale)))
+    disk = np.hypot(*np.mgrid[-k:k + 1, -k:k + 1]) <= k
+    closed = np.pad(out, k + 2)
+    closed = ndimage.binary_erosion(ndimage.binary_dilation(closed, disk), disk)[k + 2:-k - 2, k + 2:-k - 2]
+    # Только у туловища (кисти и пальцы не трогаем — иначе пальцы слипнутся).
+    near = (x < SQ_HALF + 0.3) & (z > z0 - 0.05) & (z < SQ_TOP + 0.25)
+    out = np.where(near, closed, out)
+    return ndimage.gaussian_filter(out.astype(np.float32), 3.0) > 0.5
 
 
 def _inflate(inside):
