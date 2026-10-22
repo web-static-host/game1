@@ -92,7 +92,7 @@ class CreatureSprite:
 	func _draw() -> void:
 		if pose.is_empty() or not _is_model():
 			return
-		ModelSprites.draw_creature(self, pose.split("|")[0], Vector2.ZERO, BODY_W, looks)
+		ModelSprites.draw_creature(self, pose, Vector2.ZERO, BODY_W, looks)
 
 	func _draw_pose(n: Node2D, p: String) -> void:
 		if not cache.has(p):

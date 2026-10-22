@@ -39,8 +39,13 @@ const FACE_PARTS := ["Approved_Iris", "Approved_Pupil", "Approved_Glint", "Appro
 const EYE_PARTS := ["Approved_EyeWhite", "Approved_Iris", "Approved_Pupil", "Approved_Glint", "Approved_GlintSmall", "Approved_Brow"]
 const MOUTH_PARTS := ["Approved_Smile", "Approved_Tongue", "Approved_Tooth"]
 const BLUSH_PARTS := ["Approved_Blush", "Approved_Blush_001"]
-## Рот у одного глаза: его высота по раскладке рисованного (низ глаза + 0,06 ширины).
+## Рот у одного глаза: его высота по раскладке рисованного (низ глаза + 0,06 ширины) и верхний
+## край рта модели (по нему рот грустного переворачивается).
 const MOUTH_Y := 1.285
+const MOUTH_TOP := 1.31
+## Середина брови и на сколько градусов её повернуть у грустного (наклон в другую сторону).
+const BROW := Vector3(0.0, 2.02, 0.4)
+const SAD_BROW := 16.0
 ## Радужка: обычная (как в модели), альбинос, меланист — как у рисованного.
 const IRIS := [Color(0, 0, 0, 0), Color(0.85, 0.35, 0.45), Color(0.95, 0.7, 0.15)]
 ## Участки листов (м, в плоскости камеры от ступней: x — вправо, y — вверх) и чёткость (пикс/м).
@@ -66,8 +71,8 @@ const FINGER_ROOT_OUT := Vector2(1.51, 0.8)
 const HIDE_FINGERS := {3: [4], 2: [1, 4]}
 const MAX_FINGERS := 8
 ## Шерсть: столько оболочек, на столько метров.
-const FUR_SHELLS := 7
-const FUR_LEN := 0.09
+const FUR_SHELLS := 10
+const FUR_LEN := 0.12
 
 ## Позы: куда поставить суставы — [кость, "to", точка следующего сустава] (м, оси модели:
 ## x — вправо, y — вверх, z — к зрителю) или [кость, ось, градусы]. Сначала родитель.
@@ -118,12 +123,15 @@ const POSES := {
 
 ## Жабры: x щелей и высота верхней (м) — у каждой формы туловище своей ширины.
 const GILLS := {
-	CreatureArt.Shape.TRIANGLE: Vector2(0.27, 1.1),
-	CreatureArt.Shape.SQUARE: Vector2(0.44, 1.12),
-	CreatureArt.Shape.ROUND: Vector2(0.44, 1.12),
+	CreatureArt.Shape.TRIANGLE: Vector2(0.27, 1.14),
+	CreatureArt.Shape.SQUARE: Vector2(0.44, 1.16),
+	CreatureArt.Shape.ROUND: Vector2(0.44, 1.16),
 }
-## Панцирь: на столько метров выступает из-за туловища и головы.
-const SHELL_GROW := 0.2
+## Панцирь за спиной — выпуклая «подушка» (суперэллипсоид): полуоси, центр и показатель (больше —
+## квадратнее); выглядывает из-за головы и боков туловища, как у рисованного.
+const SHELL_AXES := Vector3(1.12, 1.08, 0.5)
+const SHELL_AT := Vector3(0.0, 1.5, -0.28)
+const SHELL_POW := 3.0
 ## Лишние пальцы: радиус и длина (м), шаг корней по ладони и угол между пальцами.
 const FINGER_R := 0.058
 const FINGER_LEN := 0.32
@@ -155,7 +163,7 @@ var _flats := {}
 
 
 ## Слои гаврика по порядку отрисовки: [ключ листа, чем красить].
-static func layers_of(looks: Dictionary) -> Array:
+static func layers_of(looks: Dictionary, sad := false) -> Array:
 	var shape := int(looks.get("shape", 0))
 	var out := []
 	if looks.get("shell", false):
@@ -167,7 +175,8 @@ static func layers_of(looks: Dictionary) -> Array:
 	if looks.get("gills", false):
 		out.append(["gills/%d" % shape, Tint.BODY])
 	var iris := 1 if looks.get("albino", false) else 2 if looks.get("melanist", false) else 0
-	out.append(["face/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris], Tint.BODY])
+	out.append(["face/%d/%d/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris,
+		1 if looks.get("female", false) else 0, 1 if sad else 0], Tint.BODY])
 	if looks.get("hair", false):
 		out.append(["hair", Tint.HAIR])
 	if looks.get("horn", false):
@@ -220,7 +229,7 @@ func _start() -> void:
 	var base: Array[String] = []
 	for s in MODELS:
 		base.append("body/%d/0/4/0" % s)
-	base.append("face/1/0")
+	base.append("face/1/0/0/0")
 	for attempt in 3:
 		var ok := true
 		for key in base:
@@ -352,7 +361,7 @@ func _bake(key: String, attempt: int):
 						var prm := {"grow": FUR_LEN * k, "shell": k}
 						parts.append([_dup(body), _fx(4, false, Color(0.92, 0.92, 0.92), prm), _fx(4, true, Color(1, 1, 0), prm)])
 			"face":
-				var face := _face_parts(model, meshes, int(p[1]), int(p[2]), closed)
+				var face := _face_parts(model, meshes, int(p[1]), int(p[2]), closed, p[3] == "1", p[4] == "1")
 				parts.append_array(face[0])
 				eye_pts = face[1]
 				eye_r = face[2]
@@ -384,9 +393,7 @@ func _bake(key: String, attempt: int):
 					ball.height = 0.22
 					parts.append([_copy(model, ball, Transform3D(Basis(), tip)), _white(), _flat(Color(1, 0.55, 0))])
 			"shell":
-				# Панцирь — как у рисованного: каёмка вокруг туловища и головы (тело кладётся поверх).
-				var prm := {"grow": SHELL_GROW}
-				parts.append([_dup(body), _fx(6, false, Color(0.55, 0.42, 0.25), prm), _fx(6, true, Color(1, 0, 0), prm)])
+				parts.append([_copy(model, _shell_mesh(), Transform3D()), _fx(6, false, Color(0.55, 0.42, 0.25)), kept])
 		var foot := cam.unproject_position(model.global_position) / ss
 		var hand := cam.unproject_position(skel.to_global(skel.get_bone_global_pose(skel.find_bone("Hand.R")).origin)) / ss
 		var eyes: Array[Vector2] = []
@@ -523,7 +530,8 @@ func _extra_fingers(skel: Skeleton3D, fingers: int) -> Array:
 			var outer := k % 2 == 0
 			var step := k / 2 + 1
 			var r := FINGER_ROOT_OUT if outer else FINGER_ROOT_IN
-			var a := (0.62 + FINGER_ANGLE * step) * (1.0 if outer else -1.0)
+			# Внутренний — круче: иначе под углом камеры сливается с соседним.
+			var a := (0.62 + FINGER_ANGLE * step) if outer else -(0.85 + FINGER_ANGLE * step)
 			var dir := Vector3(sin(a) * sx, -cos(a), 0.06).normalized()
 			var cap := CapsuleMesh.new()
 			cap.radius = FINGER_R
@@ -540,8 +548,10 @@ func _extra_fingers(skel: Skeleton3D, fingers: int) -> Array:
 
 
 ## Лицо: n глаз по раскладке рисованного (с бровями), рот под нижним глазом (без глаз — крупнее
-## и выше), румянец у рта. Закрытые глаза — веки цвета тела. -> [части, центры глаз, радиус глаза].
-func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: bool) -> Array:
+## и выше), румянец у рта. Закрытые глаза — веки цвета тела. У самки — ресницы у внешних уголков,
+## грустный — рот перевёрнут (без зуба) и брови наклонены наоборот, как у рисованного.
+## -> [части, центры глаз, радиус глаза].
+func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: bool, female: bool, sad: bool) -> Array:
 	var parts := []
 	var lay := CreatureArt.eye_layout(Vector2.ZERO, ART_W, n)
 	var spots: Array = lay[0]
@@ -558,24 +568,79 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 		iris_mat.albedo_color = ic
 		iris_mat.roughness = 0.4
 	var sc := er / EYE_R
+	var keep := _flat(Color(1, 0, 0))
 	for part in EYE_PARTS:
 		if closed and part in FACE_PARTS:
 			continue
 		var lid: bool = closed and part == "Approved_EyeWhite"
 		for pt: Vector3 in pts:
-			var mi := _copy(model, (meshes[part] as MeshInstance3D).mesh, Transform3D(Basis.from_scale(Vector3.ONE * sc), pt - EYE * sc))
+			var xf := Transform3D(Basis.from_scale(Vector3.ONE * sc), pt - EYE * sc)
+			if sad and part == "Approved_Brow":
+				# Брови грустного — наклон в другую сторону (поворот вокруг середины брови).
+				var c := xf * BROW
+				xf = Transform3D(Basis(Vector3.BACK, deg_to_rad(SAD_BROW)), c - Basis(Vector3.BACK, deg_to_rad(SAD_BROW)) * c) * xf
+			var mi := _copy(model, (meshes[part] as MeshInstance3D).mesh, xf)
 			var cm: Material = _white() if lid else iris_mat if part == "Approved_Iris" else null
-			parts.append([mi, cm, _flat(Color(1, 1, 0) if lid else Color(1, 0, 0))])
+			parts.append([mi, cm, _flat(Color(1, 1, 0)) if lid else keep])
+	if female and not closed:
+		for p: Vector3 in pts:
+			var sides := [-1.0, 1.0]
+			if pts.size() >= 2 and p.x < -0.01:
+				sides = [-1.0]
+			elif pts.size() >= 2 and p.x > 0.01:
+				sides = [1.0]
+			for sx: float in sides:
+				for k in [0.25, 0.6]:
+					parts.append([_copy(model, _lash(p, er, sx, k), Transform3D()), _lash_mat(), keep])
 	var my := (low - er - 0.06 * ART_W) if n > 0 else (EYE.y - 0.06 * ART_W)
 	var dy := my - MOUTH_Y
 	var ms := 1.0 if n > 0 else 1.47
 	var mc := Vector3(0.0, MOUTH_Y - 0.05, 0.0)
 	for part in MOUTH_PARTS:
+		if sad and part == "Approved_Tooth":
+			continue
+		var mesh: Mesh = (meshes[part] as MeshInstance3D).mesh
 		var xf := Transform3D(Basis.from_scale(Vector3(ms, ms, 1.0)), mc - mc * ms + Vector3(0, dy, 0))
-		parts.append([_copy(model, (meshes[part] as MeshInstance3D).mesh, xf), null, _flat(Color(1, 0, 0))])
+		var cm: Material = null
+		if sad:
+			# Рот вверх дном: отражаем по верхнему краю (и мельче), опускаем — как у рисованного.
+			var top := mc.y + (MOUTH_TOP - mc.y) * ms + dy
+			xf = Transform3D(Basis.from_scale(Vector3(1, -0.6, 1)), Vector3(0, top * 1.6 - 0.1, 0)) * xf
+			var src := mesh.surface_get_material(0)
+			if src is BaseMaterial3D:
+				cm = (src as BaseMaterial3D).duplicate()
+				(cm as BaseMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+		parts.append([_copy(model, mesh, xf), cm, keep])
 	for part in BLUSH_PARTS:
-		parts.append([_copy(model, (meshes[part] as MeshInstance3D).mesh, Transform3D(Basis(), Vector3(0, dy, 0))), null, _flat(Color(1, 0, 0))])
+		parts.append([_copy(model, (meshes[part] as MeshInstance3D).mesh, Transform3D(Basis(), Vector3(0, dy, 0))), null, keep])
 	return [parts, pts, er]
+
+
+## Ресница у внешнего уголка глаза p (радиус er): короткая, загнута наружу, как у рисованной самки.
+static func _lash(p: Vector3, er: float, sx: float, k: float) -> ArrayMesh:
+	var from := p + Vector3(sx * cos(k) * er, sin(k) * er * 1.05, 0.03 * er / EYE_R)
+	var dir := Vector3(sx * 0.9, 0.55 + k * 0.5, 0.0).normalized()
+	var tip := from + dir * er * 0.42
+	var c1 := from + dir * er * 0.2
+	var c2 := tip + Vector3(0, -er * 0.05, 0)
+	var pts := PackedVector3Array()
+	var rs := PackedFloat32Array()
+	for j in 7:
+		var t := j / 6.0
+		var u := 1.0 - t
+		pts.append(from * u * u * u + c1 * 3.0 * u * u * t + c2 * 3.0 * u * t * t + tip * t * t * t)
+		rs.append(er * 0.065 * (1.0 - 0.5 * t))
+	return _tube_mesh(pts, rs)
+
+
+func _lash_mat() -> StandardMaterial3D:
+	if not _flats.has("lash"):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = CreatureArt.PUPIL
+		m.roughness = 0.5
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_flats["lash"] = m
+	return _flats["lash"]
 
 
 ## Причёска по прототипу автора (art_src/characters/hair/prototype_hair.png): «цветок» из семи
@@ -617,6 +682,31 @@ static func _petal(root: Vector3, mid: Vector3, tip: Vector3, hw: float) -> Arra
 		pts.append(root * u * u + mid * 2.0 * u * t + tip * t * t)
 		rs.append(hw * 2.5 * sqrt(t + 0.01) * pow(1.0 - t, 0.9) + 0.004)
 	return _tube_mesh(pts, rs, 0.75)
+
+
+## Панцирь: сфера, вытянутая в суперэллипсоид (у краёв плоский и широкий, как у черепахи).
+func _shell_mesh() -> ArrayMesh:
+	if _uv_meshes.has("shell"):
+		return _uv_meshes["shell"]
+	var sm := SphereMesh.new()
+	sm.radial_segments = 48
+	sm.rings = 32
+	var st := SurfaceTool.new()
+	st.create_from(sm, 0)
+	var arr := st.commit_to_arrays()
+	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var e := 2.0 / SHELL_POW
+	for i in v.size():
+		var q := v[i] / 0.5
+		v[i] = SHELL_AT + Vector3(signf(q.x) * pow(absf(q.x), e), signf(q.y) * pow(absf(q.y), e), signf(q.z) * pow(absf(q.z), e)) * SHELL_AXES
+	arr[Mesh.ARRAY_VERTEX] = v
+	arr[Mesh.ARRAY_NORMAL] = null
+	st = SurfaceTool.new()
+	st.create_from_arrays(arr)
+	st.generate_normals()
+	var out := st.commit()
+	_uv_meshes["shell"] = out
+	return out
 
 
 ## Рог: изогнутый конус на макушке (кольца рисует шейдер).
@@ -798,7 +888,8 @@ func _exit_tree() -> void:
 
 
 ## Нарисовать гаврика моделью, если она готова, включена и все его листы сняты; иначе false —
-## тогда рисуем как раньше (CreatureArt). w — ширина туловища, как у рисованного гаврика.
+## тогда рисуем как раньше (CreatureArt). w — ширина туловища, как у рисованного гаврика;
+## поза с «|sad» — грустный.
 static func draw_creature(ci: CanvasItem, pose: String, at: Vector2, w: float, looks: Dictionary, t := 1.0) -> bool:
 	var m := shared
 	if m == null or not m.is_baked or not enabled or not fits(looks):
@@ -843,19 +934,27 @@ static func body_color(looks: Dictionary) -> Color:
 
 
 ## Нарисовать гаврика-модель: ступни в at, h — его высота в пикселях. Слои — по порядку.
+## Грустное лицо («|sad» в позе) снимается отдельно; пока его нет — обычное.
 func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, looks: Dictionary) -> void:
+	var sad := pose.ends_with("|sad")
+	pose = pose.split("|")[0]
 	var col := body_color(looks)
 	var hair: Color = looks.get("hair_color", col.darkened(0.4))
 	var face := {}
 	var face_k := 1.0
-	for l in layers_of(looks):
-		var s: Dictionary = sheets[l[0]]
+	for l in layers_of(looks, sad):
+		var key: String = l[0]
+		if not sheets.has(key):
+			if not _failed.has(key):
+				_want(key)
+			key = key.left(key.length() - 1) + "0"
+		var s: Dictionary = sheets[key]
 		var f := _frame(s, pose)
 		var k := h / HEIGHT / float(s["ppm"])
 		var region: Rect2 = f["region"]
 		var tint := col if l[1] == Tint.BODY else hair if l[1] == Tint.HAIR else Color.WHITE
 		ci.draw_texture_rect_region(s["tex"], Rect2(at - (f["foot"] as Vector2) * k, region.size * k), region, tint)
-		if String(l[0]).begins_with("face/"):
+		if key.begins_with("face/"):
 			face = f
 			face_k = k
 	if POSES.get(pose, {}).get("closed", false) and not face.is_empty():
@@ -867,6 +966,7 @@ func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, looks: Dictionary
 
 ## Где правая кисть относительно ступней (пиксели экрана) — для инструмента в руке.
 func hand_pos(pose: String, h: float, looks: Dictionary) -> Vector2:
+	pose = pose.split("|")[0]
 	var s: Dictionary = sheets.get(body_key(looks), sheets["body/%d/0/4/0" % CreatureArt.Shape.TRIANGLE])
 	return (_frame(s, pose)["hand"] as Vector2) * (h / HEIGHT / float(s["ppm"]))
 

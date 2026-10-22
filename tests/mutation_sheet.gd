@@ -28,6 +28,7 @@ func _initialize() -> void:
 			["волосы", {"hair": true}], ["рог", {"horn": true}], ["усики", {"antennae": true}], ["панцирь", {"shell": true}],
 			["шерсть", {"fur": true}], ["длин. руки", {"long_arms": true}], ["3 пальца", {"fingers": 3}], ["6 пальцев", {"fingers": 6}],
 			["светится", {"glow": true}], ["альбинос", {"albino": true}], ["меланист", {"melanist": true}],
+			["самка", {"female": true}], ["самка, 2 глаза", {"female": true, "eyes": 2}], ["грустный", {"sad": true}],
 			["всё сразу", {"eyes": 2, "pattern": 2, "hair": true, "horn": true, "fur": true, "gills": true}]]:
 		var g := base.duplicate()
 		g.merge(m[1], true)
@@ -42,6 +43,11 @@ func _process(_delta: float) -> bool:
 		var ready := true
 		for it in _list:
 			ready = ModelSprites.fits(it[1]) and ready
+			# Грустное лицо игра заказывает при отрисовке — здесь заранее.
+			for l in ModelSprites.layers_of(it[1], it[1].get("sad", false)):
+				if not _models.sheets.has(l[0]):
+					_models._want(l[0])
+					ready = false
 		if ready:
 			_build()
 			_shot_at = _frame + 4
@@ -74,8 +80,11 @@ func _build() -> void:
 		var y := 110.0 + (i / cols) * 385.0
 		var g2 := g.duplicate()
 		g2["pose"] = UnitLayer.POSES.get(_pose, {})
+		var pose := _pose + ("|sad" if g.get("sad", false) else "")
+		if g.get("sad", false):
+			g2["mood"] = -0.6
 		_add(layer, func(ci: CanvasItem) -> void: CreatureArt.draw(ci, Vector2(x, y), w, g2, 1.0))
-		_add(layer, func(ci: CanvasItem) -> void: ModelSprites.draw_creature(ci, _pose, Vector2(x, y + 180), w, g))
+		_add(layer, func(ci: CanvasItem) -> void: ModelSprites.draw_creature(ci, pose, Vector2(x, y + 180), w, g))
 		var name: String = _list[i][0]
 		_add(layer, func(ci: CanvasItem) -> void: ci.draw_string(ThemeDB.fallback_font, Vector2(x - 70, y + 212), name, HORIZONTAL_ALIGNMENT_CENTER, 140, 16, Color.WHITE))
 

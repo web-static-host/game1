@@ -49,6 +49,8 @@ float hex_edge(vec2 p) {
 void vertex() {
 	if (effect == 5 || effect == 7) {
 		rest = vec3(UV, 0.0);
+	} else if (effect == 6) {
+		rest = VERTEX;
 	} else {
 		rest = vec3(UV, UV2.x);
 	}
@@ -88,39 +90,43 @@ void fragment() {
 		for (int i = 0; i < 3; i++) {
 			for (int s = 0; s < 2; s++) {
 				float sx = s == 0 ? -1.0 : 1.0;
-				vec2 q = (p - vec2(sx * (gill.x + 0.06), gill.y - float(i) * 0.15)) / vec2(0.06, 0.075);
-				on = on || (abs(length(q) - 1.0) < 0.42 && q.x * sx < -0.25);
+				vec2 q = (p - vec2(sx * (gill.x + 0.05), gill.y - float(i) * 0.18)) / vec2(0.05, 0.058);
+				on = on || (abs(length(q) - 1.0) < 0.38 && q.x * sx < -0.2);
 			}
 		}
 		if (!on || rest.z < 0.0) {
 			discard;
 		}
 	} else if (effect == 4) {
-		// Шерсть: волоски — столбики в клетках, к кончикам тоньше и реже.
-		// Клочки по ~8 см, к кончикам свисают вниз.
-		vec3 q = rest * 13.0 + vec3(0.0, shell * 0.35, 0.0);
-		vec3 f = fract(q) - 0.5;
-		float n = hash3(floor(q));
-		if (length(f) > 0.62 * (1.0 - shell * 0.75) || n < 0.15 + 0.25 * shell) {
+		// Шерсть, как у рисованного: пушистый край силуэта (ворс там, где поверхность уходит от
+		// взгляда; спереди тело гладкое). Клочки по ~9 см, к кончикам сужаются в острие и свисают
+		// вниз; у корня темнее.
+		if (abs(NORMAL.z) > 0.55) {
+			discard;
+		}
+		vec3 q = rest * 11.0 + vec3(0.0, shell * 0.7, 0.0);
+		vec3 cell = floor(q);
+		vec3 jit = vec3(hash3(cell), hash3(cell + 7.1), hash3(cell + 3.3)) - 0.5;
+		vec3 f = fract(q) - 0.5 - jit * 0.3;
+		float n = hash3(cell + 1.7);
+		if (length(f) > 0.78 * pow(1.0 - shell, 1.4) || n < 0.06) {
 			discard;
 		}
 		// Кисти — без шерсти.
 		if (abs(p.x) > 1.1 && p.y < 1.05) {
 			discard;
 		}
-		c *= mix(0.7, 1.0, shell);
+		c *= mix(0.62, 1.0, shell);
 	} else if (effect == 5) {
 		// Волосы — гладкие матовые лепестки; красим чуть не в полную силу — светлее и мягче тела.
 		tintk = 0.9;
 		rough = 0.7;
 		spec = 0.25;
 	} else if (effect == 6) {
-		// Панцирь: каёмка вокруг туловища и головы (руки и ноги — без), шестиугольные пластины.
-		if ((abs(p.x) > 0.95 && p.y < 2.05) || p.y < 0.55) {
-			discard;
-		}
-		float e = hex_edge(p / 0.25);
-		c *= e < 0.07 ? 0.55 : 1.0;
+		// Панцирь: шестиугольные пластины (середина светлее), тёмные швы, по краю — тёмная кайма.
+		float e = hex_edge(p / 0.26);
+		c *= e < 0.06 ? 0.5 : mix(0.85, 1.12, smoothstep(0.06, 0.45, e));
+		c *= mix(0.7, 1.0, smoothstep(0.0, 0.25, rest.z + 0.1));
 	} else if (effect == 8) {
 		// Убранные пальцы (поза покоя, обе руки — по |x|; где пальцы у тела — по прототипу):
 		// всё, что дальше корня пальца.
