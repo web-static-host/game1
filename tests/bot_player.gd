@@ -748,6 +748,10 @@ var style := "classic"
 func _opening() -> bool:
 	if style != "opening" or opening_done or planet != "earth":
 		return false
+	# Ферме нужно тепло (+15 °C): на поверхности так только летом, под землёй ~+10 °C —
+	# поэтому к готовой ферме сразу очаг, иначе грибы не растут и к зиме голод.
+	if _heat_farms():
+		return true
 	var building := 0
 	var have := {}
 	for p in colony.projects:
@@ -796,7 +800,8 @@ func _surface_room(purpose: int, width := 6) -> bool:
 			var s := world.gen.surface_y(sx)
 			# На крышу готовой комнаты — второй этаж, иначе на землю.
 			var r := Rect2i(sx, s - 3, width, 3)
-			if not _bad_spot(r) and colony.validate(Project.Kind.ROOM, r, mat).is_empty():
+			# Как игрок: не ставит туда, куда гаврикам не дойти (за обрывом).
+			if not _bad_spot(r) and colony.validate(Project.Kind.ROOM, r, mat).is_empty() and colony.can_reach(r):
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, mat)
 				if p != null:
 					_pending_purpose[p.id] = purpose

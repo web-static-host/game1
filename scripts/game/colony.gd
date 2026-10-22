@@ -5299,7 +5299,7 @@ func _try_harvest(u: Unit, parents: Dictionary, dist: Dictionary, only: Array = 
 	var best_stand = null
 	var best_d := 1 << 30
 	var want_food := food_low()
-	for x in (only if pid != 0 else world.feature_marks.keys()):
+	for x in (only if not only.is_empty() else world.feature_marks.keys()):
 		if reserved.has("h%d" % x) or not harvestable(x):
 			continue
 		var base := Vector2i(x, world.gen.surface_y(x) - 1)
@@ -6108,6 +6108,12 @@ func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		var kind: int = GATHER_SOURCES[k]
 		if kind < 0:
 			continue
+		# Уже помеченное на сбор — рубят его (раньше искали только непомеченное, и если всё
+		# рядом уже помечено, а склада ещё нет — стройка вставала намертво).
+		var marked: Array = world.feature_marks.keys().filter(func(x: int) -> bool:
+			return world.feature_at(x) == kind and _gather_ok(x, kind))
+		if not marked.is_empty() and _try_harvest(u, parents, dist, marked):
+			return true
 		var ux := u.cell().x
 		var best_x = null
 		var best_d := 1 << 30
