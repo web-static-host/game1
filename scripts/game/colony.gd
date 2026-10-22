@@ -6485,16 +6485,58 @@ func _hearth_fuel(p: Project, need: int) -> int:
 	return got
 
 
-## Очаги: жгут дрова, пока вокруг холодно; без дров гаснут.
+## Нужен ли огонь: рядом с очагом (в зоне его тепла с запасом) есть гаврик или туда идёт,
+## рядом ферма, которой без огня холодно, или кто-то в колонии замерзает (тогда разжигают
+## все очаги — чтобы было, где согреться). Считается раз в HEARTH_CHECK секунд.
+const HEARTH_CHECK := 1.0
+var _hearth_need := {}
+var _hearth_need_at := -INF
+
+
+## Холодно ли у очага без огня.
+func is_cold_at(p: Project) -> bool:
+	var c := p.rect.get_center()
+	return world.gen.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
+
+
+func hearth_needed(p: Project) -> bool:
+	if game_time - _hearth_need_at >= HEARTH_CHECK:
+		_hearth_need_at = game_time
+		_hearth_need.clear()
+		var freezing := false
+		for u in units:
+			if needs_warmth(u):
+				freezing = true
+				break
+		for h in rooms_of(RoomType.HEARTH):
+			_hearth_need[h.id] = freezing or _someone_near(h)
+	return bool(_hearth_need.get(p.id, true))
+
+
+func _someone_near(h: Project) -> bool:
+	var area := h.rect.grow(RoomType.heat_zone(h).y + 2)
+	for u in units:
+		if area.has_point(u.cell()):
+			return true
+		if u.state == Unit.State.MOVE and not u.path.is_empty() and area.has_point(u.path[-1]):
+			return true
+	for f in rooms_of(RoomType.FARM):
+		var fc := f.rect.get_center()
+		if f.rect.intersects(area) and world.gen.temperature(fc.y, world.gen.surface_y(fc.x), season_delta()) < FARM_MIN_TEMP:
+			return true
+	return false
+
+
+## Очаги: жгут дрова, пока вокруг холодно и есть кого греть; без дров гаснут.
 func _hearth_tick(dt: float) -> void:
 	for p in rooms_of(RoomType.HEARTH):
 		var was := p.burning
 		p.burning = false
 		if p.paused:
 			continue
-		# Холодно ли без огня (своё тепло не считаем).
-		var c := p.rect.get_center()
-		var cold := world.gen.temperature(c.y, world.gen.surface_y(c.x), season_delta()) < HEARTH_ON_BELOW
+		# Холодно ли без огня (своё тепло не считаем) и греть ли кого-то: очаг горит только
+		# по нужде, а недогоревшее полено ждёт следующего раза.
+		var cold := is_cold_at(p) and hearth_needed(p)
 		if not cold:
 			# Потеплело — топить не нужно: «нет дров» больше не тревога (иначе все рубят лес).
 			if p.blocked.begins_with("Нет дров"):

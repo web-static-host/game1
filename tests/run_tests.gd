@@ -75,6 +75,7 @@ func _initialize() -> void:
 	test_haul_batches()
 	test_worlds()
 	test_crew_takeover()
+	test_hearth_on_demand()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -3259,6 +3260,36 @@ func test_crew_takeover() -> void:
 		check(builder.carry_amount == mini(colony.carry_cap(), colony.support_wood_left(t)), "строитель несёт дерево на %d срезов" % builder.carry_amount)
 	else:
 		check(false, "строитель пошёл за деревом на крепь")
+
+
+## Очаг горит, только когда есть кого греть: рядом гаврик или ферма в холоде.
+func test_hearth_on_demand() -> void:
+	var colony := _new_colony(31)
+	var x := _find_solid_column(colony.world, 40)
+	_start(colony, x)
+	var room := _fake_room(colony, RoomType.HOME, x + 60, 6)
+	var hearth := _hearth(colony, room)
+	colony.inventory = {"wood": 20, "food": 50}
+	colony.game_time = Colony.YEAR * 0.9
+	# Подальше от очага: никого рядом.
+	for u in colony.units:
+		u.pos = Vector2(x - 40, colony.world.gen.surface_y(x - 40) - 1)
+		u.health = 100.0
+	var c := hearth.rect.get_center()
+	var cold := colony.world.gen.temperature(c.y, colony.world.gen.surface_y(c.x), colony.season_delta()) < Colony.HEARTH_ON_BELOW
+	check(cold, "у очага холодно (зима)")
+	colony._hearth_need_at = -INF
+	colony._hearth_tick(0.5)
+	check(not hearth.burning and int(colony.inventory.get("wood", 0)) == 20, "никого рядом — очаг не горит и дров не тратит")
+	colony.units[0].pos = Vector2(c)
+	colony._hearth_need_at = -INF
+	colony._hearth_tick(0.5)
+	check(hearth.burning, "гаврик пришёл — очаг разгорелся")
+	colony.units[0].pos = Vector2(x - 40, colony.world.gen.surface_y(x - 40) - 1)
+	var left := hearth.farm_progress
+	colony._hearth_need_at = -INF
+	colony._hearth_tick(0.5)
+	check(not hearth.burning and hearth.farm_progress == left, "ушёл — очаг погас, недогоревшее осталось")
 
 
 ## Лифты встык одного вида соединяются в один.

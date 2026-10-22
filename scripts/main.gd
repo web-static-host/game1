@@ -1447,14 +1447,14 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					"%d из %d" % [colony.held_in(p, "methane"), cap], Color(0.45, 0.7, 1.0)))
 				rows.append({"type": "text", "text": "Газ хранится только здесь, в баке. По трубам его берут газовые генераторы и газовые котлы очагов. Бак полон — откачка останавливается: поставьте ещё одну дегазацию или жгите газ."})
 			RoomType.HEARTH:
-				chips.append(["", "горит" if p.burning else "не горит"])
+				chips.append(["", "горит" if p.burning else ("не горит — греть некого" if colony.is_cold_at(p) and not colony.hearth_needed(p) else "не горит")])
 				var n := RoomType.stoves(p)
 				var zone := RoomType.heat_zone(p)
 				var per_log := RoomType.HEARTH_FUEL_TIME * (RoomType.BRICK_STOVE_GAIN if p.brick_stoves else 1.0)
 				chips.append(["", "печей %d, %s%s" % [n, "кирпичные" if p.brick_stoves else "каменные", ", с котлами" if p.gas_boiler else ""]])
 				if p.gas_boiler:
 					chips.append(["", "на газу" if p.on_gas else "на дровах/угле"])
-				rows.append({"type": "text", "text": "Каждая печь жжёт 1 дерево за %d с%s, пока вокруг холоднее %d °C. Греет от стен комнаты: в %d м — полное тепло (+%d °C), дальше слабее, до %d м. Жилые и ферму — ставьте рядом." \
+				rows.append({"type": "text", "text": "Каждая печь жжёт 1 дерево за %d с%s, пока вокруг холоднее %d °C и есть кого греть: рядом гаврик, ферма в холоде или кто-то в колонии замерзает. Иначе огонь гаснет, а недогоревшее ждёт. Греет от стен комнаты: в %d м — полное тепло (+%d °C), дальше слабее, до %d м. Жилые и ферму — ставьте рядом." \
 					% [int(per_log), " (уголь — вдвое дольше, его берут первым)" if p.brick_stoves else " (каменные печи углём не топят — только дрова)", int(Colony.HEARTH_ON_BELOW), zone.x, int(Colony.HEAT), zone.y]})
 				if p.gas_boiler:
 					rows.append({"type": "text", "text": "Газовые котлы: первым жгут метан от дегазации (1 метан — как 3 дерева), на газу греют на 1–2 м дальше. Метан кончился — печи топят углём и дровами."})
