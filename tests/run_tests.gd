@@ -3226,6 +3226,13 @@ func test_worlds() -> void:
 	var saves := Worlds.saves(wid)
 	check(saves.size() == 2 and ns[1] == "Сохранение 1", "автосохранение одно, плюс сохранение игрока (%d)" % saves.size())
 	check(int(Worlds.load_save(wid, ns[0]).get("seed", 0)) == 77, "сохранение читается")
+	# Автосохранение после ручного — пишет только в свой слот, ручное не трогает.
+	var later := data.duplicate()
+	later["seed"] = 78
+	Worlds.write_save(wid, Worlds.AUTO, later, {"name": "Автосохранение", "units": 9})
+	var mine: Array = Worlds.saves(wid).filter(func(x: Dictionary) -> bool: return x["id"] == ns[0])
+	check(Worlds.saves(wid).size() == 2 and int(Worlds.load_save(wid, ns[0]).get("seed", 0)) == 77
+		and not mine.is_empty() and int(mine[0].get("units", 0)) == 7, "автосохранение не перезаписало ручное")
 	check(Worlds.latest().get("world") == wid, "последнее сохранение — в этом мире")
 	Worlds.rename(wid, "Новое имя")
 	check(Worlds.meta(wid)["name"] == "Новое имя", "мир переименован")

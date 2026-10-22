@@ -2,7 +2,7 @@ extends SceneTree
 ## Долгая игра ботом-«вовлечённым игроком» (tests/bot_player.gd): на Земле, а если бот
 ## соберёт ракету и долетит — и на планетах (миры идут одновременно). Пишет вехи, срезы
 ## каждые 10 минут и «пустые» отрезки, итог по каждому миру.
-##   godot --headless --path . -s res://tests/longplay.gd -- <seed> <минут>
+##   godot --headless --path . -s res://tests/longplay.gd -- <seed> <минут> [classic|opening]
 
 const BotPlayer := preload("res://tests/bot_player.gd")
 
@@ -23,6 +23,10 @@ func _initialize() -> void:
 	universe.add_world("earth", world, colony)
 	universe.arrived.connect(_on_arrived)
 	bots["earth"] = BotPlayer.new(colony)
+	# Стиль игры бота: opening — сначала склад, амбар, лаборатория, мост, ферма и два дома;
+	# classic — как раньше (по нужде).
+	var style := args[2] if args.size() > 2 else "classic"
+	bots["earth"].style = style
 	# Куда бот отправит ракету (TARGET=mars и т. п.).
 	var target := OS.get_environment("TARGET")
 	bots["earth"].target_planet = target if not target.is_empty() else "mars"
@@ -31,7 +35,7 @@ func _initialize() -> void:
 		print("%s: ракета улетела на %s" % [bots["earth"]._time(), Planet.planet_name(f["planet"])])
 	var next_slice := 600.0
 	var think := 0.0
-	print("=== Мир %d, %d минут игры ===" % [seed_value, minutes])
+	print("=== Мир %d, %d минут игры, бот: %s ===" % [seed_value, minutes, style])
 	while t < minutes * 60.0:
 		for e in universe.worlds:
 			(e["colony"] as Colony).update(0.5)

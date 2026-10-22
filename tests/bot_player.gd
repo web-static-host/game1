@@ -296,6 +296,9 @@ func _play() -> void:
 	# К зиме — очаг у жилых домов (иначе замёрзнут).
 	if _heat_homes():
 		return
+	# Начало игры: склад, амбар, лаборатория, мост, ферма и два дома — потом всё остальное.
+	if _opening():
+		return
 	# Лес у базы на исходе, а за прудом есть — мост, пока есть из чего строить.
 	if _bridge():
 		return
@@ -346,9 +349,9 @@ func _play_planet() -> void:
 
 ## Озёра не переплывают: если пруд отрезает округу — мост на другой берег (до двух мостов),
 ## как сделал бы игрок, когда у базы кончается лес и ягоды.
-func _bridge() -> bool:
+func _bridge(opening := false) -> bool:
 	var bridges := colony.projects.filter(func(q: Project) -> bool: return q.kind == Project.Kind.BRIDGE)
-	if bridges.size() >= 2 or _trees_reachable() >= 6:
+	if bridges.size() >= 2 or (not opening and _trees_reachable() >= 6):
 		return false
 	var best := Rect2i()
 	var best_d := 1 << 30
@@ -368,7 +371,10 @@ func _bridge() -> bool:
 			best_d = d
 	if best_d > 90:
 		return false
-	if colony.inventory.get("wood", 0) + colony.drop_total("wood") < Project.cost_for(Project.Kind.BRIDGE, best)["wood"]:
+	if best_d > 90 or best.size.x <= 0:
+		return false
+	# В начале игры мост закладывают сразу: дерево добудут, пока строится.
+	if not opening and colony.inventory.get("wood", 0) + colony.drop_total("wood") < Project.cost_for(Project.Kind.BRIDGE, best)["wood"]:
 		return false
 	if colony.create_project(Project.Kind.BRIDGE, best) != null:
 		_act("мост")
@@ -728,8 +734,59 @@ func _need_home() -> bool:
 	return _surface_room(RoomType.HOME)
 
 
-## Комната 6×3 на земле у базы (ищем ровное место всё дальше).
-func _surface_room(purpose: int) -> bool:
+## Начало игры, как у толкового игрока: склад и амбар средние, лаборатория малая, мост
+## через пруд, ферма большая и два больших дома — чтобы сразу пошли дети; потом очаг
+## (ферме и домам). Шаги идут по порядку, одновременно строится не больше двух.
+const OPENING := [[RoomType.STORAGE, 6], [RoomType.GRANARY, 6], [RoomType.LAB, 3], [-1, 0],
+	[RoomType.FARM, 9], [RoomType.HOME, 9], [RoomType.HOME, 9]]
+var _opening_skip := {}
+var opening_done := false
+## Как играет бот: "classic" — строит по нужде; "opening" — сначала стартовый набор (OPENING).
+var style := "classic"
+
+
+func _opening() -> bool:
+	if style != "opening" or opening_done or planet != "earth":
+		return false
+	var building := 0
+	var have := {}
+	for p in colony.projects:
+		var purpose: int = _pending_purpose.get(p.id, p.purpose)
+		if p.kind != Project.Kind.ROOM or purpose == RoomType.NONE:
+			continue
+		var key := "%d,%d" % [purpose, p.rect.size.x]
+		have[key] = int(have.get(key, 0)) + 1
+		if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
+			building += 1
+	var used := {}
+	for i in OPENING.size():
+		var step: Array = OPENING[i]
+		if _opening_skip.has(i):
+			continue
+		if step[0] < 0:
+			if colony.projects.any(func(q: Project) -> bool: return q.kind == Project.Kind.BRIDGE):
+				continue
+			if building >= 2:
+				return true
+			if not _bridge(true):
+				_opening_skip[i] = true
+			return true
+		var key := "%d,%d" % [step[0], step[1]]
+		used[key] = int(used.get(key, 0)) + 1
+		if int(have.get(key, 0)) >= int(used[key]):
+			continue
+		if building >= 2:
+			return true
+		if not _surface_room(step[0], step[1]):
+			_opening_skip[i] = true
+		return true
+	opening_done = true
+	_milestone("opening", "Начало обустроено: склад, амбар, лаборатория, ферма, два дома")
+	return false
+
+
+## Комната на земле у базы (ищем ровное место всё дальше).
+func _surface_room(purpose: int, width := 6) -> bool:
 	var mat := _best_material()
 	# Материалы не нужны заранее: заложенная стройка сама позовёт гавриков добыть недостающее.
 	for d in range(0, 60):
@@ -738,8 +795,8 @@ func _surface_room(purpose: int) -> bool:
 				continue
 			var s := world.gen.surface_y(sx)
 			# На крышу готовой комнаты — второй этаж, иначе на землю.
-			var r := Rect2i(sx, s - 3, 6, 3)
-			if colony.validate(Project.Kind.ROOM, r, mat).is_empty():
+			var r := Rect2i(sx, s - 3, width, 3)
+			if not _bad_spot(r) and colony.validate(Project.Kind.ROOM, r, mat).is_empty():
 				var p := colony.create_project(Project.Kind.ROOM, r, -1, mat)
 				if p != null:
 					_pending_purpose[p.id] = purpose
