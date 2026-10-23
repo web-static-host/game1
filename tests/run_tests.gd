@@ -101,6 +101,7 @@ func _initialize() -> void:
 	test_far_unit_returns()
 	test_player_save_stuck_store()
 	test_ladder_idle()
+	test_steel_save()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -1916,7 +1917,7 @@ func test_tech_tree() -> void:
 					break
 		r.add(10000.0)
 	check(r.done.size() == Research.TECHS.size(), "все %d технологий можно изучить (%d)" % [Research.TECHS.size(), r.done.size()])
-	check(colony.dig_bonus() == 1.5 and dig == 1.0, "стальной инструмент: копка в полтора раза быстрее")
+	check(colony.dig_bonus() == 1.5 and dig == 1.0, "железный инструмент: копка в полтора раза быстрее")
 	check(colony.carry_cap() == 8 and colony.build_bonus() == 1.5 and colony.automation_bonus() == 1.5, "тачки, плотники, автоматика")
 	check(colony.farm_bonus() >= 1.25, "агрономия прибавила урожай")
 	check(cap == 0 or colony.storage_capacity("wood") > cap, "стеллажи расширили склады")
@@ -2153,7 +2154,7 @@ func test_economy() -> void:
 	# Бурение ускоряет копку.
 	var before := colony.dig_bonus()
 	colony.research.done.append("tools")
-	check(colony.dig_bonus() > before, "стальной инструмент ускоряет копку")
+	check(colony.dig_bonus() > before, "железный инструмент ускоряет копку")
 	# Сохранение науки.
 	var d := colony.to_dict()
 	var c2 := Colony.new(WorldData.new(WorldGen.new(81)))
@@ -2667,7 +2668,7 @@ func _dug_project(colony: Colony, kind: int, r: Rect2i, id: int) -> Project:
 
 
 func _power_up(colony: Colony, x: int) -> void:
-	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "lifts", "cargo_lifts"])
+	colony.research.done.append_array(["electricity", "smelting", "steel_frame", "lifts", "cargo_lifts"])
 	var gen := Project.new()
 	gen.id = 899
 	gen.kind = Project.Kind.ROOM
@@ -2696,7 +2697,7 @@ func test_space() -> void:
 	var w := colony.world
 	var x := _flat_x(w, 80)
 	_start(colony, x - 10)
-	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "rocketry", "oil_drilling", "refining", "combustion", "electronics"])
+	colony.research.done.append_array(["electricity", "smelting", "steel_frame", "rocketry", "oil_drilling", "refining", "combustion", "electronics"])
 	var s := w.gen.surface_y(x)
 	var pad := Project.new()
 	pad.id = 920
@@ -2779,7 +2780,7 @@ func test_oil() -> void:
 	var x := _find_solid_column(w, 60)
 	_start(colony, x - 25)
 	var s := w.gen.surface_y(x)
-	colony.research.done.append_array(["electricity", "smelting", "steel", "steel_frame", "tools", "drill_rig", "oil_drilling", "refining", "combustion"])
+	colony.research.done.append_array(["electricity", "smelting", "steel_frame", "tools", "drill_rig", "oil_drilling", "refining", "combustion"])
 	check(colony._add("oil", 5) == 0, "без нефтехранилища нефть хранить негде")
 	var tank := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s + 4, 6, 3), 910)
 	tank.purpose = RoomType.OIL_TANK
@@ -3034,14 +3035,14 @@ func test_planet_balance() -> void:
 	var hb := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 12, s + 18, 3, 3), 952)
 	colony.research.done.append_array(["pottery", "steel_frame"])
 	check(colony.set_purpose(hb, RoomType.HEARTH_BRICK) and hb.equip_target == RoomType.HEARTH_BRICK, "комнату сразу под кирпичный очаг")
-	# Крепь из стали.
-	colony.inventory = {"metal": 10}
+	# Крепь из железа.
+	colony.inventory = {"iron": 10}
 	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
-	check(t != null and colony.support_key(t) == "metal" and colony.required(t).has("metal") and not colony.required(t).has("wood"),
-		"нет дерева — крепь из стали (%s, %s, дерева на земле %d)" % [colony.support_key(t) if t else "-", colony.required(t) if t else {}, colony.drop_total("wood")])
+	check(t != null and colony.support_key(t) == "iron" and colony.required(t).has("iron") and not colony.required(t).has("wood"),
+		"нет дерева — крепь из железа (%s, %s, дерева на земле %d)" % [colony.support_key(t) if t else "-", colony.required(t) if t else {}, colony.drop_total("wood")])
 	if t != null:
-		t.delivered = {"metal": 1}
-		check(colony._pay_support(t, t.needs_support[0]) and t.support_mat == "metal", "срез закреплён сталью (1 сталь за 2 дерева)")
+		t.delivered = {"iron": 1}
+		check(colony._pay_support(t, t.needs_support[0]) and t.support_mat == "iron", "срез закреплён железом (1 железо за 2 дерева)")
 	# Редкие металлы: в новых мирах золото есть на 80–300 м, но его меньше, чем железа.
 	# Ствол через пещеру: по её пустым клеткам на стройке лазят (раньше стройка вставала).
 	var cave := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 30, s + 20, 1, 10))
@@ -3326,7 +3327,7 @@ func test_forge_ores() -> void:
 	colony.inventory = {"copper_ore": 1, "food": 50}
 	forge.stock = {"iron_ore": 2}
 	colony.drops.clear()
-	forge.targets = {"iron": 30, "copper": 10, "metal": 0, "silver": 0, "gold": 0, "uranium": 0}
+	forge.targets = {"iron": 30, "copper": 10, "silver": 0, "gold": 0, "uranium": 0}
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge) == "iron", "плавит то, чего меньше всего до нормы (железо 0/30 — как медь 0/10, первым — железо)")
 	colony._craft(forge)
@@ -4182,10 +4183,10 @@ func test_new_science() -> void:
 	# Старое сохранение: изученное переводится в новые технологии вместе с требованиями.
 	var old := Research.new()
 	old.load_dict({"done": ["bricks", "metallurgy", "lifts", "steam", "medicine"], "current": "drilling", "progress": 30.0})
-	check(old.has("pottery") and old.has("smelting") and old.has("steel") and old.has("steel_frame"), "кирпич и металлургия → гончарное дело, плавка руды и стали, каркас")
+	check(old.has("pottery") and old.has("smelting") and old.has("steel_frame"), "кирпич и металлургия → гончарное дело, плавка руды, железный каркас")
 	check(old.has("lifts") and old.has("ropes") and old.has("electricity") and old.has("nature") and old.has("mechanics"),
 		"лифты и турбины → электролифт и механика со всем, что им нужно")
-	check(old.current == "tools" and old.progress == 30.0, "начатое бурение → стальной инструмент, очки не пропали")
+	check(old.current == "tools" and old.progress == 30.0, "начатое бурение → железный инструмент, очки не пропали")
 	# Эффекты.
 	var colony := _new_colony(64)
 	_start(colony, 0)
@@ -4193,15 +4194,8 @@ func test_new_science() -> void:
 	check(colony._track_factor(u, true) == 1.0, "без канатов лезут как раньше")
 	colony.research.learn("ropes")
 	check(colony._track_factor(u, true) == 1.5, "канаты: по лестницам в полтора раза быстрее")
-	var forge := Project.new()
-	forge.purpose = RoomType.FORGE
-	forge.targets = {"metal": 10}
-	colony.inventory["iron"] = 10
-	colony.inventory["coal"] = 10
-	check(colony.forge_pick(forge) == "", "сталь без «Плавки стали» не плавят")
-	colony.research.learn("steel")
-	forge.forge_at = -INF
-	check(colony.forge_pick(forge) == "metal", "после «Плавки стали» — плавят")
+	check(not Research.TECHS.has("steel") and not RoomType.FORGE_RECIPES.has("metal") and not Mat.RESOURCE_NAMES.has("metal"),
+		"стали в игре нет — только железо")
 	var hearth := Project.new()
 	hearth.purpose = RoomType.HEARTH
 	hearth.rect = Rect2i(0, 0, 6, 3)
@@ -4223,7 +4217,7 @@ func test_new_science() -> void:
 	check(kid.skills["dig"] > before, "ученичество: пока мама копает, ребёнок учится копать (%.2f)" % kid.skills["dig"])
 
 
-## Живут 5 лет; в старом сохранении (3,5 года) сроки уже живущих растягиваются.
+## Живут 10 лет; в старом сохранении (3,5 или 5 лет) сроки уже живущих растягиваются.
 func test_lifespan() -> void:
 	var colony := _new_colony(65)
 	colony.start_new(0)
@@ -4231,13 +4225,17 @@ func test_lifespan() -> void:
 	for u in colony.units:
 		avg += u.lifespan / Colony.YEAR / u.stat("longevity")
 	avg /= colony.units.size()
-	check(absf(avg - 5.0) < 0.8, "гаврики живут около 5 лет (%.1f)" % avg)
+	check(absf(avg - 10.0) < 1.6, "гаврики живут около 10 лет (%.1f)" % avg)
 	var d := colony.to_dict()
 	d.erase("life_v")
 	var before: float = colony.units[0].lifespan
 	var back := Colony.new(colony.world)
 	back.load_dict(d)
-	check(absf(back.units[0].lifespan - before * 5.0 / 3.5) < 1.0, "старое сохранение: срок жизни вырос в 5/3,5 раза")
+	check(absf(back.units[0].lifespan - before * 10.0 / 3.5) < 1.0, "старое сохранение (3,5 года): срок жизни вырос в 10/3,5 раза")
+	d["life_v"] = 1
+	var mid := Colony.new(colony.world)
+	mid.load_dict(d)
+	check(absf(mid.units[0].lifespan - before * 2.0) < 1.0, "сохранение с 5 годами: срок жизни вырос вдвое")
 
 
 ## Большая колония: со дна глубокого ствола обход гаврика не достаёт до склада —
@@ -4409,3 +4407,20 @@ func test_ladder_idle() -> void:
 		colony.update(0.5)
 		t += 0.5
 	check(not colony.pathing.climbable(u.cell()), "бездельник ушёл с лестницы (%s, задача %d)" % [u.cell(), u.task])
+
+
+## Стали больше нет: в старом сохранении она на складе, в стенах и в крепи становится железом.
+func test_steel_save() -> void:
+	var colony := _new_colony(66)
+	_start(colony, 0)
+	var d := colony.to_dict()
+	d.erase("steel_v")
+	d["inventory"] = {"metal": 7, "iron": 5}
+	if not d["projects"].is_empty():
+		d["projects"][0]["material"] = "metal"
+		d["projects"][0]["delivered"] = {"metal": 2}
+	var back := Colony.new(colony.world)
+	back.load_dict(d)
+	check(back.inventory.get("iron", 0) == 12 and not back.inventory.has("metal"), "сталь на складе стала железом (%s)" % [back.inventory])
+	if not back.projects.is_empty():
+		check(back.projects[0].material == "iron" and back.projects[0].delivered.get("iron", 0) == 2, "стальные стены и принесённая сталь — железо")

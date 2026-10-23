@@ -95,4 +95,5 @@ func load_dict(d: Dictionary) -> void:
 		SaveSystem.apply(wd, world, colony)
 		add_world(planet, world, colony)
 	for f in d.get("flights", []):
-		flights.append(f)
+		# Стали больше нет: в грузе старых полётов она — железо.
+		flights.append(Colony.steel_to_iron(f))

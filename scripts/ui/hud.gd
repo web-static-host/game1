@@ -311,9 +311,14 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made :
 	for k in keys:
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
-		item.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Ресурс нажимается: где его искать (глубина, порода, что рядом).
+		item.mouse_filter = Control.MOUSE_FILTER_STOP
 		item.add_child(IconView.make(k, 24))
 		item.add_child(_label(Fmt.int_spaced(inventory.get(k, 0)), 19, Color(0.97, 0.92, 0.75)))
+		var key: String = k
+		item.gui_input.connect(func(e: InputEvent) -> void:
+			if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
+				show_message(Mat.resource_name(key), ResourceHints.text(key)))
 		_res_box.add_child(item)
 
 
@@ -1074,6 +1079,13 @@ func _build_store(st: Dictionary) -> void:
 			inner.add_child(c)
 		b.custom_minimum_size.x = 30 + 26 + 28 + 16 + 12 * Mat.resource_name(key).length()
 		row.add_child(b)
+		# «?» — где искать этот ресурс.
+		var hint := Button.new()
+		hint.text = "?"
+		hint.focus_mode = Control.FOCUS_NONE
+		hint.custom_minimum_size = Vector2(50, 50)
+		hint.pressed.connect(func() -> void: show_message(Mat.resource_name(key), ResourceHints.text(key)))
+		row.add_child(hint)
 		if not on:
 			row.add_child(_label("не хранить", 16, MUTED))
 			continue

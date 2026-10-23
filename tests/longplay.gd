@@ -20,9 +20,20 @@ func _initialize() -> void:
 	var ly := OS.get_environment("LIFE_YEARS")
 	if not ly.is_empty():
 		Unit.life_years = float(ly)
-	var world := WorldData.new(WorldGen.new(seed_value))
-	var colony := Colony.new(world)
-	colony.start_new(0)
+	# Продолжить прежний прогон: LOAD_FROM=файл (сохранение, записанное SAVE_TO).
+	var load_from := OS.get_environment("LOAD_FROM")
+	var world: WorldData
+	var colony: Colony
+	if not load_from.is_empty():
+		var data = JSON.parse_string(FileAccess.get_file_as_string(load_from))
+		world = WorldData.new(WorldGen.new(int(data["seed"]), int(data.get("gen", WorldGen.LATEST))))
+		colony = Colony.new(world)
+		SaveSystem.apply(data, world, colony)
+		print("Продолжаем с %s (%s)" % [load_from, colony.date_text()])
+	else:
+		world = WorldData.new(WorldGen.new(seed_value))
+		colony = Colony.new(world)
+		colony.start_new(0)
 	universe.base_seed = seed_value
 	universe.add_world("earth", world, colony)
 	universe.arrived.connect(_on_arrived)
@@ -65,6 +76,12 @@ func _initialize() -> void:
 				b._slice()
 	for b in bots.values():
 		b.report()
+	# Сохранить Землю, чтобы потом продолжить (SAVE_TO=файл).
+	var save_to := OS.get_environment("SAVE_TO")
+	if not save_to.is_empty():
+		var earth: Dictionary = universe.worlds[0]
+		SaveSystem.write(SaveSystem.serialize(earth["world"], earth["colony"], (earth["colony"] as Colony).home), save_to)
+		print("Сохранено: %s" % save_to)
 	print("\nПолётов в пути: %d" % universe.flights.size())
 	quit()
 

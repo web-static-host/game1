@@ -107,9 +107,9 @@ const COLD := 0.0
 ## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
 const WINTER_FISH_SLOWDOWN := 2.0
 ## Сколько лет служит постройка до полного износа (на поверхности).
-const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "metal": 60.0}
+const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "iron": 60.0}
 ## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
-const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "metal": 0.6}
+const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "iron": 0.6}
 ## Предупреждения об износе.
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые гаврики склада добывают сами: ресурс -> объект поверхности.
@@ -356,7 +356,7 @@ func available_materials() -> Array[String]:
 	if research.has("pottery"):
 		out.append("brick")
 	if research.has("steel_frame"):
-		out.append("metal")
+		out.append("iron")
 	return out
 
 
@@ -755,6 +755,28 @@ func _source_reachable(key: String, p: Project) -> bool:
 	return true
 
 
+## Старые сохранения: ключ и значение «metal» (сталь) → «iron» (железо), количества складываются.
+static func steel_to_iron(v: Variant) -> Variant:
+	if v is Dictionary:
+		var out := {}
+		for k in v:
+			var key = "iron" if str(k) == "metal" else k
+			var val = steel_to_iron(v[k])
+			if out.has(key) and (val is float or val is int) and (out[key] is float or out[key] is int):
+				out[key] = out[key] + val
+			else:
+				out[key] = val
+		return out
+	if v is Array:
+		var arr := []
+		for e in v:
+			arr.append(steel_to_iron(e))
+		return arr
+	if v is String and v == "metal":
+		return "iron"
+	return v
+
+
 ## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
 func _water_structure_error(kind: int, r: Rect2i) -> String:
 	var over_water := 0
@@ -1077,26 +1099,26 @@ func _return_delivered(p: Project) -> void:
 
 # --- Доставка материалов ------------------------------------------------------------
 
-## Крепь — из дерева, а нет его — из стали: она прочнее, на срез её вдвое меньше.
-## Чем крепят следующий срез: что уже принесли, иначе дерево, если его хватает, иначе сталь.
+## Крепь — из дерева, а нет его — из железа: оно прочнее, на срез его вдвое меньше.
+## Чем крепят следующий срез: что уже принесли, иначе дерево, если его хватает, иначе железо.
 func support_key(p: Project) -> String:
 	var wood := p.slice_wood()
-	var metal := support_amount(p, "metal")
+	var iron := support_amount(p, "iron")
 	if int(p.delivered.get("wood", 0)) >= wood:
 		return "wood"
-	if int(p.delivered.get("metal", 0)) >= metal:
-		return "metal"
+	if int(p.delivered.get("iron", 0)) >= iron:
+		return "iron"
 	if int(inventory.get("wood", 0)) + drop_total("wood") + int(p.delivered.get("wood", 0)) >= wood:
 		return "wood"
-	# Стальная крепь — после «Стального каркаса».
-	if research.has("steel_frame") and int(inventory.get("metal", 0)) + int(p.delivered.get("metal", 0)) >= metal:
-		return "metal"
+	# Железная крепь — после «Железного каркаса».
+	if research.has("steel_frame") and int(inventory.get("iron", 0)) + int(p.delivered.get("iron", 0)) >= iron:
+		return "iron"
 	return "wood"
 
 
 ## Сколько материала key на крепь одного среза.
 static func support_amount(p: Project, key: String) -> int:
-	return ceili(p.slice_wood() / 2.0) if key == "metal" else p.slice_wood()
+	return ceili(p.slice_wood() / 2.0) if key == "iron" else p.slice_wood()
 
 
 ## Сколько дерева ещё уйдёт на крепь незакреплённых срезов (в «деревянных» единицах).
@@ -2198,7 +2220,7 @@ func _pay_support(p: Project, i: int) -> bool:
 	if p.support_paid and p.support_slice == i:
 		return true
 	var mat := ""
-	for k in ["wood", "metal"]:
+	for k in ["wood", "iron"]:
 		if int(p.delivered.get(k, 0)) >= support_amount(p, k):
 			mat = k
 			break
@@ -2613,7 +2635,7 @@ func _land_ship() -> Project:
 	next_project_id += 1
 	p.kind = Project.Kind.ROOM
 	p.rect = Rect2i(x0, s0 - 3, 9, 3)
-	p.material = "metal"
+	p.material = "iron"
 	p.purpose = RoomType.SHIP
 	p.phase = Project.Phase.DONE
 	p.paid = true
@@ -4877,7 +4899,7 @@ func _own_project(u: Unit) -> Project:
 		return null
 	var i := slice_to_support(p)
 	if i >= 0 and not (p.support_paid and p.support_slice == i) and remaining_dig(p).is_empty():
-		for k in ["wood", "metal"]:
+		for k in ["wood", "iron"]:
 			if int(p.delivered.get(k, 0)) >= support_amount(p, k):
 				return p
 		return null
@@ -6585,7 +6607,7 @@ func forge_pick(p: Project) -> String:
 	var best_r := INF
 	for k in RoomType.FORGE_RECIPES:
 		var norm := int(p.targets.get(k, 0))
-		if norm <= 0 or (k == "metal" and not research.has("steel")):
+		if norm <= 0:
 			continue
 		var have := _have_any(k)
 		if have >= norm:
@@ -7756,7 +7778,8 @@ func to_dict() -> Dictionary:
 		"store_targets": store_targets,
 		"stores_v": 1,
 		"ores_v": 1,
-		"life_v": 1,
+		"life_v": 2,
+		"steel_v": 1,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
@@ -7771,6 +7794,9 @@ func _drops_list() -> Array:
 
 
 func load_dict(d: Dictionary) -> void:
+	# Стали больше нет — в старом сохранении она (на складах, в стенах, в крепи, в нормах) — железо.
+	if int(d.get("steel_v", 0)) < 1:
+		d = steel_to_iron(d)
 	inventory.clear()
 	var inv: Dictionary = d.get("inventory", {})
 	for k in inv:
@@ -7851,10 +7877,14 @@ func load_dict(d: Dictionary) -> void:
 		_migrate_stores()
 	if int(d.get("ores_v", 0)) < 1:
 		_migrate_ores()
-	# Раньше жили 3,5 года, теперь 5 — сроки уже живущих растут так же.
-	if int(d.get("life_v", 0)) < 1:
+	# Жили 3,5 года, потом 5, теперь 10 — сроки уже живущих растут так же.
+	var life_v := int(d.get("life_v", 0))
+	if life_v < 1:
 		for u in units:
 			u.lifespan *= 5.0 / 3.5
+	if life_v < 2:
+		for u in units:
+			u.lifespan *= 2.0
 	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
 	# материалы возвращаются на склад.
 	for p in projects.duplicate():

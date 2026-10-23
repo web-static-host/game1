@@ -7,18 +7,18 @@ const BotPlayer := preload("res://tests/bot_player.gd")
 
 ## Что обычно изучено к запуску ракеты: вся цепочка до ракетостроения и кое-что рядом.
 const RESEARCH := ["mushrooms", "carts", "pottery", "geology", "geology2", "apprentice", "nature", "electricity",
-	"scaffolding", "smelting", "steel", "steel_frame", "hydroponics", "tools", "mechanics", "drill_rig", "oil_drilling", "refining",
+	"scaffolding", "smelting", "steel_frame", "hydroponics", "tools", "mechanics", "drill_rig", "oil_drilling", "refining",
 	"rails", "combustion", "chemistry", "electronics", "rocketry", "gas_masks", "gas_collector", "shelving"]
 ## Груз (до 200): дерево, еда (её хватает, пока не заработает ферма) и сталь на крепь;
 ## на холодную — кирпич на печи (они жгут местный уголь).
 const CARGO := {
-	"mars": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
-	"venus": {"wood": 70, "food": 100, "metal": 30},
-	"mercury": {"wood": 70, "food": 100, "metal": 30},
-	"jupiter": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
-	"saturn": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
-	"uranus": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
-	"neptune": {"wood": 60, "food": 90, "brick": 24, "metal": 26},
+	"mars": {"wood": 60, "food": 90, "brick": 24, "iron": 26},
+	"venus": {"wood": 70, "food": 100, "iron": 30},
+	"mercury": {"wood": 70, "food": 100, "iron": 30},
+	"jupiter": {"wood": 60, "food": 90, "brick": 24, "iron": 26},
+	"saturn": {"wood": 60, "food": 90, "brick": 24, "iron": 26},
+	"uranus": {"wood": 60, "food": 90, "brick": 24, "iron": 26},
+	"neptune": {"wood": 60, "food": 90, "brick": 24, "iron": 26},
 }
 
 

@@ -1210,7 +1210,7 @@ func _storage_control(p: Project) -> Dictionary:
 ## Кузница: что плавит сейчас и нормы — сколько держать каждого металла (как на складе).
 func _forge_rows(p: Project, rows: Array) -> void:
 	var key := colony.forge_pick(p)
-	rows.append({"type": "text", "text": "Из любой руды — 3 единицы металла; сталь — из 2 железа и 1 угля (после «Плавки стали»). Плавит то, чего меньше всего до нормы и для чего есть руда. Нормы — ниже. Сейчас: %s." % (
+	rows.append({"type": "text", "text": "Из любой руды — 3 единицы металла. Плавит то, чего меньше всего до нормы и для чего есть руда. Нормы — ниже. Сейчас: %s." % (
 		Mat.resource_name(key).to_lower() if not key.is_empty() else "ничего — всё по норме или нет руды")})
 
 
@@ -1218,9 +1218,6 @@ func _forge_rows(p: Project, rows: Array) -> void:
 func _forge_controls(p: Project) -> Array:
 	var controls := []
 	for k in RoomType.FORGE_RECIPES:
-		# Сталь — после «Плавки стали».
-		if k == "metal" and not colony.research.has("steel"):
-			continue
 		var src: String = RoomType.FORGE_RECIPES[k][0].keys()[0]
 		controls.append({"label": "%s: есть %d, руды %d" % [Mat.resource_name(k), colony._have_any(k),
 				colony._have_any(src) if src.ends_with("_ore") else colony._have_any("iron")],
@@ -1942,10 +1939,10 @@ func _pending_spec() -> Dictionary:
 		var sw := _support_estimate(kind, r)
 		var have: int = colony.inventory.get("wood", 0)
 		if sw > 0:
-			# Нет дерева — крепь из стали (её вдвое меньше).
-			var steel: int = colony.inventory.get("metal", 0)
-			if have < sw and steel > 0:
-				rows.append({"type": "resources", "label": "Укрепление", "items": [["metal", steel, ceili(sw / 2.0), steel >= ceili(sw / 2.0)]]})
+			# Нет дерева — крепь из железа (его вдвое меньше), после «Железного каркаса».
+			var iron: int = colony.inventory.get("iron", 0)
+			if have < sw and iron > 0 and colony.research.has("steel_frame"):
+				rows.append({"type": "resources", "label": "Укрепление", "items": [["iron", iron, ceili(sw / 2.0), iron >= ceili(sw / 2.0)]]})
 			else:
 				rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
 	var support := colony.support_needed(kind, r)

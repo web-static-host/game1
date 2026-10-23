@@ -104,7 +104,6 @@ const RESOURCE_NAMES := {
 	"salt": "Соль",
 	"oil": "Нефть",
 	"brick": "Кирпич",
-	"metal": "Сталь",
 	"methane": "Метан",
 	"diesel": "Дизельное топливо",
 }

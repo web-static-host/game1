@@ -22,7 +22,7 @@ const HINTS := [
 	"охлаждает воздух вокруг (20 м)",
 	"учёные открывают технологии",
 	"обжиг: 2 глины + топливо (1 дерево или ½ угля) → 2 кирпича",
-	"плавка: 1 руда → 3 металла (железо, медь, серебро, золото; уран — только на обогатительной фабрике), 2 железа + 1 уголь → 1 сталь",
+	"плавка: 1 руда → 3 металла (железо, медь, серебро, золото; уран — только на обогатительной фабрике)",
 	"энергия: сжигает уголь или дрова",
 	"собирает метан вокруг (10, 20 или 40 м — чем больше комната, тем дальше) в свой бак — топливо для газового генератора",
 	"хранит еду: рыбу, урожай ферм, ягоды",
@@ -61,17 +61,16 @@ const RECIPES := {
 	REFINERY: [{"oil": 2}, {"diesel": 1}, 20.0],
 	ENRICHMENT: [{"uranium_ore": 1}, {"uranium": 3}, 40.0],
 }
-## Кузница: из любой руды (кроме урановой) — 3 единицы готового металла; сталь — из железа и угля.
+## Кузница: из любой руды (кроме урановой) — 3 единицы готового металла.
 ## Что плавить, решают нормы в карточке кузницы: держать столько-то каждого металла.
 const FORGE_RECIPES := {
 	"iron": [{"iron_ore": 1}, {"iron": 3}, 20.0],
 	"copper": [{"copper_ore": 1}, {"copper": 3}, 20.0],
 	"silver": [{"silver_ore": 1}, {"silver": 3}, 25.0],
 	"gold": [{"gold_ore": 1}, {"gold": 3}, 25.0],
-	"metal": [{"iron": 2, "coal": 1}, {"metal": 1}, 30.0],
 }
 ## Нормы кузницы по умолчанию.
-const FORGE_TARGETS := {"iron": 30, "copper": 20, "metal": 10, "silver": 0, "gold": 0}
+const FORGE_TARGETS := {"iron": 40, "copper": 20, "silver": 0, "gold": 0}
 ## Радиоактивное: кто копает, носит или обогащает — облучается.
 const RADIOACTIVE := ["uranium_ore", "uranium"]
 const ORES := ["iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore"]
@@ -85,8 +84,8 @@ const SHIP_HOLD := 200
 const SHIP_POWER := 20
 ## Ракета: материалы на сборку (топливо — по трубам из баков) и время сборки.
 const ROCKET_COST := {
-	"chem": {"iron": 80, "metal": 30, "copper": 40, "gold": 10, "silver": 10, "diamond": 4, "diesel": 60},
-	"nuclear": {"iron": 100, "metal": 50, "copper": 50, "gold": 20, "silver": 20, "diamond": 8, "uranium": 20},
+	"chem": {"iron": 110, "copper": 40, "gold": 10, "silver": 10, "diamond": 4, "diesel": 60},
+	"nuclear": {"iron": 150, "copper": 50, "gold": 20, "silver": 20, "diamond": 8, "uranium": 20},
 }
 const ROCKET_WORK := 600.0
 ## Жидкое и газ: хранятся только в баках (метан — в дегазации, нефть и дизель — в
@@ -236,11 +235,11 @@ static func equip_cost(t: int, p: Project) -> Dictionary:
 		REFINERY:
 			return {"iron": 12, "copper": 6, "brick": 8}
 		ENRICHMENT:
-			return {"metal": 12, "copper": 8, "brick": 10}
+			return {"iron": 12, "copper": 8, "brick": 10}
 		DIESEL_GEN:
-			return {"iron": 10, "copper": 6, "metal": 4}
+			return {"iron": 14, "copper": 6}
 		LAUNCHPAD:
-			return {"stone": 40, "brick": 20, "metal": 20}
+			return {"stone": 40, "brick": 20, "iron": 20}
 		DEGAS:
 			return {"wood": 8, "stone": 8}
 		GRANARY:

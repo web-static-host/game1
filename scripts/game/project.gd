@@ -29,7 +29,7 @@ const MATERIALS := {
 	"wood": ["Дерево", 1.0],
 	"stone": ["Камень", 1.5],
 	"brick": ["Кирпич", 1.3],
-	"metal": ["Сталь", 1.6],
+	"iron": ["Железо", 1.6],
 }
 
 var id := 0
@@ -48,7 +48,7 @@ var blocked := ""
 var workers := 1
 ## Лестница у левой стены (нужна, если пол комнаты ниже поверхности).
 var ladder := false
-## Материал стен комнаты: ключ ресурса ("wood", "stone", "brick", "metal").
+## Материал стен комнаты: ключ ресурса ("wood", "stone", "brick", "iron").
 var material := "wood"
 ## Назначение комнаты (RoomType) и оборудование.
 var purpose := 0
@@ -113,7 +113,7 @@ var supported: Array[int] = []
 var support_slice := -1
 var support_paid := false
 var support_progress := 0.0
-## Из чего оплачена крепь текущего среза ("wood" или "metal").
+## Из чего оплачена крепь текущего среза ("wood" или "iron").
 var support_mat := ""
 ## Кузница: что плавит сейчас (ключ продукции) и когда выбирала.
 var forge_key := ""

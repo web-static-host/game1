@@ -17,6 +17,11 @@ var shaft_bottom := 0
 ## Полуширина ствола: 0 — ствол в 1 м, 1 — ход бура в 3 м (комнаты ставятся за ним).
 var shaft_half := 0
 var side := 1
+## Сколько раз ствол начинали заново в стороне (вода, лава впереди).
+var _shaft_moves := 0
+## Супер-гаврики и мутанты за всю игру (id).
+var _ever_super := {}
+var _ever_mutant := {}
 var _pending_purpose := {}
 ## Сколько секунд стройка стоит с «Нет доступа» и места, где бот такую уже бросил.
 var _stuck := {}
@@ -55,6 +60,13 @@ func world_name() -> String:
 ## Раз в 5 секунд игры: ход игрока и учёт «затиший».
 func think() -> void:
 	_play()
+	# Кто рождался за всю игру (в итоге видны только живые).
+	for u in colony.units:
+		if not u.genome.is_empty():
+			if Genetics.is_super(u.genome):
+				_ever_super[u.id] = true
+			if Genetics.is_mutant(u.genome):
+				_ever_mutant[u.id] = true
 	if t - last_news > 900.0:
 		quiet.append("%s: 15 мин без новостей (жит %d, глубина %d м)" % [_time(), colony.units.size(), _depth()])
 		last_news = t
@@ -120,7 +132,7 @@ func _summary() -> void:
 	for k in shapes:
 		sl.append("%s %d" % [k, shapes[k]])
 	print("Формы: %s" % ", ".join(sl))
-	print("Супер-гаврики (бирюзовые): %d · мутанты: %d" % [supers, mutants])
+	print("Супер-гаврики (бирюзовые): %d · мутанты: %d (живые сейчас); за всю игру — супер %d, мутантов %d" % [supers, mutants, _ever_super.size(), _ever_mutant.size()])
 	print("Мир: %s" % world_name())
 
 
@@ -241,7 +253,7 @@ func _slice() -> void:
 	for u in colony.units:
 		if u.state == Unit.State.IDLE and u.task == Unit.Task.NONE:
 			idle += 1
-	var keys := ["food", "fish", "berries", "wood", "stone", "clay", "coal", "iron", "copper", "brick", "metal", "methane",
+	var keys := ["food", "fish", "berries", "wood", "stone", "clay", "coal", "iron", "copper", "brick", "methane",
 		"silver", "gold", "diamond", "uranium", "oil", "diesel"]
 	var inv: PackedStringArray = []
 	for k in keys:
@@ -314,6 +326,10 @@ func _play() -> void:
 	if _drill_program() or _lift_program():
 		return
 	_mine_program()
+	# Ствол углубляют всегда, когда прежний отрезок докопан, — не ждут, пока стройки
+	# наверху закончатся (иначе на руду для ракеты не выйти никогда).
+	if _deepen():
+		return
 	if _busy() >= 2:
 		return
 	if _need_home():
@@ -466,7 +482,7 @@ func _fix_gas() -> bool:
 			var top := Rect2i(sx, world.gen.surface_y(sx) - 3, 9, 3)
 			if maxi(absi(top.get_center().x - c.x), absi(top.get_center().y - c.y)) > 19:
 				continue
-			if colony.validate(Project.Kind.ROOM, top, mat).is_empty():
+			if colony.validate(Project.Kind.ROOM, top, mat).is_empty() and colony.can_reach(top):
 				var tr := colony.create_project(Project.Kind.ROOM, top, -1, mat)
 				if tr != null:
 					_pending_purpose[tr.id] = RoomType.DEGAS
@@ -479,7 +495,8 @@ func _fix_gas() -> bool:
 					continue
 				if not OS.get_environment("DEBUG_GAS").is_empty():
 					print("   try %s: %s" % [room, colony.validate(Project.Kind.ROOM, room, mat)])
-				if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
+				# Только туда, куда можно подойти: иначе дегазация висит «Нет доступа».
+				if colony.validate(Project.Kind.ROOM, room, mat).is_empty() and colony.can_reach(room) and not _bad_spot(room):
 					var r := colony.create_project(Project.Kind.ROOM, room, -1, mat)
 					if r != null:
 						_pending_purpose[r.id] = RoomType.DEGAS
@@ -619,7 +636,7 @@ func _professions() -> void:
 		places.append_array(colony.rooms_of(t))
 	# Кузница плавит руду в металл и железо в сталь — по нормам (под ракету и стройки).
 	for f in colony.rooms_of(RoomType.FORGE):
-		f.targets = {"iron": 120, "copper": 60, "metal": 55, "silver": 12, "gold": 12, "uranium": 22}
+		f.targets = {"iron": 230, "copper": 60, "silver": 12, "gold": 12, "uranium": 22}
 	for p in colony.projects:
 		if p.is_water_structure() and p.phase == Project.Phase.DONE and (colony.can_fish_from(p) or p.kind == Project.Kind.PIER):
 			places.append(p)
@@ -880,6 +897,38 @@ func _shaft() -> bool:
 	return true
 
 
+## Следующие 10 м ствола, когда прежний отрезок докопан. Впереди подземная вода или лава —
+## ствол начинают заново в стороне (вода — затопленные пещеры, они местные).
+func _deepen() -> bool:
+	if planet != "earth":
+		return false
+	for p in colony.projects:
+		if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x and p.phase != Project.Phase.DONE:
+			return false
+	var r := Rect2i(shaft_x, shaft_bottom, 1, 10)
+	var err := colony.validate(Project.Kind.TUNNEL, r)
+	if err.is_empty():
+		if colony.create_project(Project.Kind.TUNNEL, r, 2) != null:
+			shaft_bottom += 10
+			_act("шахта глубже")
+			var depth := shaft_bottom - world.gen.surface_y(shaft_x)
+			for d in [50, 100, 200, 500, 1000]:
+				if depth >= d:
+					_milestone("depth%d" % d, "Шахта заложена до %d м" % d)
+			return true
+		return false
+	# Упёрся в воду или лаву — или новый ствол на поверхности не встаёт (застроено) — в сторону.
+	if (err.begins_with("В зоне стройки") or shaft_bottom == world.gen.surface_y(shaft_x)) and _shaft_moves < 16:
+		events["ствол перенесён: " + err.split(" —")[0]] = events.get("ствол перенесён: " + err.split(" —")[0], 0) + 1
+		_shaft_moves += 1
+		var step := 9 * _shaft_moves
+		shaft_x = colony.home.x + 3 + (step if _shaft_moves % 2 == 1 else -step)
+		shaft_bottom = world.gen.surface_y(shaft_x)
+		_act("новый ствол")
+		return true
+	return false
+
+
 ## Что строить под землёй дальше.
 func _next_underground() -> int:
 	var has := func(t: int) -> bool:
@@ -967,7 +1016,7 @@ func _more_storage() -> void:
 # --- Путь к ракете (Земля) ------------------------------------------------------------
 ## Цепочка исследований до ракетостроения — в первую очередь.
 const ROCKET_PATH := ["mushrooms", "pottery", "geology", "carts", "apprentice", "smelting", "nature", "electricity",
-	"scaffolding", "steel", "tools", "gas_masks", "gas_collector", "gas_heating", "geology2", "rails", "drill_rig",
+	"scaffolding", "tools", "gas_masks", "gas_collector", "gas_heating", "geology2", "rails", "drill_rig",
 	"mechanics", "oil_drilling", "refining", "combustion", "rocketry"]
 ## Уровни разведочных шахт (м от поверхности): по 40 м в обе стороны от ствола.
 const EXPLORE_LEVELS := [30, 55, 80, 105, 130, 155, 185, 215]
@@ -982,16 +1031,13 @@ var _ext := {}
 
 ## Чего ещё не хватает на ракету, космодром и мастерские (сверх того, что на складе).
 func rocket_need() -> Dictionary:
-	var want := {"iron": 80 + 30, "metal": 30 + 20, "copper": 40 + 12, "gold": 10, "silver": 10, "diamond": 4, "brick": 36}
+	var want := {"iron": 110 + 30 + 20, "copper": 40 + 12, "gold": 10, "silver": 10, "diamond": 4, "brick": 36}
 	var out := {}
 	for k in want:
 		# Руда — это будущий металл: 1 руда в кузнице — 3 металла.
 		var left: int = int(want[k]) - int(colony.inventory.get(k, 0)) - 3 * int(colony.inventory.get(k + "_ore", 0))
 		if left > 0:
 			out[k] = left
-	# Сталь куют из железа: на нехватку стали — вдвое больше железа.
-	if out.has("metal"):
-		out["iron"] = int(out.get("iron", 0)) + 2 * int(out["metal"])
 	return out
 
 
@@ -1285,8 +1331,8 @@ func _launch(pad: Project) -> bool:
 			crew.append(partner)
 	var cargo := {}
 	var total := 0
-	var plan := [["wood", 60], ["food", 90], ["brick", 24], ["metal", 26]] if stat == "cold" \
-		else [["wood", 70], ["food", 100], ["metal", 30]]
+	var plan := [["wood", 60], ["food", 90], ["brick", 24], ["iron", 26]] if stat == "cold" \
+		else [["wood", 70], ["food", 100], ["iron", 30]]
 	for pair in plan:
 		# Еду берут любую: грибы, рыбу, ягоды.
 		var keys: Array = RoomType.FOOD_KEYS if pair[0] == "food" else [pair[0]]

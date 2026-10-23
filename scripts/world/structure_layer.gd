@@ -108,7 +108,7 @@ const WALLS := {
 	"wood": [Color(0.8, 0.56, 0.35), Color(0.48, 0.31, 0.19), Color(0.74, 0.51, 0.31)],
 	"stone": [Color(0.7, 0.73, 0.8), Color(0.42, 0.45, 0.55), Color(0.6, 0.63, 0.71)],
 	"brick": [Color(0.84, 0.43, 0.32), Color(0.5, 0.24, 0.18), Color(0.95, 0.84, 0.74)],
-	"metal": [Color(0.64, 0.7, 0.78), Color(0.34, 0.39, 0.47), Color(0.52, 0.58, 0.66)],
+	"iron": [Color(0.64, 0.7, 0.78), Color(0.34, 0.39, 0.47), Color(0.52, 0.58, 0.66)],
 }
 const BED_FRAME := Color(0.56, 0.36, 0.22)
 const BLANKETS := [Color(0.31, 0.6, 0.95), Color(0.94, 0.4, 0.55), Color(0.38, 0.78, 0.45), Color(0.98, 0.72, 0.25)]
@@ -278,7 +278,7 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
 
 
-## Лифт: стальные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
+## Лифт: железные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
 const LIFT_STEEL := Color(0.55, 0.58, 0.64)
 const LIFT_CAB := Color(0.86, 0.62, 0.22)
 
@@ -394,8 +394,8 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 				draw_line(Vector2(r.position.x, y + h - 1), Vector2(r.end.x, y + h - 1), Color(c[1], 0.35), 1.0)
 				y += 12
 				i += 1
-		"metal":
-			# Стальные панели с заклёпками.
+		"iron":
+			# Железные панели с заклёпками.
 			var x := r.position.x + 5
 			while x < r.end.x - 5:
 				draw_line(Vector2(x, r.position.y + 5), Vector2(x, r.end.y - 6), c[2], 2.0)
@@ -676,7 +676,7 @@ static func _decor_x(a: float, b: float, wm: float, posts: Array[float]) -> floa
 	return NAN
 
 
-const CRATES := ["wood", "stone", "brick", "metal", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone",
+const CRATES := ["wood", "stone", "brick", "coal", "iron", "copper", "silver", "gold", "uranium", "diamond", "salt", "clay", "limestone",
 	"iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore"]
 ## Полки стеллажа: верх планок над полом (м, печатает art_src/rooms/cut_sheets.py для rack_tall),
 ## по три ящика на полку — между массивными стойками 1,64 м. Всё нарисовано строго спереди, как комната.

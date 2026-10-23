@@ -32,7 +32,7 @@ func _process(_delta: float) -> bool:
 		var world: WorldData = _main.world
 		var x0: int = _main._home.x + 2
 		var s := world.gen.surface_y(x0)
-		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "metal": 300, "coal": 15, "gold": 10, "copper": 10,
+		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "iron": 300, "coal": 15, "gold": 10, "copper": 10,
 			"salt": 10, "iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10, "methane": 60}
 		colony.known_resources = {"wood": true, "stone": true}
 		# Геологоразведка II: порода видна на 3 клетки от выработок — проверить, что все открытые
@@ -43,7 +43,7 @@ func _process(_delta: float) -> bool:
 		colony.create_project(T, Rect2i(x0, s, 1, 15))
 		colony.create_project(R, Rect2i(x0 + 1, s + 2, 9, 3), -1, "wood")
 		colony.create_project(R, Rect2i(x0 + 1, s + 5, 6, 3), -1, "brick")
-		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "metal")
+		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "iron")
 		colony.create_project(R, Rect2i(x0 + 1, s + 8, 6, 3), -1, "stone")
 		colony.create_project(R, Rect2i(x0 + 7, s + 8, 3, 3), -1, "wood")
 		colony.create_project(R, Rect2i(x0 + 1, s + 11, 6, 3), -1, "wood")
@@ -118,7 +118,7 @@ func _shot(name: String) -> void:
 func _stage() -> void:
 	for pr in _main.colony.projects:
 		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.STORAGE:
-			pr.held = {"brick": 30, "metal": 25, "stone": 20, "wood": 25, "coal": 15, "gold": 10, "copper": 10, "salt": 10} \
+			pr.held = {"brick": 30, "iron": 25, "stone": 20, "wood": 25, "coal": 15, "gold": 10, "copper": 10, "salt": 10} \
 				if pr.material == "brick" else {"iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10}
 		if pr.kind == Project.Kind.ROOM and pr.purpose == RoomType.GRANARY:
 			pr.held = {"food": 30, "berries": 20}
