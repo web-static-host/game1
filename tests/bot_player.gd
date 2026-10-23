@@ -14,6 +14,8 @@ var last_news := 0.0
 var quiet: Array[String] = []
 var shaft_x := 0
 var shaft_bottom := 0
+## Полуширина ствола: 0 — ствол в 1 м, 1 — ход бура в 3 м (комнаты ставятся за ним).
+var shaft_half := 0
 var side := 1
 var _pending_purpose := {}
 ## Сколько секунд стройка стоит с «Нет доступа» и места, где бот такую уже бросил.
@@ -308,6 +310,8 @@ func _play() -> void:
 	if _space_program():
 		return
 	if _clay_mine():
+		return
+	if _drill_program() or _lift_program():
 		return
 	_mine_program()
 	if _busy() >= 2:
@@ -648,7 +652,7 @@ func _professions() -> void:
 		var slots := 1 if RoomType.is_store(p.purpose) else colony.work_slots(p)
 		# Склад и амбар без работника не наполняются — по одному всегда.
 		if p.purpose == RoomType.FARM:
-			slots = mini(slots, 1) if adults.size() < 7 else slots
+			slots = mini(slots, 1) if adults.size() < 7 and not _winter_short() else slots
 		if p.purpose == RoomType.LAB and adults.size() < 8:
 			slots = 1
 		while colony.assigned_to(p).size() < slots and free.size() > keep_free:
@@ -855,9 +859,11 @@ func _shaft() -> bool:
 		return true
 	if want >= 0:
 		var floor_y := shaft_bottom - 1
-		# Нефтекачалка — 9 м (качает на 40 м вокруг), остальное — 6 м.
-		var rw := 9 if want == RoomType.OIL_PUMP else 6
-		var rx := shaft_x + 1 if side > 0 else shaft_x - rw
+		# Нефтекачалка — 9 м (качает на 40 м вокруг); когда людей много — большие лаборатории
+		# (учат быстрее) и фермы; остальное — 6 м.
+		var big := colony.units.size() >= 12 and (want == RoomType.LAB or want == RoomType.FARM)
+		var rw := 9 if want == RoomType.OIL_PUMP or big else 6
+		var rx := shaft_x + 1 + shaft_half if side > 0 else shaft_x - rw - shaft_half
 		var room := Rect2i(rx, floor_y - 2, rw, 3)
 		var mat := _best_material()
 		if colony.validate(Project.Kind.ROOM, room, mat).is_empty():
@@ -895,8 +901,12 @@ func _next_underground() -> int:
 				return RoomType.GRANARY if k == "food" else RoomType.STORAGE
 	if not has.call(RoomType.LAB):
 		return RoomType.LAB
-	# Ферма на каждые четыре рта (зимой фермы под очагом еле справляются).
-	if colony.units.size() >= 7 and colony.rooms_of(RoomType.FARM).size() < (colony.units.size() + 3) / 4:
+	# Ферма на каждые четыре рта (зимой фермы под очагом еле справляются) и ещё одна,
+	# если к зиме запаса мало.
+	var farms := colony.rooms_of(RoomType.FARM).size()
+	if colony.units.size() >= 7 and farms < (colony.units.size() + 3) / 4:
+		return RoomType.FARM
+	if _winter_short() and farms < colony.units.size() / 2 and not _pending_purpose.values().has(RoomType.FARM):
 		return RoomType.FARM
 	if not has.call(RoomType.DINING):
 		return RoomType.DINING
@@ -905,6 +915,11 @@ func _next_underground() -> int:
 		if p.purpose == RoomType.LAB or _pending_purpose.get(p.id, -1) == RoomType.LAB:
 			labs += 1
 	if colony.units.size() >= 9 and labs < clampi(colony.units.size() / 5, 2, 4) and not colony.research.current.is_empty():
+		return RoomType.LAB
+	# Большая лаборатория (9 м) — когда людей хватает: технологии идут быстрее.
+	if colony.units.size() >= 12 and not colony.research.current.is_empty() \
+			and not colony.rooms_of(RoomType.LAB).any(func(q: Project) -> bool: return q.rect.size.x >= 9) \
+			and not _pending_purpose.values().has(RoomType.LAB):
 		return RoomType.LAB
 	if colony.research.has("pottery") and not has.call(RoomType.KILN) and colony.known_resources.has("clay"):
 		return RoomType.KILN
@@ -970,7 +985,8 @@ func rocket_need() -> Dictionary:
 	var want := {"iron": 80 + 30, "metal": 30 + 20, "copper": 40 + 12, "gold": 10, "silver": 10, "diamond": 4, "brick": 36}
 	var out := {}
 	for k in want:
-		var left: int = int(want[k]) - int(colony.inventory.get(k, 0))
+		# Руда — это будущий металл: 1 руда в кузнице — 3 металла.
+		var left: int = int(want[k]) - int(colony.inventory.get(k, 0)) - 3 * int(colony.inventory.get(k + "_ore", 0))
 		if left > 0:
 			out[k] = left
 	# Сталь куют из железа: на нехватку стали — вдвое больше железа.
@@ -1041,7 +1057,8 @@ func _find_ore(need: Dictionary) -> Variant:
 			if not world.is_revealed(x, y) or world.is_dug(x, y):
 				continue
 			var m := world.get_mat(x, y)
-			var key := Mat.resource(m)
+			# Шахты дают руду («iron_ore»), а нужен металл («iron») — ищем руду нужного металла.
+			var key := Mat.resource(m).trim_suffix("_ore")
 			if m == Mat.KIMBERLITE:
 				key = "diamond"
 			var rank := want.find(key)
@@ -1103,6 +1120,78 @@ func _explore_mine(diamonds: bool) -> bool:
 		if colony.extend_error(m, dir, 30).is_empty() and colony.extend_project(m, dir, 30) != null:
 			_ext[m.id] = int(_ext.get(m.id, 0)) + 1
 			_act("разведка дальше")
+			return true
+	return false
+
+
+## Запаса еды до весны не хватит: к зиме (за 3 месяца) и всю зиму еды должно быть на
+## ~3 месяца вперёд.
+func _winter_short() -> bool:
+	var to_winter := colony.time_to_winter()
+	if to_winter > Colony.MONTH * 4.0 and not colony.is_winter():
+		return false
+	return colony.food_value() < colony.units.size() * WINTER_FOOD
+
+
+## Еды на гаврика на зиму (в «порциях» food_value).
+const WINTER_FOOD := 60.0
+
+
+## Буровая установка: ставится у дна ствола и сверлит вниз по 30 м — так ствол уходит
+## глубже втрое быстрее, а широкий ход годится и под лифт.
+var _drill_id := 0
+
+
+func _drill_program() -> bool:
+	if planet != "earth" or not colony.research.has("drill_rig") or not colony.powered():
+		return false
+	var drill := colony.project_by_id(_drill_id) if _drill_id != 0 else null
+	if drill == null:
+		_drill_id = 0
+		if colony.inventory.get("iron", 0) < 6:
+			return false
+		for dx in [1, -3]:
+			var r := Rect2i(shaft_x + dx, shaft_bottom - 3, 3, 3)
+			if colony.validate(Project.Kind.DRILL, r).is_empty():
+				var p := colony.create_project(Project.Kind.DRILL, r, 2)
+				if p != null:
+					_drill_id = p.id
+					_act("бур")
+					_milestone("drill", "Поставлен бур")
+					return true
+		return false
+	if drill.phase != Project.Phase.DONE or colony.drilling(drill):
+		return false
+	var n := 30
+	if colony.drill_error(drill, Vector2i.DOWN, n).is_empty():
+		colony.start_drill(drill, Vector2i.DOWN, n)
+		_act("бурение")
+		# Новый ствол — ход бура: в него ставят комнаты и лифты.
+		shaft_x = drill.rect.position.x + 1
+		shaft_half = 1
+		shaft_bottom = drill.rect.end.y + n
+		_milestone("drilled", "Бур пошёл вниз")
+		return true
+	return false
+
+
+## Пассажирский лифт от поверхности до дна ствола (рядом со стволом), когда шахта глубокая.
+var _lift_done := false
+
+
+func _lift_program() -> bool:
+	if planet != "earth" or _lift_done or not colony.research.has("lifts") or not colony.powered():
+		return false
+	var s := world.gen.surface_y(shaft_x)
+	if shaft_bottom - s < 50 or colony.inventory.get("iron", 0) < 8 or colony.inventory.get("copper", 0) < 4:
+		return false
+	for dx in [-2, 2, -3, 3]:
+		var x: int = shaft_x + dx
+		var r := Rect2i(x, world.gen.surface_y(x), 2, shaft_bottom - world.gen.surface_y(x))
+		if colony.validate(Project.Kind.LIFT, r, "wood").is_empty() and colony.create_project(Project.Kind.LIFT, r, 2) != null:
+			_lift_done = true
+			_act("лифт")
+			_milestone("lift", "Заложен лифт до дна ствола")
 			return true
 	return false
 

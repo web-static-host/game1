@@ -94,6 +94,7 @@ func _initialize() -> void:
 	test_mine_caves()
 	test_water_levels()
 	test_new_science()
+	test_lifespan()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4214,3 +4215,20 @@ func test_new_science() -> void:
 	colony.research.learn("apprentice")
 	colony._apprentice(kid, 10.0)
 	check(kid.skills["dig"] > before, "ученичество: пока мама копает, ребёнок учится копать (%.2f)" % kid.skills["dig"])
+
+
+## Живут 5 лет; в старом сохранении (3,5 года) сроки уже живущих растягиваются.
+func test_lifespan() -> void:
+	var colony := _new_colony(65)
+	colony.start_new(0)
+	var avg := 0.0
+	for u in colony.units:
+		avg += u.lifespan / Colony.YEAR / u.stat("longevity")
+	avg /= colony.units.size()
+	check(absf(avg - 5.0) < 0.8, "гаврики живут около 5 лет (%.1f)" % avg)
+	var d := colony.to_dict()
+	d.erase("life_v")
+	var before: float = colony.units[0].lifespan
+	var back := Colony.new(colony.world)
+	back.load_dict(d)
+	check(absf(back.units[0].lifespan - before * 5.0 / 3.5) < 1.0, "старое сохранение: срок жизни вырос в 5/3,5 раза")

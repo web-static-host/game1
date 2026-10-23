@@ -254,7 +254,7 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 		genome = Genetics.founder(rng)
 		genome["female"] = sex == Unit.Sex.FEMALE
 	u.set_genome(genome)
-	u.lifespan = Unit.LIFESPAN * u.stat("longevity") * rng.randf_range(0.85, 1.15)
+	u.lifespan = Unit.life_years * YEAR * u.stat("longevity") * rng.randf_range(0.85, 1.15)
 	u.name = _free_name(u.sex)
 	u.look = rng.randf()
 	u.pos = pos
@@ -7582,6 +7582,7 @@ func to_dict() -> Dictionary:
 		"store_targets": store_targets,
 		"stores_v": 1,
 		"ores_v": 1,
+		"life_v": 1,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
 		"research": research.to_dict(),
@@ -7676,6 +7677,10 @@ func load_dict(d: Dictionary) -> void:
 		_migrate_stores()
 	if int(d.get("ores_v", 0)) < 1:
 		_migrate_ores()
+	# Раньше жили 3,5 года, теперь 5 — сроки уже живущих растут так же.
+	if int(d.get("life_v", 0)) < 1:
+		for u in units:
+			u.lifespan *= 5.0 / 3.5
 	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
 	# материалы возвращаются на склад.
 	for p in projects.duplicate():

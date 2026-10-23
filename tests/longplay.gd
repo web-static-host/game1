@@ -16,6 +16,10 @@ func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var seed_value := int(args[0]) if args.size() > 0 else 4242
 	var minutes := int(args[1]) if args.size() > 1 else 240
+	# Срок жизни для прогонов «что если» (LIFE_YEARS=10).
+	var ly := OS.get_environment("LIFE_YEARS")
+	if not ly.is_empty():
+		Unit.life_years = float(ly)
 	var world := WorldData.new(WorldGen.new(seed_value))
 	var colony := Colony.new(world)
 	colony.start_new(0)
@@ -35,7 +39,7 @@ func _initialize() -> void:
 		print("%s: ракета улетела на %s" % [bots["earth"]._time(), Planet.planet_name(f["planet"])])
 	var next_slice := 600.0
 	var think := 0.0
-	print("=== Мир %d, %d минут игры, бот: %s ===" % [seed_value, minutes, style])
+	print("=== Мир %d, %d минут игры, бот: %s, живут %.0f лет ===" % [seed_value, minutes, style, Unit.life_years])
 	while t < minutes * 60.0:
 		for e in universe.worlds:
 			(e["colony"] as Colony).update(0.5)
