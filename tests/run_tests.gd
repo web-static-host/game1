@@ -95,6 +95,10 @@ func _initialize() -> void:
 	test_water_levels()
 	test_new_science()
 	test_lifespan()
+	test_far_source()
+	test_cut_off_store()
+	test_base_pit()
+	test_far_unit_returns()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4232,3 +4236,123 @@ func test_lifespan() -> void:
 	var back := Colony.new(colony.world)
 	back.load_dict(d)
 	check(absf(back.units[0].lifespan - before * 5.0 / 3.5) < 1.0, "старое сохранение: срок жизни вырос в 5/3,5 раза")
+
+
+## Большая колония: со дна глубокого ствола обход гаврика не достаёт до склада —
+## путь к складу ищут прицельно, и материалы на стройку несут.
+func test_far_source() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := 40
+	while true:
+		var dry := true
+		for dx in range(-65, 100):
+			if not w.gen.lake_at(x + dx).is_empty():
+				dry = false
+		if dry:
+			break
+		x += 50
+	_start(colony, x - 50)
+	for i in 80:
+		_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + i, w.gen.surface_y(x + i), 1, 80), 1000 + i)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 81, w.gen.surface_y(x + 81), 1, 150), 1100)
+	colony._rebuild_climb()
+	colony.inventory = {"wood": 30}
+	colony._sync_held()
+	var u: Unit = colony.units[0]
+	var bottom := Vector2i(x + 81, w.gen.surface_y(x + 81) + 149)
+	u.pos = Vector2(bottom)
+	var reach := colony.pathing.explore(bottom)
+	check(Pathing.truncated(reach[1]) and colony._source_spot("wood", reach[1]) == null,
+		"со дна ствола обход до запаса дерева не достаёт (%s, %s)" % [Pathing.truncated(reach[1]), colony._source_spot("wood", reach[1])])
+	var src := colony._haul_source("wood", reach[1], u, reach[0])
+	check(src[0] != null, "но путь к запасу находится прицельно — дерево понесут")
+
+
+## Склад с нужным материалом отрезан (засыпали вход) — стройка не стоит молча:
+## «Склад недоступен», а проложили путь — предупреждение снимается.
+func test_cut_off_store() -> void:
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var store: Project = res[1]
+	check(store.purpose == RoomType.STORAGE, "склад готов")
+	var w := colony.world
+	colony.inventory = {"food": 50}
+	colony.drops.clear()
+	colony._sync_held()
+	colony._add("wood", 40, store)
+	check(colony.held_in(store, "wood") > 0 and colony.base_have("wood") == 0,
+		"дерево лежит на складе (%d, у базы %d)" % [colony.held_in(store, "wood"), colony.base_have("wood")])
+	# Стройка на поверхности ждёт дерево.
+	var x := store.rect.end.x + 4
+	var p := colony.create_project(Project.Kind.ROOM, Rect2i(x, w.gen.surface_y(x) - 3, 3, 3))
+	if p == null:
+		check(false, "комната на поверхности заложена")
+		return
+	p.phase = Project.Phase.BUILD
+	p.paid = false
+	p.delivered = {}
+	p.blocked = ""
+	# Засыпаем ствол к складу; гаврики — на поверхности.
+	var shaft: Project = null
+	for q in colony.projects:
+		if q.kind == Project.Kind.TUNNEL:
+			shaft = q
+	for c in shaft.cells():
+		w.set_material(c.x, c.y, Mat.GRANITE)
+		colony.interior.erase(c)
+	colony.projects.erase(shaft)
+	colony._rebuild_climb()
+	for u in colony.units:
+		u.pos = Vector2(x, w.gen.surface_y(x) - 1)
+	colony._reach_at = -INF
+	colony._check_sources()
+	check(p.blocked.begins_with(Colony.NO_SOURCE), "склад отрезан — предупреждение: " + p.blocked)
+	# Проложили ход снова.
+	for c in shaft.cells():
+		w.set_material(c.x, c.y, Mat.AIR)
+		colony.interior[c] = shaft.id
+	colony.projects.append(shaft)
+	colony._rebuild_climb()
+	colony._reach_at = -INF
+	colony._check_sources()
+	check(p.blocked.is_empty(), "путь есть — предупреждение снято: " + p.blocked)
+
+
+## У базы выкопали яму — запас у базы всё равно берут (со дна ямы), а не стоят без дела.
+func test_base_pit() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x + 10)
+	colony.inventory = {"wood": 20}
+	colony._sync_held()
+	check(colony.base_have("wood") == 20, "дерево — у базы")
+	for dx in range(-8, -1):
+		var cx := colony.home.x + dx
+		var sy := w.gen.surface_y(cx)
+		for dy in 2:
+			w.set_material(cx, sy + dy, Mat.AIR)
+			w.set_dug(cx, sy + dy)
+	colony._rebuild_climb()
+	var u: Unit = colony.units[0]
+	var hx := colony.home.x + 3
+	u.pos = Vector2(hx, w.gen.surface_y(hx) - 1)
+	var reach := colony.pathing.explore(u.cell())
+	check(colony._source_spot("wood", reach[1]) != null, "запас у базы доступен и после ямы (%s)" % [colony._source_spots("wood")])
+
+
+## Гаврик ушёл далеко от базы и рядом дела нет — идёт обратно, а не стоит там навсегда.
+func test_far_unit_returns() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x)
+	var u: Unit = colony.units[0]
+	var fx := x + 200
+	u.pos = Vector2(fx, w.gen.surface_y(fx) - 1)
+	u.state = Unit.State.IDLE
+	u.satiety = 100.0
+	var ok := colony._assign(u)
+	check(ok and u.task == Unit.Task.GOTO and absi(u.target.x - colony.home.x) < 190,
+		"далеко от базы — идёт к ней (%s, задача %d, цель %s)" % [ok, u.task, u.target])

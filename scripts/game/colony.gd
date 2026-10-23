@@ -647,6 +647,14 @@ func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionar
 			var c := Vector2i(x, y)
 			if pathing.node(c):
 				goals[c] = true
+	return _extend_far(start, goals, key, parents, dist)
+
+
+## Прицельный путь от start к любой из goals дописывается в обход гаврика (с клетками вокруг
+## конца пути). Неудачу по ключу key помнят FAR_RETRY секунд.
+func _extend_far(start: Vector2i, goals: Dictionary, key: String, parents: Dictionary, dist: Dictionary) -> bool:
+	if game_time - float(_far_fail.get(key, -INF)) < FAR_RETRY:
+		return false
 	var path := pathing.find_path(start, goals)
 	if path.is_empty():
 		_far_fail[key] = game_time
@@ -685,6 +693,52 @@ func _check_access() -> void:
 			p.blocked = "Нет доступа — гаврики не могут дойти до стройки" if p.is_water_structure() \
 				else "Нет доступа — проложите тоннель к стройке"
 			_log("%s: %s" % [p.title(), p.blocked], "warning")
+
+
+## Материал на складе есть, но склад отрезан (яма без лестницы, обвал): гаврики не могут
+## его взять, и стройка молча стояла бы. Предупреждаем — игрок проложит путь.
+const NO_SOURCE := "Склад недоступен"
+
+
+func _check_sources() -> void:
+	for p in projects:
+		var had := p.blocked.begins_with(NO_SOURCE)
+		if p.paused or (not had and not p.blocked.is_empty()):
+			continue
+		var cut: PackedStringArray = []
+		var need := _needed_now(p)
+		for k in need:
+			if RoomType.PIPED.has(k) or int(p.delivered.get(k, 0)) + in_transit(p, k) >= int(need[k]):
+				continue
+			# Нет совсем — это «Не хватает», а не доступ.
+			if inventory.get(k, 0) + drop_total(k) <= 0:
+				continue
+			if not _source_reachable(k):
+				cut.append(Mat.resource_name(k).to_lower())
+		if cut.is_empty():
+			if had:
+				p.blocked = ""
+		else:
+			var msg := "%s: %s лежит там, куда гаврикам не дойти — проложите путь (лестница, тоннель)" % [NO_SOURCE, ", ".join(cut)]
+			if p.blocked != msg:
+				p.blocked = msg
+				_log("%s: %s" % [p.title(), msg], "warning")
+
+
+## Может ли хоть кто-то дойти до склада (или кучи) с ресурсом key.
+func _source_reachable(key: String) -> bool:
+	_refresh_reach()
+	# Обход оборвался раньше — не знаем наверняка, не пугаем.
+	if _reach_map.size() >= REACH_CAP:
+		return true
+	if inventory.get(key, 0) > 0:
+		for c in _source_spots(key):
+			if _reach_map.has(c):
+				return true
+	for c: Vector2i in drops:
+		if drop_amount(c, key) > 0 and _drop_stand(c, _reach_map) != null:
+			return true
+	return false
 
 
 ## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
@@ -3777,6 +3831,7 @@ func update(dt: float) -> void:
 		if _access_t >= 5:
 			_access_t = 0
 			_check_access()
+			_check_sources()
 			_settle_drops()
 		# Воду откачали — затопленная стройка продолжается сама.
 		for p in projects:
@@ -4634,7 +4689,40 @@ func _assign(u: Unit) -> bool:
 			"builds":
 				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
 					return true
-	return false
+	return _return_home(u, parents, dist)
+
+
+## Ушёл далеко (на разведку, за кучей на краю карты) и дела рядом нет: работа ищется только
+## в пределах обхода (Pathing.MAX_RADIUS), так что дальше от базы гаврик застрял бы навсегда.
+## Идёт к базе — к самой близкой к ней клетке, куда может дойти.
+const FAR_FROM_HOME := 60
+
+
+## Сами по себе (сбор по нужде и до нормы склада, разведка, кучи для строек) гаврики не уходят
+## от базы дальше HOME_RANGE: оттуда добытое уже не донести — обход не достаёт до склада, и
+## гаврик бегал бы туда-обратно впустую.
+const HOME_RANGE := Pathing.MAX_RADIUS - 20
+
+
+func near_home(x: int) -> bool:
+	return absi(x - home.x) <= HOME_RANGE
+
+
+func _return_home(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	var off := absi(u.cell().x - home.x)
+	if off <= FAR_FROM_HOME:
+		return false
+	var best = null
+	var best_off := off - 10
+	for c: Vector2i in dist:
+		var o := absi(c.x - home.x)
+		if o < best_off or (o == best_off and best != null and dist[c] < dist[best]):
+			best_off = o
+			best = c
+	if best == null:
+		return false
+	_start(u, Unit.Task.GOTO, best, best, 0, parents)
+	return true
 
 
 ## Стройки: копка, расчистка, укрепление, стройка, обустройство, ремонт, доставка материалов.
@@ -5326,15 +5414,35 @@ func _ground_cell(x: int) -> Vector2i:
 func _source_spots(key: String) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	if RoomType.BULK.has(key):
-		for dx in range(3, 6):
-			out.append(_ground_cell(home.x + dx))
-		return out
+		return _base_spots(3, 6)
 	for room in holders(key):
 		if held_in(room, key) > 0 and RoomType.is_store(room.purpose):
 			for x in range(RoomType.floor_start(room), room.rect.end.x):
 				out.append(Vector2i(x, room.rect.end.y - 1))
 	if base_have(key) > 0 or out.is_empty():
-		for dx in range(-8, -1):
+		out.append_array(_base_spots(-8, -1))
+	return out
+
+
+## Где брать запас у базы (столбцы home.x + from … home.x + to - 1). У базы выкопали яму
+## или застроили — земля уже не там, где была: берут с любой клетки этих столбцов, где можно
+## стоять (пол комнаты, дно ямы, крыша), иначе запас у базы был бы недоступен.
+const BASE_SPAN := 16
+
+
+func _base_spots(from: int, to: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for dx in range(from, to):
+		var g := _ground_cell(home.x + dx)
+		if pathing.node(g):
+			out.append(g)
+			continue
+		for dy in range(1, BASE_SPAN):
+			for c in [g + Vector2i(0, dy), g - Vector2i(0, dy)]:
+				if pathing.node(c):
+					out.append(c)
+	if out.is_empty():
+		for dx in range(from, to):
 			out.append(_ground_cell(home.x + dx))
 	return out
 
@@ -5503,18 +5611,26 @@ func _settle_drops() -> void:
 
 
 ## Ближайший источник ресурса: [где встать, клетка кучи или null, сколько можно взять].
-func _haul_source(key: String, dist: Dictionary) -> Array:
+func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}) -> Array:
 	var best := [null, null, 0]
 	var best_d := 1 << 30
 	var store: int = inventory.get(key, 0) - _claimed(key)
 	if store > 0:
 		var s = _source_spot(key, dist)
+		if s == null and u != null and Pathing.truncated(dist):
+			# Большая колония: склад дальше, чем достаёт обход гаврика, — путь к нему ищут прицельно.
+			var goals := {}
+			for c in _source_spots(key):
+				if pathing.node(c):
+					goals[c] = true
+			if _extend_far(u.cell(), goals, "src " + key, parents, dist):
+				s = _source_spot(key, dist)
 		if s != null:
 			best = [s, null, store]
 			best_d = dist[s]
 	for c: Vector2i in drops:
 		var avail := drop_amount(c, key) - _claimed_drop(c, key)
-		if avail <= 0:
+		if avail <= 0 or not near_home(c.x):
 			continue
 		var stand = _drop_stand(c, dist)
 		if stand != null and dist[stand] < best_d:
@@ -5683,7 +5799,7 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_o
 	var now := _needed_now(p)
 	keys.sort_custom(func(a: String, b: String) -> bool: return now.has(a) and not now.has(b))
 	for k in keys:
-		var src := _haul_source(k, dist)
+		var src := _haul_source(k, dist, u, parents)
 		if src[0] == null:
 			continue
 		u.carry_key = k
@@ -5759,7 +5875,7 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
 		if want <= 0:
 			continue
-		var src := _haul_source(k, dist)
+		var src := _haul_source(k, dist, u, parents)
 		if src[0] == null:
 			continue
 		u.carry_key = k
@@ -5775,7 +5891,7 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		var want := SUPPLY_CYCLES - fuel_have(p) - _incoming_to(p, "coal") * 2.0 - _incoming_to(p, "wood")
 		if want > 0.0:
 			for k in ["coal", "wood"]:
-				var src := _haul_source(k, dist)
+				var src := _haul_source(k, dist, u, parents)
 				if src[0] == null:
 					continue
 				var units := ceili(want / float(RoomType.FUEL_VALUE[k]))
@@ -5916,6 +6032,8 @@ func _haul_pickup(u: Unit) -> void:
 				u.project_id = to[1].id
 	else:
 		stand = _near_rect(p.rect, reach[1])
+		if stand == null and _reach_far(u.cell(), p.rect, reach[0], reach[1]):
+			stand = _near_rect(p.rect, reach[1], true)
 	if stand == null:
 		# Нести некуда — кладёт обратно.
 		var back := u.carry_amount
@@ -6053,7 +6171,7 @@ func _try_gather(u: Unit, key: String, room: Project, parents: Dictionary, dist:
 	var best_stand = null
 	var best_d := 1 << 30
 	for x in range(maxi(explored_min, ux - Pathing.MAX_RADIUS), mini(explored_max, ux + Pathing.MAX_RADIUS) + 1):
-		if not _gather_ok(x, kind):
+		if not _gather_ok(x, kind) or not near_home(x):
 			continue
 		var base := _ground_cell(x)
 		for stand in [base, base + Vector2i(-1, 0), base + Vector2i(1, 0)]:
@@ -6077,7 +6195,7 @@ func _try_scout(u: Unit, parents: Dictionary, dist: Dictionary, key: String) -> 
 	var best_d := 1 << 30
 	for c: Vector2i in dist:
 		var s := world.gen.surface_y(c.x)
-		if c.y >= s or c.y < s - 3 or (c.x < explored_max - 8 and c.x > explored_min + 8):
+		if c.y >= s or c.y < s - 3 or (c.x < explored_max - 8 and c.x > explored_min + 8) or not near_home(c.x):
 			continue
 		if dist[c] < best_d:
 			best_d = dist[c]
@@ -6111,14 +6229,14 @@ func _try_need(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		# Уже помеченное на сбор — рубят его (раньше искали только непомеченное, и если всё
 		# рядом уже помечено, а склада ещё нет — стройка вставала намертво).
 		var marked: Array = world.feature_marks.keys().filter(func(x: int) -> bool:
-			return world.feature_at(x) == kind and _gather_ok(x, kind))
+			return world.feature_at(x) == kind and _gather_ok(x, kind) and near_home(x))
 		if not marked.is_empty() and _try_harvest(u, parents, dist, marked):
 			return true
 		var ux := u.cell().x
 		var best_x = null
 		var best_d := 1 << 30
 		for x in range(maxi(explored_min, ux - Pathing.MAX_RADIUS), mini(explored_max, ux + Pathing.MAX_RADIUS) + 1):
-			if world.feature_marks.has(x) or not _gather_ok(x, kind):
+			if world.feature_marks.has(x) or not _gather_ok(x, kind) or not near_home(x):
 				continue
 			var base := _ground_cell(x)
 			for stand in [base, base + Vector2i(-1, 0), base + Vector2i(1, 0)]:
