@@ -1,6 +1,6 @@
 ## Нарезка листов иконок ChatGPT в отдельные PNG для игры (assets/icons/).
 ## Каждая иконка — по рамке своей клетки сетки, обрезана по рисунку и вписана в квадрат.
-## Запуск: python3 art_src/icons/cut_icons.py  (нужен Pillow)
+## Запуск: python3 art_src/icons/cut_icons.py  (нужен Pillow), потом make_ingots.py — слитки металлов.
 import os
 from collections import deque
 import numpy as np
@@ -14,9 +14,9 @@ SHEETS = [
     # (файл, столбцов, строк, имена по строкам)
     ('resources_sheet.png', 5, 5, [
         'wood', 'stone', 'clay', 'food', 'berries',
-        'coal', 'iron', 'copper', 'silver', 'gold',
-        'uranium', 'diamond', 'salt', 'oil', 'limestone',
-        'brick', 'metal', 'methane', 'soil', 'sand',
+        'coal', 'iron_ore', 'copper_ore', 'silver_ore', 'gold_ore',
+        'uranium_ore', 'diamond', 'salt', 'oil', 'limestone',
+        'brick', 'ingot_base', 'methane', 'soil', 'sand',
         'gravel', 'people', 'power', 'health', 'science']),
     ('weather_sheet.png', 4, 2, [
         'weather_sun', 'weather_sun_cloud', 'weather_cloud', 'weather_rain',
@@ -76,7 +76,9 @@ def cut(sheet, cols, rows, names):
         side = max(icon.width, icon.height)
         sq = Image.new('RGBA', (side, side), (0, 0, 0, 0))
         sq.alpha_composite(icon, ((side - icon.width) // 2, (side - icon.height) // 2))
-        sq.resize((SIZE, SIZE), Image.LANCZOS).save(os.path.join(OUT, name + '.png'))
+        # Слиток — заготовка для make_ingots.py (слитки металлов в своих цветах), не значок игры.
+        dst = HERE if name == 'ingot_base' else OUT
+        sq.resize((SIZE, SIZE), Image.LANCZOS).save(os.path.join(dst, name + '.png'))
     print(sheet, len(names))
 
 
