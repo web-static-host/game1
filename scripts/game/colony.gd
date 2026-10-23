@@ -713,7 +713,7 @@ func _check_sources() -> void:
 			# Нет совсем — это «Не хватает», а не доступ.
 			if inventory.get(k, 0) + drop_total(k) <= 0:
 				continue
-			if not _source_reachable(k):
+			if not _source_reachable(k, p):
 				cut.append(Mat.resource_name(k).to_lower())
 		if cut.is_empty():
 			if had:
@@ -725,20 +725,34 @@ func _check_sources() -> void:
 				_log("%s: %s" % [p.title(), msg], "warning")
 
 
-## Может ли хоть кто-то дойти до склада (или кучи) с ресурсом key.
-func _source_reachable(key: String) -> bool:
-	_refresh_reach()
-	# Обход оборвался раньше — не знаем наверняка, не пугаем.
-	if _reach_map.size() >= REACH_CAP:
-		return true
-	if inventory.get(key, 0) > 0:
-		for c in _source_spots(key):
-			if _reach_map.has(c):
-				return true
-	for c: Vector2i in drops:
-		if drop_amount(c, key) > 0 and _drop_stand(c, _reach_map) != null:
+## Может ли кто-то из тех, кто доходит до стройки p, дойти и до склада (или кучи) с ресурсом
+## key. Общая карта достижимости тут не годится: гаврик по ту сторону трещины «достаёт» до
+## склада, но не до стройки.
+func _source_reachable(key: String, p: Project) -> bool:
+	var near: Array = units.filter(func(u: Unit) -> bool: return not u.child)
+	var mid := Vector2(p.rect.get_center())
+	near.sort_custom(func(a: Unit, b: Unit) -> bool:
+		return Vector2(a.cell()).distance_squared_to(mid) < Vector2(b.cell()).distance_squared_to(mid))
+	var tried := 0
+	for u: Unit in near:
+		var e := pathing.explore(u.cell())
+		var dist: Dictionary = e[1]
+		if Pathing.truncated(dist):
+			# Обход оборвался — не знаем наверняка, не пугаем.
 			return true
-	return false
+		if _near_rect(p.rect, dist, true) == null:
+			tried += 1
+			if tried >= 6:
+				break
+			continue
+		if inventory.get(key, 0) > 0 and _source_spot(key, dist) != null:
+			return true
+		for c: Vector2i in drops:
+			if drop_amount(c, key) > 0 and _drop_stand(c, dist) != null:
+				return true
+		return false
+	# До самой стройки никто не доходит — это «Нет доступа», а не склад.
+	return true
 
 
 ## Мост — над самой водой, от берега до берега; пристань — от берега в воду.
@@ -1806,6 +1820,17 @@ func _rebuild_climb() -> void:
 				if p.rect.size.y > p.rect.size.x and not (p.kind == Project.Kind.LIFT and p.cargo):
 					for c in p.cells():
 						lad[c] = true
+				# Шахта (горизонтальный ход) прямо под другой выработкой: пока копали, туда
+				# вели леса; после — постоянная лестница, иначе внизу остались бы запертыми.
+				if p.kind != Project.Kind.LIFT and p.rect.size.x >= p.rect.size.y:
+					var top := p.rect.position.y - 1
+					for x in range(p.rect.position.x, p.rect.end.x):
+						var a := Vector2i(x, top)
+						if interior.has(a) and interior[a] != p.id and not room_cells.has(a) and world.is_open(x, top):
+							lad[a] = true
+							for y in range(p.rect.position.y, p.rect.end.y):
+								lad[Vector2i(x, y)] = true
+							break
 			Project.Kind.ROOM:
 				for side in [-1, 1]:
 					if edge_ladder(p, side, site):
@@ -1829,6 +1854,14 @@ func _rebuild_climb() -> void:
 				for c in p.slice_cells(i):
 					if c.y == p.rect.end.y - 1 and not Mat.is_solid(world.get_mat(c.x, c.y + 1)):
 						fl[c] = true
+	# У построенной комнаты свой пол: под ней выкопали тоннель или осыпалась земля — по
+	# комнате всё равно ходят (раньше пол печи над тоннелем «пропадал» и отрезал склад).
+	for p in projects:
+		if p.kind == Project.Kind.ROOM and (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP):
+			var y := p.rect.end.y - 1
+			for x in range(p.rect.position.x, p.rect.end.x):
+				if not Mat.is_solid(world.get_mat(x, y + 1)):
+					fl[Vector2i(x, y)] = true
 	# Клетки пассажирских лифтов: у какой клетки садиться в кабину.
 	_lift_cells.clear()
 	for p in projects:
@@ -3890,9 +3923,12 @@ func _update_unit(u: Unit, dt: float) -> void:
 					u.idle_fails += 1
 					# Ждёт следующей работы своей выработки — смотрит часто.
 					u.retry = 0.5 if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, 5.0)
-					# Бездельники не стоят толпой в одной точке — расходятся по комнатам.
-					if not offline and u.state == Unit.State.IDLE and _crowded(u):
-						_stroll(u)
+					# Бездельники не стоят толпой в одной точке и не торчат на лестнице (мешают
+					# проходу) — расходятся по комнатам.
+					if not offline and u.state == Unit.State.IDLE:
+						var on_ladder := pathing.climbable(u.cell()) and not u.waiting_own
+						if (on_ladder or _crowded(u)) and not _stroll(u) and on_ladder:
+							_off_ladder(u)
 		Unit.State.FALL:
 			u.pos.x = roundf(u.pos.x)
 			var k := Vector2i(roundi(u.pos.x), floori(u.pos.y))
@@ -3949,7 +3985,7 @@ func _stroll(u: Unit) -> bool:
 			continue
 		for x in range(RoomType.floor_start(p), p.rect.end.x):
 			var c := Vector2i(x, p.rect.end.y - 1)
-			if taken.has(c) or not dist.has(c) or c == u.cell():
+			if taken.has(c) or not dist.has(c) or c == u.cell() or pathing.climbable(c):
 				continue
 			if p.id == u.bed_room and dist[c] <= 80:
 				home.append(c)
@@ -3960,6 +3996,26 @@ func _stroll(u: Unit) -> bool:
 		return false
 	var to: Vector2i = pool[rng.randi() % pool.size()]
 	_start(u, Unit.Task.STROLL, to, to, 0, reach[0])
+	return true
+
+
+## Бездельник на лестнице, а свободной комнаты рядом нет — сходит с лестницы на ближайшее
+## место, где можно стоять.
+func _off_ladder(u: Unit) -> bool:
+	var reach := pathing.explore(u.cell())
+	var dist: Dictionary = reach[1]
+	var taken := {}
+	for o in units:
+		if o != u:
+			taken[o.cell()] = true
+	var best = null
+	for c: Vector2i in dist:
+		if pathing.climbable(c) or taken.has(c) or (best != null and dist[c] >= dist[best]):
+			continue
+		best = c
+	if best == null:
+		return false
+	_start(u, Unit.Task.STROLL, best, best, 0, reach[0])
 	return true
 
 

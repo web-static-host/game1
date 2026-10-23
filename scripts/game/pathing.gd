@@ -143,6 +143,11 @@ func neighbors(c: Vector2i) -> Array[Vector2i]:
 			elif not on_ladder and _pass_m(side) and _pass_m(side + DOWN) and _node_m(drop) and not climbable(drop):
 				# Спрыгивают с уступа в 2 м (с лестницы и на лестницу — нет: по ней слезают).
 				out.append(drop)
+			# Щель в 1 клетку (осыпался песок, трещина) — перешагивают: иначе узкая трещина
+			# отрезала бы полколонии.
+			var over := c + Vector2i(dx * 2, 0)
+			if not on_ladder and _pass_m(side) and _pass_m(side + UP) and not standable(side) and _node_m(over):
+				out.append(over)
 	return out
 
 

@@ -99,6 +99,8 @@ func _initialize() -> void:
 	test_cut_off_store()
 	test_base_pit()
 	test_far_unit_returns()
+	test_player_save_stuck_store()
+	test_ladder_idle()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4356,3 +4358,54 @@ func test_far_unit_returns() -> void:
 	var ok := colony._assign(u)
 	check(ok and u.task == Unit.Task.GOTO and absi(u.target.x - colony.home.x) < 190,
 		"далеко от базы — идёт к ней (%s, задача %d, цель %s)" % [ok, u.task, u.target])
+
+
+## Сохранение игрока: склад с деревом был отрезан (пол печи над тоннелем «пропал», рядом —
+## щель от осыпавшегося песка), шахта под шахтой осталась без выхода. Теперь все гаврики
+## в одной связанной области, стройки достраиваются.
+func test_player_save_stuck_store() -> void:
+	var data = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/stuck_store.json"))
+	var world := WorldData.new(WorldGen.new(int(data["seed"]), int(data.get("gen", 1))))
+	var colony := Colony.new(world)
+	SaveSystem.apply(data, world, colony)
+	colony.update(0.5)
+	var store := colony.project_by_id(2)
+	var sizes := {}
+	for u in colony.units:
+		# Кто сейчас в пути между клетками — не в счёт.
+		if not u.child and colony.pathing.node(u.cell()):
+			var e := colony.pathing.explore(u.cell())
+			sizes[e[1].size()] = true
+			check(colony._source_spot("wood", e[1]) != null, "%s доходит до склада с деревом" % u.name)
+	check(sizes.size() == 1, "все взрослые в одной связанной области (%s)" % [sizes.keys()])
+	var room := colony.project_by_id(57)
+	var t := 0.0
+	while t < 400.0 and room.phase == Project.Phase.BUILD:
+		colony.update(0.5)
+		t += 0.5
+	check(room.phase != Project.Phase.BUILD, "комната 9×3, ждавшая дерево, построена (за %.0f с)" % t)
+	check(store != null and colony.held_in(store, "wood") < 240, "дерево со склада понесли")
+
+
+## Без дела на лестнице не стоят — уходят на пол (лестница — проход).
+func test_ladder_idle() -> void:
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	var shaft: Project = null
+	for p in colony.projects:
+		if p.kind == Project.Kind.TUNNEL:
+			shaft = p
+	var u: Unit = colony.units[0]
+	var c := Vector2i(shaft.rect.position.x, shaft.rect.position.y + 2)
+	check(colony.pathing.climbable(c), "в стволе лестница")
+	u.pos = Vector2(c)
+	u.state = Unit.State.IDLE
+	u.task = Unit.Task.NONE
+	u.retry = 0.0
+	u.satiety = 100.0
+	u.energy = 100.0
+	var t := 0.0
+	while t < 30.0 and (colony.pathing.climbable(u.cell()) or u.task != Unit.Task.NONE):
+		colony.update(0.5)
+		t += 0.5
+	check(not colony.pathing.climbable(u.cell()), "бездельник ушёл с лестницы (%s, задача %d)" % [u.cell(), u.task])
