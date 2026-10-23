@@ -179,6 +179,7 @@ func _build_scene() -> void:
 	hud.build_opened.connect(func() -> void: hud.set_build_rooms(_build_room_items(), _build_tool_locks()))
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
+	hud.export_pressed.connect(_export_save)
 	hud.save_pressed.connect(func() -> void:
 		if _world_id.is_empty():
 			_save()
@@ -195,7 +196,8 @@ func _build_scene() -> void:
 
 func _process(delta: float) -> void:
 	# Большие паузы (сворачивание) учитываются как оффлайн, а не через delta.
-	var dt := 0.0 if _away else minf(delta, 0.25)
+	# Открыто меню — игра на паузе.
+	var dt := 0.0 if _away or hud.menu_open() else minf(delta, 0.25)
 	# Время идёт во всех мирах сразу; ракеты летят.
 	var step: float = dt * SPEEDS[_speed_idx]
 	# Симуляция не съедает кадр: если на большой колонии шаг дороже бюджета, игра идёт
@@ -253,7 +255,7 @@ func _notification(what: int) -> void:
 					_apply_offline(_paused_at)
 				_paused_at = 0.0
 		NOTIFICATION_WM_GO_BACK_REQUEST:
-			# «Назад» на Android не закрывает игру: закрывает окно, а если окон нет — меню.
+			# «Назад» на Android: закрывает меню игры, а если его нет — сворачивает игру.
 			if hud != null:
 				hud.back_pressed()
 		NOTIFICATION_WM_CLOSE_REQUEST:
@@ -315,6 +317,25 @@ func _save(manual := false) -> String:
 	info["name"] = "Автосохранение"
 	Worlds.write_save(_world_id, Worlds.AUTO, data, info)
 	return info["name"]
+
+
+## Сохранение — файлом в «Загрузки» телефона: его можно прислать, чтобы разобрать ошибку.
+func _export_save() -> void:
+	_save()
+	var data := SaveSystem.load_data(Worlds.save_path(_world_id, Worlds.AUTO)) if not _world_id.is_empty() else SaveSystem.load_data()
+	var name := "gavriki_%s.json" % Time.get_datetime_string_from_system().replace(":", "-").replace("T", "_")
+	var dirs := [OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS), OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS), OS.get_user_data_dir()]
+	for d in dirs:
+		if str(d).is_empty():
+			continue
+		var path := str(d).path_join(name)
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		if f != null:
+			f.store_string(JSON.stringify(data))
+			f.close()
+			hud.show_message("Сохранение в файл", "Файл сохранён:\n%s\n\nЕго можно прислать (например, загрузить на GitHub рядом со скриншотами)." % path)
+			return
+	hud.show_message("Сохранение в файл", "Не удалось записать файл: нет доступа к памяти телефона.")
 
 
 ## События колонии — в журнал; с других планет — только важное, с названием планеты.

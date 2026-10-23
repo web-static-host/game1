@@ -57,7 +57,8 @@ func _open(screen: String, arg := "") -> void:
 
 func _back() -> void:
 	if _stack.size() <= 1:
-		get_tree().quit()
+		# «Назад» на главном экране сворачивает игру, а не закрывает её.
+		AppWindow.minimize()
 		return
 	_stack.pop_back()
 	_show()

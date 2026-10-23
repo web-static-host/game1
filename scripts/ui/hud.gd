@@ -19,6 +19,8 @@ signal speed_selected(index: int)
 signal science_pressed
 signal people_pressed
 signal save_pressed
+## Выгрузить сохранение файлом в «Загрузки» (прислать разработчику).
+signal export_pressed
 signal load_requested(sid: String)
 ## Выйти в главное меню; save — сохраниться перед выходом.
 signal exit_requested(save: bool)
@@ -1782,6 +1784,10 @@ func _build_menu(center: CenterContainer) -> void:
 	_menu_load.pressed.connect(_open_load)
 	var settings := _menu_button(v, "Настройки")
 	settings.pressed.connect(_open_settings)
+	var export := _menu_button(v, "Сохранение в файл")
+	export.pressed.connect(func() -> void:
+		_menu.visible = false
+		export_pressed.emit())
 	var quit := _menu_button(v, "Выйти в меню")
 	quit.pressed.connect(_ask_exit)
 	_sub = PanelContainer.new()
@@ -1875,17 +1881,19 @@ func _ask_exit() -> void:
 
 ## «Назад» на телефоне: закрыть верхнее окно, а если ничего не открыто — открыть меню.
 func back_pressed() -> void:
+	# «Назад» меню не открывает (меню — только кнопкой): закрывает открытое меню, иначе
+	# игра сворачивается.
 	if _sub.visible:
 		_back_to_menu()
 	elif _menu.visible:
 		_menu.visible = false
-	elif _dialog.visible:
-		_dialog.visible = false
-	elif _info_panel.visible or _build_row.visible:
-		close_overlays()
 	else:
-		_menu_load.visible = not world_id.is_empty()
-		_menu.visible = true
+		AppWindow.minimize()
+
+
+## Открыто меню игры — время стоит.
+func menu_open() -> bool:
+	return _menu.visible or _sub.visible
 
 
 func _menu_button(parent: Control, text: String) -> Button:
