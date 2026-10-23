@@ -1208,6 +1208,8 @@ var _drag_vel := Vector2.ZERO
 var _inertia_region := ""
 var _replaying := false
 var _panel_scroll_f := 0.0
+## Прокрутка окна поверх меню (если в нём список).
+var _sub_scroll: ScrollContainer
 ## Последние точки пальца [позиция, мс] — по ним скорость для инерции.
 var _drag_samples: Array = []
 
@@ -1219,6 +1221,11 @@ func _scrolling() -> bool:
 func _scroll_region_at(pos: Vector2) -> String:
 	if _tree_panel != null and _tree_panel.visible and _tree_clip.get_global_rect().has_point(pos):
 		return "tree"
+	# Окно поверх меню (справочник, сохранения, настройки) — выше карточки.
+	if _sub.visible and is_instance_valid(_sub_scroll) and _sub_scroll.is_visible_in_tree() \
+			and _sub_scroll.get_global_rect().has_point(pos) \
+			and _sub_scroll.get_v_scroll_bar().max_value > _sub_scroll.size.y + 1.0:
+		return "sub"
 	if _info_panel.visible and _scroll.get_global_rect().has_point(pos) \
 			and _scroll.get_v_scroll_bar().max_value > _scroll.size.y + 1.0:
 		return "panel"
@@ -1241,7 +1248,7 @@ func _input(event: InputEvent) -> void:
 			_drag_t = Time.get_ticks_msec()
 			_drag_vel = Vector2.ZERO
 			_drag_samples = [[event.position, Time.get_ticks_msec()]]
-			_panel_scroll_f = _scroll.scroll_vertical
+			_panel_scroll_f = (_sub_scroll if region == "sub" else _scroll).scroll_vertical
 			get_viewport().set_input_as_handled()
 		elif _press_event != null:
 			var press := _press_event
@@ -1294,9 +1301,12 @@ func _replay_tap(press: InputEventMouseButton, release: InputEventMouseButton) -
 
 
 func _scroll_by(region: String, d: Vector2) -> void:
-	if region == "panel":
-		_panel_scroll_f = clampf(_panel_scroll_f + d.y, 0.0, maxf(0.0, _scroll.get_v_scroll_bar().max_value - _scroll.size.y))
-		_scroll.scroll_vertical = int(_panel_scroll_f)
+	if region == "panel" or region == "sub":
+		var sc: ScrollContainer = _sub_scroll if region == "sub" else _scroll
+		if not is_instance_valid(sc):
+			return
+		_panel_scroll_f = clampf(_panel_scroll_f + d.y, 0.0, maxf(0.0, sc.get_v_scroll_bar().max_value - sc.size.y))
+		sc.scroll_vertical = int(_panel_scroll_f)
 	elif region == "tree":
 		_tree_pan -= d
 		_clamp_tree_pan()
@@ -1306,6 +1316,7 @@ func _process(delta: float) -> void:
 	if _inertia_region.is_empty():
 		return
 	if _drag_vel.length() < 30.0 or (_inertia_region == "panel" and not _info_panel.visible) \
+			or (_inertia_region == "sub" and not _sub.visible) \
 			or (_inertia_region == "tree" and not _tree_panel.visible):
 		_inertia_region = ""
 		return
@@ -1837,6 +1848,8 @@ func _open_sub(title: String, body: Control, buttons: Array) -> void:
 	if body != null:
 		var sc := ScrollContainer.new()
 		sc.custom_minimum_size = Vector2(0, minf(340.0, size.y - 250.0))
+		# Листается пальцем так же, как карточка (см. _input).
+		_sub_scroll = sc
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc.add_child(body)
