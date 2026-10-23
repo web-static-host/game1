@@ -276,6 +276,7 @@ func set_worlds_visible(on: bool) -> void:
 
 ## Строка ресурсов: гаврики и запасы значками. Перестраивается только при изменениях.
 func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made := 0, power_used := 0, power_known := false) -> void:
+	_last_inventory = inventory
 	# Еда — одним бургером (сумма грибов, рыбы и ягод), остальное — по ресурсам.
 	var keys: Array = ["wood", "stone"]
 	var rest := inventory.keys().filter(func(k: String) -> bool:
@@ -320,6 +321,18 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made :
 			if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
 				show_message(Mat.resource_name(key), ResourceHints.text(key)))
 		_res_box.add_child(item)
+	# «?» — справочник: где искать любой ресурс, даже которого ещё нет.
+	var help := PanelContainer.new()
+	help.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.16), 14, 2))
+	help.custom_minimum_size = Vector2(30, 28)
+	var q := _label("?", 20, Color.WHITE)
+	q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	help.add_child(q)
+	help.mouse_filter = Control.MOUSE_FILTER_STOP
+	help.gui_input.connect(func(e: InputEvent) -> void:
+		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
+			_open_resources(true))
+	_res_box.add_child(help)
 
 
 func _chip_plain(glyph: String, text: String, col: Color) -> HBoxContainer:
@@ -1796,6 +1809,8 @@ func _build_menu(center: CenterContainer) -> void:
 	_menu_load.pressed.connect(_open_load)
 	var settings := _menu_button(v, "Настройки")
 	settings.pressed.connect(_open_settings)
+	var res_help := _menu_button(v, "Ресурсы: где искать")
+	res_help.pressed.connect(func() -> void: _open_resources(false))
 	var export := _menu_button(v, "Сохранение в файл")
 	export.pressed.connect(func() -> void:
 		_menu.visible = false
@@ -1858,6 +1873,46 @@ func _open_load() -> void:
 	_sub_box.move_child(warn, 1)
 
 
+## Справочник ресурсов: все ресурсы игры; нажали — под ним подсказка, где искать.
+## standalone — открыт с верхней панели (закрывается целиком), иначе — из меню.
+var _last_inventory := {}
+var _sub_standalone := false
+
+
+func _open_resources(standalone: bool) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	for key: String in ResourceHints.HINTS:
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 50)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 8)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(row)
+		var name := _label(Mat.resource_name(key), 19, Color.WHITE)
+		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var have := int(_last_inventory.get(key, 0))
+		for c: Control in [IconView.make(key, 30), name, _label("есть %s" % Fmt.int_spaced(have) if have > 0 else "", 17, MUTED)]:
+			c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(c)
+		box.add_child(b)
+		var hint := _label(ResourceHints.text(key), 17, Color(0.9, 0.92, 0.96))
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.custom_minimum_size = Vector2(560, 0)
+		hint.visible = false
+		box.add_child(hint)
+		b.pressed.connect(func() -> void: hint.visible = not hint.visible)
+	_sub_standalone = standalone
+	var close := func() -> void:
+		_sub_standalone = false
+		_sub.visible = false
+	_open_sub("Ресурсы: где искать", box, [["Закрыть", close]] if standalone else [["Назад", _back_to_menu]])
+
+
 func _open_settings() -> void:
 	var box := VBoxContainer.new()
 	var sv := SettingsView.new()
@@ -1895,7 +1950,10 @@ func _ask_exit() -> void:
 func back_pressed() -> void:
 	# «Назад» меню не открывает (меню — только кнопкой): закрывает открытое меню, иначе
 	# игра сворачивается.
-	if _sub.visible:
+	if _sub.visible and _sub_standalone:
+		_sub_standalone = false
+		_sub.visible = false
+	elif _sub.visible:
 		_back_to_menu()
 	elif _menu.visible:
 		_menu.visible = false
