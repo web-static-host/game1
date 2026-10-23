@@ -902,6 +902,10 @@ func _shaft() -> bool:
 func _deepen() -> bool:
 	if planet != "earth":
 		return false
+	# Сначала — чтобы колония встала на ноги: люди, ферма, лаборатория, еда к зиме.
+	if colony.units.size() < 8 or colony.rooms_of(RoomType.FARM).is_empty() \
+			or colony.rooms_of(RoomType.LAB).is_empty() or _winter_short():
+		return false
 	for p in colony.projects:
 		if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x and p.phase != Project.Phase.DONE:
 			return false

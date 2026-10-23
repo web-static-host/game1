@@ -74,16 +74,24 @@ func _initialize() -> void:
 			next_slice += 600.0
 			for b in bots.values():
 				b._slice()
+			# Каждые 5 часов игры — сохранение (SAVE_TO): прервётся прогон — продолжим (LOAD_FROM).
+			if int(t) % 18000 == 0:
+				_save()
 	for b in bots.values():
 		b.report()
-	# Сохранить Землю, чтобы потом продолжить (SAVE_TO=файл).
-	var save_to := OS.get_environment("SAVE_TO")
-	if not save_to.is_empty():
-		var earth: Dictionary = universe.worlds[0]
-		SaveSystem.write(SaveSystem.serialize(earth["world"], earth["colony"], (earth["colony"] as Colony).home), save_to)
-		print("Сохранено: %s" % save_to)
+	_save()
 	print("\nПолётов в пути: %d" % universe.flights.size())
 	quit()
+
+
+## Сохранить Землю, чтобы потом продолжить (SAVE_TO=файл).
+func _save() -> void:
+	var save_to := OS.get_environment("SAVE_TO")
+	if save_to.is_empty():
+		return
+	var earth: Dictionary = universe.worlds[0]
+	SaveSystem.write(SaveSystem.serialize(earth["world"], earth["colony"], (earth["colony"] as Colony).home), save_to)
+	print("Сохранено: %s (%.0f мин)" % [save_to, t / 60.0])
 
 
 func _on_arrived(planet: String, colony: Colony, new_world: bool) -> void:
