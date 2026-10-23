@@ -102,6 +102,7 @@ func _initialize() -> void:
 	test_player_save_stuck_store()
 	test_ladder_idle()
 	test_steel_save()
+	test_degas_resumes()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4424,3 +4425,31 @@ func test_steel_save() -> void:
 	check(back.inventory.get("iron", 0) == 12 and not back.inventory.has("metal"), "сталь на складе стала железом (%s)" % [back.inventory])
 	if not back.projects.is_empty():
 		check(back.projects[0].material == "iron" and back.projects[0].delivered.get("iron", 0) == 2, "стальные стены и принесённая сталь — железо")
+
+
+## Геолог почуял газ в породе — выработка ждёт; дегазация рядом уже есть — копают дальше
+## сами (в сохранении игрока шахта и тоннель стояли так годами).
+func test_degas_resumes() -> void:
+	var data = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/stuck_store.json"))
+	var world := WorldData.new(WorldGen.new(int(data["seed"]), int(data.get("gen", 1))))
+	var colony := Colony.new(world)
+	SaveSystem.apply(data, world, colony)
+	var mine := colony.project_by_id(35)
+	check(mine.paused and mine.hazard_pending == "gas", "шахта ждёт ответа на «пахнет газом»")
+	check(colony.degas_covers(mine.rect.get_center()), "её накрывает дегазация")
+	var t := 0.0
+	while t < 60.0 and mine.paused:
+		colony.update(0.5)
+		t += 0.5
+	check(not mine.paused and mine.hazard_pending.is_empty(), "дегазация рядом — работы продолжились сами (за %.0f с)" % t)
+	# Бак дегазации полон — газ из выработок всё равно уходит.
+	var degas: Project = colony.rooms_of(RoomType.DEGAS)[0]
+	colony._add("methane", 100000, degas)
+	check(colony.room_free(degas, "methane") <= 0, "бак дегазации полон")
+	var c := degas.rect.get_center() + Vector2i(0, 5)
+	colony.elements.gas[c] = 0.5
+	var before: int = colony.inventory.get("methane", 0)
+	for i in 20:
+		colony.update(0.5)
+	check(colony.elements.gas_at(c) < 0.25, "полный бак — газ всё равно откачивают (%.3f)" % colony.elements.gas_at(c))
+	check(colony.inventory.get("methane", 0) <= before, "лишний метан выпускают, а не копят")

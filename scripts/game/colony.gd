@@ -5297,6 +5297,18 @@ func _dig_deadlock(now: Array[Vector2i]) -> bool:
 
 
 ## Геолог чует скрытую опасность рядом с забоем: бригада останавливается и ждёт решения.
+## Накрывает ли клетку c работающая дегазация (квадрат её радиуса).
+func degas_covers(c: Vector2i) -> bool:
+	for p in rooms_of(RoomType.DEGAS):
+		if p.paused:
+			continue
+		var center := p.rect.get_center()
+		var dr := RoomType.effect_radius(p)
+		if absi(c.x - center.x) <= dr and absi(c.y - center.y) <= dr:
+			return true
+	return false
+
+
 ## Вода опасна, только когда до неё клетка-две: о дальней геолог не тревожит (она видна на
 ## карте). Магму и газ он чует тем дальше, чем выше уровень геологии.
 const WATER_WARN_RADIUS := 2
@@ -5318,7 +5330,9 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 				Mat.MAGMA:
 					kind = "magma"
 				Mat.GAS_POCKET:
-					kind = "gas"
+					# Дегазация рядом — газ из вскрытого кармана она уберёт: геолог не останавливает.
+					if not degas_covers(c):
+						kind = "gas"
 			if kind.is_empty() or p.hazard_ack.has(kind):
 				continue
 			p.paused = true

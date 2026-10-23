@@ -408,9 +408,10 @@ func _gas_tick() -> void:
 			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
 	# Дегазация собирает метан — это топливо для газового генератора и котлов.
 	for p in colony.rooms_of(RoomType.DEGAS):
-		# Бак полон — газ больше не откачивают.
-		if p.paused or colony.room_free(p, "methane") <= 0:
+		if p.paused:
 			continue
+		# Бак полон — газ всё равно откачивают (выработки чистые), лишний выпускают наружу.
+		var store := colony.room_free(p, "methane") > 0
 		var center := p.rect.get_center()
 		var dr := RoomType.effect_radius(p)
 		for c in next:
@@ -418,7 +419,8 @@ func _gas_tick() -> void:
 				var take: float = next[c] * DEGAS_TAKE
 				next[c] -= take
 				# «Газосборник» — вдвое больше метана с того же газа.
-				_captured += take * (2.0 if colony.research.has("gas_collector") else 1.0)
+				if store:
+					_captured += take * (2.0 if colony.research.has("gas_collector") else 1.0)
 	while _captured >= 1.0:
 		_captured -= 1.0
 		colony._add("methane", 1)
@@ -454,6 +456,14 @@ func _gas_alarm() -> void:
 		# опасно дышать (иначе работники задохнутся).
 		var digging := p.phase == Project.Phase.DIG
 		var stop_at := GAS_ALARM if digging else GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0)
+		# Геолог чуял газ в породе, а дегазация рядом уже есть — копают дальше сами.
+		if p.hazard_pending == "gas" and p.paused and colony.degas_covers(p.rect.get_center()):
+			p.hazard_ack.append("gas")
+			p.hazard_pending = ""
+			p.paused = false
+			p.blocked = ""
+			colony._log("%s: рядом дегазация — газ из породы она уберёт, работы продолжаются" % p.title(), "info")
+			continue
 		if p.hazard_pending == "methane":
 			if g < GAS_CLEAR:
 				p.paused = false
