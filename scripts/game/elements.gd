@@ -59,6 +59,11 @@ var seeps := {}
 var _captured := 0.0
 ## Метан в открытых клетках: Vector2i -> доля (0..1+).
 var gas := {}
+## Вскрытые газовые карманы: клетка -> сколько секунд ещё помнить. Взрыв, остановка копки
+## и бегство из газа — только рядом с ними: метан из угля и разошедшийся по ходам не взрывается.
+var pockets := {}
+const POCKET_RADIUS := 6
+const POCKET_MEMORY := 1800.0
 var _water_t := 0.0
 var _lava_t := 0.0
 var _gas_t := 0.0
@@ -121,11 +126,23 @@ func on_opened(c: Vector2i) -> void:
 			springs[n] = SPRING_TIME * 0.5
 		elif SEEP_RESERVE.has(m) and not seeps.has(n):
 			seeps[n] = SEEP_RESERVE[m]
+		if m == Mat.GAS_POCKET:
+			pockets[n] = POCKET_MEMORY
 
 
 ## Газовый карман вскрыт: метан выходит в выработку.
 func release_gas(c: Vector2i) -> void:
 	gas[c] = gas.get(c, 0.0) + GAS_PER_POCKET
+	pockets[c] = POCKET_MEMORY
+
+
+## Рядом вскрытый газовый карман (или пласт кармана ещё сочится).
+func near_pocket(r: Rect2i) -> bool:
+	var area := r.grow(POCKET_RADIUS)
+	for c: Vector2i in pockets:
+		if area.has_point(c):
+			return true
+	return false
 
 
 func _accepts(c: Vector2i) -> bool:
@@ -380,6 +397,14 @@ func _seep_tick() -> void:
 
 
 func _gas_tick() -> void:
+	for c: Vector2i in pockets.keys():
+		# Пока карман сочится — помним; выдохся — забываем через POCKET_MEMORY.
+		if seeps.has(c) and world.get_mat(c.x, c.y) == Mat.GAS_POCKET:
+			pockets[c] = POCKET_MEMORY
+		else:
+			pockets[c] -= GAS_STEP
+			if pockets[c] <= 0.0:
+				pockets.erase(c)
 	_seep_tick()
 	_gas_alarm()
 	if gas.is_empty():
@@ -457,6 +482,9 @@ func _gas_alarm() -> void:
 		var masks := colony.research.has("gas_masks")
 		var digging := p.phase == Project.Phase.DIG
 		var stop_at := (GAS_EXPLOSIVE if masks else GAS_ALARM) if digging else GAS_CHOKE * (2.0 if masks else 1.0)
+		# Копка встаёт только у вскрытого газового кармана: в остальном метане искра не страшна.
+		if digging and not near_pocket(p.rect):
+			stop_at = GAS_CHOKE * (2.0 if masks else 1.0)
 		# Геолог чуял газ в породе, а дегазация рядом или есть противогазы — копают дальше сами.
 		if p.hazard_pending == "gas" and p.paused and (masks or colony.degas_covers(p.rect.get_center())):
 			p.hazard_ack.append("gas")
@@ -466,7 +494,7 @@ func _gas_alarm() -> void:
 			colony._log("%s: %s, работы продолжаются" % [p.title(), "в противогазах газ не страшен" if masks else "рядом дегазация — газ из породы она уберёт"], "info")
 			continue
 		if p.hazard_pending == "methane":
-			if g < (GAS_ALARM if masks else GAS_CLEAR):
+			if g < (GAS_ALARM if masks else GAS_CLEAR) or (digging and not near_pocket(p.rect) and g < stop_at):
 				p.paused = false
 				p.hazard_pending = ""
 				p.blocked = ""
@@ -482,7 +510,7 @@ func _gas_alarm() -> void:
 ## Искра от кирки в облаке метана: взрыв.
 func spark(c: Vector2i) -> void:
 	var g := maxf(gas_at(c), gas_at(c + UP))
-	if g < GAS_EXPLOSIVE or _rng.randf() > 0.02:
+	if g < GAS_EXPLOSIVE or _rng.randf() > 0.02 or not near_pocket(Rect2i(c, Vector2i.ONE)):
 		return
 	explode(c)
 
@@ -575,7 +603,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 			u.health -= 6.0 * dt
 		_hurt_check(u, "утонул(а)")
 	var g := maxf(gas_at(c), gas_at(head))
-	if g >= (GAS_ALARM if u.ability("flee_early") == true else GAS_EXPLOSIVE):
+	if g >= (GAS_ALARM if u.ability("flee_early") == true else GAS_EXPLOSIVE) and near_pocket(Rect2i(c, Vector2i.ONE)):
 		colony.flee_gas(u)
 	if g >= GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0):
 		u.health -= 3.0 * dt
@@ -622,7 +650,7 @@ static func _cells(d: Dictionary) -> Array:
 
 func to_dict() -> Dictionary:
 	return {"active": _cells(active), "lava": _cells(lava_still), "springs": _cells(springs), "gas": _cells(gas),
-		"seeps": _cells(seeps), "captured": _captured}
+		"seeps": _cells(seeps), "pockets": _cells(pockets), "captured": _captured}
 
 
 func load_dict(d: Dictionary) -> void:
@@ -636,4 +664,10 @@ func load_dict(d: Dictionary) -> void:
 		gas[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
 	for e in d.get("seeps", []):
 		seeps[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	for e in d.get("pockets", []):
+		pockets[Vector2i(int(e[0]), int(e[1]))] = float(e[2])
+	# Старое сохранение: карманы, которые ещё сочатся, — из пластов.
+	for c: Vector2i in seeps:
+		if world.get_mat(c.x, c.y) == Mat.GAS_POCKET:
+			pockets[c] = POCKET_MEMORY
 	_captured = float(d.get("captured", 0.0))

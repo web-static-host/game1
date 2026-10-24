@@ -1867,6 +1867,19 @@ func test_gas_alarm() -> void:
 	room.phase = Project.Phase.DIG
 	room.purpose = RoomType.NONE
 	el._gas_alarm()
+	check(not room.paused, "метан без газового кармана рядом (из угля, разошёлся по ходам) — копают дальше")
+	var u0 := colony.units[0]
+	u0.pos = Vector2(o + Vector2i(4, 4))
+	u0.state = Unit.State.IDLE
+	u0.task = Unit.Task.NONE
+	el.affect_unit(u0, 0.1)
+	check(u0.task != Unit.Task.GOTO, "без кармана из метана не бегут — он не взрывается")
+	for i in 500:
+		el.spark(o + Vector2i(4, 4))
+	check(colony.projects.has(room) and room.phase == Project.Phase.DIG, "без кармана искра метан не взрывает")
+	# Вскрыли газовый карман рядом — тут метан взрывоопасен.
+	el.pockets[o + Vector2i(10, 3)] = Elements.POCKET_MEMORY
+	el._gas_alarm()
 	check(room.paused and room.hazard_pending == "methane", "метан у копки — работы остановлены")
 	var u := colony.units[0]
 	u.pos = Vector2(o + Vector2i(4, 4))
@@ -4496,9 +4509,10 @@ func test_gas_masks() -> void:
 	room.phase = Project.Phase.DIG
 	room.rect = Rect2i(o.x + 2, o.y + 2, 6, 3)
 	colony.projects.append(room)
+	el.pockets[o + Vector2i(9, 3)] = Elements.POCKET_MEMORY
 	el.gas[o + Vector2i(4, 3)] = 0.2
 	el._gas_alarm()
-	check(room.paused, "без противогазов в слабом газе копка встаёт")
+	check(room.paused, "без противогазов в слабом газе у кармана копка встаёт")
 	colony.set_paused(room, false)
 	room.hazard_ack.clear()
 	colony.research.learn("gas_masks")
