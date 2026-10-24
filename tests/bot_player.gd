@@ -43,6 +43,13 @@ func _init(c: Colony) -> void:
 	# На планете шахта идёт прямо из корабля вниз.
 	shaft_x = ship.rect.position.x + 4 if ship != null else colony.home.x + 3
 	shaft_bottom = ship.rect.end.y if ship != null else world.gen.surface_y(shaft_x)
+	# Продолжение из сохранения: ствол уже есть — копаем дальше самый глубокий, а не
+	# начинаем новый с поверхности (там всё застроено, и бот переставал углубляться).
+	if ship == null:
+		for p in colony.projects:
+			if p.kind == Project.Kind.TUNNEL and p.rect.size.y > p.rect.size.x and p.rect.end.y > shaft_bottom:
+				shaft_x = p.rect.position.x
+				shaft_bottom = p.rect.end.y
 
 
 func _ship() -> Project:
