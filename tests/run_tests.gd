@@ -104,6 +104,7 @@ func _initialize() -> void:
 	test_steel_save()
 	test_degas_resumes()
 	test_gas_masks()
+	test_drill_lift()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -3597,7 +3598,7 @@ func test_lifts() -> void:
 	colony.assign_work(colony.units[1], st)
 	colony._register_room(st)
 	colony._rebuild_climb()
-	check(not colony.pathing.climbable(Vector2i(x + 41, s + 5)), "по шахте грузового не лазают")
+	check(colony.pathing.climbable(Vector2i(x + 41, s + 5)), "по шахте грузового при нужде лазают (аварийная лестница)")
 	check(colony.lift_stores(cl, 1).has(st), "склад вплотную к нижнему концу")
 	cl.lift_buf[0]["stone"] = 30
 	colony.inventory["stone"] = int(colony.inventory.get("stone", 0)) + 30
@@ -4495,3 +4496,77 @@ func test_gas_masks() -> void:
 	room.hazard_pending = "gas"
 	el._gas_alarm()
 	check(not room.paused and room.hazard_pending.is_empty(), "предупреждение геолога о газе в противогазах не держит")
+
+
+## Бур-лифт 3×5: внизу бур, вверху грузовой лифт. Бурит вниз, шахта лифта растёт следом,
+## добытое кабина сама везёт наверх — на склад вплотную к верху лифта.
+func test_drill_lift() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	var r := Rect2i(x + 10, s + 4, 3, 5)
+	check(not colony.drill_lift_error(r).is_empty(), "без технологии бур-лифт не поставить")
+	colony.research.learn("drill_lift")
+	colony.inventory["iron"] = 200
+	colony.inventory["copper"] = 50
+	check(colony.drill_lift_error(r).is_empty(), "с технологией — можно: " + colony.drill_lift_error(r))
+	var drill := colony.create_drill_lift(r)
+	check(drill != null, "бур-лифт заложен")
+	if drill == null:
+		return
+	var lift := colony.drill_lift_of(drill)
+	check(lift != null and lift.cargo and lift.lift_vertical() and lift.rect == Rect2i(x + 10, s + 4, 3, 2) \
+		and drill.rect == Rect2i(x + 10, s + 6, 3, 3), "внизу бур 3×3, над ним грузовой лифт 3×2")
+	# Построено (как будто гаврики уже выкопали и собрали).
+	for p in [drill, lift]:
+		for c in p.cells():
+			w.set_material(c.x, c.y, Mat.AIR)
+			w.set_dug(c.x, c.y)
+			colony.interior[c] = p.id
+		p.phase = Project.Phase.DONE
+	var st := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 13, s + 4, 6, 3), 960)
+	st.purpose = RoomType.STORAGE
+	colony.assign_work(colony.units[1], st)
+	colony._register_room(st)
+	colony._rebuild_climb()
+	colony._power_tick(0.1)
+	check(colony.lift_stores(lift, 0).has(st), "склад вплотную к верху лифта")
+	# На пути бура — гранит (известняк — пустая порода, она просто исчезает).
+	for y in range(s + 9, s + 20):
+		for xx in range(x + 10, x + 13):
+			w.set_material(xx, y, Mat.GRANITE)
+	check(not colony.start_drill(drill, Vector2i.LEFT, 5).is_empty(), "бур-лифт вбок не бурит")
+	check(colony.start_drill(drill, Vector2i.DOWN, 10).is_empty(), "бурит вниз")
+	var before := 0
+	for k in st.held:
+		before += int(st.held[k])
+	var t := 0.0
+	while t < 400.0 and (colony.drilling(drill) or _load_left(lift) > 0):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		colony._lifts_tick(0.5)
+		t += 0.5
+	check(not colony.drilling(drill) and drill.rect.position.y == s + 16, "бур прошёл 10 м вниз (%d)" % (drill.rect.position.y - s))
+	check(lift.rect.size.y == 12 and lift.rect.end.y == drill.rect.position.y, "шахта лифта доросла до бура (%d м)" % lift.rect.size.y)
+	var after := 0
+	for k in st.held:
+		after += int(st.held[k])
+	check(after > before + 10, "добытое кабина сама довезла на склад (%d → %d за %.0f с)" % [before, after, t])
+	var left := 0
+	for y in range(s + 6, s + 19):
+		for xx in range(x + 10, x + 13):
+			for k in colony.drops.get(Vector2i(xx, y), {}):
+				if not RoomType.BULK.has(k):
+					left += int(colony.drops[Vector2i(xx, y)][k])
+	check(left == 0, "в шахте ничего не осталось лежать (%d)" % left)
+
+
+func _load_left(lift: Project) -> int:
+	var n := 0
+	for d in [lift.lift_load, lift.lift_buf[0], lift.lift_buf[1]]:
+		for k in d:
+			n += int(d[k])
+	return n

@@ -392,14 +392,15 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		return _water_structure_error(kind, r)
 	if kind == Project.Kind.LIFT:
-		var is_cargo := material == "cargo"
+		var is_cargo := material == "cargo" or material == "cargo_drill"
 		if not research.has("cargo_lifts" if is_cargo else "lifts"):
 			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
 		if r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
 		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
-	if is_passage(kind) and kind != Project.Kind.DRILL:
+	# Лифт бур-лифта стоит над буром — и над землёй тоже.
+	if is_passage(kind) and kind != Project.Kind.DRILL and material != "cargo_drill":
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
@@ -892,7 +893,7 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood", che
 	p.kind = kind
 	p.rect = r
 	p.material = material if kind == Project.Kind.ROOM else "wood"
-	p.cargo = kind == Project.Kind.LIFT and material == "cargo"
+	p.cargo = kind == Project.Kind.LIFT and (material == "cargo" or material == "cargo_drill")
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
@@ -1303,6 +1304,12 @@ func drill_error(p: Project, dir: Vector2i, n: int) -> String:
 		return "Бур уже сверлит — сначала остановите"
 	if not [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].has(dir):
 		return "Бур сверлит вниз, влево или вправо"
+	if p.link_id != 0 and dir != Vector2i.DOWN:
+		return "Бур-лифт сверлит только вниз — лифт идёт следом"
+	if p.link_id != 0:
+		var lift := drill_lift_of(p)
+		if lift == null or lift.phase != Project.Phase.DONE:
+			return "Сначала достройте лифт бур-лифта"
 	if n < 1 or n > DRILL_MAX:
 		return "За раз — от 1 до %d м" % DRILL_MAX
 	var path := drill_path(p, dir, n)
@@ -1318,6 +1325,71 @@ func drill_error(p: Project, dir: Vector2i, n: int) -> String:
 	if int(inventory.get("iron", 0)) < iron:
 		return "Нужно %d железа на обсадку хода (на складе %d)" % [iron, int(inventory.get("iron", 0))]
 	return ""
+
+
+# --- Бур-лифт ----------------------------------------------------------------------------
+## Бур-лифт 3×5: внизу бур 3×3, над ним грузовой лифт 3×2. Бурит только вниз; шахта лифта
+## растёт следом за буром, а всё, что он выкопал, ждёт кабину у нижнего конца — лифт сам
+## везёт наверх и выгружает на склад вплотную к верху лифта (нет склада — кладёт у лифта).
+static func drill_lift_parts(r: Rect2i) -> Array[Rect2i]:
+	return [Rect2i(r.position.x, r.position.y + 2, 3, 3), Rect2i(r.position.x, r.position.y, 3, 2)]
+
+
+func drill_lift_error(r: Rect2i) -> String:
+	if not research.has("drill_lift"):
+		return "Сначала изучите «%s»" % Research.tech_name("drill_lift")
+	if r.size != Vector2i(3, 5):
+		return "Бур-лифт — 3×5: внизу бур, вверху лифт"
+	var parts := drill_lift_parts(r)
+	var err := validate(Project.Kind.DRILL, parts[0])
+	if not err.is_empty():
+		return err
+	return validate(Project.Kind.LIFT, parts[1], "cargo_drill", false)
+
+
+func create_drill_lift(r: Rect2i, workers := -1) -> Project:
+	if not drill_lift_error(r).is_empty():
+		return null
+	var parts := drill_lift_parts(r)
+	var drill := create_project(Project.Kind.DRILL, parts[0], workers)
+	if drill == null:
+		return null
+	var lift := create_project(Project.Kind.LIFT, parts[1], workers, "cargo_drill", false)
+	if lift == null:
+		cancel_project(drill)
+		return null
+	drill.link_id = lift.id
+	lift.link_id = drill.id
+	return drill
+
+
+## Лифт бур-лифта (или null).
+func drill_lift_of(p: Project) -> Project:
+	if p.kind != Project.Kind.DRILL or p.link_id == 0:
+		return null
+	var q := project_by_id(p.link_id)
+	return q if q != null and q.kind == Project.Kind.LIFT else null
+
+
+## Бур-лифт сдвинулся вниз: шахта лифта дорастает до бура, выкопанное — в кабину.
+func _drill_lift_step(p: Project) -> void:
+	var lift := drill_lift_of(p)
+	if lift == null:
+		return
+	lift.rect.size.y = maxi(2, p.rect.position.y - lift.rect.position.y)
+	# Выкопанное падает на пол — забираем всё, что лежит в шахте лифта и в самом буре.
+	var area := lift.rect.merge(p.rect).grow_individual(0, 0, 0, 1)
+	for c: Vector2i in drops.keys():
+		if not area.has_point(c):
+			continue
+		for k in drops[c].keys():
+			# Пустая порода не нужна — её кабина не возит.
+			if RoomType.BULK.has(k):
+				continue
+			var n := drop_amount(c, k)
+			if n > 0:
+				lift.lift_buf[1][k] = int(lift.lift_buf[1].get(k, 0)) + _take_drop(c, k, n)
+	_rebuild_climb()
 
 
 ## Приказ буру: пройти n м в сторону dir. Ход сразу размечается тоннелем или шахтой.
@@ -1401,6 +1473,7 @@ func _drills_tick(dt: float) -> void:
 		for c in solid:
 			_complete_dig(c, bore, null)
 		p.rect.position += p.drill_dir
+		_drill_lift_step(p)
 		p.drill_left -= 1
 		if p.drill_left <= 0:
 			_end_bore(p, true)
@@ -1838,8 +1911,8 @@ func _rebuild_climb() -> void:
 		match p.kind:
 			Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.LIFT:
 				# Вертикальный тоннель — с лестницей; горизонтальный и шахта — только по полу.
-				# В шахте пассажирского лифта — аварийная лестница; в грузовом лазить нельзя.
-				if p.rect.size.y > p.rect.size.x and not (p.kind == Project.Kind.LIFT and p.cargo):
+				# В шахте лифта (и грузового тоже) — аварийная лестница: при нужде по ней лазают.
+				if p.rect.size.y > p.rect.size.x or (p.kind == Project.Kind.LIFT and p.lift_vertical()):
 					for c in p.cells():
 						lad[c] = true
 				# Шахта (горизонтальный ход) прямо под другой выработкой: пока копали, туда

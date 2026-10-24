@@ -66,6 +66,8 @@ var cargo := false
 ## Кабина ещё не стояла (координата может быть и отрицательной — у поверхности).
 const LIFT_UNSET := -1.0e9
 var lift_pos := LIFT_UNSET
+## Бур-лифт: у бура — id его грузового лифта, у лифта — id бура.
+var link_id := 0
 ## Бур: куда едет (ноль — стоит), сколько метров осталось, сколько уже сверлит срез,
 ## ход, который он проходит, и где стоял, когда получил приказ.
 var drill_dir := Vector2i.ZERO
@@ -159,9 +161,11 @@ var hazard_pending := ""
 
 func title() -> String:
 	if kind == Kind.LIFT:
+		if link_id != 0:
+			return "Лифт бур-лифта %d м" % rect.size.y
 		return "%s %d м" % ["Грузовой лифт" if cargo else "Лифт", maxi(rect.size.x, rect.size.y)]
 	if kind == Kind.DRILL:
-		return "Бур"
+		return "Бур-лифт" if link_id != 0 else "Бур"
 	if kind == Kind.ROOM and purpose != RoomType.NONE:
 		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
@@ -173,7 +177,8 @@ static func kind_name(k: int) -> String:
 
 ## Лифт вертикальный (иначе — горизонтальный).
 func lift_vertical() -> bool:
-	return rect.size.y > rect.size.x
+	# Лифт бур-лифта — всегда вертикальный (сначала он 3×2 над буром, потом растёт вниз).
+	return link_id != 0 or rect.size.y > rect.size.x
 
 
 ## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
@@ -441,6 +446,7 @@ func to_dict() -> Dictionary:
 		"store_filter": store_filter,
 		"store_off": store_off,
 		"cargo": cargo,
+		"link_id": link_id,
 		"lift_pos": lift_pos,
 		"lift_load": lift_load,
 		"lift_buf": lift_buf,
@@ -509,6 +515,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
 	p.cargo = bool(d.get("cargo", false))
+	p.link_id = int(d.get("link_id", 0))
 	p.lift_pos = float(d.get("lift_pos", LIFT_UNSET))
 	# В старых сохранениях «ещё не ставили» было −1 (кабина выше нуля тогда не держалась).
 	if p.lift_pos == -1.0:

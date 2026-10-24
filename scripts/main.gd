@@ -603,7 +603,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL]
+	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL, Hud.Mode.DRILL_LIFT]
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -924,7 +924,8 @@ func _show_project(p: Project) -> void:
 			else:
 				controls.append({"label": "Сверлить, м", "value": _drill_len, "min": 1, "max": Colony.DRILL_MAX,
 					"changed": func(v: int) -> void: _drill_len = v})
-				for d: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]:
+				# Бур-лифт — только вниз: лифт идёт следом.
+				for d: Vector2i in ([Vector2i.DOWN] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]):
 					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.RIGHT: "Вправо →"}[d]
 					actions.push_front([label, func() -> void:
 						var err := colony.start_drill(p, d, _drill_len)
@@ -1305,6 +1306,11 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
 			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
 		Project.Kind.DRILL:
+			if p.link_id != 0:
+				var lift := colony.drill_lift_of(p)
+				var stores := colony.lift_stores(lift, 0) if lift != null and lift.phase == Project.Phase.DONE else []
+				rows.append({"type": "text", "text": "Бур-лифт: бурит только вниз, шахта грузового лифта растёт следом, и всё добытое кабина сама везёт наверх. %s" % (
+					"Выгружает на склад: %s." % stores[0].title() if not stores.is_empty() else "Склада у верха лифта нет — добытое ляжет у лифта, гаврики разнесут. Поставьте склад вплотную к верху лифта.")})
 			if colony.drilling(p):
 				var went := absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
 				var all := went + p.drill_left
@@ -1800,6 +1806,17 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 			if colony.validate(kind, rr).is_empty():
 				r = rr
 				err = ""
+	elif mode == Hud.Mode.DRILL_LIFT:
+		# Бур-лифт 3×5 под пальцем (палец — на буре); прилипает к земле или полу рядом.
+		r = Rect2i(c.x - 1, c.y - 3, 3, 5)
+		err = colony.drill_lift_error(r)
+		for dy in [1, -1, 2, -2]:
+			if err.is_empty():
+				break
+			var rr := Rect2i(c.x - 1, c.y - 3 + dy, 3, 5)
+			if colony.drill_lift_error(rr).is_empty():
+				r = rr
+				err = ""
 	elif mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
 		# Лифт — строго вертикально или строго горизонтально (ход 3 м).
 		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
@@ -1820,6 +1837,8 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 		return
 	var kind := _mode_kind()
 	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else _lift_material())
+	if mode == Hud.Mode.DRILL_LIFT:
+		err = colony.drill_lift_error(r)
 	if mode == Hud.Mode.BRIDGE:
 		err = "Мостик и пристань строятся над озером" if _water_options.is_empty() else ""
 		for o in _water_options:
@@ -1833,6 +1852,8 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending_kind = kind
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
 	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else _lift_material()
+	if mode == Hud.Mode.DRILL_LIFT:
+		_pending_material = "drill_lift"
 	_show_pending()
 
 
@@ -1886,7 +1907,7 @@ func _mode_kind() -> int:
 			return Project.Kind.MINE
 		Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT:
 			return Project.Kind.LIFT
-		Hud.Mode.DRILL:
+		Hud.Mode.DRILL, Hud.Mode.DRILL_LIFT:
 			return Project.Kind.DRILL
 	return Project.Kind.TUNNEL
 
@@ -1932,6 +1953,12 @@ func _pending_spec() -> Dictionary:
 	var rows := []
 	var cost := Project.lift_cost(r, _pending_material == "cargo") if kind == Project.Kind.LIFT \
 		else (Project.drill_cost(r) if kind == Project.Kind.DRILL else Project.cost_for(kind, r, _pending_material))
+	if _pending_material == "drill_lift":
+		# Бур и кабина грузового лифта над ним.
+		cost = Project.drill_cost(r).duplicate()
+		var lc := Project.lift_cost(Rect2i(0, 0, 3, 2), true)
+		for k in lc:
+			cost[k] = int(cost.get(k, 0)) + int(lc[k])
 	if not cost.is_empty():
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
@@ -2038,7 +2065,7 @@ const ROOM_PICS := {
 ## Неизученные инструменты стройки: режим -> почему нельзя.
 func _build_tool_locks() -> Dictionary:
 	var out := {}
-	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"]]:
+	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"], [Hud.Mode.DRILL_LIFT, "drill_lift"]]:
 		if not colony.research.has(pair[1]):
 			out[pair[0]] = "Сначала изучите «%s» (Наука)" % Research.tech_name(pair[1])
 	return out
@@ -2064,11 +2091,13 @@ func _build_room_items() -> Array:
 
 
 func _confirm_pending() -> bool:
-	var err := colony.validate(_pending_kind, _pending, _pending_material)
+	var drill_lift := _pending_material == "drill_lift"
+	var err := colony.drill_lift_error(_pending) if drill_lift else colony.validate(_pending_kind, _pending, _pending_material)
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		return false
-	var p := colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
+	var p := colony.create_drill_lift(_pending, _pending_workers) if drill_lift \
+		else colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()
 	_clear_preview()
