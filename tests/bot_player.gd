@@ -346,7 +346,7 @@ func _play() -> void:
 	# Еды не хватает (ферм меньше, чем по одной на четыре рта) — новая ферма раньше всего
 	# прочего: в «classic» дома строились вне очереди, дети рождались, а ферма была одна —
 	# колонии вымирали от голода на втором году.
-	if _food_short() and _shaft(RoomType.FARM):
+	if _food_short() and not _shaft_digging() and _shaft(RoomType.FARM):
 		return
 	# Амбар (без него еда не копится на зиму) и дома (без кроватей нет детей) — вне очереди:
 	# в «classic» колонии вымирали в первую зиму, пока бот ждал конца других строек.
@@ -358,7 +358,7 @@ func _play() -> void:
 	# Ферма и лаборатория — вне очереди: без них колония не живёт и не учится (лабораторию
 	# мог разрушить обвал, а строек всегда много).
 	var core := _next_underground()
-	if (core == RoomType.FARM or core == RoomType.LAB) and _shaft():
+	if (core == RoomType.FARM or core == RoomType.LAB) and not _shaft_digging() and _shaft():
 		return
 	if _busy() >= 2:
 		return
@@ -1009,6 +1009,15 @@ func _shaft(force := -1) -> bool:
 		if depth >= d:
 			_milestone("depth%d" % d, "Шахта заложена до %d м" % d)
 	return true
+
+
+## Отрезок ствола ещё копают. Вне очереди ствол не удлиняют, пока прежний не докопан:
+## иначе, если комната у дна не вставала, бот каждые 5 с закладывал ещё 10 м (сотни строек).
+func _shaft_digging() -> bool:
+	for p in colony.projects:
+		if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x and p.phase != Project.Phase.DONE:
+			return true
+	return false
 
 
 ## Следующие 10 м ствола, когда прежний отрезок докопан. Впереди подземная вода или лава —
