@@ -659,8 +659,26 @@ func _professions() -> void:
 				if colony.assigned_to(q).is_empty():
 					return true
 		return false
+	# Лаборатория без учёного, а ферма с лишними руками — одного с фермы в лабораторию
+	# (раньше большая ферма забирала всех, и наука стояла годами).
+	for lab in colony.rooms_of(RoomType.LAB):
+		if not colony.assigned_to(lab).is_empty() or free.size() > 0:
+			continue
+		for f in colony.rooms_of(RoomType.FARM):
+			var fw: Array = colony.assigned_to(f)
+			if fw.size() > 1:
+				colony.unassign_work(fw[-1])
+				free.append(fw[-1])
+				_act("с фермы в лабораторию")
+				break
 	# Свободные нужны на стройки и подноску, но не в ущерб еде и науке.
 	var keep_free := 0 if adults.size() < 8 else adults.size() / 5
+	# Сначала по одному на каждую ферму и лабораторию, потом — остальные места.
+	for p in places:
+		if (p.purpose == RoomType.FARM or p.purpose == RoomType.LAB) and colony.assigned_to(p).is_empty() and not free.is_empty():
+			free.sort_custom(func(a: Unit, b: Unit) -> bool: return colony.suitability(a, p) < colony.suitability(b, p))
+			if colony.assign_work(free.pop_back(), p).is_empty():
+				_act("назначение")
 	for p in places:
 		# Пока ферма или лаборатория без работника — на склады не назначаем.
 		if RoomType.is_store(p.purpose) and adults.size() < 8 and unstaffed_core.call():
