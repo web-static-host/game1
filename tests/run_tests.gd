@@ -173,9 +173,10 @@ func test_deep_geology() -> void:
 	var mid := _histogram(gen, 1200, 200, 40)
 	var deep := _histogram(gen, 20000, 200, 40)
 	var sed := 0
-	for m in [Mat.SANDSTONE, Mat.SHALE, Mat.LIMESTONE, Mat.COAL, Mat.AQUIFER]:
+	for m in [Mat.SANDSTONE, Mat.SHALE, Mat.LIMESTONE, Mat.COAL]:
 		sed += shallow.get(m, 0)
 	check(sed > 4000, "на 30 м — осадочные породы (%d)" % sed)
+	check(not shallow.has(Mat.AQUIFER) and not mid.has(Mat.AQUIFER), "водоносного песка в игре нет")
 	check(mid.get(Mat.GRANITE, 0) + mid.get(Mat.GNEISS, 0) > 4000, "на 1.2 км — гранит/гнейс")
 	check(deep.get(Mat.BASALT, 0) > 2000, "на 20 км много базальта (%d)" % deep.get(Mat.BASALT, 0))
 	check(not shallow.has(Mat.MAGMA) and not mid.has(Mat.MAGMA), "магмы нет на малых глубинах")

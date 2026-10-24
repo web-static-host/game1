@@ -422,8 +422,7 @@ func _sedimentary(x: int, y: int, d: int, wd: float) -> int:
 	# Слоистость: шум сильно растянут по горизонтали → пласты.
 	if d > 15 and absf(_n_coal.get_noise_2d(x * 0.05, wd)) < 0.035:
 		return Mat.COAL
-	if planet["lakes"] and d < 220 and _n_aquifer.get_noise_2d(x * 0.1, wd) > 0.5:
-		return Mat.AQUIFER
+	# Водоносного песка больше нет (убран из игры): на его месте — обычные пласты.
 	if d > 150 and _n_salt.get_noise_2d(x * 0.3, wd * 0.6) > 0.6:
 		return Mat.ROCK_SALT
 	var band := _n_band.get_noise_2d(x * 0.08, wd)
