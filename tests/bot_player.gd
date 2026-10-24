@@ -878,7 +878,11 @@ func _has_room(t: int) -> bool:
 
 
 func _need_home() -> bool:
-	if colony.beds_total() >= colony.units.size() + 1 or _pending_purpose.values().has(RoomType.HOME):
+	# Свободных кроватей — с запасом: ребёнок родится, только если есть свободная кровать
+	# (беременная занимает свою заранее), и с одной лишней кроватью рождений почти не было —
+	# колония старела и вымирала (1234: с 8-го года ни одного ребёнка).
+	var spare := 2 + colony.units.size() / 6
+	if colony.beds_total() >= colony.units.size() + spare or _pending_purpose.values().has(RoomType.HOME):
 		return false
 	# Пока еды мало, новых кроватей не строим: лишние рты добьют колонию.
 	if _food_short():
