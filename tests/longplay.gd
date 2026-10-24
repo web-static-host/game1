@@ -51,12 +51,14 @@ func _initialize() -> void:
 	var next_slice := 600.0
 	var think := 0.0
 	print("=== Мир %d, %d минут игры, бот: %s, живут %.0f лет ===" % [seed_value, minutes, style, Unit.life_years])
+	# Шаг симуляции (STEP=1.0 — вдвое быстрее, для длинных серий).
+	var step := float(OS.get_environment("STEP")) if not OS.get_environment("STEP").is_empty() else 0.5
 	while t < minutes * 60.0:
 		for e in universe.worlds:
-			(e["colony"] as Colony).update(0.5)
-		universe.update(0.5)
-		t += 0.5
-		think += 0.5
+			(e["colony"] as Colony).update(step)
+		universe.update(step)
+		t += step
+		think += step
 		for b in bots.values():
 			b.t = t
 		if think >= 5.0:
@@ -75,7 +77,7 @@ func _initialize() -> void:
 			for b in bots.values():
 				b._slice()
 			# Каждые 5 часов игры — сохранение (SAVE_TO): прервётся прогон — продолжим (LOAD_FROM).
-			if int(t) % 18000 == 0:
+			if int(t) % 18000 < int(step) + 1:
 				_save()
 	for b in bots.values():
 		b.report()
