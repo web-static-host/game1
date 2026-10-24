@@ -707,18 +707,24 @@ func _professions() -> void:
 				if colony.assigned_to(q).is_empty():
 					return true
 		return false
-	# Лаборатория без учёного, а ферма с лишними руками — одного с фермы в лабораторию
-	# (раньше большая ферма забирала всех, и наука стояла годами).
+	# Лаборатория без учёного, а свободных нет — берём с мостков (рыбалка), складов или
+	# фермы, где больше одного (раньше наука стояла годами).
 	for lab in colony.rooms_of(RoomType.LAB):
-		if not colony.assigned_to(lab).is_empty() or free.size() > 0:
+		if not colony.assigned_to(lab).is_empty() or free.size() > 0 or not _base_reaches(lab):
 			continue
-		for f in colony.rooms_of(RoomType.FARM):
-			var fw: Array = colony.assigned_to(f)
-			if fw.size() > 1:
-				colony.unassign_work(fw[-1])
-				free.append(fw[-1])
-				_act("с фермы в лабораторию")
+		var donor: Unit = null
+		for p in colony.projects:
+			if donor != null:
 				break
+			var pw: Array = colony.assigned_to(p)
+			if pw.is_empty():
+				continue
+			if p.is_water_structure() or RoomType.is_store(p.purpose) or (p.purpose == RoomType.FARM and pw.size() > 1):
+				donor = pw[-1]
+		if donor != null:
+			colony.unassign_work(donor)
+			free.append(donor)
+			_act("в лабораторию")
 	# Свободные нужны на стройки и подноску, но не в ущерб еде и науке.
 	var keep_free := 0 if adults.size() < 8 else adults.size() / 5
 	# Сначала по одному на каждую ферму и лабораторию, потом — остальные места.
@@ -998,11 +1004,23 @@ func _deepen() -> bool:
 	return false
 
 
+## Можно ли дойти до постройки от базы (колонию бывает разрезает обвалом).
+func _base_reaches(p: Project) -> bool:
+	var e := colony.pathing.explore(colony._ground_cell(colony.home.x))
+	if Pathing.truncated(e[1]):
+		return colony.can_reach(p.rect)
+	return colony._near_rect(p.rect, e[1], true) != null or colony._reach_far(colony._ground_cell(colony.home.x), p.rect, e[0], e[1])
+
+
 ## Что строить под землёй дальше.
 func _next_underground() -> int:
 	var has := func(t: int) -> bool:
+		if _pending_purpose.values().has(t):
+			return true
 		for p in colony.projects:
-			if p.kind == Project.Kind.ROOM and (p.purpose == t or _pending_purpose.values().has(t)):
+			# Ферма и лаборатория, до которых от базы не дойти, — как нет.
+			if p.kind == Project.Kind.ROOM and p.purpose == t \
+					and (not (t == RoomType.LAB or t == RoomType.FARM) or _base_reaches(p)):
 				return true
 		return false
 	if not has.call(RoomType.FARM):
