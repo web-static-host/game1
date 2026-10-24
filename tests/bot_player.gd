@@ -341,6 +341,13 @@ func _play() -> void:
 	# наверху закончатся (иначе на руду для ракеты не выйти никогда).
 	if _deepen():
 		return
+	# Амбар (без него еда не копится на зиму) и дома (без кроватей нет детей) — вне очереди:
+	# в «classic» колонии вымирали в первую зиму, пока бот ждал конца других строек.
+	if not _has_room(RoomType.GRANARY) and not _pending_purpose.values().has(RoomType.GRANARY) \
+			and _surface_room(RoomType.GRANARY):
+		return
+	if _need_home():
+		return
 	# Ферма и лаборатория — вне очереди: без них колония не живёт и не учится (лабораторию
 	# мог разрушить обвал, а строек всегда много).
 	var core := _next_underground()
