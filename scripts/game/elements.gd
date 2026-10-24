@@ -452,20 +452,21 @@ func _gas_alarm() -> void:
 		if p.is_water_structure() or p.purpose == RoomType.DEGAS or p.purpose == RoomType.VENT:
 			continue
 		var g := gas_in(p.rect.grow(1))
-		# Искру даёт кирка: копка стоит уже при тревоге. Готовые комнаты — когда газом
-		# опасно дышать (иначе работники задохнутся).
+		# Искру даёт кирка: копка стоит уже при тревоге, а в противогазах — только в метановом
+		# облаке (там искра взрывает). Готовые комнаты — когда газом опасно дышать.
+		var masks := colony.research.has("gas_masks")
 		var digging := p.phase == Project.Phase.DIG
-		var stop_at := GAS_ALARM if digging else GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0)
-		# Геолог чуял газ в породе, а дегазация рядом уже есть — копают дальше сами.
-		if p.hazard_pending == "gas" and p.paused and colony.degas_covers(p.rect.get_center()):
+		var stop_at := (GAS_EXPLOSIVE if masks else GAS_ALARM) if digging else GAS_CHOKE * (2.0 if masks else 1.0)
+		# Геолог чуял газ в породе, а дегазация рядом или есть противогазы — копают дальше сами.
+		if p.hazard_pending == "gas" and p.paused and (masks or colony.degas_covers(p.rect.get_center())):
 			p.hazard_ack.append("gas")
 			p.hazard_pending = ""
 			p.paused = false
 			p.blocked = ""
-			colony._log("%s: рядом дегазация — газ из породы она уберёт, работы продолжаются" % p.title(), "info")
+			colony._log("%s: %s, работы продолжаются" % [p.title(), "в противогазах газ не страшен" if masks else "рядом дегазация — газ из породы она уберёт"], "info")
 			continue
 		if p.hazard_pending == "methane":
-			if g < GAS_CLEAR:
+			if g < (GAS_ALARM if masks else GAS_CLEAR):
 				p.paused = false
 				p.hazard_pending = ""
 				p.blocked = ""

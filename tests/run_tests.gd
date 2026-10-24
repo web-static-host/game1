@@ -103,6 +103,7 @@ func _initialize() -> void:
 	test_ladder_idle()
 	test_steel_save()
 	test_degas_resumes()
+	test_gas_masks()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4454,3 +4455,43 @@ func test_degas_resumes() -> void:
 		colony.update(0.5)
 	check(colony.elements.gas_at(c) < 0.25, "полный бак — газ всё равно откачивают (%.3f)" % colony.elements.gas_at(c))
 	check(colony.inventory.get("methane", 0) <= before, "лишний метан выпускают, а не копят")
+
+
+## Противогазы: в слабом газе копают дальше, встают только в метановом облаке (там взрыв);
+## предупреждение геолога о газе в породе не останавливает.
+func test_gas_masks() -> void:
+	var colony := _new_colony(63)
+	var w := colony.world
+	_start(colony, 0)
+	var el := colony.elements
+	var o := Vector2i(300, w.gen.surface_y(300) + 40)
+	_granite_box(w, o, Vector2i(20, 10))
+	var cells := []
+	for y in range(o.y + 2, o.y + 5):
+		for x in range(o.x + 2, o.x + 12):
+			cells.append(Vector2i(x, y))
+	_dig_cells(w, cells)
+	var room := Project.new()
+	room.id = 951
+	room.kind = Project.Kind.ROOM
+	room.phase = Project.Phase.DIG
+	room.rect = Rect2i(o.x + 2, o.y + 2, 6, 3)
+	colony.projects.append(room)
+	el.gas[o + Vector2i(4, 3)] = 0.2
+	el._gas_alarm()
+	check(room.paused, "без противогазов в слабом газе копка встаёт")
+	colony.set_paused(room, false)
+	room.hazard_ack.clear()
+	colony.research.learn("gas_masks")
+	el._gas_alarm()
+	check(not room.paused, "в противогазах в слабом газе копают дальше")
+	el.gas[o + Vector2i(4, 3)] = 0.4
+	el._gas_alarm()
+	check(room.paused and room.hazard_pending == "methane", "в метановом облаке встают и в противогазах — искра взрывает")
+	el.gas[o + Vector2i(4, 3)] = 0.1
+	el._gas_alarm()
+	check(not room.paused, "облако рассеялось до слабого газа — копают дальше")
+	room.paused = true
+	room.hazard_pending = "gas"
+	el._gas_alarm()
+	check(not room.paused and room.hazard_pending.is_empty(), "предупреждение геолога о газе в противогазах не держит")

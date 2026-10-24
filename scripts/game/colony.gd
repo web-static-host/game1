@@ -5330,8 +5330,9 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 				Mat.MAGMA:
 					kind = "magma"
 				Mat.GAS_POCKET:
-					# Дегазация рядом — газ из вскрытого кармана она уберёт: геолог не останавливает.
-					if not degas_covers(c):
+					# Дегазация рядом — газ из вскрытого кармана она уберёт; в противогазах газ не
+					# страшен — геолог не останавливает.
+					if not degas_covers(c) and not research.has("gas_masks"):
 						kind = "gas"
 			if kind.is_empty() or p.hazard_ack.has(kind):
 				continue
