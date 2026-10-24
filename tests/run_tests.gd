@@ -57,6 +57,7 @@ func _initialize() -> void:
 	test_separate_stores()
 	test_mine_meters()
 	test_lights()
+	test_roof_over_wall()
 	test_two_generators()
 	test_store_limits()
 	test_change_material()
@@ -3710,6 +3711,21 @@ func test_walk_floor_only() -> void:
 	u.state = Unit.State.IDLE
 	colony.update(0.1)
 	check(u.state == Unit.State.FALL or u.cell().y > c2.y, "гаврик в воздухе падает")
+
+
+func test_roof_over_wall() -> void:
+	# Комната в склоне: над стеной открыто — по крыше над стеной ходят (раньше там была
+	# щель-обрыв, и жители по ту сторону склона оказывались отрезаны от базы).
+	var res := _colony_with_room(32, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var r := room.rect
+	var top := Vector2i(r.end.x - 1, r.position.y - 1)
+	for y in [top.y, top.y - 1, top.y - 2]:
+		colony.world.set_material(top.x, y, Mat.AIR)
+		colony.world.set_dug(top.x, y)
+	colony._rebuild_climb()
+	check(colony.pathing.standable(top) and colony.pathing.node(top), "над стеной комнаты стоят, как на крыше")
 
 
 func test_two_generators() -> void:

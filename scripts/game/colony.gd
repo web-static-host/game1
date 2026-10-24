@@ -1984,6 +1984,12 @@ func _rebuild_climb() -> void:
 			for x in range(p.rect.position.x, p.rect.end.x):
 				if not Mat.is_solid(world.get_mat(x, y + 1)):
 					fl[Vector2i(x, y)] = true
+			# И крыша над стенами: стена держит, по ней ходят. Иначе комната в склоне
+			# оставляла над стеной щель-обрыв, и жители по ту сторону оказывались отрезаны.
+			for x in [p.rect.position.x, p.rect.end.x - 1]:
+				var a := Vector2i(x, p.rect.position.y - 1)
+				if world.is_open(a.x, a.y) and not interior.has(a) and not room_cells.has(a):
+					fl[a] = true
 	# Клетки пассажирских лифтов: у какой клетки садиться в кабину.
 	_lift_cells.clear()
 	for p in projects:

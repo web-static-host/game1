@@ -314,6 +314,8 @@ func _play() -> void:
 	_marks()
 	_science()
 	_professions()
+	if _wood_triage():
+		return
 	if _fix_shaft():
 		return
 	if _fix_gas():
@@ -340,6 +342,11 @@ func _play() -> void:
 	# Ствол углубляют всегда, когда прежний отрезок докопан, — не ждут, пока стройки
 	# наверху закончатся (иначе на руду для ракеты не выйти никогда).
 	if _deepen():
+		return
+	# Еды не хватает (ферм меньше, чем по одной на четыре рта) — новая ферма раньше всего
+	# прочего: в «classic» дома строились вне очереди, дети рождались, а ферма была одна —
+	# колонии вымирали от голода на втором году.
+	if _food_short() and _shaft(RoomType.FARM):
 		return
 	# Амбар (без него еда не копится на зиму) и дома (без кроватей нет детей) — вне очереди:
 	# в «classic» колонии вымирали в первую зиму, пока бот ждал конца других строек.
@@ -570,6 +577,34 @@ func _finish_purposes() -> void:
 					RoomType.REFINERY: "нефтезавод", RoomType.LAUNCHPAD: "космодром"}
 				_milestone("purpose%d" % _pending_purpose[p.id], "Первая комната: %s" % names.get(_pending_purpose[p.id], "?"))
 			_pending_purpose.erase(p.id)
+
+
+## Дерева нет, а его давно ждут несколько комнат: две самые нужные (ферма, амбар, дом…)
+## остаются, остальные отменяем — принесённое вернётся и пойдёт на них, — и новых строек
+## не начинаем, пока дерево не появится (раньше дерево расходилось по десятку недостроев
+## и не достраивалось ничего, а колония голодала без фермы).
+func _wood_triage() -> bool:
+	if planet != "earth" or colony.inventory.get("wood", 0) >= 10:
+		return false
+	var starved: Array[Project] = []
+	for p in colony.projects:
+		if p.kind == Project.Kind.ROOM and p.phase != Project.Phase.DONE and p.blocked.begins_with("Не хватает") \
+				and p.blocked.contains("дерево") and float(_short.get(p.id, 0.0)) >= 300.0:
+			starved.append(p)
+	if starved.size() < 2:
+		return false
+	var rank := func(p: Project) -> int:
+		var purpose: int = p.purpose if p.purpose > 0 else int(_pending_purpose.get(p.id, -1))
+		var order := [RoomType.FARM, RoomType.GRANARY, RoomType.HOME, RoomType.LAB, RoomType.STORAGE]
+		return order.find(purpose) if order.has(purpose) else order.size()
+	starved.sort_custom(func(a: Project, b: Project) -> bool: return rank.call(a) < rank.call(b))
+	for p in starved.slice(2):
+		colony.cancel_project(p)
+		_pending_purpose.erase(p.id)
+		_short.erase(p.id)
+		events["отмена: дерево — на нужное"] = events.get("отмена: дерево — на нужное", 0) + 1
+		_act("отмена ради дерева")
+	return true
 
 
 ## Как сделал бы игрок: стройку, к которой гаврикам не подойти (например, очаг на крыше
@@ -845,6 +880,9 @@ func _has_room(t: int) -> bool:
 func _need_home() -> bool:
 	if colony.beds_total() >= colony.units.size() + 1 or _pending_purpose.values().has(RoomType.HOME):
 		return false
+	# Пока еды мало, новых кроватей не строим: лишние рты добьют колонию.
+	if _food_short():
+		return false
 	for p in colony.projects:
 		if p.purpose == RoomType.HOME and p.phase != Project.Phase.DONE:
 			return false
@@ -931,9 +969,9 @@ func _surface_room(purpose: int, width := 6) -> bool:
 
 
 ## Шахта вниз по 10 м и комната сбоку на каждом уровне: ферма, лаборатория, столовая, мастерские.
-func _shaft() -> bool:
+func _shaft(force := -1) -> bool:
 	var s := world.gen.surface_y(shaft_x)
-	var want := _next_underground()
+	var want := force if force >= 0 else _next_underground()
 	# Ствол на Земле идёт вглубь без предела, пока есть чем крепить; на планете — только под комнаты.
 	if want < 0 and planet != "earth":
 		return false
@@ -1264,6 +1302,21 @@ func _winter_short() -> bool:
 	if to_winter > Colony.MONTH * 4.0 and not colony.is_winter():
 		return false
 	return colony.food_value() < colony.units.size() * WINTER_FOOD
+
+
+## Ферм (вместе с заложенными) меньше, чем по одной на четыре рта, и запаса еды
+## меньше, чем на зиму.
+func _food_short() -> bool:
+	if planet != "earth" or colony.units.size() < 5:
+		return false
+	var farms := colony.rooms_of(RoomType.FARM).size()
+	for v in _pending_purpose.values():
+		if v == RoomType.FARM:
+			farms += 1
+	for p in colony.projects:
+		if p.purpose == RoomType.FARM and p.phase != Project.Phase.DONE:
+			farms += 1
+	return farms * 4 < colony.units.size() and colony.food_value() < colony.units.size() * WINTER_FOOD
 
 
 ## Еды на гаврика на зиму (в «порциях» food_value).
