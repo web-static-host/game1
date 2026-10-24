@@ -314,6 +314,7 @@ func _play() -> void:
 	_marks()
 	_science()
 	_professions()
+	_upgrade_hearths()
 	if _wood_triage():
 		return
 	if _fix_shaft():
@@ -347,6 +348,12 @@ func _play() -> void:
 	# прочего: в «classic» дома строились вне очереди, дети рождались, а ферма была одна —
 	# колонии вымирали от голода на втором году.
 	if _food_short() and not _shaft_digging() and _shaft(RoomType.FARM):
+		return
+	# Дерева мало, а глина есть — печь для кирпича вне очереди: кирпичные печи очагов
+	# топятся углём, газовые котлы — метаном (в долгих прогонах дерево кончалось, очаги гасли).
+	if colony.research.has("pottery") and colony.known_resources.has("clay") and colony.units.size() >= 8 \
+			and colony.inventory.get("wood", 0) < 40 and colony.rooms_of(RoomType.KILN).is_empty() \
+			and not _pending_purpose.values().has(RoomType.KILN) and not _shaft_digging() and _shaft(RoomType.KILN):
 		return
 	# Амбар (без него еда не копится на зиму) и дома (без кроватей нет детей) — вне очереди:
 	# в «classic» колонии вымирали в первую зиму, пока бот ждал конца других строек.
@@ -652,6 +659,27 @@ func _drop_stuck() -> void:
 
 
 ## Очаг — готовый, обустраиваемый (пока ставят печи, назначение ещё не задано) или в планах.
+## Очаги — на уголь и метан вместо дров: газовые котлы, когда есть метан, иначе кирпичные
+## печи, когда есть уголь (кирпич — из печи для кирпича).
+func _upgrade_hearths() -> void:
+	if planet != "earth":
+		return
+	for h in colony.rooms_of(RoomType.HEARTH):
+		if h.phase != Project.Phase.DONE:
+			continue
+		var n := RoomType.stoves(h)
+		var brick: int = colony.inventory.get("brick", 0)
+		if colony.research.has("gas_heating") and not h.gas_boiler and colony.inventory.get("methane", 0) >= 60 and brick >= 4 * n:
+			if colony.set_purpose(h, RoomType.HEARTH_GAS):
+				_act("газовые котлы")
+				return
+		elif colony.research.has("pottery") and not h.brick_stoves and not h.gas_boiler and colony.inventory.get("coal", 0) >= 30 \
+				and brick >= 6 * n:
+			if colony.set_purpose(h, RoomType.HEARTH_BRICK):
+				_act("кирпичные печи")
+				return
+
+
 func _is_hearth(p: Project) -> bool:
 	return p.purpose == RoomType.HEARTH or [RoomType.HEARTH, RoomType.HEARTH_BRICK].has(_pending_purpose.get(p.id, -1)) \
 		or (p.phase == Project.Phase.EQUIP and [RoomType.HEARTH, RoomType.HEARTH_BRICK].has(p.equip_target))
@@ -714,6 +742,16 @@ func _professions() -> void:
 	# Места работы: еда — в первую очередь.
 	# Еда, наука, хранение; рыбалка с мостков — когда людей хватает (зимой подо льдом).
 	var order := [RoomType.FARM, RoomType.LAB, RoomType.GRANARY, RoomType.STORAGE, RoomType.KILN, RoomType.FORGE, RoomType.REFINERY]
+	# Всё изучено — учёные больше не нужны: на другие работы.
+	var all_known := colony.research.done.size() >= Research.TECHS.size()
+	var core_types := [RoomType.FARM] if all_known else [RoomType.FARM, RoomType.LAB]
+	if all_known:
+		order.erase(RoomType.LAB)
+		for lab in colony.rooms_of(RoomType.LAB):
+			for w in colony.assigned_to(lab):
+				colony.unassign_work(w)
+				free.append(w)
+				_act("учёный свободен")
 	var places: Array[Project] = []
 	for t in order:
 		places.append_array(colony.rooms_of(t))
@@ -725,7 +763,7 @@ func _professions() -> void:
 			places.append(p)
 	# Ферма и лаборатория без работника, а свободных нет — снимаем со склада или амбара
 	# (без еды и науки колония не выживет, а склад подождёт).
-	for t in [RoomType.FARM, RoomType.LAB]:
+	for t in core_types:
 		for p in colony.rooms_of(t):
 			if not colony.assigned_to(p).is_empty() or free.size() > 0:
 				continue
@@ -737,7 +775,7 @@ func _professions() -> void:
 					_act("перевод на ферму/в лабораторию")
 					break
 	var unstaffed_core := func() -> bool:
-		for t in [RoomType.FARM, RoomType.LAB]:
+		for t in core_types:
 			for q in colony.rooms_of(t):
 				if colony.assigned_to(q).is_empty():
 					return true
@@ -745,7 +783,7 @@ func _professions() -> void:
 	# Лаборатория без учёного, а свободных нет — берём с мостков (рыбалка), складов или
 	# фермы, где больше одного (раньше наука стояла годами).
 	for lab in colony.rooms_of(RoomType.LAB):
-		if not colony.assigned_to(lab).is_empty() or free.size() > 0 or not _base_reaches(lab):
+		if all_known or not colony.assigned_to(lab).is_empty() or free.size() > 0 or not _base_reaches(lab):
 			continue
 		var donor: Unit = null
 		for p in colony.projects:
