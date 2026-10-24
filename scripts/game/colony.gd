@@ -1583,6 +1583,10 @@ const LIFT_WAIT := 6.0
 const CARGO_WAIT := 8.0
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
 const LIFT_MIN_RIDE := 3
+## Кабину ждут не дольше стольких секунд — потом лезут по аварийной лестнице и минуту
+## (LIFT_SKIP) лифтом не пользуются.
+const LIFT_GIVE_UP := 20.0
+const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
 
 
@@ -1627,7 +1631,7 @@ func _passenger_lift_at(c: Vector2i) -> Project:
 func _try_board(u: Unit) -> bool:
 	var nxt: Vector2i = u.path[u.path_i]
 	var p := _passenger_lift_at(nxt)
-	if p == null or not lift_powered(p):
+	if p == null or not lift_powered(p) or game_time < u.no_lift_until:
 		return false
 	var j := u.path_i
 	while j + 1 < u.path.size() and p.has_cell(u.path[j + 1]):
@@ -1636,6 +1640,7 @@ func _try_board(u: Unit) -> bool:
 		return false
 	u.lift_id = p.id
 	u.riding = false
+	u.lift_wait = 0.0
 	u.lift_board = u.path_i
 	u.lift_exit = j
 	return true
@@ -1648,6 +1653,7 @@ func _leave_lift(u: Unit, at_exit: bool) -> void:
 		u.path_i = u.lift_exit + 1
 	u.lift_id = 0
 	u.riding = false
+	u.lift_wait = 0.0
 
 
 func _lifts_tick(dt: float) -> void:
@@ -1677,7 +1683,13 @@ func _passenger_tick(p: Project, dt: float) -> void:
 			elif u.riding:
 				riders.append(u)
 			else:
-				waiting.append(u)
+				u.lift_wait += dt
+				if u.lift_wait > LIFT_GIVE_UP:
+					# Не дождался — по аварийной лестнице пешком.
+					_leave_lift(u, false)
+					u.no_lift_until = game_time + LIFT_SKIP
+				else:
+					waiting.append(u)
 	if not lift_powered(p):
 		# Без энергии кабина стоит: едущие выходят на аварийную лестницу, ждущие идут пешком.
 		for u in riders + waiting:
@@ -1703,17 +1715,20 @@ func _passenger_tick(p: Project, dt: float) -> void:
 		if (stopped or p.lift_dwell > 0.0) and riders.size() < LIFT_CAP and p.lift_dwell < LIFT_WAIT and _approaching(p, here):
 			p.lift_dwell += dt
 			return
-	# Координата остановки бывает и отрицательной (лифт от поверхности) — «нет цели» отдельно.
-	var target := 0
-	var best := 1 << 30
-	for u in (riders if not riders.is_empty() else waiting):
-		var a := _lift_axis(p, u.path[u.lift_exit if u.riding else u.lift_board])
-		if absi(a - here) < best:
-			best = absi(a - here)
-			target = a
-	if best == 1 << 30:
+	# Остановки: где выходят и (пока есть места) где ждут. Кабина едет в одну сторону, пока по
+	# пути есть остановки, и подбирает попутных — как настоящий лифт (раньше везла по одному,
+	# а остальные часами стояли в шахте).
+	var stops: Array[int] = []
+	for u in riders:
+		stops.append(_lift_axis(p, u.path[u.lift_exit]))
+	if riders.size() < LIFT_CAP:
+		for u in waiting:
+			stops.append(_lift_axis(p, u.path[u.lift_board]))
+	if stops.is_empty():
 		p.lift_dwell = 0.0
+		p.lift_dir = 0
 		return
+	var target := _next_stop(p, stops)
 	if absf(float(target) - p.lift_pos) > 0.01:
 		p.lift_dwell = 0.0
 		var step := lift_speed(p) * dt
@@ -1721,6 +1736,26 @@ func _passenger_tick(p: Project, dt: float) -> void:
 	for u in riders:
 		var c: Vector2i = u.path[u.lift_board]
 		u.pos = Vector2(c.x, p.lift_pos) if p.lift_vertical() else Vector2(p.lift_pos, c.y)
+
+
+## Ближайшая остановка по ходу кабины; впереди пусто — разворот.
+func _next_stop(p: Project, stops: Array[int]) -> int:
+	for turn in 2:
+		var best := INF
+		var out := 0
+		for a in stops:
+			var d := float(a) - p.lift_pos
+			if p.lift_dir != 0 and absf(d) > 0.01 and signf(d) != p.lift_dir:
+				continue
+			if absf(d) < best:
+				best = absf(d)
+				out = a
+		if best < INF:
+			if absf(float(out) - p.lift_pos) > 0.01:
+				p.lift_dir = int(signf(float(out) - p.lift_pos))
+			return out
+		p.lift_dir = -p.lift_dir
+	return stops[0]
 
 
 ## Кто-то идёт к остановке here этого лифта и вот-вот сядет.

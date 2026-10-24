@@ -93,6 +93,9 @@ var lift_id := 0
 var riding := false
 var lift_board := 0
 var lift_exit := 0
+## Сколько уже ждёт кабину, сек; до какого времени игры лифтом не пользуется (не дождался).
+var lift_wait := 0.0
+var no_lift_until := 0.0
 ## Грузовой лифт: к какому его концу несёт груз (0 — начало, 1 — конец).
 var cargo_end := -1
 

@@ -3626,6 +3626,44 @@ func test_lifts() -> void:
 		colony._lifts_tick(0.1)
 		t += 0.1
 	check(colony.held_in(st, "stone") >= before + 30, "грузовой довёз камень в склад (%.1f с)" % t)
+	# Кабина подбирает попутных: едет вниз с одним и по пути забирает ждущего на середине.
+	var a := colony.units[1]
+	var b := colony.units[2]
+	var pa: Array[Vector2i] = []
+	for y in range(s, s + 20):
+		pa.append(Vector2i(x, y))
+	var pb: Array[Vector2i] = []
+	for y in range(s + 10, s + 20):
+		pb.append(Vector2i(x, y))
+	for v in [[a, pa], [b, pb]]:
+		var uu: Unit = v[0]
+		colony._drop(uu)
+		uu.path = v[1]
+		uu.path_i = 0
+		uu.state = Unit.State.MOVE
+		uu.lift_id = lift.id
+		uu.lift_board = 0
+		uu.lift_exit = v[1].size() - 1
+		uu.pos = Vector2(v[1][0])
+	a.riding = true
+	lift.lift_pos = float(s)
+	lift.lift_dir = 0
+	var picked := false
+	t = 0.0
+	while t < 30.0 and a.lift_id != 0:
+		colony._passenger_tick(lift, 0.1)
+		t += 0.1
+		if b.riding and a.riding:
+			picked = true
+	check(picked, "кабина по пути вниз подобрала ждущего на середине шахты")
+	# Не дождался кабины — лезет по лестнице и минуту лифтом не пользуется.
+	b.lift_id = lift.id
+	b.riding = false
+	b.state = Unit.State.MOVE
+	b.path_i = 0
+	b.lift_wait = Colony.LIFT_GIVE_UP + 1.0
+	colony._passenger_tick(lift, 0.1)
+	check(b.lift_id == 0 and b.no_lift_until > colony.game_time, "долго ждал кабину — пошёл пешком по аварийной лестнице")
 
 
 func test_collapse_losses() -> void:

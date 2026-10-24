@@ -81,6 +81,8 @@ var bore_from := Rect2i()
 var bored_by := 0
 var lift_load := {}
 var lift_dwell := 0.0
+## Куда едет кабина пассажирского лифта: -1, 1 или 0 (стоит) — едет, пока по пути есть остановки.
+var lift_dir := 0
 ## Грузовой лифт едет к концу (0 — начало, 1 — конец; -1 — стоит).
 var lift_goal := -1
 var lift_buf: Array = [{}, {}]
