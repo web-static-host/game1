@@ -25,6 +25,8 @@ var _ever_mutant := {}
 var _pending_purpose := {}
 ## Сколько секунд стройка стоит с «Нет доступа» и места, где бот такую уже бросил.
 var _stuck := {}
+## Сколько секунд стройка ждёт материалов (id -> с).
+var _short := {}
 var _bad_rects: Array[Rect2i] = []
 var deaths: Array[String] = []
 var births := 0
@@ -290,8 +292,10 @@ func _slice() -> void:
 func _busy() -> int:
 	var n := 0
 	for p in colony.projects:
-		# Шахты копают шахтёры — стройкам они не мешают.
-		if p.kind != Project.Kind.MINE and (p.phase != Project.Phase.DONE or p.repairing):
+		# Шахты копают шахтёры — стройкам они не мешают. Стройка, которая давно ждёт
+		# материалов, — не занятость (иначе бот годами ничего не строил).
+		if p.kind != Project.Kind.MINE and (p.phase != Project.Phase.DONE or p.repairing) \
+				and float(_short.get(p.id, 0.0)) < 900.0 and not p.blocked.begins_with("Нет доступа"):
 			n += 1
 	return n
 
@@ -336,6 +340,11 @@ func _play() -> void:
 	# Ствол углубляют всегда, когда прежний отрезок докопан, — не ждут, пока стройки
 	# наверху закончатся (иначе на руду для ракеты не выйти никогда).
 	if _deepen():
+		return
+	# Ферма и лаборатория — вне очереди: без них колония не живёт и не учится (лабораторию
+	# мог разрушить обвал, а строек всегда много).
+	var core := _next_underground()
+	if (core == RoomType.FARM or core == RoomType.LAB) and _shaft():
 		return
 	if _busy() >= 2:
 		return
@@ -559,15 +568,40 @@ func _finish_purposes() -> void:
 ## Как сделал бы игрок: стройку, к которой гаврикам не подойти (например, очаг на крыше
 ## подземной фермы или дегазацию в конце шахты), отменяет и больше на это место не ставит.
 func _drop_stuck() -> void:
+	# Задуманное для стройки, которой больше нет (отменили, рухнула), забываем — иначе
+	# бот «помнит» лабораторию и новую не строит.
+	for id in _pending_purpose.keys():
+		if colony.project_by_id(id) == null:
+			_pending_purpose.erase(id)
+	# Ждёт материалов полчаса и больше (нет кирпича, железа) — отменяем, построим потом.
 	for p in colony.projects.duplicate():
-		# Комнаты у ствола ждут, пока до них докопают, — их не трогаем.
-		var at_shaft: bool = p.rect.position.x == shaft_x + 1 or p.rect.end.x == shaft_x
-		if not _pending_purpose.has(p.id) or at_shaft or p.phase == Project.Phase.DONE or not p.blocked.begins_with("Нет доступа"):
+		if p.blocked.begins_with("Не хватает") and p.phase != Project.Phase.DONE:
+			_short[p.id] = float(_short.get(p.id, 0.0)) + 5.0
+			if _short[p.id] >= 1800.0 and (_pending_purpose.has(p.id) or p.kind == Project.Kind.ROOM):
+				colony.cancel_project(p)
+				_pending_purpose.erase(p.id)
+				_short.erase(p.id)
+				events["отмена: давно нет материалов"] = events.get("отмена: давно нет материалов", 0) + 1
+		else:
+			_short.erase(p.id)
+	for p in colony.projects.duplicate():
+		# Комнаты и отрезки у ствола ждут, пока до них докопают, — их бросают не сразу.
+		var at_shaft: bool = p.rect.position.x == shaft_x + 1 or p.rect.end.x == shaft_x or p.rect.position.x == shaft_x
+		var mine_work: bool = p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE
+		if (not _pending_purpose.has(p.id) and not mine_work) or p.phase == Project.Phase.DONE or not p.blocked.begins_with("Нет доступа"):
 			_stuck.erase(p.id)
 			continue
 		_stuck[p.id] = _stuck.get(p.id, 0.0) + 5.0
-		# Очаг бросают через 2 минуты, остальное — через 4.
-		if _stuck[p.id] >= (120.0 if _is_hearth(p) else 240.0):
+		# Очаг бросают через 2 минуты, остальное — через 4, у ствола — через 10 (ствол
+		# оборвался — копают новый рядом).
+		var limit := 600.0 if at_shaft or mine_work else (120.0 if _is_hearth(p) else 240.0)
+		if _stuck[p.id] >= limit:
+			if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x:
+				_shaft_moves += 1
+				var step := 9 * _shaft_moves
+				shaft_x = colony.home.x + 3 + (step if _shaft_moves % 2 == 1 else -step)
+				shaft_bottom = world.gen.surface_y(shaft_x)
+				events["ствол оборвался — новый"] = events.get("ствол оборвался — новый", 0) + 1
 			_bad_rects.append(p.rect)
 			colony.cancel_project(p)
 			_pending_purpose.erase(p.id)
@@ -928,8 +962,7 @@ func _deepen() -> bool:
 	if planet != "earth":
 		return false
 	# Сначала — чтобы колония встала на ноги: люди, ферма, лаборатория, еда к зиме.
-	if colony.units.size() < 8 or colony.rooms_of(RoomType.FARM).is_empty() \
-			or colony.rooms_of(RoomType.LAB).is_empty() or _winter_short():
+	if colony.units.size() < 8 or colony.rooms_of(RoomType.FARM).is_empty() or _winter_short():
 		return false
 	for p in colony.projects:
 		if p.kind == Project.Kind.TUNNEL and p.rect.position.x == shaft_x and p.phase != Project.Phase.DONE:
