@@ -261,6 +261,44 @@ func find_path(start: Vector2i, goals: Dictionary, limit := FAR_NODES) -> Array[
 ## Сколько клеток перебирает прицельный поиск.
 const FAR_NODES := 12000
 
+## Путь «по времени», а не по числу клеток: по лестнице лезут медленно, в кабине лифта едут
+## быстро (lift — клетки шахт пассажирских лифтов под током). Цены шага — в долях секунды:
+## пешком 6, по лестнице 11, в кабине 2.
+const COST_WALK := 6
+const COST_CLIMB := 11
+const COST_RIDE := 2
+
+
+func timed_path(start: Vector2i, goal: Vector2i, lift: Dictionary, limit := 8000) -> Array[Vector2i]:
+	var none: Array[Vector2i] = []
+	if not node(start) or not node(goal):
+		return none
+	var parents := {start: start}
+	var g_cost := {start: 0}
+	var heap: Array = [[_h(start, Rect2i(goal, Vector2i.ONE)) * COST_RIDE, start]]
+	var closed := {}
+	var box := Rect2i(goal, Vector2i.ONE)
+	while not heap.is_empty() and closed.size() < limit:
+		var c: Vector2i = _heap_pop(heap)[1]
+		if closed.has(c):
+			continue
+		closed[c] = true
+		if c == goal:
+			return path_to(parents, c)
+		for n in neighbors(c):
+			if closed.has(n):
+				continue
+			var step := COST_WALK
+			if n.x == c.x:
+				step = COST_RIDE if lift.has(c) and lift.has(n) else COST_CLIMB
+			var d: int = g_cost[c] + step
+			if g_cost.has(n) and g_cost[n] <= d:
+				continue
+			g_cost[n] = d
+			parents[n] = c
+			_heap_push(heap, [d + _h(n, box) * COST_RIDE, n])
+	return none
+
 
 static func _h(c: Vector2i, box: Rect2i) -> int:
 	var dx := maxi(0, maxi(box.position.x - c.x, c.x - (box.end.x - 1)))

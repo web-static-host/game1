@@ -106,6 +106,7 @@ func _initialize() -> void:
 	test_gas_masks()
 	test_drill_lift()
 	test_room_move()
+	test_lift_route()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4605,3 +4606,29 @@ func test_room_move() -> void:
 	var other := _dug_project(colony, Project.Kind.ROOM, Rect2i(room.rect.end.x + 1, room.rect.position.y, 3, 3), 970)
 	check((colony.move_check(room, Vector2i.RIGHT, 3)[0] as String).begins_with("Мешает"), "другое здание на пути — нельзя")
 	colony.projects.erase(other)
+
+
+## Внизу тоннель к лифту, рядом лестница вверх: гаврик едет на лифте (быстрее), а не ползёт
+## по лестнице мимо лифта.
+func test_lift_route() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	# Лифт 2×24 и ствол с лестницей в 8 м правее; внизу и вверху — ходы между ними.
+	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 24), 980)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 10, s, 1, 24), 981)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 2, s + 22, 8, 2), 982)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 2, s + 2, 8, 2), 983)
+	colony._rebuild_climb()
+	colony._power_tick(0.1)
+	check(colony.lift_powered(lift), "лифт под током")
+	var start := Vector2i(x + 10, s + 23)
+	var goal := Vector2i(x + 10, s + 3)
+	var reach := colony.pathing.explore(start)
+	check(reach[1].has(goal), "наверх можно и по лестнице")
+	var path := colony._lift_route(start, goal, Pathing.path_to(reach[0], goal))
+	var in_lift := path.filter(func(c: Vector2i) -> bool: return lift.has_cell(c)).size()
+	check(in_lift >= 15, "путь вверх идёт через лифт, а не по лестнице (%d клеток в лифте)" % in_lift)

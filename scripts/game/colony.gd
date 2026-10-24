@@ -1896,6 +1896,33 @@ func _cargo_route(key: String, dist: Dictionary, direct_d: int, only: Project = 
 var _lift_cells := {}
 
 
+## Путь лезет по лестнице, а рядом есть пассажирский лифт под током — ищем путь «по
+## времени»: через лифт может быть быстрее, хоть и больше клеток (раньше ползли по лестнице
+## мимо лифта, до которого внизу был тоннель).
+const LIFT_ROUTE_CLIMB := 6
+
+
+func _lift_route(start: Vector2i, goal: Vector2i, path: Array[Vector2i]) -> Array[Vector2i]:
+	if _lift_cells.is_empty() or path.size() < LIFT_ROUTE_CLIMB:
+		return path
+	var climb := 0
+	var prev := start
+	for c in path:
+		if c.x == prev.x and c.y != prev.y:
+			climb += 1
+		prev = c
+	if climb < LIFT_ROUTE_CLIMB:
+		return path
+	var lift := {}
+	for c: Vector2i in _lift_cells:
+		if lift_powered(_lift_cells[c]):
+			lift[c] = true
+	if lift.is_empty():
+		return path
+	var fast := pathing.timed_path(start, goal, lift)
+	return fast if not fast.is_empty() else path
+
+
 func _rebuild_climb() -> void:
 	var lad := {}
 	var site := {}
@@ -5130,7 +5157,7 @@ func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, par
 	u.task = task
 	u.target = target
 	u.project_id = pid
-	u.path = Pathing.path_to(parents, stand)
+	u.path = _lift_route(u.cell(), stand, Pathing.path_to(parents, stand))
 	u.path_i = 0
 	u.work_t = 0.0
 	u.state = Unit.State.MOVE
@@ -6210,7 +6237,7 @@ func _haul_pickup(u: Unit) -> void:
 		u.carry_amount = 0
 		_drop(u)
 		return
-	u.path = Pathing.path_to(reach[0], stand)
+	u.path = _lift_route(u.cell(), stand, Pathing.path_to(reach[0], stand))
 	u.path_i = 0
 	u.state = Unit.State.MOVE
 
@@ -6258,7 +6285,7 @@ func _carry_to(u: Unit, room_id: int, key: String, amount: int) -> void:
 	u.carry_key = key
 	u.carry_amount = amount
 	u.haul_stage = 1
-	u.path = Pathing.path_to(reach[0], stand)
+	u.path = _lift_route(u.cell(), stand, Pathing.path_to(reach[0], stand))
 	u.path_i = 0
 	u.work_t = 0.0
 	u.state = Unit.State.MOVE

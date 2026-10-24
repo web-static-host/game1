@@ -36,6 +36,10 @@ func _initialize() -> void:
 		colony.start_new(0)
 	universe.base_seed = seed_value
 	universe.add_world("earth", world, colony)
+	# Гибели и тревоги — сразу в лог (а не только в итоговом отчёте).
+	colony.event_logged.connect(func(text: String, kind: String) -> void:
+		if kind == "danger":
+			print("  ! %s: %s" % [colony.date_text(), text]))
 	universe.arrived.connect(_on_arrived)
 	bots["earth"] = BotPlayer.new(colony)
 	# Стиль игры бота: opening — сначала склад, амбар, лаборатория, мост, ферма и два дома;
