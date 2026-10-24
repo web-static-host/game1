@@ -6527,6 +6527,9 @@ func start_repair(p: Project) -> bool:
 
 
 func _finish_repair(p: Project) -> void:
+	if p.move_dir != Vector2i.ZERO:
+		_finish_move(p)
+		return
 	_return_delivered(p)
 	p.repairing = false
 	p.repair_paid = false
@@ -6541,7 +6544,154 @@ func _finish_repair(p: Project) -> void:
 	_log("%s: ремонт закончен, как новая" % p.title(), "good")
 
 
+# --- Сдвиг комнаты ------------------------------------------------------------------------
+## Готовую комнату сдвигают за раз вбок до её ширины (3, 6 или 9 м), вверх или вниз —
+## до 3 м, если там нет других зданий. Это работа строителей (как ремонт) и половина стоимости стен; порода на
+## новом месте выкапывается. Готовые тоннели и шахты на пути комната забирает себе —
+## о них спрашивают («Продолжить?»).
+const MOVE_DIRS := {Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо", Vector2i.UP: "вверх", Vector2i.DOWN: "вниз"}
+
+
+## Насколько можно сдвинуть за раз: вбок — на ширину комнаты, вверх и вниз — на 3 м.
+static func move_max(p: Project, dir: Vector2i) -> int:
+	return p.rect.size.x if dir.y == 0 else 3
+
+
+## [ошибка, предупреждение]: ошибка — нельзя; предупреждение — можно, но заденет ходы.
+func move_check(p: Project, dir: Vector2i, n := 1) -> Array:
+	if n < 1 or n > move_max(p, dir):
+		return ["За раз — от 1 до %d м %s" % [move_max(p, dir), MOVE_DIRS.get(dir, "")], ""]
+	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
+		return ["Сдвинуть можно только готовую комнату", ""]
+	if p.repairing:
+		return ["Сначала дождитесь конца ремонта или сдвига", ""]
+	if p.purpose == RoomType.SHIP or p.purpose == RoomType.LAUNCHPAD:
+		return ["Это не сдвинуть", ""]
+	var nr := Rect2i(p.rect.position + dir * n, p.rect.size)
+	var hit: PackedStringArray = []
+	for c in Project.rect_cells(nr):
+		if p.rect.has_point(c):
+			continue
+		var other := project_at(c)
+		if other != null and other != p:
+			if (other.kind == Project.Kind.TUNNEL or other.kind == Project.Kind.MINE) and other.phase == Project.Phase.DONE:
+				if not hit.has(other.title()):
+					hit.append(other.title())
+			else:
+				return ["Мешает: %s" % other.title(), ""]
+		if world.is_revealed(c.x, c.y) and Mat.is_fluid(world.get_mat(c.x, c.y)):
+			return ["Там %s" % Mat.name_of(world.get_mat(c.x, c.y)).to_lower(), ""]
+	# На этой комнате стоит другая — её сначала.
+	for x in range(p.rect.position.x, p.rect.end.x):
+		var above := project_at(Vector2i(x, p.rect.position.y - 1))
+		if above != null and above.kind == Project.Kind.ROOM and above != p:
+			return ["Сверху стоит %s — сдвиньте сначала её" % above.title(), ""]
+	# На новом месте комнате есть на что опереться (освобождённое место — не опора).
+	# Вверх — свой пол держит комнату, под ней останется пустота.
+	for x in (range(nr.position.x, nr.end.x) if dir != Vector2i.UP else []):
+		var below := Vector2i(x, nr.end.y)
+		if p.rect.has_point(below):
+			return ["Под комнатой на новом месте ничего не будет — некуда опереться", ""]
+		if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y))):
+			return ["Комнате на новом месте не на что опереться", ""]
+	var warn := ""
+	if not hit.is_empty():
+		warn = "Сдвиг заденет: %s. Эту часть займёт комната, остальное останется ходом. Продолжить?" % ", ".join(hit)
+	return ["", warn]
+
+
+## Материалы на сдвиг: половина стоимости стен.
+func move_cost(p: Project) -> Dictionary:
+	var out := {}
+	var base := p.cost()
+	for k in base:
+		out[k] = maxi(1, ceili(base[k] * 0.5))
+	if out.is_empty():
+		out = {"wood": maxi(2, p.area() / 3)}
+	return out
+
+
+func start_move(p: Project, dir: Vector2i, n := 1) -> String:
+	wake_idle()
+	if not MOVE_DIRS.has(dir):
+		return "Сдвиг — влево, вправо, вверх или вниз"
+	var err: String = move_check(p, dir, n)[0]
+	if not err.is_empty():
+		return err
+	p.move_dir = dir * n
+	p.repairing = true
+	p.repair_paid = false
+	p.repair_done = 0.0
+	p.repair_need = move_cost(p)
+	# Работы — как на треть постройки, плюс копка породы на новом месте.
+	var solid := 0
+	for c in Project.rect_cells(Rect2i(p.rect.position + dir * n, p.rect.size)):
+		if not p.rect.has_point(c) and Mat.is_solid(world.get_mat(c.x, c.y)):
+			solid += 1
+	p.repair_work = maxf(10.0, p.build_work() * 0.35 + solid * 4.0)
+	_log("%s: сдвигаем на %d м %s, нужно %s" % [p.title(), n, MOVE_DIRS[dir], _cost_line(p.repair_need, 1.0)], "info")
+	_try_pay(p)
+	return ""
+
+
+## Строители закончили: комната встаёт на новое место (порода выкопана, ходы под ней — её).
+func _finish_move(p: Project) -> void:
+	var dir := p.move_dir
+	var old := p.rect
+	var nr := Rect2i(old.position + dir, old.size)
+	_return_delivered(p)
+	p.repairing = false
+	p.repair_paid = false
+	p.repair_done = 0.0
+	p.repair_need = {}
+	p.move_dir = Vector2i.ZERO
+	p.blocked = ""
+	if not move_check_cells_ok(p, nr):
+		_log("%s: сдвинуть не вышло — место занято" % p.title(), "warning")
+		return
+	_carve_passages(nr)
+	for c in Project.rect_cells(nr):
+		if not old.has_point(c) and Mat.is_solid(world.get_mat(c.x, c.y)):
+			_complete_dig(c, null, null)
+	for c in Project.rect_cells(old):
+		room_cells.erase(c)
+		if interior.get(c, 0) == p.id:
+			interior.erase(c)
+	# Кучи и гаврики внутри едут вместе с комнатой.
+	var moved := {}
+	for c: Vector2i in drops.keys():
+		if old.has_point(c):
+			moved[c + dir] = drops[c]
+			drops.erase(c)
+	for c in moved:
+		drops[c] = moved[c]
+	for u in units:
+		if old.has_point(u.cell()):
+			u.pos += Vector2(dir)
+	p.rect = nr
+	for c in Project.rect_cells(nr):
+		interior[c] = p.id
+		world.set_dug(c.x, c.y)
+	_register_room(p)
+	_rebuild_climb()
+	loads.loads = loads.compute()
+	for u in units:
+		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
+			_drop(u)
+	_log("%s: сдвинута на %d м %s" % [p.title(), maxi(absi(dir.x), absi(dir.y)), MOVE_DIRS.get(Vector2i(signi(dir.x), signi(dir.y)), "")], "good")
+
+
+## Новое место всё ещё свободно (пока сдвигали, рядом могли что-то заложить).
+func move_check_cells_ok(p: Project, nr: Rect2i) -> bool:
+	for c in Project.rect_cells(nr):
+		var other := project_at(c)
+		if other != null and other != p and not ((other.kind == Project.Kind.TUNNEL or other.kind == Project.Kind.MINE) and other.phase == Project.Phase.DONE):
+			return false
+	return true
+
+
 func _cancel_repair(p: Project) -> void:
+	p.move_dir = Vector2i.ZERO
 	if p.repair_paid:
 		_refund(p.repair_need, 1.0 - p.repair_done / maxf(1.0, p.repair_work))
 	_return_delivered(p)

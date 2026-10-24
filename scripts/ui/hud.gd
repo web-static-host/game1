@@ -1894,6 +1894,20 @@ var _last_inventory := {}
 var _sub_standalone := false
 
 
+## Вопрос «Продолжить?» поверх игры: да — on_yes, иначе ничего.
+func ask(title: String, text: String, yes_label: String, on_yes: Callable) -> void:
+	var l := _label(text, 20, Color(0.9, 0.92, 0.96))
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(560, 0)
+	var close := func() -> void:
+		_sub_standalone = false
+		_sub.visible = false
+	_open_sub(title, l, [[yes_label, func() -> void:
+		close.call()
+		on_yes.call(), GREEN], ["Отмена", close]])
+	_sub_standalone = true
+
+
 func _open_resources(standalone: bool) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)

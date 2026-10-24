@@ -63,6 +63,10 @@ var _extend_len := 5
 var _pick_filters := {"single": false, "calling": false}
 ## На сколько метров сверлить буром.
 var _drill_len := 10
+## Сдвиг комнаты: куда (0 ←, 1 →, 2 ↑, 3 ↓) и на сколько.
+var _move_dir_i := 0
+var _move_len := 3
+const MOVE_DIRS: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 var _wall_choice := {}
 
 func _ready() -> void:
@@ -867,6 +871,54 @@ func _unit_spec(u: Unit) -> Dictionary:
 	return {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
 
 
+## Сдвиг комнаты: куда и на сколько; рамка нового места — на карте.
+func _show_move(p: Project) -> void:
+	var dir: Vector2i = MOVE_DIRS[_move_dir_i]
+	_move_len = clampi(_move_len, 1, Colony.move_max(p, dir))
+	var nr := Rect2i(p.rect.position + dir * _move_len, p.rect.size)
+	var check: Array = colony.move_check(p, dir, _move_len)
+	var s := world_view.structures
+	s.preview = nr
+	s.preview_ok = (check[0] as String).is_empty()
+	s.preview_text = "→ %d м" % _move_len
+	var rows := []
+	rows.append({"type": "text", "text": "Комнату сдвигают за раз вбок до её ширины (%d м), вверх и вниз — до 3 м. Работают строители, нужны материалы; порода на новом месте выкапывается. Всё внутри едет вместе с комнатой." % p.rect.size.x})
+	rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(colony.move_cost(p))})
+	if not (check[0] as String).is_empty():
+		rows.append({"type": "warning", "text": check[0]})
+	elif not (check[1] as String).is_empty():
+		rows.append({"type": "warning", "text": check[1]})
+	var controls := [
+		{"label": "Куда", "value": _move_dir_i, "min": 0, "max": 3, "options": ["← влево", "→ вправо", "↑ вверх", "↓ вниз"],
+			"changed": func(v: int) -> void:
+				_move_dir_i = v
+				_show_move(p)},
+		{"label": "На, м", "value": _move_len, "min": 1, "max": Colony.move_max(p, dir),
+			"changed": func(v: int) -> void:
+				_move_len = v
+				_show_move(p)},
+	]
+	var go := func() -> void:
+		var err := colony.start_move(p, dir, _move_len)
+		if not err.is_empty():
+			hud.log_event(err, "warning")
+		world_view.structures.preview = Rect2i()
+		_show_project(p)
+	var actions := [["Сдвинуть", func() -> void:
+		var c: Array = colony.move_check(p, dir, _move_len)
+		if not (c[0] as String).is_empty():
+			hud.log_event(c[0], "warning")
+		elif not (c[1] as String).is_empty():
+			hud.ask("Сдвиг комнаты", c[1], "Продолжить", go)
+		else:
+			go.call(), "primary"],
+		["Назад", func() -> void:
+			world_view.structures.preview = Rect2i()
+			_show_project(p)]]
+	hud.show_panel({"title": "Сдвинуть: %s" % p.title(), "subtitle": "", "rows": rows, "controls": controls,
+		"controls_first": true, "actions": actions})
+
+
 func _show_project(p: Project) -> void:
 	var actions := []
 	var controls := []
@@ -899,10 +951,13 @@ func _show_project(p: Project) -> void:
 		actions.append(["Продолжить", func() -> void:
 			colony.set_paused(p, false)
 			_show_project(p)])
+	if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and not p.repairing \
+			and p.purpose != RoomType.SHIP and p.purpose != RoomType.LAUNCHPAD:
+		actions.append(["Сдвинуть", func() -> void: _show_move(p)])
 	if p.phase == Project.Phase.DONE:
 		if p.repairing:
 			controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
-			actions.append(["Отменить ремонт", func() -> void:
+			actions.append(["Отменить сдвиг" if p.move_dir != Vector2i.ZERO else "Отменить ремонт", func() -> void:
 				colony.cancel_project(p)
 				_show_project(p)])
 		elif p.wear >= 0.05:

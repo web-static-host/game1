@@ -68,6 +68,8 @@ const LIFT_UNSET := -1.0e9
 var lift_pos := LIFT_UNSET
 ## Бур-лифт: у бура — id его грузового лифта, у лифта — id бура.
 var link_id := 0
+## Сдвиг комнаты (идёт как ремонт: строители и материалы): на сколько клеток и куда.
+var move_dir := Vector2i.ZERO
 ## Бур: куда едет (ноль — стоит), сколько метров осталось, сколько уже сверлит срез,
 ## ход, который он проходит, и где стоял, когда получил приказ.
 var drill_dir := Vector2i.ZERO
@@ -447,6 +449,7 @@ func to_dict() -> Dictionary:
 		"store_off": store_off,
 		"cargo": cargo,
 		"link_id": link_id,
+		"move_dir": [move_dir.x, move_dir.y],
 		"lift_pos": lift_pos,
 		"lift_load": lift_load,
 		"lift_buf": lift_buf,
@@ -516,6 +519,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.rocket = str(d.get("rocket", ""))
 	p.cargo = bool(d.get("cargo", false))
 	p.link_id = int(d.get("link_id", 0))
+	var md: Array = d.get("move_dir", [0, 0])
+	p.move_dir = Vector2i(int(md[0]), int(md[1]))
 	p.lift_pos = float(d.get("lift_pos", LIFT_UNSET))
 	# В старых сохранениях «ещё не ставили» было −1 (кабина выше нуля тогда не держалась).
 	if p.lift_pos == -1.0:

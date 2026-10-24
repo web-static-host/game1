@@ -105,6 +105,7 @@ func _initialize() -> void:
 	test_degas_resumes()
 	test_gas_masks()
 	test_drill_lift()
+	test_room_move()
 	test_old_metal_to_ore()
 	test_tunnel_at_mine_ceiling()
 	test_save_roundtrip()
@@ -4570,3 +4571,37 @@ func _load_left(lift: Project) -> int:
 		for k in d:
 			n += int(d[k])
 	return n
+
+
+## Сдвиг комнаты: вбок до ширины комнаты, вверх-вниз до 3 м; строители и материалы; другое
+## здание мешает; готовый тоннель — предупреждение «Продолжить?», комната забирает его часть.
+func test_room_move() -> void:
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var room: Project = res[1]
+	var old := room.rect
+	check(not (colony.move_check(room, Vector2i.RIGHT, 7)[0] as String).is_empty(), "средняя комната вбок — не больше 6 м за раз")
+	check(not (colony.move_check(room, Vector2i.DOWN, 4)[0] as String).is_empty(), "вниз — не больше 3 м за раз")
+	var warn: Array = colony.move_check(room, Vector2i.LEFT, 1)
+	check((warn[0] as String).is_empty() and not (warn[1] as String).is_empty(), "влево задевает тоннель — спросят «Продолжить?» (%s)" % [warn])
+	var check_r: Array = colony.move_check(room, Vector2i.RIGHT, 6)
+	check((check_r[0] as String).is_empty() and (check_r[1] as String).is_empty(), "вправо на 6 м в породу — можно: %s" % [check_r])
+	colony.inventory["wood"] = 100
+	colony.inventory["stone"] = 100
+	colony._sync_held()
+	check(colony.start_move(room, Vector2i.RIGHT, 6).is_empty(), "сдвиг начат")
+	for u in colony.units:
+		u.satiety = 100.0
+		u.energy = 100.0
+	var t := 0.0
+	while t < 2000.0 and room.repairing:
+		colony.update(0.5)
+		t += 0.5
+	check(not room.repairing and room.rect == Rect2i(old.position + Vector2i(6, 0), old.size), "строители сдвинули комнату на 6 м (%s за %.0f с)" % [room.rect, t])
+	check(room.purpose == RoomType.STORAGE and colony.room_cells.get(room.rect.position + Vector2i(2, 1), 0) == room.id \
+		and not colony.room_cells.has(old.position + Vector2i(2, 1)), "склад остался складом, клетки комнаты — на новом месте")
+	check(colony.world.is_open(room.rect.end.x - 1, room.rect.position.y), "порода на новом месте выкопана")
+	# Другая комната мешает.
+	var other := _dug_project(colony, Project.Kind.ROOM, Rect2i(room.rect.end.x + 1, room.rect.position.y, 3, 3), 970)
+	check((colony.move_check(room, Vector2i.RIGHT, 3)[0] as String).begins_with("Мешает"), "другое здание на пути — нельзя")
+	colony.projects.erase(other)
