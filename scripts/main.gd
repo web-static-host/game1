@@ -10,6 +10,7 @@ const SPEEDS := [1.0, 2.0, 10.0, 20.0]
 const SIM_BUDGET_MS := 30.0
 ## Сколько стоит секунда игры (мс), скользящее среднее — по нему режем шаг.
 var _sim_cost := 0.0
+var _real_speed := 1.0
 const STATUS_INTERVAL := 0.2
 
 var world: WorldData
@@ -207,7 +208,12 @@ func _process(delta: float) -> void:
 	# Симуляция не съедает кадр: если на большой колонии шаг дороже бюджета, игра идёт
 	# медленнее заказанной скорости, но не замирает (иначе долгий кадр → ещё больший шаг).
 	if _sim_cost > 0.0:
-		step = maxf(minf(step, SIM_BUDGET_MS / _sim_cost), minf(step, dt))
+		# На ×10 и ×20 расчёту можно чуть больше времени кадра: кадров меньше, время быстрее.
+		var budget := SIM_BUDGET_MS * (1.5 if SPEEDS[_speed_idx] >= 10.0 else 1.0)
+		step = maxf(minf(step, budget / _sim_cost), minf(step, dt))
+	# Сколько на деле идёт время (большая колония на слабом телефоне не успевает за ×20).
+	if dt > 0.0:
+		_real_speed = lerpf(_real_speed, step / dt, 0.05)
 	var t0 := Time.get_ticks_usec()
 	for e in universe.worlds:
 		(e["colony"] as Colony).update(step)
@@ -2233,7 +2239,12 @@ func _env_text(c: Vector2i) -> String:
 func _update_status() -> void:
 	var c := world_view.camera_cell()
 	var depth := c.y - world.gen.surface_y(c.x)
-	hud.set_status(("Высота %s м" % Fmt.int_spaced(-c.y)) if depth < 0 else ("Глубина %s м" % Fmt.int_spaced(depth)))
+	var where := ("Высота %s м" % Fmt.int_spaced(-c.y)) if depth < 0 else ("Глубина %s м" % Fmt.int_spaced(depth))
+	# Телефон не успевает за выбранной скоростью — показываем, с какой идёт на деле.
+	var want: float = SPEEDS[_speed_idx]
+	if want > 1.0 and _real_speed < want * 0.85:
+		where += " · ×%d → ×%.0f" % [roundi(want), maxf(1.0, _real_speed)]
+	hud.set_status(where)
 	var hungry := 0
 	for u in colony.units:
 		if u.satiety < 25.0:

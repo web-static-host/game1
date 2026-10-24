@@ -1581,6 +1581,8 @@ const LIFT_POWER := 5
 const LIFT_WAIT := 6.0
 ## Сколько грузовой ждёт, пока наберётся груз, сек.
 const CARGO_WAIT := 8.0
+## Бездельник без дела ищет работу не реже, чем раз в столько секунд.
+const IDLE_RETRY_MAX := 12.0
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
 const LIFT_MIN_RIDE := 3
 ## Кабину ждут не дольше стольких секунд — потом лезут по аварийной лестнице и минуту
@@ -1588,6 +1590,7 @@ const LIFT_MIN_RIDE := 3
 const LIFT_GIVE_UP := 20.0
 const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
+var _wear_acc := 0.0
 
 
 func lifts() -> Array[Project]:
@@ -4004,7 +4007,11 @@ func update(dt: float) -> void:
 			if not p.paused:
 				_try_pay(p)
 		_tick_exposure(step)
-		_wear_tick(step)
+		# Износ — медленный: считаем раз в секунду игры (обход всех построек дорогой).
+		_wear_acc += step
+		if _wear_acc >= 1.0:
+			_wear_tick(_wear_acc)
+			_wear_acc = 0.0
 		_power_tick(step)
 		_lifts_tick(step)
 		_drills_tick(step)
@@ -4085,7 +4092,10 @@ func _update_unit(u: Unit, dt: float) -> void:
 					# Дела нет — ищем реже, чтобы толпа бездельников не грузила игру.
 					u.idle_fails += 1
 					# Ждёт следующей работы своей выработки — смотрит часто.
-					u.retry = 0.5 if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, 5.0)
+					# Новая стройка или приказ будят сразу (wake_idle); сама собой работа
+					# появляется реже — долгие бездельники ищут раз в IDLE_RETRY_MAX с (поиск
+					# пути дорогой: два десятка бездельников съедали половину расчёта игры).
+					u.retry = 0.5 if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, IDLE_RETRY_MAX)
 					# Бездельники не стоят толпой в одной точке и не торчат на лестнице (мешают
 					# проходу) — расходятся по комнатам.
 					if not offline and u.state == Unit.State.IDLE:
@@ -6742,6 +6752,8 @@ func _finish_move(p: Project) -> void:
 		world.set_dug(c.x, c.y)
 	_register_room(p)
 	_rebuild_climb()
+	# Клетки построек сменились местами (число то же) — пути и проверки клеток забываем целиком.
+	pathing.clear_cache()
 	loads.loads = loads.compute()
 	for u in units:
 		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):

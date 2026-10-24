@@ -22,7 +22,7 @@ var room_cells: Dictionary
 ## Настил мостов и пристаней: по нему ходят над водой.
 var deck: Dictionary
 ## Кэш обходов: старт -> [parents, dist]. Сбрасывается, когда меняется порода или постройки,
-## и раз в CACHE_TIME секунд (вода течёт, это не отслеживаем).
+## и раз в CACHE_TIME секунд.
 ## Клетки с лестницей и клетки идущих строек (леса) — их ведёт колония.
 var ladders := {}
 var sites := {}
@@ -33,10 +33,16 @@ var climb_rev := 0
 var _cache := {}
 var _cache_key := []
 var _cache_age := 0.0
-## Запомненные node() и passable() клеток — живут столько же, сколько кэш обходов.
+## Запомненные node() и passable() клеток: изменённые клетки мира (world.changed) сбрасывают
+## их точечно, постройки — целиком; на всякий случай — целиком раз в MEMO_TIME секунд.
 var _node_memo := {}
 var _pass_memo := {}
+## Запомненные соседи клетки (neighbors) — сбрасываются так же; сосед зависит от клеток
+## до 2 м вбок и 3 м вверх-вниз.
+var _nbr_memo := {}
+var _memo_age := 0.0
 const CACHE_TIME := 4.0
+const MEMO_TIME := 20.0
 
 
 func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
@@ -115,6 +121,15 @@ func _pass_m(c: Vector2i) -> bool:
 
 
 func neighbors(c: Vector2i) -> Array[Vector2i]:
+	var memo = _nbr_memo.get(c)
+	if memo != null:
+		return memo
+	var out := _neighbors(c)
+	_nbr_memo[c] = out
+	return out
+
+
+func _neighbors(c: Vector2i) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	# Сначала — вверх и вниз по лестнице: при равной длине пути лезут прямо, а не петляют.
 	var on_ladder := climbable(c)
@@ -153,10 +168,7 @@ func neighbors(c: Vector2i) -> Array[Vector2i]:
 
 ## Обход в ширину от start. Возвращает [parents: Dictionary, dist: Dictionary].
 func explore(start: Vector2i) -> Array:
-	var key := [world.revision, interior.size(), room_cells.size(), deck.size(), climb_rev]
-	if key != _cache_key:
-		clear_cache()
-		_cache_key = key
+	sync()
 	if _cache.has(start):
 		return _cache[start]
 	var out := _explore(start)
@@ -164,21 +176,64 @@ func explore(start: Vector2i) -> Array:
 	return out
 
 
+## Мир или постройки поменялись — забываем устаревшее (точечно, если менялась только порода).
+func sync() -> void:
+	_take_changes()
+	var key := [world.revision, interior.size(), room_cells.size(), deck.size(), climb_rev]
+	if key != _cache_key:
+		# Изменилась только порода (копают) — проверки клеток уже сброшены рядом с ней,
+		# обходы — заново. Остальное (комнаты, лестницы) — сбрасываем всё.
+		if key.slice(1) == _cache_key.slice(1):
+			_cache.clear()
+		else:
+			clear_cache()
+		_cache_key = key
+
+
 ## Время идёт: старые обходы забываем.
 func tick(dt: float) -> void:
 	_cache_age += dt
 	if _cache_age >= CACHE_TIME:
 		_cache_age = 0.0
+		# Обходы — заново; проверки клеток держим дольше: изменения мира сбрасывают их точечно.
+		_cache.clear()
+	_memo_age += dt
+	if _memo_age >= MEMO_TIME:
+		_memo_age = 0.0
 		clear_cache()
+
+
+## Клетки мира поменялись: проверки «можно стоять / пройти» рядом с ними забываем
+## (клетка влияет на себя, на того, кто стоит над ней, и на голову того, кто под ней).
+func _take_changes() -> void:
+	if world.changed.is_empty():
+		return
+	if world.changed.size() >= 4096:
+		_node_memo.clear()
+		_pass_memo.clear()
+		_nbr_memo.clear()
+	else:
+		for c in world.changed:
+			for dy in [-1, 0, 1]:
+				var n := c + Vector2i(0, dy)
+				_node_memo.erase(n)
+				_pass_memo.erase(n)
+			if not _nbr_memo.is_empty():
+				for dy in range(-3, 4):
+					for dx in range(-2, 3):
+						_nbr_memo.erase(c + Vector2i(dx, dy))
+	world.changed.clear()
 
 
 func clear_cache() -> void:
 	_cache.clear()
 	_node_memo.clear()
 	_pass_memo.clear()
+	_nbr_memo.clear()
 
 
 func _explore(start: Vector2i, cap := MAX_NODES) -> Array:
+	sync()
 	var parents := {start: start}
 	var dist := {start: 0}
 	if not node(start):
@@ -203,6 +258,7 @@ func _explore(start: Vector2i, cap := MAX_NODES) -> Array:
 ## Обход сразу от многих стартов: куда может дойти хоть кто-то (без предела по горизонтали).
 ## Возвращает расстояние от ближайшего старта.
 func explore_multi(starts: Array[Vector2i], cap: int) -> Dictionary:
+	sync()
 	var dist := {}
 	var queue: Array[Vector2i] = []
 	for st in starts:
@@ -229,6 +285,7 @@ static func truncated(dist: Dictionary) -> bool:
 ## Прицельный поиск пути к любой из клеток goals (A*): для целей дальше, чем достаёт обход.
 ## Возвращает путь от старта (не включая его) до цели или пустой, если не нашёл за limit клеток.
 func find_path(start: Vector2i, goals: Dictionary, limit := FAR_NODES) -> Array[Vector2i]:
+	sync()
 	var none: Array[Vector2i] = []
 	if goals.is_empty() or not node(start):
 		return none
@@ -270,6 +327,7 @@ const COST_RIDE := 2
 
 
 func timed_path(start: Vector2i, goal: Vector2i, lift: Dictionary, limit := 8000) -> Array[Vector2i]:
+	sync()
 	var none: Array[Vector2i] = []
 	if not node(start) or not node(goal):
 		return none

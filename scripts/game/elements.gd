@@ -22,6 +22,8 @@ const LAVA_COOL := 90.0
 ## Как часто вскрытый водоносный пласт выпускает клетку воды.
 const SPRING_TIME := 25.0
 const PUMP_TIME := 2.0
+## Насос не нашёл воды — следующий обзор зоны через столько секунд.
+const PUMP_DRY_WAIT := 8.0
 const GAS_STEP := 1.0
 ## Сколько метана отдаёт вскрытая клетка, всего и в секунду.
 const SEEP_RESERVE := {Mat.GAS_POCKET: 40.0, Mat.COAL: 2.5}
@@ -69,6 +71,8 @@ var _lava_t := 0.0
 var _gas_t := 0.0
 var _pump_t := 0.0
 var _rng := RandomNumberGenerator.new()
+## Насос -> время игры, до которого он не ищет воду (вокруг было сухо).
+var _pump_dry := {}
 var _warned := {}
 var _temp_memo := {}
 var _temp_t := 0.0
@@ -346,18 +350,26 @@ func _pump_once() -> void:
 	for p in colony.rooms_of(RoomType.PUMP):
 		if p.paused:
 			continue
+		# Воды вокруг не было — смотрим снова не сразу: обзор зоны (до 81×81 клеток) дорогой.
+		if float(_pump_dry.get(p.id, 0.0)) > colony.game_time:
+			continue
 		var center := p.rect.get_center()
 		var best = null
 		var pr := RoomType.effect_radius(p)
+		var surf := PackedInt32Array()
+		for x in range(center.x - pr, center.x + pr + 1):
+			surf.append(world.gen.surface_y(x))
 		for y in range(center.y - pr, center.y + pr + 1):
 			for x in range(center.x - pr, center.x + pr + 1):
-				if world.gen.surface_y(x) > y:
+				if surf[x - center.x + pr] > y:
 					continue # озёра на поверхности не откачиваем
 				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER:
 					best = Vector2i(x, y)
 					break
 			if best != null:
 				break
+		if best == null:
+			_pump_dry[p.id] = colony.game_time + PUMP_DRY_WAIT
 		if best != null:
 			world.clear_fluid(best.x, best.y)
 			# С энергией насос качает вдвое быстрее.
