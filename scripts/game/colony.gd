@@ -977,17 +977,30 @@ func flee_gas(u: Unit) -> void:
 	_fled[u.id] = game_time
 	var reach := pathing.explore(u.cell())
 	var dist: Dictionary = reach[1]
+	# Чистый воздух поближе — но на полу, а не на лестнице, и не туда, где уже стоят или
+	# куда идут другие (раньше все сбегались в одну клетку на лестнице и запирали проход).
+	var taken := {}
+	for o in units:
+		if o != u:
+			taken[o.cell()] = int(taken.get(o.cell(), 0)) + 1
+			if o.task == Unit.Task.GOTO:
+				taken[o.target] = int(taken.get(o.target, 0)) + 1
 	var best = null
 	var best_d := 1 << 30
 	for c: Vector2i in dist:
-		if dist[c] < best_d and elements.gas_at(c) < Elements.GAS_CLEAR and elements.gas_at(c + Vector2i.UP) < Elements.GAS_CLEAR:
-			best_d = dist[c]
+		var d: int = dist[c] + (8 if pathing.climbable(c) else 0) + 3 * int(taken.get(c, 0))
+		if d < best_d and elements.gas_at(c) < Elements.GAS_CLEAR and elements.gas_at(c + Vector2i.UP) < Elements.GAS_CLEAR:
+			best_d = d
 			best = c
 	if best == null or best == u.cell():
 		return
+	var from := u.cell()
 	_drop(u)
 	_start(u, Unit.Task.GOTO, best, best, 0, reach[0])
-	elements._warn_once("flee", "%s уходит из облака метана" % u.name, "warning")
+	# Где скопился газ — подсказываем (не чаще раза в 5 минут): там нужна дегазация.
+	if game_time - _gas_hint_t > GAS_LOG_EVERY:
+		_gas_hint_t = game_time
+		_log("%s уходит из облака метана (глубина %s) — там метан копится: поставьте рядом дегазацию" % [u.name, _depth_text(from)], "warning")
 
 
 func cancel_project(p: Project) -> void:
@@ -1410,8 +1423,19 @@ func _drill_lift_step(p: Project) -> void:
 	if lift == null:
 		return
 	lift.rect.size.y = maxi(2, p.rect.position.y - lift.rect.position.y)
-	# Выкопанное падает на пол — забираем всё, что лежит в шахте лифта и в самом буре.
-	var area := lift.rect.merge(p.rect).grow_individual(0, 0, 0, 1)
+	_drill_lift_collect(p, lift)
+	_rebuild_climb()
+
+
+## Столб бур-лифта: шахта его лифта, сам бур и ряд под ним. Что там лежит — забирает кабина.
+static func drill_lift_area(drill: Project, lift: Project) -> Rect2i:
+	return lift.rect.merge(drill.rect).grow_individual(0, 0, 0, 1)
+
+
+## Всё, что лежит в столбе бур-лифта (добытое, выгруженное), — в кабину у нижнего конца:
+## наверх её везёт лифт, гаврики это не таскают.
+func _drill_lift_collect(drill: Project, lift: Project) -> void:
+	var area := drill_lift_area(drill, lift)
 	for c: Vector2i in drops.keys():
 		if not area.has_point(c):
 			continue
@@ -1419,10 +1443,26 @@ func _drill_lift_step(p: Project) -> void:
 			# Пустая порода не нужна — её кабина не возит.
 			if RoomType.BULK.has(k):
 				continue
-			var n := drop_amount(c, k)
+			var n := drop_amount(c, k) - _claimed_drop(c, k)
 			if n > 0:
 				lift.lift_buf[1][k] = int(lift.lift_buf[1].get(k, 0)) + _take_drop(c, k, n)
-	_rebuild_climb()
+
+
+## Клетка в столбе бур-лифта: лежащее там гаврики не носят — его везёт лифт.
+func in_drill_lift(c: Vector2i) -> bool:
+	# Столбы бур-лифтов — раз в секунду игры (спрашивают про каждую кучу).
+	if game_time - _dl_rects_t >= 1.0 or _dl_rects_t > game_time:
+		_dl_rects_t = game_time
+		_dl_rects.clear()
+		for p in projects:
+			if p.kind == Project.Kind.LIFT and p.link_id != 0 and p.phase == Project.Phase.DONE:
+				var d := project_by_id(p.link_id)
+				if d != null:
+					_dl_rects.append(drill_lift_area(d, p))
+	for r in _dl_rects:
+		if r.has_point(c):
+			return true
+	return false
 
 
 ## Приказ буру: пройти n м в сторону dir. Ход сразу размечается тоннелем или шахтой.
@@ -1678,6 +1718,9 @@ const LIFT_GIVE_UP := 20.0
 const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
 var _wear_acc := 0.0
+var _gas_hint_t := -100000.0
+var _dl_rects: Array[Rect2i] = []
+var _dl_rects_t := -1000.0
 var _power_acc := 0.0
 var _climb_sig := 0
 
@@ -1760,6 +1803,11 @@ func _lifts_tick(dt: float) -> void:
 		if p.cargo:
 			if check:
 				_cargo_autoload(p)
+				# Бур-лифт: всё, что лежит в его столбе, — в кабину.
+				if p.link_id != 0 and p.phase == Project.Phase.DONE:
+					var d := project_by_id(p.link_id)
+					if d != null:
+						_drill_lift_collect(d, p)
 			_cargo_tick(p, dt, ends)
 		else:
 			_passenger_tick(p, dt)
@@ -1974,7 +2022,7 @@ func _cargo_autoload(p: Project) -> void:
 		if far == null:
 			continue
 		for q in projects:
-			if q.paused or q == p or (q.phase == Project.Phase.DONE and not q.repairing):
+			if q.paused or q == p or (q.phase == Project.Phase.DONE and not q.repairing) or q.blocked == UNDER_DRILL:
 				continue
 			var d: Vector2i = q.rect.get_center() - (far as Vector2i)
 			if absi(d.x) + absi(d.y) > 25:
@@ -6050,7 +6098,7 @@ func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}) 
 			best_d = dist[s]
 	for c: Vector2i in drops:
 		var avail := drop_amount(c, key) - _claimed_drop(c, key)
-		if avail <= 0 or not near_home(c.x):
+		if avail <= 0 or not near_home(c.x) or in_drill_lift(c):
 			continue
 		var stand = _drop_stand(c, dist)
 		if stand != null and dist[stand] < best_d:
@@ -6116,7 +6164,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_lift_end := -1
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
-		if stand == null or dist[stand] >= best_d:
+		if stand == null or dist[stand] >= best_d or in_drill_lift(c):
 			continue
 		# Добытое в шахте уносят только работники складов и подсобные.
 		var mined := in_mine(c)
@@ -6201,6 +6249,9 @@ func _incoming(key: String) -> int:
 
 
 func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_only := false) -> bool:
+	# Стройке под бур-лифтом материалы не носят, пока бур её не прошёл.
+	if p.blocked == UNDER_DRILL:
+		return false
 	var left := remaining(p)
 	if now_only:
 		# Только то, что нужно прямо сейчас и ещё не принесено и не несут.

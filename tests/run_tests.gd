@@ -4680,6 +4680,15 @@ func test_drill_lift() -> void:
 	check(not colony._try_dig(ug, under, urch[0], urch[1]), "под бур-лифтом гаврики не копают")
 	colony._check_under_drills()
 	check(under.blocked == Colony.UNDER_DRILL, "в карточке — почему стоит: «%s»" % under.blocked)
+	# Лежащее в столбе бур-лифта гаврики не носят — кабина забирает сама.
+	var dc := Vector2i(x + 11, drill.rect.end.y - 1)
+	colony.drop_item(dc, "copper", 4, null)
+	check(colony.in_drill_lift(dc), "куча в столбе бур-лифта")
+	var hs := colony._haul_source("copper", colony.pathing.explore(ug.cell())[1], ug)
+	check(hs[0] == null or hs[1] != dc, "гаврики её не берут")
+	colony._cargo_check_t = 5.0
+	colony._lifts_tick(0.1)
+	check(colony.drop_amount(dc, "copper") == 0, "кабина бур-лифта забрала кучу сама")
 	check(not colony.start_drill(drill, Vector2i.LEFT, 5).is_empty(), "бур-лифт вбок не бурит")
 	check(colony.start_drill(drill, Vector2i.DOWN, 10).is_empty(), "бурит вниз")
 	var before := 0
