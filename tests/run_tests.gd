@@ -754,7 +754,7 @@ func test_aging() -> void:
 	check(u.lifespan > Unit.LIFESPAN * 0.5, "у гаврика есть срок жизни (%.0f с)" % u.lifespan)
 	check(not u.is_elder() and u.age >= Unit.CHILD_TIME, "основатели — взрослые, не старики")
 	u.age = u.lifespan * Unit.ELDER_AT - 0.1
-	colony.update(0.5)
+	colony.update(1.0)
 	check(u.is_elder() and u.age_factor() < 1.0, "гаврик состарился и работает медленнее")
 	var mother: Unit = null
 	var father: Unit = null
@@ -772,7 +772,7 @@ func test_aging() -> void:
 	var log: Array[String] = []
 	colony.event_logged.connect(func(text: String, _kind: String) -> void: log.append(text))
 	u.age = u.lifespan - 0.1
-	colony.update(0.5)
+	colony.update(1.0)
 	check(colony.units.size() == n - 1 and not colony.units.has(u), "старик умер от старости")
 	check(log.any(func(t: String) -> bool: return "от старости" in t), "в журнале — смерть от старости")
 

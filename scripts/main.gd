@@ -9,7 +9,8 @@ const SPEEDS := [1.0, 2.0, 10.0, 20.0]
 ## Сколько миллисекунд кадра можно отдать симуляции.
 const SIM_BUDGET_MS := 30.0
 ## Сколько стоит секунда игры (мс), скользящее среднее — по нему режем шаг.
-var _sim_cost := 0.0
+## Сколько игровых секунд симулировать за кадр, чтобы уложиться в бюджет (подстраивается).
+var _step_cap := 2.0
 var _real_speed := 1.0
 const STATUS_INTERVAL := 0.2
 
@@ -204,13 +205,15 @@ func _process(delta: float) -> void:
 	# Открыто меню — игра на паузе.
 	var dt := 0.0 if _away or hud.menu_open() else minf(delta, 0.25)
 	# Время идёт во всех мирах сразу; ракеты летят.
-	var step: float = dt * SPEEDS[_speed_idx]
+	var want: float = dt * SPEEDS[_speed_idx]
 	# Симуляция не съедает кадр: если на большой колонии шаг дороже бюджета, игра идёт
-	# медленнее заказанной скорости, но не замирает (иначе долгий кадр → ещё больший шаг).
-	if _sim_cost > 0.0:
-		# На ×10 и ×20 расчёту можно чуть больше времени кадра: кадров меньше, время быстрее.
-		var budget := SIM_BUDGET_MS * (1.5 if SPEEDS[_speed_idx] >= 10.0 else 1.0)
-		step = maxf(minf(step, budget / _sim_cost), minf(step, dt))
+	# медленнее заказанной скорости, но не замирает и не медленнее ×1. Шаг подстраивается
+	# по факту: кадр уложился в бюджет — шаг растёт до заказанного, нет — уменьшается.
+	# (Раньше делили время кадра на шаг: постоянная часть кадра на маленьком шаге раздувала
+	# «стоимость секунды», шаг не рос — ×2 на телефоне шло как ×1.)
+	var step := maxf(minf(want, _step_cap), minf(want, dt))
+	# На ×10 и ×20 расчёту можно чуть больше времени кадра: кадров меньше, время быстрее.
+	var budget := SIM_BUDGET_MS * (1.5 if SPEEDS[_speed_idx] >= 10.0 else 1.0)
 	# Сколько на деле идёт время (большая колония на слабом телефоне не успевает за ×20).
 	if dt > 0.0:
 		_real_speed = lerpf(_real_speed, step / dt, 0.05)
@@ -219,8 +222,11 @@ func _process(delta: float) -> void:
 		(e["colony"] as Colony).update(step)
 	universe.update(step)
 	if step > 0.0:
-		var cost := (Time.get_ticks_usec() - t0) / 1000.0 / step
-		_sim_cost = cost if _sim_cost == 0.0 else lerpf(_sim_cost, cost, 0.1)
+		var ms := (Time.get_ticks_usec() - t0) / 1000.0
+		if ms > budget:
+			_step_cap = maxf(dt, step * budget / ms)
+		elif ms < budget * 0.7:
+			_step_cap = minf(maxf(_step_cap, step) * 1.15, 2.0)
 	_clamp_camera()
 	if _shake > 0.0:
 		_shake -= delta

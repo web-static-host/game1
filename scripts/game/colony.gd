@@ -1675,6 +1675,9 @@ const LIFT_GIVE_UP := 20.0
 const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
 var _wear_acc := 0.0
+var _power_acc := 0.0
+var _life_acc := 0.0
+var _climb_sig := 0
 
 
 func lifts() -> Array[Project]:
@@ -2043,6 +2046,19 @@ func _lift_route(start: Vector2i, goal: Vector2i, path: Array[Vector2i]) -> Arra
 		return path
 	var fast := pathing.timed_path(start, goal, lift)
 	return fast if not fast.is_empty() else path
+
+
+## Всё, от чего зависят лестницы, леса и полы: порода, постройки и их стадии.
+func _climb_signature() -> int:
+	var a := [world.revision, interior.size(), room_cells.size(), deck.size(), projects.size()]
+	for p in projects:
+		a.append(p.id)
+		a.append(p.phase)
+		a.append(p.rect)
+		a.append(p.ladder)
+		a.append(p.equip_ladder)
+		a.append(p.supported.size())
+	return hash(a)
 
 
 func _rebuild_climb() -> void:
@@ -4086,7 +4102,11 @@ func update(dt: float) -> void:
 		_climb_t += step
 		if _climb_t >= 0.5:
 			_climb_t = 0.0
-			_rebuild_climb()
+			# Лестницы и леса пересобираем, только если что-то поменялось.
+			var sig := _climb_signature()
+			if sig != _climb_sig:
+				_climb_sig = sig
+				_rebuild_climb()
 		for p in projects:
 			if not p.paused:
 				_try_pay(p)
@@ -4096,13 +4116,21 @@ func update(dt: float) -> void:
 		if _wear_acc >= 1.0:
 			_wear_tick(_wear_acc)
 			_wear_acc = 0.0
-		_power_tick(step)
+		# Энергия и жизнь (сытость, здоровье, возраст) — реже подшага: итог тот же, считать
+		# в разы дешевле (на большой колонии это заметная доля расчёта).
+		_power_acc += step
+		if _power_acc >= 0.5:
+			_power_tick(_power_acc)
+			_power_acc = 0.0
 		_lifts_tick(step)
 		_drills_tick(step)
 		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
-		_life_tick(step, false)
+		_life_acc += step
+		if _life_acc >= 1.0:
+			_life_tick(_life_acc, false)
+			_life_acc = 0.0
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)
