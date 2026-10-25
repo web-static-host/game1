@@ -81,7 +81,9 @@ func _initialize() -> void:
 			for b in bots.values():
 				b._slice()
 			# Каждые 5 часов игры — сохранение (SAVE_TO): прервётся прогон — продолжим (LOAD_FROM).
-			if int(t) % 18000 < int(step) + 1:
+			# SAVE_EVERY_MIN — чаще (облачная машина засыпает, и прогон обрывается).
+			var every := int(OS.get_environment("SAVE_EVERY_MIN")) * 60 if not OS.get_environment("SAVE_EVERY_MIN").is_empty() else 18000
+			if int(t) % every < int(step) + 1:
 				_save()
 	for b in bots.values():
 		b.report()
