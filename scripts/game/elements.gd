@@ -488,6 +488,13 @@ func _gas_alarm() -> void:
 	for p: Project in colony.projects:
 		if p.is_water_structure() or p.purpose == RoomType.DEGAS or p.purpose == RoomType.VENT:
 			continue
+		# Машина (бур, бур-лифт, ход бура) копает без искры — газ ей безразличен.
+		if colony.is_machine(p):
+			if p.hazard_pending == "methane":
+				p.paused = false
+				p.hazard_pending = ""
+				p.blocked = ""
+			continue
 		var g := gas_in(p.rect.grow(1))
 		# Искру даёт кирка: копка стоит уже при тревоге, а в противогазах — только в метановом
 		# облаке (там искра взрывает). Готовые комнаты — когда газом опасно дышать.

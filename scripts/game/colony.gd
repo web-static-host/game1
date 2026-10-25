@@ -27,7 +27,7 @@ const HAZARD_TEXT := {
 	"water": "Геолог: стена влажная — рядом вода. Дальше — риск затопления. Продолжить?",
 	"magma": "Геолог: порода раскалена — рядом магма! Прорыв лавы — катастрофа. Продолжить?",
 	"gas": "Геолог: пахнет газом — рядом метан. Нужна дегазация. Продолжить?",
-	"methane": "Вскрыт газовый карман — метан в выработке! Искра от кирки — взрыв. Работы стоят, пока газ не уйдёт (поможет дегазация). Продолжить на свой риск?",
+	"methane": "Рядом газовый карман — из него в выработку идёт метан! Искра от кирки — взрыв. Работы стоят, пока газ не уйдёт (поможет дегазация). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil"]
@@ -707,7 +707,7 @@ func _check_sources() -> void:
 		if p.paused or (not had and not p.blocked.is_empty()):
 			continue
 		var cut: PackedStringArray = []
-		var need := _needed_now(p)
+		var need := _needed_now(p, true)
 		for k in need:
 			if RoomType.PIPED.has(k) or int(p.delivered.get(k, 0)) + in_transit(p, k) >= int(need[k]):
 				continue
@@ -1196,14 +1196,28 @@ func supply_status(p: Project) -> Array:
 
 
 ## Материалы, которые нужны прямо сейчас (этап встал без них).
-func _needed_now(p: Project) -> Dictionary:
+## min_only — только то, без чего стройка стоит прямо сейчас (крепь текущего среза): по нему
+## судят «Не хватает» и «Склад недоступен».
+func _needed_now(p: Project, min_only := false) -> Dictionary:
 	match p.phase:
 		Project.Phase.DIG:
+			# Крепь на всю стройку несут сразу (а не по срезу: пока несли бревно на очередной
+			# срез, копка стояла). На текущий срез — сколько ему нужно, остальное — вперёд.
 			var i := slice_to_support(p)
-			if i >= 0 and not (p.support_paid and p.support_slice == i):
-				var key := support_key(p)
-				return {key: support_amount(p, key)}
-			return {}
+			if min_only:
+				if i >= 0 and not (p.support_paid and p.support_slice == i):
+					var k := support_key(p)
+					return {k: support_amount(p, k)}
+				return {}
+			var left := support_wood_left(p)
+			if left <= 0:
+				return {}
+			var key := support_key(p)
+			var per := support_amount(p, key)
+			var n := ceili(float(left) / p.slice_wood()) * per
+			if i < 0 and int(p.delivered.get(key, 0)) >= n:
+				return {}
+			return {key: n}
 		Project.Phase.BUILD:
 			return p.cost() if not p.paid else {}
 		Project.Phase.EQUIP:
@@ -1215,7 +1229,7 @@ func _needed_now(p: Project) -> Dictionary:
 
 ## Хватит ли ресурсов вообще: на складе + несут + уже на месте.
 func _check_supply(p: Project) -> void:
-	var need := _needed_now(p)
+	var need := _needed_now(p, true)
 	var lacking: PackedStringArray = []
 	for k in need:
 		var have: int = p.delivered.get(k, 0) + in_transit(p, k) + inventory.get(k, 0) + drop_total(k)
@@ -1360,7 +1374,24 @@ func create_drill_lift(r: Rect2i, workers := -1) -> Project:
 		return null
 	drill.link_id = lift.id
 	lift.link_id = drill.id
+	# Место под себя бур-лифт роет сам — крепь гаврикам ставить не нужно.
+	for q in [drill, lift]:
+		q.supported.clear()
+		for i in q.slice_count():
+			q.supported.append(i)
+		q.needs_support.clear()
 	return drill
+
+
+## Копает машина, а не кирка: бур, ход, который он сверлит, и бур-лифт (бур и его лифт).
+## Газ ей безразличен.
+func is_machine(p: Project) -> bool:
+	return p.kind == Project.Kind.DRILL or p.bored_by > 0 or drill_lift_part(p)
+
+
+## Часть бур-лифта: его бур или его лифт. Место под себя бур-лифт роет сам.
+func drill_lift_part(p: Project) -> bool:
+	return p.link_id != 0 and (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.LIFT)
 
 
 ## Лифт бур-лифта (или null).
@@ -1425,6 +1456,7 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 
 
 func _drills_tick(dt: float) -> void:
+	_drill_lift_dig(dt)
 	for p: Project in projects.duplicate():
 		if not drilling(p) or p.paused:
 			continue
@@ -1477,6 +1509,58 @@ func _drills_tick(dt: float) -> void:
 		p.drill_left -= 1
 		if p.drill_left <= 0:
 			_end_bore(p, true)
+
+
+## Бур-лифт сам роет себе место (лифт сверху, бур снизу): по ряду сверху вниз со скоростью
+## бура, на энергии (или дизеле). Гаврики потом только собирают его.
+func _drill_lift_dig(dt: float) -> void:
+	for p: Project in projects:
+		if p.kind != Project.Kind.DRILL or p.link_id == 0 or p.paused:
+			continue
+		var lift := project_by_id(p.link_id)
+		var parts: Array[Project] = [p]
+		if lift != null and lift.phase == Project.Phase.DIG and not lift.paused:
+			parts.push_front(lift)
+		var row: Array = []
+		var top := 1 << 30
+		for q in parts:
+			if q.phase != Project.Phase.DIG:
+				continue
+			# Бур-лифт, заложенный до того, как он стал рыть сам, — тоже без крепи.
+			if not q.needs_support.is_empty():
+				q.needs_support.clear()
+				q.supported.clear()
+				for i in q.slice_count():
+					q.supported.append(i)
+			for c in remaining_dig(q):
+				if c.y < top:
+					top = c.y
+					row.clear()
+				if c.y == top:
+					row.append([c, q])
+		if row.is_empty():
+			continue
+		var on_diesel := false
+		if not powered() or power_ratio <= 0.0:
+			if research.has("combustion") and (p.fuel > 0.0 or _remove("diesel", 1) >= 1):
+				if p.fuel <= 0.0:
+					p.fuel += DRILL_DIESEL_TIME
+				on_diesel = true
+				p.fuel = maxf(0.0, p.fuel - dt)
+			else:
+				p.blocked = "Нет энергии — бур-лифт не роет себе место"
+				continue
+		if p.blocked.begins_with("Нет энергии"):
+			p.blocked = ""
+		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
+		var need := DRILL_MOVE_TIME * DRILL_SPEED
+		for e in row:
+			need = maxf(need, dig_time(e[0]))
+		if p.drill_t < need:
+			continue
+		p.drill_t = 0.0
+		for e in row:
+			_complete_dig(e[0], e[1], null)
 
 
 ## Бур дошёл (или его остановили): пройденная часть хода готова, бур ждёт приказа.
@@ -4973,8 +5057,8 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, miners: bool, builders: bool) -> bool:
 	if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 		return false
-	# Ход, который сверлит бур, гаврики не копают.
-	if p.bored_by > 0:
+	# Ход, который сверлит бур, гаврики не копают; место под бур-лифт он роет сам.
+	if p.bored_by > 0 or (p.phase == Project.Phase.DIG and drill_lift_part(p)):
 		return false
 	var mine := p.kind == Project.Kind.MINE
 	var crew := _crew_ok(u, mine, miners, builders)
@@ -5482,8 +5566,9 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 					kind = "magma"
 				Mat.GAS_POCKET:
 					# Дегазация рядом — газ из вскрытого кармана она уберёт; в противогазах газ не
-					# страшен — геолог не останавливает.
-					if not degas_covers(c) and not research.has("gas_masks"):
+					# страшен — геолог не останавливает. Машине (бур, бур-лифт) газ безразличен:
+					# искру даёт кирка.
+					if not degas_covers(c) and not research.has("gas_masks") and not is_machine(p):
 						kind = "gas"
 			if kind.is_empty() or p.hazard_ack.has(kind):
 				continue
