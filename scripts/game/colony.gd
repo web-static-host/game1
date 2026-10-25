@@ -28,6 +28,7 @@ const HAZARD_TEXT := {
 	"magma": "Геолог: порода раскалена — рядом магма! Прорыв лавы — катастрофа. Продолжить?",
 	"gas": "Геолог: пахнет газом — рядом метан. Нужна дегазация. Продолжить?",
 	"methane": "Рядом газовый карман — из него в выработку идёт метан! Искра от кирки — взрыв. Работы стоят, пока газ не уйдёт (поможет дегазация). Продолжить на свой риск?",
+	"methane_air": "Метан в выработке — тяжело дышать. Работы стоят, пока газ не уйдёт (поможет дегазация, противогазы). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
 const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil"]
@@ -951,10 +952,11 @@ func set_paused(p: Project, on: bool) -> void:
 
 
 ## Газовая тревога: бригада бросает работу, пока метан не уйдёт или игрок не прикажет продолжать.
-func gas_stop(p: Project) -> void:
+## pocket — у газового кармана (взрывоопасно); иначе газа просто столько, что тяжело дышать.
+func gas_stop(p: Project, pocket := true) -> void:
 	p.paused = true
 	p.hazard_pending = "methane"
-	p.blocked = HAZARD_TEXT["methane"]
+	p.blocked = HAZARD_TEXT["methane" if pocket else "methane_air"]
 	# Газ то копится, то уходит — не засыпаем сообщениями: о стройке не чаще раза в 5 минут.
 	if game_time - float(_gas_logged.get(p.id, -1000.0)) > GAS_LOG_EVERY:
 		_log("%s: %s" % [p.title(), p.blocked], "danger")
@@ -1677,7 +1679,6 @@ const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
 var _wear_acc := 0.0
 var _power_acc := 0.0
-var _life_acc := 0.0
 var _climb_sig := 0
 
 
@@ -4117,8 +4118,8 @@ func update(dt: float) -> void:
 		if _wear_acc >= 1.0:
 			_wear_tick(_wear_acc)
 			_wear_acc = 0.0
-		# Энергия и жизнь (сытость, здоровье, возраст) — реже подшага: итог тот же, считать
-		# в разы дешевле (на большой колонии это заметная доля расчёта).
+		# Энергия — дважды в секунду: итог тот же, считать дешевле. (Жизнь раз в секунду
+		# пробовали — колонии в долгих прогонах вымирали; жизнь — на каждом подшаге.)
 		_power_acc += step
 		if _power_acc >= 0.5:
 			_power_tick(_power_acc)
@@ -4128,10 +4129,7 @@ func update(dt: float) -> void:
 		_oil_tick(step)
 		_plant_tick(step)
 		_season_tick()
-		_life_acc += step
-		if _life_acc >= 1.0:
-			_life_tick(_life_acc, false)
-			_life_acc = 0.0
+		_life_tick(step, false)
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)

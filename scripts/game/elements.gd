@@ -501,9 +501,12 @@ func _gas_alarm() -> void:
 		var masks := colony.research.has("gas_masks")
 		var digging := p.phase == Project.Phase.DIG
 		var stop_at := (GAS_EXPLOSIVE if masks else GAS_ALARM) if digging else GAS_CHOKE * (2.0 if masks else 1.0)
-		# Копка встаёт только у вскрытого газового кармана: в остальном метане искра не страшна.
-		if digging and not near_pocket(p.rect):
-			stop_at = GAS_CHOKE * (2.0 if masks else 1.0)
+		# Взрыв — только у газового кармана. В остальном метане искра не страшна, но копка
+		# встаёт, когда газа столько, что тяжело дышать (иначе он копился до удушья и
+		# расходился по базе): без противогазов — с прежнего порога, в противогазах — у удушья.
+		var pocket := near_pocket(p.rect)
+		if digging and not pocket:
+			stop_at = GAS_CHOKE * 2.0 * 0.8 if masks else GAS_EXPLOSIVE
 		# Геолог чуял газ в породе, а дегазация рядом или есть противогазы — копают дальше сами.
 		if p.hazard_pending == "gas" and p.paused and (masks or colony.degas_covers(p.rect.get_center())):
 			p.hazard_ack.append("gas")
@@ -523,7 +526,7 @@ func _gas_alarm() -> void:
 			if g < GAS_CLEAR:
 				p.hazard_ack.erase("methane")
 		elif g >= stop_at and not p.paused:
-			colony.gas_stop(p)
+			colony.gas_stop(p, pocket or not digging)
 
 
 ## Искра от кирки в облаке метана: взрыв.
@@ -622,9 +625,13 @@ func affect_unit(u: Unit, dt: float) -> void:
 			u.health -= 6.0 * dt
 		_hurt_check(u, "утонул(а)")
 	var g := maxf(gas_at(c), gas_at(head))
-	if g >= (GAS_ALARM if u.ability("flee_early") == true else GAS_EXPLOSIVE) and near_pocket(Rect2i(c, Vector2i.ONE)):
+	var choke := GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0)
+	# У газового кармана уходят от взрывоопасного метана; любой газ, которым уже трудно
+	# дышать, — тоже покидают (иначе задыхались в метане из угля).
+	if (g >= (GAS_ALARM if u.ability("flee_early") == true else GAS_EXPLOSIVE) and near_pocket(Rect2i(c, Vector2i.ONE))) \
+			or g >= choke * 0.8:
 		colony.flee_gas(u)
-	if g >= GAS_CHOKE * (2.0 if colony.research.has("gas_masks") else 1.0):
+	if g >= choke:
 		u.health -= 3.0 * dt
 		_hurt_check(u, "задохнулся(лась) метаном")
 	var t := temperature(c)

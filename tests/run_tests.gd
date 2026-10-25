@@ -1867,8 +1867,20 @@ func test_gas_alarm() -> void:
 	check(not room.paused, "готовая ферма в метане работает: искру даёт только кирка")
 	room.phase = Project.Phase.DIG
 	room.purpose = RoomType.NONE
+	el.gas[o + Vector2i(4, 3)] = 0.2
+	el.gas[o + Vector2i(4, 4)] = 0.2
 	el._gas_alarm()
-	check(not room.paused, "метан без газового кармана рядом (из угля, разошёлся по ходам) — копают дальше")
+	check(not room.paused, "слабый метан без газового кармана (из угля) — копают дальше")
+	el.gas[o + Vector2i(4, 3)] = 0.3
+	el.gas[o + Vector2i(4, 4)] = 0.3
+	el._gas_alarm()
+	check(room.paused and room.blocked == Colony.HAZARD_TEXT["methane_air"],
+		"метана столько, что тяжело дышать, — копка встаёт, но без «взрыва»: «%s»" % room.blocked)
+	colony.set_paused(room, false)
+	room.hazard_ack.clear()
+	room.hazard_pending = ""
+	el.gas[o + Vector2i(4, 3)] = 0.2
+	el.gas[o + Vector2i(4, 4)] = 0.3
 	var u0 := colony.units[0]
 	u0.pos = Vector2(o + Vector2i(4, 4))
 	u0.state = Unit.State.IDLE
