@@ -1,0 +1,97 @@
+name: Долгие тесты ботами
+
+# Запуск вручную: Actions → «Долгие тесты ботами» → Run workflow.
+# 10 миров параллельно, каждый — до ~5,8 часа настоящего времени (предел задачи — 6 часов).
+# Итог: сводка на странице запуска, логи и сохранения — в артефактах.
+# Не дошли до конца — запустить снова с resume_run = номер (id) прошлого запуска: продолжат
+# с сохранений.
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Сколько минут игры (3600 = 30 лет)"
+        default: "3600"
+      resume_run:
+        description: "Продолжить с сохранений запуска (id из адреса страницы запуска), пусто — с начала"
+        default: ""
+
+jobs:
+  bot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 358
+    permissions:
+      actions: read
+      contents: read
+    container:
+      image: barichello/godot-ci:4.4.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { seed: 2024, style: opening }
+          - { seed: 31337, style: opening }
+          - { seed: 9001, style: classic }
+          - { seed: 777, style: opening }
+          - { seed: 4242, style: opening }
+          - { seed: 1234, style: opening }
+          - { seed: 5555, style: opening }
+          - { seed: 8080, style: opening }
+          - { seed: 100, style: classic }
+          - { seed: 2718, style: opening }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Импорт проекта
+        run: godot --headless --path . --import
+      - name: Сохранение прошлого запуска
+        if: inputs.resume_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: bot-${{ matrix.seed }}
+          path: prev
+          run-id: ${{ inputs.resume_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Прогон
+        run: |
+          mkdir -p out
+          if [ -f prev/save.json ]; then
+            export LOAD_FROM=prev/save.json
+            cat prev/log.txt > out/log.txt 2>/dev/null || true
+            echo "=== продолжение с сохранения ===" >> out/log.txt
+          fi
+          STEP=1.0 SAVE_EVERY_MIN=60 SAVE_TO=out/save.json WALL_LIMIT_MIN=340 \
+            godot --headless --path . -s res://tests/longplay.gd -- ${{ matrix.seed }} ${{ inputs.minutes }} ${{ matrix.style }} \
+            2>&1 | grep -v '^\s*at: \|^ERROR: .*resources still in use\|^WARNING: ObjectDB' >> out/log.txt || true
+          tail -5 out/log.txt
+      - name: Строка в сводку
+        if: always()
+        run: |
+          last=$(grep '^\[' out/log.txt | tail -1 | sed -E 's/^\[ *[0-9]+ с\] *//' | cut -c1-160)
+          rocket=$(grep -c 'ракета улетела' out/log.txt || true)
+          echo "${{ matrix.seed }} ${{ matrix.style }} | ракет: ${rocket} | ${last}" > out/summary.txt
+          cat out/summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bot-${{ matrix.seed }}
+          path: out/
+          retention-days: 30
+
+  summary:
+    needs: bot
+    if: always()
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bot-*
+          path: all
+      - name: Сводка
+        run: |
+          {
+            echo "## Долгие тесты ботами"
+            echo
+            echo '```'
+            cat all/*/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat all/*/summary.txt

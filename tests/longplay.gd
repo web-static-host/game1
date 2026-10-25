@@ -57,7 +57,13 @@ func _initialize() -> void:
 	print("=== Мир %d, %d минут игры, бот: %s, живут %.0f лет ===" % [seed_value, minutes, style, Unit.life_years])
 	# Шаг симуляции (STEP=1.0 — вдвое быстрее, для длинных серий).
 	var step := float(OS.get_environment("STEP")) if not OS.get_environment("STEP").is_empty() else 0.5
+	# WALL_LIMIT_MIN — сколько минут настоящего времени можно считать (у задачи в CI предел):
+	# время вышло — итог и сохранение, продолжим с него (LOAD_FROM).
+	var wall_ms := int(float(OS.get_environment("WALL_LIMIT_MIN")) * 60000.0) if not OS.get_environment("WALL_LIMIT_MIN").is_empty() else 0
 	while t < minutes * 60.0:
+		if wall_ms > 0 and Time.get_ticks_msec() > wall_ms:
+			print("\nВремя прогона вышло (%d мин) — итог на %.0f мин игры" % [wall_ms / 60000, t / 60.0])
+			break
 		for e in universe.worlds:
 			(e["colony"] as Colony).update(step)
 		universe.update(step)
