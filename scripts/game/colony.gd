@@ -258,6 +258,8 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 	u.lifespan = Unit.life_years * YEAR * u.stat("longevity") * rng.randf_range(0.85, 1.15)
 	u.name = _free_name(u.sex)
 	u.look = rng.randf()
+	# Разнести проверки стихий по времени — от зерна мира, чтобы прогоны повторялись.
+	u.env_t = fmod(float(u.id) * 0.618034, 1.0)
 	u.pos = pos
 	units.append(u)
 	return u

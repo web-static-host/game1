@@ -114,7 +114,7 @@ var irradiated := false
 var takeover := 0
 var takeover_by := 0
 ## Сколько накопилось с прошлой проверки стихий (вода, газ, жара, холод).
-var env_t := randf()
+var env_t := 0.0
 var path: Array[Vector2i] = []
 var path_i := 0
 var retry := 0.0
