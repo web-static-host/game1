@@ -67,8 +67,12 @@ jobs:
         run: |
           last=$(grep '^\[' out/log.txt | tail -1 | sed -E 's/^\[ *[0-9]+ с\] *//' | cut -c1-160)
           rocket=$(grep -c 'ракета улетела' out/log.txt || true)
-          echo "${{ matrix.seed }} ${{ matrix.style }} | ракет: ${rocket} | ${last}" > out/summary.txt
+          dead=$(grep '^\[' out/log.txt | grep -m1 '| жит 0 ' | grep -o '([^)]*)' | head -1 || true)
+          causes=$(grep 'погиб(ла)' out/log.txt | sed 's/.*погиб(ла): //' | sort | uniq -c | sort -rn | head -4 | awk '{c=$1; $1=""; printf "%s×%d,", $0, c}' || true)
+          echo "${{ matrix.seed }} ${{ matrix.style }} | ракет: ${rocket} | ${last} | вымерли: ${dead:-нет} | гибель:${causes}" > out/summary.txt
           cat out/summary.txt
+          echo "--- срезы раз в 5 лет ---"
+          grep '^\[' out/log.txt | awk 'NR%60==1' | sed -E 's/^\[ *[0-9]+ с\] *//' | cut -c1-230
       - uses: actions/upload-artifact@v4
         if: always()
         with:
