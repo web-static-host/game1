@@ -396,6 +396,12 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 		var is_cargo := material == "cargo" or material == "cargo_drill"
 		if not research.has("cargo_lifts" if is_cargo else "lifts"):
 			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
+		# Под бур-лифтом свой лифт не нужен: шахта его лифта сама дорастает за буром.
+		if material != "cargo_drill":
+			for d in projects:
+				if d.kind == Project.Kind.DRILL and d.link_id != 0 and d.rect.position.x < r.end.x \
+						and d.rect.end.x > r.position.x and r.end.y > d.rect.end.y and r.position.y >= d.rect.position.y:
+					return "Под бур-лифтом лифт не нужен: прикажите бур-лифту бурить вниз — шахта его лифта дорастёт сама"
 		if r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
@@ -5538,7 +5544,7 @@ static func _under_drill(c: Vector2i, drills: Array[Project]) -> bool:
 	return false
 
 
-const UNDER_DRILL := "Под бур-лифтом: этот столб прокопает бур — прикажите ему бурить вниз"
+const UNDER_DRILL := "Под бур-лифтом: гаврики здесь не копают — этот столб пройдёт бур, когда вы прикажете ему бурить вниз (в карточке бур-лифта «↓ Вниз»). Лифт тут не нужен: шахта лифта бур-лифта дорастает за буром сама — такой лифт можно отменить, материалы вернутся"
 
 
 ## Стройка, которой осталось копать только под бур-лифтом, — пишем почему стоит.

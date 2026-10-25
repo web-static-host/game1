@@ -4664,7 +4664,9 @@ func test_drill_lift() -> void:
 	for y in range(s + 9, s + 20):
 		for xx in range(x + 10, x + 13):
 			w.set_material(xx, y, Mat.GRANITE)
-	# Под бур-лифтом заложен грузовой лифт: гаврики его не копают — пройдёт бур.
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 10, s + 9, 3, 8), "cargo").contains("не нужен"),
+		"новый лифт под бур-лифтом не поставить: его шахта дорастает сама")
+	# Под бур-лифтом заложен грузовой лифт (из старой версии): гаврики его не копают — пройдёт бур.
 	var under := Project.new()
 	under.id = 961
 	under.kind = Project.Kind.LIFT
