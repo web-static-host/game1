@@ -4652,6 +4652,22 @@ func test_drill_lift() -> void:
 	for y in range(s + 9, s + 20):
 		for xx in range(x + 10, x + 13):
 			w.set_material(xx, y, Mat.GRANITE)
+	# Под бур-лифтом заложен грузовой лифт: гаврики его не копают — пройдёт бур.
+	var under := Project.new()
+	under.id = 961
+	under.kind = Project.Kind.LIFT
+	under.cargo = true
+	under.phase = Project.Phase.DIG
+	under.rect = Rect2i(x + 10, s + 9, 3, 8)
+	for i in under.slice_count():
+		under.needs_support.append(i)
+	colony.projects.append(under)
+	var ug := colony.units[2]
+	colony._drop(ug)
+	var urch := colony.pathing.explore(ug.cell())
+	check(not colony._try_dig(ug, under, urch[0], urch[1]), "под бур-лифтом гаврики не копают")
+	colony._check_under_drills()
+	check(under.blocked == Colony.UNDER_DRILL, "в карточке — почему стоит: «%s»" % under.blocked)
 	check(not colony.start_drill(drill, Vector2i.LEFT, 5).is_empty(), "бур-лифт вбок не бурит")
 	check(colony.start_drill(drill, Vector2i.DOWN, 10).is_empty(), "бурит вниз")
 	var before := 0
@@ -4665,6 +4681,9 @@ func test_drill_lift() -> void:
 		t += 0.5
 	check(not colony.drilling(drill) and drill.rect.position.y == s + 16, "бур прошёл 10 м вниз (%d)" % (drill.rect.position.y - s))
 	check(lift.rect.size.y == 12 and lift.rect.end.y == drill.rect.position.y, "шахта лифта доросла до бура (%d м)" % lift.rect.size.y)
+	check(colony.remaining_dig(under).is_empty() and under.supported.size() == under.slice_count(),
+		"лифт под буром прокопал бур, крепь — его обсадка (%d из %d)" % [under.supported.size(), under.slice_count()])
+	colony.projects.erase(under)
 	var after := 0
 	for k in st.held:
 		after += int(st.held[k])

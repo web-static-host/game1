@@ -1504,6 +1504,7 @@ func _drills_tick(dt: float) -> void:
 		p.drill_t = 0.0
 		for c in solid:
 			_complete_dig(c, bore, null)
+		_machine_dug(solid)
 		p.rect.position += p.drill_dir
 		_drill_lift_step(p)
 		p.drill_left -= 1
@@ -4147,6 +4148,7 @@ func update(dt: float) -> void:
 			_access_t = 0
 			_check_access()
 			_check_sources()
+			_check_under_drills()
 			_settle_drops()
 		# Воду откачали — затопленная стройка продолжается сама.
 		for p in projects:
@@ -5471,12 +5473,75 @@ func _work_spot(c: Vector2i, dist: Dictionary) -> Array:
 	return best
 
 
+## Буры, под которыми (в их столбе, ниже них) есть клетки стройки p: бур-лифт (его дело —
+## бурить вниз) и бур, который сейчас бурит. Под стоящим обычным буром копают сами.
+func _drills_above(p: Project) -> Array[Project]:
+	var out: Array[Project] = []
+	for d in projects:
+		if d.kind != Project.Kind.DRILL or not (d.link_id != 0 or drilling(d)):
+			continue
+		if d.rect.position.x < p.rect.end.x and d.rect.end.x > p.rect.position.x and p.rect.end.y > d.rect.end.y:
+			out.append(d)
+	return out
+
+
+static func _under_drill(c: Vector2i, drills: Array[Project]) -> bool:
+	for d in drills:
+		if c.x >= d.rect.position.x and c.x < d.rect.end.x and c.y >= d.rect.end.y:
+			return true
+	return false
+
+
+const UNDER_DRILL := "Под бур-лифтом: этот столб прокопает бур — прикажите ему бурить вниз"
+
+
+## Стройка, которой осталось копать только под бур-лифтом, — пишем почему стоит.
+func _check_under_drills() -> void:
+	for p in projects:
+		if p.phase != Project.Phase.DIG or p.paused or p.bored_by > 0:
+			continue
+		var had := p.blocked == UNDER_DRILL
+		if not had and not p.blocked.is_empty():
+			continue
+		var drills := _drills_above(p)
+		var left := remaining_dig(p)
+		var all_under := not drills.is_empty() and not left.is_empty()
+		if all_under:
+			for c in left:
+				if not _under_drill(c, drills):
+					all_under = false
+					break
+		if all_under and not had:
+			p.blocked = UNDER_DRILL
+		elif not all_under and had:
+			p.blocked = ""
+
+
+## Бур прокопал клетки чужой стройки (лифт по ходу бура): срезы, выкопанные целиком, уже
+## укреплены обсадкой бура — крепь там не нужна.
+func _machine_dug(cells: Array) -> void:
+	for q in projects:
+		if q.phase != Project.Phase.DIG or q.bored_by > 0:
+			continue
+		for c in cells:
+			if not q.has_cell(c):
+				continue
+			var i := q.slice_of(c)
+			if slice_dug(q, i) and not q.supported.has(i):
+				q.supported.append(i)
+				_check_phase(q)
+
+
 func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
 	var best_cell = null
 	var best_stand = null
 	var best_d := 1 << 30
 	var any_free := false
 	var now := diggable_now(p)
+	# Под буром не копают: этот столб прокопает сам бур, когда пойдёт вниз.
+	var drills := _drills_above(p)
+	if not drills.is_empty():
+		now = now.filter(func(c: Vector2i) -> bool: return not _under_drill(c, drills))
 	for c in now:
 		if reserved.has(c):
 			continue
@@ -5490,7 +5555,7 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 	# копаем доступную клетку соседнего среза, иначе стройка встанет навсегда.
 	if best_cell == null and _dig_deadlock(now):
 		for c in remaining_dig(p):
-			if reserved.has(c) or now.has(c):
+			if reserved.has(c) or now.has(c) or _under_drill(c, drills):
 				continue
 			any_free = true
 			var spot := _work_spot(c, dist)
