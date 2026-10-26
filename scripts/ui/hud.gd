@@ -483,8 +483,12 @@ func _build_bottom(box: VBoxContainer) -> void:
 		b.add_theme_font_size_override("font_size", 22)
 		for st in ["normal", "hover", "disabled"]:
 			b.add_theme_stylebox_override(st, flat)
+		# Поля у нажатой — как у обычной: иначе «×20» не влезала и показывалась «×2».
+		var on := btn_box(ACCENT, true)
+		on.content_margin_left = 6
+		on.content_margin_right = 6
 		for st in ["pressed", "hover_pressed"]:
-			b.add_theme_stylebox_override(st, btn_box(ACCENT, true))
+			b.add_theme_stylebox_override(st, on)
 		b.pressed.connect(func() -> void: speed_selected.emit(i))
 		seg_row.add_child(b)
 	var menu := IconButton.make("menu", "Меню")

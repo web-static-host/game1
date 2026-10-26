@@ -1127,7 +1127,8 @@ func test_slices() -> void:
 						break
 		max_open = maxi(max_open, open_unsupported)
 	check(room.phase != Project.Phase.DIG, "комнату выкопали срез за срезом (%.0f с)" % t)
-	check(max_open <= 1, "одновременно открыт не больше одного незакреплённого среза (%d)" % max_open)
+	# Пока крепят выкопанный срез, копают соседний — незакреплённых не больше двух.
+	check(max_open <= 2, "одновременно открыто не больше двух незакреплённых срезов (%d)" % max_open)
 	check(room.supported.size() == 5, "все срезы закреплены")
 	check(colony.inventory.get("wood", 0) < 40 - 4, "крепь стоила дерева")
 
@@ -2644,10 +2645,18 @@ func test_change_material() -> void:
 	planned.phase = Project.Phase.BUILD
 	planned.rect = r2
 	planned.plan_purpose = RoomType.STORAGE
+	planned.paid = true
 	colony.projects.append(planned)
+	# Материалы на обустройство носят ещё до постройки — и они остаются в комнате.
+	var eq := RoomType.equip_cost(RoomType.STORAGE, planned)
+	check(int(colony.required(planned).get("wood", 0)) == int(eq["wood"]), "на стройке под склад сразу носят и дерево на полки")
+	planned.delivered = eq.duplicate()
+	planned.delivered["stone"] = 5
 	colony._finish_project(planned)
 	check(planned.phase == Project.Phase.EQUIP and planned.equip_target == RoomType.STORAGE and planned.plan_purpose == 0,
 		"заложили склад — после постройки сразу обустраивают")
+	check(planned.equip_paid, "принесённое заранее сразу пошло на обустройство")
+	check(not planned.delivered.has("stone"), "лишнее не держат в комнате — вернули")
 	colony.projects.erase(planned)
 	check(colony.change_material(room, "wood"), "обратно на дерево тоже можно")
 	colony.cancel_equip(room)
@@ -4726,6 +4735,9 @@ func test_drill_lift() -> void:
 	colony._cargo_check_t = 5.0
 	colony._lifts_tick(0.1)
 	check(colony.drop_amount(dc, "copper") == 0, "кабина бур-лифта забрала кучу сама")
+	# Выгружать груз вниз — не на сам бур: иначе кабина подберёт его обратно (ездил по кругу).
+	var bottom = colony.lift_station(lift, 1)
+	check(bottom == null or not Colony.drill_lift_area(drill, lift).has_point(bottom), "нижняя площадка бур-лифта — не в его столбе")
 	check(not colony.start_drill(drill, Vector2i.LEFT, 5).is_empty(), "бур-лифт вбок не бурит")
 	check(colony.start_drill(drill, Vector2i.DOWN, 10).is_empty(), "бурит вниз")
 	var before := 0

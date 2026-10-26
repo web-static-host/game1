@@ -1157,7 +1157,8 @@ func support_wood_left(p: Project) -> int:
 
 
 ## Материалы, которые нужно принести на стройку для оставшихся работ (всего).
-## Пока копают, носят дерево на крепь и заодно материалы на строительство.
+## Пока копают, носят дерево на крепь и заодно материалы на строительство (и на
+## обустройство, если комнату заложили сразу под назначение).
 func required(p: Project) -> Dictionary:
 	var out := {}
 	match p.phase:
@@ -1169,9 +1170,15 @@ func required(p: Project) -> Dictionary:
 				var key := support_key(p)
 				var n := sw if key == "wood" else ceili(sw / 2.0)
 				out[key] = out.get(key, 0) + n
+			var plan := plan_cost(p)
+			for k in plan:
+				out[k] = out.get(k, 0) + plan[k]
 		Project.Phase.BUILD:
 			if not p.paid:
 				out = p.cost().duplicate()
+			var plan := plan_cost(p)
+			for k in plan:
+				out[k] = out.get(k, 0) + plan[k]
 		Project.Phase.EQUIP:
 			if not p.equip_paid:
 				out = RoomType.job_cost(p).duplicate()
@@ -1180,6 +1187,17 @@ func required(p: Project) -> Dictionary:
 		Project.Phase.DONE:
 			if p.repairing and not p.repair_paid:
 				out = p.repair_need.duplicate()
+	return out
+
+
+## Материалы обустройства комнаты, заложенной сразу под назначение: их носят с начала
+## копки, чтобы после постройки обустройство не ждало (топливо идёт по трубам — его нет).
+func plan_cost(p: Project) -> Dictionary:
+	if p.kind != Project.Kind.ROOM or p.plan_purpose <= 0:
+		return {}
+	var out := RoomType.equip_cost(p.plan_purpose, p).duplicate()
+	for k in RoomType.PIPED:
+		out.erase(k)
 	return out
 
 
@@ -1939,13 +1957,31 @@ func lift_station(p: Project, end: int) -> Variant:
 	var ends := _lift_ends(p)
 	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
 		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
+	# У бур-лифта низ шахты — сам бур: выгруженное там кабина подбирала обратно наверх
+	# (материалы ездили по кругу). Площадка — первый выход из шахты выше бура.
+	var skip := Rect2i()
+	if p.link_id != 0:
+		var d := project_by_id(p.link_id)
+		if d != null:
+			skip = drill_lift_area(d, p)
 	var best = null
 	for c in _rect_cells(slice.grow(1)):
-		if p.has_cell(c) or not pathing.node(c):
+		if p.has_cell(c) or not pathing.node(c) or skip.has_point(c):
 			continue
 		if best == null or absi(_lift_axis(p, c) - ends[end]) < absi(_lift_axis(p, best) - ends[end]):
 			best = c
-	return best
+	if best != null:
+		return best
+	# У самого конца выхода нет — ближайший выход вдоль шахты.
+	var step := 1 if end == 0 else -1
+	for i in range(1, absi(ends[1] - ends[0]) + 1):
+		var axis: int = ends[end] + i * step
+		var sides := [Vector2i(p.rect.position.x - 1, axis), Vector2i(p.rect.end.x, axis)] if p.lift_vertical() \
+			else [Vector2i(axis, p.rect.position.y - 1), Vector2i(axis, p.rect.end.y)]
+		for c: Vector2i in sides:
+			if pathing.node(c) and not skip.has_point(c):
+				return c
+	return null
 
 
 func _rect_cells(r: Rect2i) -> Array[Vector2i]:
@@ -2595,15 +2631,22 @@ func _finish_support(p: Project) -> void:
 	_check_phase(p)
 
 
-## Клетки, которые можно копать сейчас: только в начатом срезе, пока он не закреплён.
+## Клетки, которые можно копать сейчас: в начатом срезе, пока он не закреплён, а когда он
+## выкопан и ждёт крепь — уже и в соседнем (раньше копатели стояли, пока ставят крепь, и
+## уходили на другую работу; незакреплённых срезов — не больше двух).
 func diggable_now(p: Project) -> Array[Vector2i]:
 	var all := remaining_dig(p)
 	var active := active_slices(p)
 	if active.is_empty():
 		return all
+	var allowed := active.duplicate()
+	if active.size() == 1 and slice_dug(p, active[0]):
+		for j in [active[0] - 1, active[0] + 1]:
+			if p.needs_support.has(j) and not p.supported.has(j):
+				allowed.append(j)
 	var out: Array[Vector2i] = []
 	for c in all:
-		if active.has(p.slice_of(c)) and not slice_dug(p, p.slice_of(c)):
+		if allowed.has(p.slice_of(c)) and not slice_dug(p, p.slice_of(c)):
 			out.append(c)
 	return out
 
@@ -2712,7 +2755,15 @@ func _try_pay(p: Project) -> void:
 func _finish_project(p: Project) -> void:
 	if p.extends_id > 0 and _merge_extension(p):
 		return
-	_return_delivered(p)
+	# Принесённое на обустройство остаётся в комнате, лишнее — на склад.
+	var keep := plan_cost(p)
+	for k in p.delivered.keys():
+		var extra: int = int(p.delivered[k]) - int(keep.get(k, 0))
+		if extra > 0:
+			_add(k, extra)
+			p.delivered[k] = int(p.delivered[k]) - extra
+		if int(p.delivered[k]) <= 0:
+			p.delivered.erase(k)
 	p.phase = Project.Phase.DONE
 	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
@@ -2730,10 +2781,13 @@ func _finish_project(p: Project) -> void:
 		var t := p.plan_purpose
 		p.plan_purpose = 0
 		_log("Построено: %s — обустраиваем: %s" % [p.title(), RoomType.purpose_name(t)], "good")
-		set_purpose(p, t)
+		if not set_purpose(p, t):
+			_return_delivered(p)
 	elif p.kind == Project.Kind.ROOM:
+		_return_delivered(p)
 		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
 	else:
+		_return_delivered(p)
 		_log("Построено: %s" % p.title(), "good")
 	if p.kind == Project.Kind.LIFT:
 		_merge_lifts(p)
