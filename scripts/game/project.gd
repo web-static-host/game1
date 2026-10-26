@@ -10,7 +10,8 @@ extends RefCounted
 ## или горизонтальный ход в 3 м высотой; строится как тоннель, потом ставят кабину.
 ## DRILL — бур: машина 3×3; по приказу сама едет вниз или вбок и сверлит ход в 3 м,
 ## за ней остаётся тоннель (вниз) или ход как шахта (вбок).
-enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT, DRILL }
+## PROBE — геоскважина 2×2: зонд из её середины открывает породу полосой, ничего не копая.
+enum Kind { TUNNEL, ROOM, BRIDGE, PIER, MINE, LIFT, DRILL, PROBE }
 ## EQUIP — готовая комната оборудуется под назначение.
 enum Phase { DIG, BUILD, DONE, EQUIP }
 
@@ -79,6 +80,8 @@ var bore_id := 0
 var bore_from := Rect2i()
 ## Ход, который сверлит бур (id бура): гаврики его не копают.
 var bored_by := 0
+## Геоскважина: на сколько метров ушёл зонд (куда — drill_dir, сколько осталось — drill_left).
+var probe_done := 0
 var lift_load := {}
 var lift_dwell := 0.0
 ## Куда едет кабина пассажирского лифта: -1, 1 или 0 (стоит) — едет, пока по пути есть остановки.
@@ -170,13 +173,15 @@ func title() -> String:
 		return "%s %d м" % ["Грузовой лифт" if cargo else "Лифт", maxi(rect.size.x, rect.size.y)]
 	if kind == Kind.DRILL:
 		return "Бур-лифт" if link_id != 0 else "Бур"
+	if kind == Kind.PROBE:
+		return "Геоскважина"
 	if kind == Kind.ROOM and purpose != RoomType.NONE:
 		return "%s %d×%d" % [RoomType.NAMES[purpose], rect.size.x, rect.size.y]
 	return "%s %d×%d" % [kind_name(kind), rect.size.x, rect.size.y]
 
 
 static func kind_name(k: int) -> String:
-	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт", "Бур"][k]
+	return ["Тоннель", "Комната", "Мостик", "Пристань", "Шахта", "Лифт", "Бур", "Геоскважина"][k]
 
 
 ## Лифт вертикальный (иначе — горизонтальный).
@@ -189,6 +194,11 @@ func lift_vertical() -> bool:
 ## Бур: железо на корпус и медь на мотор (обсадку хода берут при каждом приказе).
 static func drill_cost(_r: Rect2i) -> Dictionary:
 	return {"iron": 4, "copper": 2}
+
+
+## Геоскважина: железо на вышку и штанги, медь на мотор зонда.
+static func probe_cost() -> Dictionary:
+	return {"iron": 3, "copper": 1}
 
 
 ## base — с кабиной (у продолжения шахты лифта — только рельсы и провода).
@@ -256,6 +266,8 @@ static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 		return {"wood": 2 * r.size.x}
 	if k == Kind.PIER:
 		return {"wood": 4 * r.size.x, "stone": 4}
+	if k == Kind.PROBE:
+		return probe_cost()
 	# Тоннель крепится по ходу копки — на втором этапе только отделка.
 	return {}
 
@@ -273,6 +285,8 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 		return maxi(r.size.x, r.size.y) * 4.0
 	if k == Kind.DRILL:
 		return 30.0
+	if k == Kind.PROBE:
+		return 15.0
 	return cells_n * 1.0
 
 
@@ -391,6 +405,10 @@ static func size_error(k: int, r: Rect2i) -> String:
 		if w != 3 or h != 3:
 			return "Бур — машина 3×3"
 		return ""
+	if k == Kind.PROBE:
+		if w != 2 or h != 2:
+			return "Геоскважина — 2×2"
+		return ""
 	if k == Kind.LIFT:
 		# Строго вертикально (2–3 м шириной) или строго горизонтально (3 м высотой).
 		if h > w:
@@ -462,6 +480,7 @@ func to_dict() -> Dictionary:
 		"bore_id": bore_id,
 		"bore_from": [bore_from.position.x, bore_from.position.y, bore_from.size.x, bore_from.size.y],
 		"bored_by": bored_by,
+		"probe_done": probe_done,
 		"limits": limits,
 		"exposed_t": exposed_t,
 		"support_wood": support_wood,
@@ -536,6 +555,7 @@ static func from_dict(d: Dictionary) -> Project:
 	var bf: Array = d.get("bore_from", [0, 0, 0, 0])
 	p.bore_from = Rect2i(int(bf[0]), int(bf[1]), int(bf[2]), int(bf[3]))
 	p.bored_by = int(d.get("bored_by", 0))
+	p.probe_done = int(d.get("probe_done", 0))
 	for k in d.get("lift_load", {}):
 		p.lift_load[str(k)] = int(d["lift_load"][k])
 	var bufs: Array = d.get("lift_buf", [{}, {}])

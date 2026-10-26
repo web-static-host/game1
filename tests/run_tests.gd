@@ -107,6 +107,7 @@ func _initialize() -> void:
 	test_degas_resumes()
 	test_gas_masks()
 	test_drill_lift()
+	test_geoprobe()
 	test_room_move()
 	test_lift_route()
 	test_old_metal_to_ore()
@@ -4648,6 +4649,57 @@ func test_gas_masks() -> void:
 
 ## Бур-лифт 3×5: внизу бур, вверху грузовой лифт. Бурит вниз, шахта лифта растёт следом,
 ## добытое кабина сама везёт наверх — на склад вплотную к верху лифта.
+func test_geoprobe() -> void:
+	# Геоскважина 2×2: зонд из её середины открывает породу полосой, ничего не копая.
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 40)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	var r := Rect2i(x, s + 20, 2, 2)
+	check(not colony.validate(Project.Kind.PROBE, r).is_empty(), "без «Геоскважины I» не поставить")
+	colony.research.done.append_array(["geology", "geology2", "tools", "drill_rig", "geoprobe"])
+	var p := _dug_project(colony, Project.Kind.PROBE, r, 950)
+	check(p.title() == "Геоскважина", "называется геоскважиной")
+	colony._power_tick(0.1)
+	check(colony.start_probe(p, Vector2i.DOWN).is_empty(), "зонд пошёл вниз")
+	var t := 0.0
+	while t < 600.0 and colony.probing(p):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+	check(not colony.probing(p) and p.probe_done == 20, "зонд прошёл 20 м (%.0f с, %d м)" % [t, p.probe_done])
+	var band := true
+	for y in range(r.end.y, r.end.y + 20):
+		for bx in [x, x + 1]:
+			band = band and w.is_revealed(bx, y)
+	check(band, "полоса 2 м по оси зонда открыта на всю длину")
+	check(not w.is_revealed(x - 2, r.end.y + 15) and not w.is_revealed(x + 3, r.end.y + 15), "шире радиуса — не видно")
+	check(Mat.is_solid(w.get_mat(x, r.end.y + 10)), "порода не выкопана — только осмотр")
+	# Третий уровень: 60 м, полоса 6 м; вбок.
+	colony.research.done.append_array(["geology3", "geology4", "geoprobe2", "geoprobe3"])
+	check(colony.start_probe(p, Vector2i.RIGHT).is_empty(), "зонд вправо")
+	t = 0.0
+	while t < 2000.0 and colony.probing(p):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+	check(p.probe_done == 60, "с «Геоскважиной III» — 60 м (%d)" % p.probe_done)
+	var wide := true
+	for yy in range(r.position.y - 2, r.position.y + 4):
+		wide = wide and w.is_revealed(r.end.x + 30, yy)
+	check(wide, "полоса 6 м шириной")
+	# Вверх зонд не выходит над землёй.
+	check(colony.start_probe(p, Vector2i.UP).is_empty(), "зонд вверх")
+	t = 0.0
+	while t < 2000.0 and colony.probing(p):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+	check(p.probe_done <= 21, "вверх — только до поверхности (%d м)" % p.probe_done)
+
+
 func test_drill_lift() -> void:
 	var colony := _new_colony(36)
 	var w := colony.world

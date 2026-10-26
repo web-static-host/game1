@@ -75,6 +75,8 @@ func _draw() -> void:
 	for p in colony.projects:
 		if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE:
 			_draw_drill(p, _rect_px(p.rect), 1.0)
+		elif p.kind == Project.Kind.PROBE and p.phase == Project.Phase.DONE:
+			_draw_probe(p, _rect_px(p.rect), 1.0)
 	_draw_dig_progress()
 	_draw_drops(font)
 	_draw_gas()
@@ -142,7 +144,7 @@ func _draw_done(p: Project) -> void:
 				_draw_question(r)
 	elif p.kind == Project.Kind.LIFT:
 		_draw_lift(p, r)
-	elif p.kind != Project.Kind.DRILL:
+	elif p.kind != Project.Kind.DRILL and p.kind != Project.Kind.PROBE:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
 		_draw_cracks(p, r)
@@ -276,6 +278,36 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 		var m := base_c.lerp(tip, t)
 		var w := half * (1.0 - t)
 		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
+
+
+## Геоскважина 2×2: вышка-тренога с мотором, из середины — штанга зонда (пока идёт,
+## тянется на пройденные метры; кончик крутится).
+func _draw_probe(p: Project, r: Rect2, alpha: float) -> void:
+	var steel := Color(0.58, 0.6, 0.66, alpha)
+	var dark := Color(0.32, 0.34, 0.4, alpha)
+	var c := r.get_center()
+	var top := Vector2(c.x, r.position.y + 4)
+	# Ноги вышки и перекладины.
+	for sx in [-1.0, 1.0]:
+		draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, dark, 5.0)
+		draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, steel, 3.0)
+	for k in [0.4, 0.7]:
+		var y: float = lerpf(top.y, r.end.y - 2, k)
+		var half: float = (r.size.x * 0.5 - 4) * k
+		draw_line(Vector2(c.x - half, y), Vector2(c.x + half, y), steel, 2.5)
+	# Мотор и лампа (горит, когда есть энергия).
+	_rbox(Rect2(c.x - 9, r.end.y - 16, 18, 13), 4, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
+	draw_circle(top + Vector2(0, 2), 3.5, Color(LAMP, alpha) if colony.powered() else Color(0.35, 0.35, 0.38, alpha))
+	if not colony.probing(p) or alpha < 1.0:
+		return
+	var d := Vector2(p.drill_dir)
+	var start := c + d * r.size.x * 0.5
+	var tip := start + d * TILE * p.probe_done
+	draw_line(start, tip, Color(0.2, 0.2, 0.24, 0.9), 5.0)
+	draw_line(start, tip, Color(0.75, 0.78, 0.84), 2.5)
+	var a := Time.get_ticks_msec() * 0.012 if not p.paused and colony.powered() else 0.0
+	var side := Vector2(-d.y, d.x) * 5.0
+	draw_line(tip - side.rotated(a), tip + side.rotated(a), Color(0.9, 0.9, 0.95), 2.5)
 
 
 ## Лифт: железные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
@@ -1516,6 +1548,8 @@ func _draw_site(p: Project, font: Font) -> void:
 			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
 		elif p.kind == Project.Kind.DRILL:
 			_draw_drill(p, r, 0.3 + 0.7 * t)
+		elif p.kind == Project.Kind.PROBE:
+			_draw_probe(p, r, 0.3 + 0.7 * t)
 		else:
 			_draw_supports(p, r, 0.3 + 0.7 * t)
 		var bar := Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 6)

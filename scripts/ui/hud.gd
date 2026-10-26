@@ -28,7 +28,7 @@ signal setting_changed(key: String, value: Variant)
 
 ## LOOK — обычный режим: нажатие показывает то, что под пальцем, и действия с ним.
 ## Остальные — разовые: после «Построить», «Отмены» или выбора точки возвращаемся в LOOK.
-enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT, DRILL, DRILL_LIFT }
+enum Mode { LOOK, TUNNEL, ROOM, BRIDGE, SEND, MINE, LIFT, CARGO_LIFT, DRILL, DRILL_LIFT, PROBE }
 
 ## Инструменты «Стройки»: [режим, значок, подпись].
 const TOOLS := [
@@ -39,6 +39,7 @@ const TOOLS := [
 	[Mode.CARGO_LIFT, "cargo_lift", "Грузовой лифт"],
 	[Mode.DRILL, "drill", "Бур"],
 	[Mode.DRILL_LIFT, "drill", "Бур-лифт"],
+	[Mode.PROBE, "drill", "Геоскважина"],
 ]
 ## Плиток комнат в ряду меню стройки.
 const ROOM_COLS := 10
@@ -51,6 +52,7 @@ const TOOL_HINTS := {
 	Mode.CARGO_LIFT: "Проведите строго вверх-вниз (шахта 3 м) или вбок. Поставьте склад вплотную к концам",
 	Mode.DRILL: "Коснитесь, где поставить бур (машина 3×3). Куда и сколько сверлить — в его карточке",
 	Mode.DRILL_LIFT: "Коснитесь, где поставить бур-лифт (3×5: внизу бур, вверху грузовой лифт). Склад — вплотную к верху лифта",
+	Mode.PROBE: "Коснитесь, где поставить геоскважину (2×2). Куда пустить зонд — в её карточке",
 }
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 const SPEED_NAMES := ["×1", "×2", "×10", "×20"]

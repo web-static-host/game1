@@ -619,7 +619,7 @@ func _set_mode(m: int, room_width := 0) -> void:
 	mode = m
 	if room_width > 0:
 		_room_w = room_width
-	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL, Hud.Mode.DRILL_LIFT]
+	camera.paint_mode = m in [Hud.Mode.TUNNEL, Hud.Mode.ROOM, Hud.Mode.BRIDGE, Hud.Mode.MINE, Hud.Mode.LIFT, Hud.Mode.CARGO_LIFT, Hud.Mode.DRILL, Hud.Mode.DRILL_LIFT, Hud.Mode.PROBE]
 	_clear_preview()
 	if m != Hud.Mode.SEND:
 		_select(null, null)
@@ -978,6 +978,24 @@ func _show_project(p: Project) -> void:
 					_show_project(p)
 				else:
 					hud.log_event(colony.repair_error(p), "warning"), "primary"])
+		# Геоскважина: куда пустить зонд; идущий — пауза и остановка.
+		if p.kind == Project.Kind.PROBE:
+			if colony.probing(p):
+				if not p.paused:
+					actions.push_front(["Пауза", func() -> void:
+						colony.set_paused(p, true)
+						_show_project(p)])
+				actions.push_front(["Остановить", func() -> void:
+					colony.stop_probe(p)
+					_show_project(p), "danger"])
+			else:
+				for d: Vector2i in [Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT]:
+					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.UP: "↑ Вверх", Vector2i.RIGHT: "Вправо →"}[d]
+					actions.push_front([label, func() -> void:
+						var err := colony.start_probe(p, d)
+						if not err.is_empty():
+							hud.log_event(err, "warning")
+						_show_project(p)])
 		# Бур: куда и сколько сверлить; сверлящий — пауза и остановка.
 		if p.kind == Project.Kind.DRILL:
 			if colony.drilling(p):
@@ -1372,6 +1390,19 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			var bdone := colony.bridge_meters_done(p)
 			rows.append(_progress("Готово", float(bdone) / p.rect.size.x, "%d из %d м" % [bdone, p.rect.size.x]))
 			rows.append({"type": "text", "text": "Мост строят по метру от берега. «Остановить» — построенная часть остаётся пристанью, дерево за остальное возвращается."})
+		Project.Kind.PROBE:
+			var lv := colony.probe_level()
+			if colony.probing(p):
+				var all: int = p.probe_done + p.drill_left
+				rows.append(_progress("Зонд", float(p.probe_done) / maxf(1.0, all), "%d из %d м" % [p.probe_done, all], Color(0.6, 0.7, 0.8)))
+			if not lv.is_empty():
+				chips.append(["", "зонд до %d м" % lv[0]])
+				chips.append(["", "полоса обзора %d м" % (int(lv[1]) * 2)])
+			if p.phase == Project.Phase.DONE:
+				chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else "нет — зонд стоит")])
+				rows.append({"type": "text", "text": "Зонд из середины скважины уходит вниз, вверх, влево или вправо и открывает породу полосой — ничего не копая: видно, есть ли там руда, вода, газ или магма. Длина и ширина полосы растут с «Геоскважиной II» и «III». Идёт со скоростью алмазного бура, на энергии. Что нашёл — в журнале."})
+			else:
+				rows.append({"type": "text", "text": "Место под скважину выкапывают, потом собирают вышку. Готовой скважиной командуют из её карточки: куда пустить зонд."})
 		Project.Kind.DRILL:
 			if p.link_id != 0:
 				var lift := colony.drill_lift_of(p)
@@ -1875,6 +1906,17 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 			if colony.validate(kind, rr).is_empty():
 				r = rr
 				err = ""
+	elif mode == Hud.Mode.PROBE:
+		# Геоскважина 2×2 под пальцем; сама прилипает к земле или полу рядом.
+		r = Rect2i(c.x, c.y - 1, 2, 2)
+		err = colony.validate(kind, r)
+		for dy in [1, -1, 2, -2]:
+			if err.is_empty():
+				break
+			var rr := Rect2i(c.x, c.y - 1 + dy, 2, 2)
+			if colony.validate(kind, rr).is_empty():
+				r = rr
+				err = ""
 	elif mode == Hud.Mode.DRILL_LIFT:
 		# Бур-лифт 3×5 под пальцем (палец — на буре); прилипает к земле или полу рядом.
 		r = Rect2i(c.x - 1, c.y - 3, 3, 5)
@@ -1978,6 +2020,8 @@ func _mode_kind() -> int:
 			return Project.Kind.LIFT
 		Hud.Mode.DRILL, Hud.Mode.DRILL_LIFT:
 			return Project.Kind.DRILL
+		Hud.Mode.PROBE:
+			return Project.Kind.PROBE
 	return Project.Kind.TUNNEL
 
 
@@ -2134,7 +2178,7 @@ const ROOM_PICS := {
 ## Неизученные инструменты стройки: режим -> почему нельзя.
 func _build_tool_locks() -> Dictionary:
 	var out := {}
-	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"], [Hud.Mode.DRILL_LIFT, "drill_lift"]]:
+	for pair in [[Hud.Mode.LIFT, "lifts"], [Hud.Mode.CARGO_LIFT, "cargo_lifts"], [Hud.Mode.DRILL, "drill_rig"], [Hud.Mode.DRILL_LIFT, "drill_lift"], [Hud.Mode.PROBE, "geoprobe"]]:
 		if not colony.research.has(pair[1]):
 			out[pair[0]] = "Сначала изучите «%s» (Наука)" % Research.tech_name(pair[1])
 	return out

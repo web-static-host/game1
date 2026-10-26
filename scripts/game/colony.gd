@@ -408,18 +408,20 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
 		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
+	if kind == Project.Kind.PROBE and not research.has("geoprobe"):
+		return "Сначала изучите «%s»" % Research.tech_name("geoprobe")
 	# Лифт бур-лифта стоит над буром — и над землёй тоже.
-	if is_passage(kind) and kind != Project.Kind.DRILL and material != "cargo_drill":
+	if is_passage(kind) and kind != Project.Kind.DRILL and kind != Project.Kind.PROBE and material != "cargo_drill":
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
 					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
-	if kind == Project.Kind.DRILL:
-		# Бур ставят на землю, на пол хода или прямо в породу (место выкопают).
+	if kind == Project.Kind.DRILL or kind == Project.Kind.PROBE:
+		# Бур и геоскважину ставят на землю, на пол хода или прямо в породу (место выкопают).
 		for x in range(r.position.x, r.end.x):
 			var below := Vector2i(x, r.end.y)
 			if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y))):
-				return "Буру не на что встать — нужен грунт или пол снизу"
+				return "%s не на что встать — нужен грунт или пол снизу" % ("Буру" if kind == Project.Kind.DRILL else "Геоскважине")
 	if kind == Project.Kind.ROOM:
 		# Каждая колонна комнаты должна на что-то опираться.
 		for x in range(r.position.x, r.end.x):
@@ -1525,6 +1527,7 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 
 func _drills_tick(dt: float) -> void:
 	_drill_lift_dig(dt)
+	_probes_tick(dt)
 	for p: Project in projects.duplicate():
 		if not drilling(p) or p.paused:
 			continue
@@ -1671,6 +1674,145 @@ func _end_bore(p: Project, arrived: bool) -> void:
 func stop_drill(p: Project) -> void:
 	if drilling(p):
 		_end_bore(p, false)
+
+
+# --- Геоскважина -----------------------------------------------------------------------
+## Геоскважина 2×2: из её середины зонд уходит вниз, вверх, влево или вправо и открывает
+## породу полосой (ширина — два радиуса, от оси зонда), ничего не копая: смотреть, есть ли
+## там что-нибудь. Длина и полоса — по уровню технологии; скорость — как у алмазного бура.
+## [технология, длина зонда, радиус обзора]
+const PROBE_LEVELS := [["geoprobe", 20, 1], ["geoprobe2", 40, 2], ["geoprobe3", 60, 3]]
+const PROBE_POWER := 5
+
+
+## [длина, радиус] по изученному (пусто — не изучено).
+func probe_level() -> Array:
+	var out := []
+	for lv in PROBE_LEVELS:
+		if research.has(lv[0]):
+			out = [lv[1], lv[2]]
+	return out
+
+
+## Зонд идёт.
+func probing(p: Project) -> bool:
+	return p.kind == Project.Kind.PROBE and p.phase == Project.Phase.DONE and p.drill_left > 0
+
+
+func probe_error(p: Project, dir: Vector2i) -> String:
+	if p.kind != Project.Kind.PROBE or p.phase != Project.Phase.DONE:
+		return "Геоскважина ещё не собрана"
+	if probing(p):
+		return "Зонд уже идёт — сначала остановите"
+	if not [Vector2i.DOWN, Vector2i.UP, Vector2i.LEFT, Vector2i.RIGHT].has(dir):
+		return "Зонд идёт вниз, вверх, влево или вправо"
+	if probe_level().is_empty():
+		return "Сначала изучите «%s»" % Research.tech_name("geoprobe")
+	return ""
+
+
+func start_probe(p: Project, dir: Vector2i) -> String:
+	var err := probe_error(p, dir)
+	if not err.is_empty():
+		return err
+	p.drill_dir = dir
+	p.drill_left = int(probe_level()[0])
+	p.probe_done = 0
+	p.drill_t = 0.0
+	p.blocked = ""
+	_log("%s: зонд пошёл %s на %d м" % [p.title(), _dir_word(dir), p.drill_left], "info")
+	return ""
+
+
+static func _dir_word(dir: Vector2i) -> String:
+	return {Vector2i.DOWN: "вниз", Vector2i.UP: "вверх", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}.get(dir, "")
+
+
+## Клетки полосы обзора на метре i от края скважины (0 — первый): ширина — два радиуса,
+## отсчёт от оси зонда (середины скважины 2×2).
+static func probe_band(p: Project, dir: Vector2i, i: int, radius: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var r := p.rect
+	if dir.x == 0:
+		var y := r.end.y + i if dir == Vector2i.DOWN else r.position.y - 1 - i
+		var mid := r.position.x + r.size.x / 2
+		for x in range(mid - radius, mid + radius):
+			out.append(Vector2i(x, y))
+	else:
+		var x := r.end.x + i if dir == Vector2i.RIGHT else r.position.x - 1 - i
+		var mid := r.position.y + r.size.y / 2
+		for y in range(mid - radius, mid + radius):
+			out.append(Vector2i(x, y))
+	return out
+
+
+func _probes_tick(dt: float) -> void:
+	for p: Project in projects:
+		if not probing(p) or p.paused:
+			continue
+		if not powered() or power_ratio <= 0.0:
+			if p.blocked.is_empty():
+				p.blocked = "Нет энергии — зонд стоит"
+			continue
+		if p.blocked.begins_with("Нет энергии"):
+			p.blocked = ""
+		var lv := probe_level()
+		# Ось зонда (по ней — время: порода твёрже — дольше); поверх земли зонд не идёт.
+		var axis := probe_band(p, p.drill_dir, p.probe_done, 1)
+		if axis.any(func(c: Vector2i) -> bool: return c.y < world.gen.surface_y(c.x)):
+			_end_probe(p, "вышел к поверхности")
+			continue
+		# Как алмазный бур: вдвое быстрее обычного, на энергии.
+		p.drill_t += dt * DRILL_SPEED * dig_bonus() * 2.0 * clampf(power_ratio, 0.0, 1.0)
+		var need := DRILL_MOVE_TIME * DRILL_SPEED
+		for c in axis:
+			if Mat.is_solid(world.get_mat(c.x, c.y)):
+				need = maxf(need, dig_time(c))
+		if p.drill_t < need:
+			continue
+		p.drill_t = 0.0
+		for c in probe_band(p, p.drill_dir, p.probe_done, int(lv[1])):
+			if world.reveal(c.x, c.y):
+				_note_discovery(world.get_mat(c.x, c.y), c)
+				world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+		p.probe_done += 1
+		p.drill_left -= 1
+		if p.drill_left <= 0:
+			_end_probe(p, "")
+
+
+## Зонд дошёл (или его остановили): итог — что видно в полосе.
+func _end_probe(p: Project, why: String) -> void:
+	var dir := p.drill_dir
+	var went := p.probe_done
+	p.drill_left = 0
+	p.blocked = ""
+	var lv := probe_level()
+	var found := {}
+	for i in went:
+		for c in probe_band(p, dir, i, int(lv[1]) if not lv.is_empty() else 1):
+			var m := world.get_mat(c.x, c.y)
+			var key := Mat.resource(m)
+			var what := ""
+			if NOTABLE.has(key) or Mat.is_ore(m):
+				what = Mat.name_of(m).to_lower()
+			elif Mat.is_fluid(m):
+				what = Mat.name_of(m).to_lower()
+			elif Mat.hazard(m) == Mat.Hazard.GAS:
+				what = "газоносный пласт"
+			if not what.is_empty():
+				found[what] = int(found.get(what, 0)) + 1
+	var parts: PackedStringArray = []
+	for k in found:
+		parts.append("%s ×%d" % [k, found[k]])
+	_log("%s: зонд прошёл %d м %s%s. %s" % [p.title(), went, _dir_word(dir), (" (" + why + ")") if not why.is_empty() else "",
+		("Найдено: " + ", ".join(parts)) if not parts.is_empty() else "Ничего ценного — пустая порода"], "good" if not parts.is_empty() else "info")
+
+
+## Остановить зонд: открытое остаётся открытым.
+func stop_probe(p: Project) -> void:
+	if probing(p):
+		_end_probe(p, "остановлен")
 
 
 # --- Нефть ----------------------------------------------------------------------------
@@ -2768,7 +2910,7 @@ func _finish_project(p: Project) -> void:
 	highest_y = mini(highest_y, p.rect.position.y)
 	p.blocked = ""
 	# Бур — машина, а не помещение: сквозь него ходят, он уезжает.
-	for c in ([] as Array[Vector2i]) if p.kind == Project.Kind.DRILL else p.cells():
+	for c in ([] as Array[Vector2i]) if p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE else p.cells():
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_register_deck(p)
@@ -2807,7 +2949,8 @@ func _restore_water_overlaps(gone: Project) -> void:
 
 ## Проходы — тоннели, шахты и лифты: друг другу не мешают и могут пересекаться.
 static func is_passage(kind: int) -> bool:
-	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT or kind == Project.Kind.DRILL
+	return kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE or kind == Project.Kind.LIFT or kind == Project.Kind.DRILL \
+		or kind == Project.Kind.PROBE
 
 
 func _register_deck(p: Project) -> void:
@@ -7616,6 +7759,8 @@ func _power_tick(dt: float) -> void:
 	for p in projects:
 		if _drill_active(p):
 			power_used += DRILL_POWER
+		elif probing(p) and not p.paused:
+			power_used += PROBE_POWER
 	for t in RoomType.POWER_USE:
 		if t == RoomType.FARM and not research.has("hydroponics"):
 			continue
@@ -8480,7 +8625,7 @@ func load_dict(d: Dictionary) -> void:
 			for k in p.targets:
 				store_targets[k] = maxi(int(store_targets.get(k, 0)), int(p.targets[k]))
 		_register_room(p)
-		if (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP) and p.kind != Project.Kind.DRILL:
+		if (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP) and p.kind != Project.Kind.DRILL and p.kind != Project.Kind.PROBE:
 			for c in p.cells():
 				interior[c] = p.id
 		_register_deck(p)
