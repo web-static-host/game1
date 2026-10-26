@@ -347,7 +347,9 @@ func _play() -> void:
 	# Еды не хватает (ферм меньше, чем по одной на четыре рта) — новая ферма раньше всего
 	# прочего: в «classic» дома строились вне очереди, дети рождались, а ферма была одна —
 	# колонии вымирали от голода на втором году.
-	if _food_short() and not _shaft_digging() and _shaft(RoomType.FARM):
+	# Ферма — на земле (с очагом): под землёй стройку месяцами держит метан (мир 8080: ферма
+	# у ствола весь первый год стояла «Метан в выработке», колония вымерла зимой).
+	if _food_short() and (_surface_room(RoomType.FARM, 9) or (not _shaft_digging() and _shaft(RoomType.FARM))):
 		return
 	# Дерева мало, а глина есть — печь для кирпича вне очереди: кирпичные печи очагов
 	# топятся углём, газовые котлы — метаном (в долгих прогонах дерево кончалось, очаги гасли).
@@ -359,6 +361,10 @@ func _play() -> void:
 	# в «classic» колонии вымирали в первую зиму, пока бот ждал конца других строек.
 	if not _has_room(RoomType.GRANARY) and not _pending_purpose.values().has(RoomType.GRANARY) \
 			and _surface_room(RoomType.GRANARY):
+		return
+	# Склад тоже вне очереди: без него дерево не копится — очаги у ферм гаснут, грибы
+	# в холоде не растут (мир 100: три амбара, ни одного склада, голод в первую зиму).
+	if not _has_room(RoomType.STORAGE) and _surface_room(RoomType.STORAGE):
 		return
 	if _need_home():
 		return
@@ -601,7 +607,9 @@ func _wood_triage() -> bool:
 	if starved.size() < 2:
 		return false
 	var rank := func(p: Project) -> int:
-		var purpose: int = p.purpose if p.purpose > 0 else int(_pending_purpose.get(p.id, -1))
+		# Обустраиваемая комната — по тому, подо что её обустраивают (ферму в обустройстве
+		# отменяли первой как «без назначения» — мир 4242 весь год без фермы, голод).
+		var purpose: int = _purpose(p) if _purpose(p) > 0 else int(_pending_purpose.get(p.id, -1))
 		var order := [RoomType.FARM, RoomType.GRANARY, RoomType.HOME, RoomType.LAB, RoomType.STORAGE]
 		return order.find(purpose) if order.has(purpose) else order.size()
 	starved.sort_custom(func(a: Project, b: Project) -> bool: return rank.call(a) < rank.call(b))
@@ -626,7 +634,9 @@ func _drop_stuck() -> void:
 	for p in colony.projects.duplicate():
 		if p.blocked.begins_with("Не хватает") and p.phase != Project.Phase.DONE:
 			_short[p.id] = float(_short.get(p.id, 0.0)) + 5.0
-			if _short[p.id] >= 1800.0 and (_pending_purpose.has(p.id) or p.kind == Project.Kind.ROOM):
+			# Ферму и амбар не бросают: без них голод (дерево им достанется первым — _wood_triage).
+			var core: bool = int(_pending_purpose.get(p.id, _purpose(p))) in [RoomType.FARM, RoomType.GRANARY]
+			if _short[p.id] >= 1800.0 and not core and (_pending_purpose.has(p.id) or p.kind == Project.Kind.ROOM):
 				colony.cancel_project(p)
 				_pending_purpose.erase(p.id)
 				_short.erase(p.id)
@@ -910,9 +920,17 @@ func _has_room(t: int) -> bool:
 	if _pending_purpose.values().has(t):
 		return true
 	for p in colony.projects:
-		if p.kind == Project.Kind.ROOM and p.purpose == t:
+		if p.kind == Project.Kind.ROOM and _purpose(p) == t:
 			return true
 	return false
+
+
+## Назначение комнаты, в том числе той, что ещё обустраивают (у неё назначения пока нет:
+## бот считал, что амбара нет, и ставил второй и третий, а склада под дерево не было).
+func _purpose(p: Project) -> int:
+	if p.purpose == RoomType.NONE and p.phase == Project.Phase.EQUIP:
+		return RoomType.base_type(p.equip_target)
+	return p.purpose
 
 
 func _need_home() -> bool:
@@ -923,10 +941,10 @@ func _need_home() -> bool:
 	if colony.beds_total() >= colony.units.size() + spare or _pending_purpose.values().has(RoomType.HOME):
 		return false
 	# Пока еды мало, новых кроватей не строим: лишние рты добьют колонию.
-	if _food_short():
+	if _food_short() or _hungry_for_beds():
 		return false
 	for p in colony.projects:
-		if p.purpose == RoomType.HOME and p.phase != Project.Phase.DONE:
+		if _purpose(p) == RoomType.HOME and p.phase != Project.Phase.DONE:
 			return false
 	return _surface_room(RoomType.HOME)
 
@@ -934,8 +952,8 @@ func _need_home() -> bool:
 ## Начало игры, как у толкового игрока: склад и амбар средние, лаборатория малая, мост
 ## через пруд, ферма большая и два больших дома — чтобы сразу пошли дети; потом очаг
 ## (ферме и домам). Шаги идут по порядку, одновременно строится не больше двух.
-const OPENING := [[RoomType.STORAGE, 6], [RoomType.GRANARY, 6], [RoomType.LAB, 3], [-1, 0],
-	[RoomType.FARM, 9], [RoomType.HOME, 9], [RoomType.HOME, 9]]
+const OPENING := [[RoomType.GRANARY, 6], [RoomType.FARM, 9], [RoomType.STORAGE, 6], [RoomType.LAB, 3], [-1, 0],
+	[RoomType.HOME, 9], [RoomType.HOME, 9]]
 var _opening_skip := {}
 var opening_done := false
 ## Как играет бот: "classic" — строит по нужде; "opening" — сначала стартовый набор (OPENING).
@@ -963,9 +981,15 @@ func _opening() -> bool:
 		if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
 			building += 1
 	var used := {}
+	var deferred := false
 	for i in OPENING.size():
 		var step: Array = OPENING[i]
 		if _opening_skip.has(i):
+			continue
+		# Дома (кровати — это дети) — когда еды хватает: в 8080 за первый год на 5 взрослых
+		# родилось 7 детей, и запас на зиму съели.
+		if step[0] == RoomType.HOME and _hungry_for_beds():
+			deferred = true
 			continue
 		if step[0] < 0:
 			if colony.projects.any(func(q: Project) -> bool: return q.kind == Project.Kind.BRIDGE):
@@ -984,6 +1008,8 @@ func _opening() -> bool:
 		if not _surface_room(step[0], step[1]):
 			_opening_skip[i] = true
 		return true
+	if deferred:
+		return false
 	opening_done = true
 	_milestone("opening", "Начало обустроено: склад, амбар, лаборатория, ферма, два дома")
 	return false
@@ -1108,7 +1134,7 @@ func _next_underground() -> int:
 			return true
 		for p in colony.projects:
 			# Ферма и лаборатория, до которых от базы не дойти, — как нет.
-			if p.kind == Project.Kind.ROOM and p.purpose == t \
+			if p.kind == Project.Kind.ROOM and _purpose(p) == t \
 					and (not (t == RoomType.LAB or t == RoomType.FARM) or _base_reaches(p)):
 				return true
 		return false
@@ -1183,7 +1209,12 @@ func _pier() -> bool:
 
 func _more_storage() -> void:
 	for k in ["wood", "stone", "food"]:
-		if colony.inventory.get(k, 0) >= colony.capacity(k) - 5:
+		var kind := RoomType.GRANARY if k == "food" else RoomType.STORAGE
+		# Пока такой склад ещё строят или обустраивают — второй не ставим.
+		if colony.projects.any(func(q: Project) -> bool: return q.phase != Project.Phase.DONE and _purpose(q) == kind) \
+				or _pending_purpose.values().has(kind):
+			continue
+		if colony.storage_capacity(k) > 0 and colony.inventory.get(k, 0) >= colony.capacity(k) - 5:
 			_milestone("full", "Склад впервые забит (%s)" % k)
 			_surface_room(RoomType.GRANARY if k == "food" else RoomType.STORAGE)
 			return
@@ -1365,13 +1396,18 @@ func _food_short() -> bool:
 		if v == RoomType.FARM:
 			farms += 1
 	for p in colony.projects:
-		if p.purpose == RoomType.FARM and p.phase != Project.Phase.DONE:
+		if _purpose(p) == RoomType.FARM and p.phase != Project.Phase.DONE:
 			farms += 1
 	return farms * 4 < colony.units.size() and colony.food_value() < colony.units.size() * WINTER_FOOD
 
 
 ## Еды на гаврика на зиму (в «порциях» food_value).
 const WINTER_FOOD := 60.0
+
+
+## Еды меньше, чем на ползимы на каждого, а кроватей всем хватает — новых не строим.
+func _hungry_for_beds() -> bool:
+	return colony.beds_total() >= colony.units.size() and colony.food_value() < colony.units.size() * WINTER_FOOD * 0.5
 
 
 ## Буровая установка: ставится у дна ствола и сверлит вниз по 30 м — так ствол уходит
