@@ -3639,6 +3639,41 @@ func test_lifts() -> void:
 		colony._lifts_tick(0.1)
 		t += 0.1
 	check(colony.held_in(st, "stone") >= before + 30, "грузовой довёз камень в склад (%.1f с)" % t)
+	# Стройке у верхнего конца материалы со склада у нижнего везёт лифт — руками их не носят.
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 43, s, 6, 2), 905)
+	colony._rebuild_climb()
+	var top_site := Project.new()
+	top_site.id = 904
+	top_site.kind = Project.Kind.ROOM
+	top_site.rect = Rect2i(x + 49, s, 6, 3)
+	colony._add("wood", 10, st)
+	check(colony.lift_feeds(top_site, "wood"), "дерево со склада у лифта к стройке у другого конца везёт лифт")
+	check(not colony.lift_feeds(top_site, "iron"), "чего нет на складе у лифта — носят как обычно")
+	# Грузовой возит и людей — вдвое больше пассажирского; высадив, возвращается к концу шахты.
+	check(colony.lift_cap(cl) == Colony.LIFT_CAP * 2, "в грузовой входит вдвое больше людей")
+	var rd := colony.units[0]
+	colony._drop(rd)
+	var pr: Array[Vector2i] = []
+	for y in range(s, s + 9):
+		pr.append(Vector2i(x + 41, y))
+	rd.path = pr
+	rd.path_i = 0
+	rd.state = Unit.State.MOVE
+	rd.pos = Vector2(pr[0])
+	cl.lift_pos = float(s + 15)
+	check(colony._try_board(rd), "в грузовой лифт садятся")
+	var rode_cargo := false
+	t = 0.0
+	while t < 30.0 and rd.lift_id != 0:
+		colony._lifts_tick(0.1)
+		rode_cargo = rode_cargo or rd.riding
+		t += 0.1
+	check(rode_cargo and rd.pos.distance_to(Vector2(pr[-1])) < 0.5, "доехал в грузовом до середины шахты")
+	t = 0.0
+	while t < 10.0 and not (is_equal_approx(cl.lift_pos, float(s)) or is_equal_approx(cl.lift_pos, float(s + 15))):
+		colony._lifts_tick(0.1)
+		t += 0.1
+	check(is_equal_approx(cl.lift_pos, float(s)) or is_equal_approx(cl.lift_pos, float(s + 15)), "высадив людей, грузовой вернулся к концу шахты")
 	# Кабина подбирает попутных: едет вниз с одним и по пути забирает ждущего на середине.
 	var a := colony.units[1]
 	var b := colony.units[2]

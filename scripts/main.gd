@@ -1402,12 +1402,14 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				for k in p.lift_load:
 					load += int(p.lift_load[k])
 				chips.append(["", "в кабине %d из %d" % [load, Colony.CARGO_CAP]])
+				var riders := colony.units.filter(func(o: Unit) -> bool: return o.lift_id == p.id and o.riding).size()
+				chips.append(["people", "людей %d из %d" % [riders, colony.lift_cap(p)]])
 				var names := ["верхнего" if p.lift_vertical() else "левого", "нижнего" if p.lift_vertical() else "правого"]
 				for e in 2:
 					var st := colony.lift_stores(p, e)
 					rows.append({"type": "text", "text": "У %s конца: %s" % [names[e],
 						("склад вплотную — разгрузка и погрузка сами" if not st.is_empty() else "склада нет — груз выгружается на площадку")]})
-				rows.append({"type": "text", "text": "Возит только грузы. Подсобные и работники складов несут добычу в лифт, если до него ближе, чем до склада; у склада вплотную к другому концу лифт разгружается сам. Материалы для строек у дальнего конца лифт сам берёт из склада у своего конца."})
+				rows.append({"type": "text", "text": "Возит грузы и людей (до %d человек — вдвое больше пассажирского; сначала людей, потом груз). Подсобные и работники складов несут добычу в лифт, если до него ближе, чем до склада; у склада вплотную к другому концу лифт разгружается сам. Материалы для строек у дальнего конца лифт сам берёт из склада у своего конца — со склада их туда руками не носят." % colony.lift_cap(p)})
 			else:
 				var riding := colony.units.filter(func(o: Unit) -> bool: return o.lift_id == p.id and o.riding).size()
 				chips.append(["people", "в кабине %d из %d" % [riding, Colony.LIFT_CAP]])
