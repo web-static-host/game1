@@ -82,7 +82,11 @@ var _status: Label
 var _date: Label
 var _weather: TextureRect
 var _weather_name := ""
-var _res_box: HBoxContainer
+## Значки ресурсов: не помещаются в строку — переносятся во вторую (раньше строка
+## раздвигала весь интерфейс шире экрана: дата и кнопки скорости уходили за край).
+var _res_box: HFlowContainer
+var _top_panel: PanelContainer
+var _date_panel: PanelContainer
 var _res_sig := ""
 var _build_btn: IconButton
 var _build_row: PanelContainer
@@ -217,11 +221,15 @@ func _build_top(column: VBoxContainer) -> void:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(panel)
-	_res_box = HBoxContainer.new()
-	_res_box.add_theme_constant_override("separation", 14)
+	_top_panel = panel
+	_res_box = HFlowContainer.new()
+	_res_box.add_theme_constant_override("h_separation", 14)
+	_res_box.add_theme_constant_override("v_separation", 6)
 	_res_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(_res_box)
+	resized.connect(_fit_top)
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -231,6 +239,7 @@ func _build_top(column: VBoxContainer) -> void:
 	date_panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
 	date_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(date_panel)
+	_date_panel = date_panel
 	var right := VBoxContainer.new()
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right.add_theme_constant_override("separation", 0)
@@ -335,6 +344,35 @@ func set_resources(inventory: Dictionary, people: int, hungry := 0, power_made :
 		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
 			_open_resources(true))
 	_res_box.add_child(help)
+	_fit_top.call_deferred()
+
+
+## Ширина строки ресурсов — не больше, чем осталось до даты: лишние значки уходят во
+## вторую строку, а журнал, подсказка и карточка опускаются под неё.
+func _fit_top() -> void:
+	if _res_box == null or _date_panel == null:
+		return
+	var natural := 0.0
+	var n := 0
+	for c in _res_box.get_children():
+		if c.is_queued_for_deletion():
+			continue
+		natural += (c as Control).get_combined_minimum_size().x
+		n += 1
+	natural += 14.0 * maxi(0, n - 1)
+	var avail := size.x - SIDE * 2.0 - _date_panel.get_combined_minimum_size().x - 12.0 - 20.0
+	_res_box.custom_minimum_size.x = maxf(200.0, minf(natural, avail))
+	if _log != null:
+		_log.position.y = _top_h()
+	if _hint != null and _hint.is_visible_in_tree():
+		_place_hint()
+
+
+## Где кончается верхняя строка (в одну строку ресурсов — как раньше, TOP_H).
+func _top_h() -> float:
+	if _top_panel == null:
+		return TOP_H
+	return maxf(TOP_H, _top_panel.position.y + EDGE_TOP + _top_panel.size.y - 12.0)
 
 
 func _chip_plain(glyph: String, text: String, col: Color) -> HBoxContainer:
@@ -653,14 +691,14 @@ func set_hint(text: String) -> void:
 func _place_hint() -> void:
 	var box := _hint.get_parent().get_parent() as Control
 	box.reset_size()
-	box.position = Vector2((size.x - box.size.x) * 0.5, TOP_H + 18)
+	box.position = Vector2((size.x - box.size.x) * 0.5, _top_h() + 18)
 	_room_strip.reset_size()
 	_room_strip.position = Vector2((size.x - _room_strip.size.x) * 0.5, box.position.y + box.size.y + 8)
 
 
 ## Сколько места сверху занято подсказкой и полоской выбора.
 func _top_limit() -> float:
-	var top := TOP_H
+	var top := _top_h()
 	var box := _hint.get_parent().get_parent() as Control
 	if box.visible:
 		top = box.position.y + box.size.y + 8.0
