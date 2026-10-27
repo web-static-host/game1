@@ -4632,6 +4632,10 @@ func _update_unit(u: Unit, dt: float) -> void:
 			if not _task_valid(u) or _needs_interrupt(u):
 				_drop(u)
 				return
+			# Ждать у своей стройки — STAY_TIME с конца работы, а не с начала (клетку твёрдой
+			# породы копают дольше — докопав, сразу уходил домой, а копать звали других сверху).
+			if u.project_id == u.last_project and u.task in [Unit.Task.DIG, Unit.Task.SUPPORT, Unit.Task.BUILD, Unit.Task.EQUIP, Unit.Task.REPAIR]:
+				u.last_work_t = game_time
 			_work(u, dt)
 
 
@@ -5522,9 +5526,9 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 ## --- Своя стройка ------------------------------------------------------------------
 ## Кто копал или крепил, не бросает выработку, пока в ней есть работа: следующую клетку
 ## (или крепь среза) он ждёт рядом, а не уходит носить добытое — это дело других.
-## Ждёт не дольше STAY_TIME с начала последней работы и не ждёт, если стройка стоит
+## Ждёт не дольше STAY_TIME с конца последней работы и не ждёт, если стройка стоит
 ## (пауза, тревога, нет дерева на крепь, все места заняты).
-const STAY_TIME := 15.0
+const STAY_TIME := 60.0
 
 
 ## Закончил клетку или крепь — сразу берёт следующую работу своей выработки, пока её
@@ -5988,6 +5992,26 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 				best_cell = c
 				best_stand = spot[0]
 				helper = o.id
+	# Свободных клеток нет, а забронировавший клетку ещё далеко идёт (например, спускается
+	# с поверхности) — тот, кто стоит рядом, копает её сам, а дальний ищет другое дело
+	# (раньше трое ждали у последней клетки, пока четвёртый минуту ехал к ней сверху).
+	if best_cell == null:
+		var far_one: Unit = null
+		for c in now:
+			var o := _unit_by_id(int(reserved.get(c, 0)))
+			if o == null or o == u or o.task != Unit.Task.DIG or o.state != Unit.State.MOVE \
+					or o.takeover != 0 or o.takeover_by != 0 or (builder_or_miner(o) and not builder_or_miner(u)):
+				continue
+			var spot := _work_spot(c, dist)
+			if spot[0] != null and spot[1] + CREW_LEAD < o.path.size() - o.path_i and spot[1] < best_d:
+				best_d = spot[1]
+				best_cell = c
+				best_stand = spot[0]
+				far_one = o
+		if far_one != null:
+			_drop(far_one)
+			_start(u, Unit.Task.DIG, best_cell, best_stand, p.id, parents)
+			return true
 	if best_cell == null:
 		# «Нет доступа» — только если к стройке вообще никто не подобрался.
 		if any_free and workers_on(p) == 0 and p.blocked.is_empty():
