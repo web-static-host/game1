@@ -4771,35 +4771,24 @@ func test_drill_lift() -> void:
 	var lift := colony.drill_lift_of(drill)
 	check(lift != null and lift.cargo and lift.lift_vertical() and lift.rect == Rect2i(x + 10, s + 4, 3, 2) \
 		and drill.rect == Rect2i(x + 10, s + 6, 3, 3), "внизу бур 3×3, над ним грузовой лифт 3×2")
-	# Место под себя бур-лифт роет сам: гаврики его не копают, крепь не нужна, газ не помеха.
+	# Место под бур-лифт копают гаврики (сам он копает, только когда бурит вниз); крепь не нужна.
 	for q in [drill, lift]:
 		for c in q.cells():
 			w.set_material(c.x, c.y, Mat.GRANITE)
 		q.phase = Project.Phase.DIG
 	check(drill.needs_support.is_empty() and lift.needs_support.is_empty(), "бур-лифту крепь не нужна")
-	var dg := colony.units[0]
-	colony._drop(dg)
-	var rch := colony.pathing.explore(dg.cell())
-	check(not colony._try_project(dg, drill, rch[0], rch[1], true, true) \
-		and not colony._try_project(dg, lift, rch[0], rch[1], true, true), "гаврики место под бур-лифт не копают")
-	colony.elements.pockets[Vector2i(x + 11, s + 5)] = Elements.POCKET_MEMORY
-	colony.elements.gas[Vector2i(x + 11, s + 3)] = 1.0
-	colony.elements._gas_alarm()
-	check(not drill.paused and not lift.paused, "бур-лифту газ безразличен")
-	colony.elements.gas.clear()
-	# Пока к месту не пройти — не роет.
+	check(not colony.is_machine(drill) and not colony.is_machine(lift), "место под бур-лифт копают гаврики, не машина")
 	colony._drills_tick(0.5)
-	check(colony.remaining_dig(lift).size() == 6 and drill.blocked.begins_with("Нет доступа"), "без прохода бур-лифт себе место не роет")
-	# Ход сбоку от бур-лифта — теперь роет.
+	check(colony.remaining_dig(lift).size() == 6, "сам бур-лифт себе место не роет")
 	var s13 := w.gen.surface_y(x + 13)
 	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 13, s13, 1, s + 9 - s13), 961)
 	colony._rebuild_climb()
-	var dt0 := 0.0
-	while dt0 < 600.0 and (not colony.remaining_dig(drill).is_empty() or not colony.remaining_dig(lift).is_empty()):
-		colony._power_tick(0.5)
-		colony._drills_tick(0.5)
-		dt0 += 0.5
-	check(colony.remaining_dig(drill).is_empty() and colony.remaining_dig(lift).is_empty(), "бур-лифт сам выкопал себе место (%.0f с)" % dt0)
+	var dg := colony.units[0]
+	colony._drop(dg)
+	var rch := colony.pathing.explore(dg.cell())
+	check(colony._try_project(dg, lift, rch[0], rch[1], true, true) or colony._try_project(dg, drill, rch[0], rch[1], true, true),
+		"гаврики копают место под бур-лифт")
+	colony._drop(dg)
 	# Построено (как будто гаврики уже собрали).
 	for p in [drill, lift]:
 		for c in p.cells():

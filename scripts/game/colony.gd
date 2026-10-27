@@ -1444,7 +1444,7 @@ func create_drill_lift(r: Rect2i, workers := -1) -> Project:
 		return null
 	drill.link_id = lift.id
 	lift.link_id = drill.id
-	# Место под себя бур-лифт роет сам — крепь гаврикам ставить не нужно.
+	# Место под бур-лифт копают гаврики, крепь не нужна: стенки держит корпус машины.
 	for q in [drill, lift]:
 		q.supported.clear()
 		for i in q.slice_count():
@@ -1453,13 +1453,14 @@ func create_drill_lift(r: Rect2i, workers := -1) -> Project:
 	return drill
 
 
-## Копает машина, а не кирка: бур, ход, который он сверлит, и бур-лифт (бур и его лифт).
-## Газ ей безразличен.
+## Копает машина, а не кирка: готовый бур, ход, который он сверлит, и готовый бур-лифт
+## (бур и его лифт). Газ ей безразличен. Место под бур и бур-лифт копают гаврики — тут газ
+## их останавливает, как на любой стройке.
 func is_machine(p: Project) -> bool:
-	return p.kind == Project.Kind.DRILL or p.bored_by > 0 or drill_lift_part(p)
+	return p.bored_by > 0 or ((p.kind == Project.Kind.DRILL or drill_lift_part(p)) and p.phase != Project.Phase.DIG)
 
 
-## Часть бур-лифта: его бур или его лифт. Место под себя бур-лифт роет сам.
+## Часть бур-лифта: его бур или его лифт.
 func drill_lift_part(p: Project) -> bool:
 	return p.link_id != 0 and (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.LIFT)
 
@@ -1554,7 +1555,6 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 
 
 func _drills_tick(dt: float) -> void:
-	_drill_lift_dig(dt)
 	_probes_tick(dt)
 	_drill_sight_t += dt
 	if _drill_sight_t >= 1.0:
@@ -1613,65 +1613,6 @@ func _drills_tick(dt: float) -> void:
 		p.drill_left -= 1
 		if p.drill_left <= 0:
 			_end_bore(p, true)
-
-
-## Бур-лифт сам роет себе место (лифт сверху, бур снизу): по ряду сверху вниз со скоростью
-## бура, на энергии (или дизеле). Гаврики потом только собирают его.
-func _drill_lift_dig(dt: float) -> void:
-	for p: Project in projects:
-		if p.kind != Project.Kind.DRILL or p.link_id == 0 or p.paused:
-			continue
-		var lift := project_by_id(p.link_id)
-		var parts: Array[Project] = [p]
-		if lift != null and lift.phase == Project.Phase.DIG and not lift.paused:
-			parts.push_front(lift)
-		var row: Array = []
-		var top := 1 << 30
-		for q in parts:
-			if q.phase != Project.Phase.DIG:
-				continue
-			# Бур-лифт, заложенный до того, как он стал рыть сам, — тоже без крепи.
-			if not q.needs_support.is_empty():
-				q.needs_support.clear()
-				q.supported.clear()
-				for i in q.slice_count():
-					q.supported.append(i)
-			for c in remaining_dig(q):
-				if c.y < top:
-					top = c.y
-					row.clear()
-				if c.y == top:
-					row.append([c, q])
-		if row.is_empty():
-			continue
-		# Пока к месту не пройти — не роет (машину туда ещё не доставить).
-		var site := p.rect.merge(lift.rect) if lift != null else p.rect
-		if not can_reach(site):
-			p.blocked = "Нет доступа — проложите тоннель к стройке"
-			continue
-		if p.blocked.begins_with("Нет доступа"):
-			p.blocked = ""
-		var on_diesel := false
-		if not powered() or power_ratio <= 0.0:
-			if research.has("combustion") and (p.fuel > 0.0 or _remove("diesel", 1) >= 1):
-				if p.fuel <= 0.0:
-					p.fuel += DRILL_DIESEL_TIME
-				on_diesel = true
-				p.fuel = maxf(0.0, p.fuel - dt)
-			else:
-				p.blocked = "Нет энергии — бур-лифт не роет себе место"
-				continue
-		if p.blocked.begins_with("Нет энергии"):
-			p.blocked = ""
-		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
-		var need := DRILL_MOVE_TIME * DRILL_SPEED
-		for e in row:
-			need = maxf(need, dig_time(e[0]))
-		if p.drill_t < need:
-			continue
-		p.drill_t = 0.0
-		for e in row:
-			_complete_dig(e[0], e[1], null)
 
 
 ## Бур дошёл (или его остановили): пройденная часть хода готова, бур ждёт приказа.
@@ -5494,8 +5435,8 @@ func _try_projects(u: Unit, parents: Dictionary, dist: Dictionary, only := -1, s
 func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, miners: bool, builders: bool) -> bool:
 	if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 		return false
-	# Ход, который сверлит бур, гаврики не копают; место под бур-лифт он роет сам.
-	if p.bored_by > 0 or (p.phase == Project.Phase.DIG and drill_lift_part(p)):
+	# Ход, который сверлит бур, гаврики не копают (место под бур и бур-лифт — копают).
+	if p.bored_by > 0:
 		return false
 	var mine := p.kind == Project.Kind.MINE
 	var crew := _crew_ok(u, mine, miners, builders)
