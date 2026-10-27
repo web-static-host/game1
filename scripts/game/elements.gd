@@ -355,19 +355,22 @@ func _pump_once() -> void:
 			continue
 		var center := p.rect.get_center()
 		var best = null
+		var best_d := 1 << 30
 		var pr := RoomType.effect_radius(p)
 		var surf := PackedInt32Array()
 		for x in range(center.x - pr, center.x + pr + 1):
 			surf.append(world.gen.surface_y(x))
+		# Видимую воду, ближайшую к насосной (раньше — первую сверху, хоть и скрытую в
+		# породе: насос минутами осушал невидимую полость, а пруд под ним стоял).
 		for y in range(center.y - pr, center.y + pr + 1):
 			for x in range(center.x - pr, center.x + pr + 1):
 				if surf[x - center.x + pr] > y:
 					continue # озёра на поверхности не откачиваем
-				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER:
-					best = Vector2i(x, y)
-					break
-			if best != null:
-				break
+				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
+					var d := absi(x - center.x) + absi(y - center.y)
+					if d < best_d:
+						best_d = d
+						best = Vector2i(x, y)
 		if best == null:
 			_pump_dry[p.id] = colony.game_time + PUMP_DRY_WAIT
 		if best != null:
