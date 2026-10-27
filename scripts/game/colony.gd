@@ -8888,5 +8888,6 @@ func load_dict(d: Dictionary) -> void:
 	loads.loads = loads.compute()
 	# Стены открытых пещер — на дальность геологоразведки (старые сохранения).
 	world.deepen_caves(see_radius())
+	world.scan_deepest_seen()
 	explore()
 	_refresh_bushes()

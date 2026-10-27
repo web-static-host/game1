@@ -2331,14 +2331,15 @@ func _update_status() -> void:
 
 
 ## Камера не уходит дальше разведанного: по бокам — куда доходили гаврики,
-## вниз — до самых глубоких работ, вверх — чуть выше самых высоких построек.
+## вниз — до самых глубоких работ или открытой породы, вверх — чуть выше самых высоких построек.
 func _clamp_camera() -> void:
 	var o := Vector2(world_view.origin)
 	var t := ChunkView.TILE
 	var min_x := (colony.explored_min - 4 - o.x) * t
 	var max_x := (colony.explored_max + 5 - o.x) * t
 	var min_y := (mini(colony.highest_y, colony.home.y) - 40 - o.y) * t
-	var max_y := (maxi(colony.deepest_y, colony.home.y) + 14 - o.y) * t
+	# Вниз — и до самого глубокого открытого (зонд геоскважины, обзор бура, пещеры).
+	var max_y := (maxi(maxi(colony.deepest_y, world.deepest_seen), colony.home.y) + 14 - o.y) * t
 	camera.position = Vector2(clampf(camera.position.x, min_x, max_x), clampf(camera.position.y, min_y, max_y))
 
 

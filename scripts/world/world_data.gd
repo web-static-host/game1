@@ -201,7 +201,27 @@ func _touch_feature(x: int) -> void:
 
 
 func reveal(x: int, y: int) -> bool:
-	return _set_flags(x, y, ChunkData.F_REVEALED)
+	if not _set_flags(x, y, ChunkData.F_REVEALED):
+		return false
+	if y > deepest_seen:
+		deepest_seen = y
+	return true
+
+
+## Самая глубокая открытая клетка (зонд, обзор бура, пещеры — не только выкопанное):
+## до неё камера опускается.
+var deepest_seen := -(1 << 30)
+
+
+## Пересчёт по открытому в сохранении (после загрузки).
+func scan_deepest_seen() -> void:
+	var flags_by_chunk := modified_flags()
+	for key: Vector2i in flags_by_chunk:
+		var flags: PackedByteArray = flags_by_chunk[key]
+		for i in range(flags.size() - 1, -1, -1):
+			if flags[i] & ChunkData.F_REVEALED:
+				deepest_seen = maxi(deepest_seen, key.y * SIZE + (i >> ChunkData.SHIFT))
+				break
 
 
 ## Кладёт материал в клетку (осыпь, обломки): клетка снова твёрдая и видимая.
