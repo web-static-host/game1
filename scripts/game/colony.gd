@@ -4437,6 +4437,7 @@ func update(dt: float) -> void:
 		if _wear_acc >= 1.0:
 			_wear_tick(_wear_acc)
 			_wear_acc = 0.0
+			_absorb_site_drops()
 		# Энергия — дважды в секунду: итог тот же, считать дешевле. (Жизнь раз в секунду
 		# пробовали — колонии в долгих прогонах вымирали; жизнь — на каждом подшаге.)
 		_power_acc += step
@@ -6292,6 +6293,37 @@ func drop_amount(c: Vector2i, key: String) -> int:
 	return int(drops.get(c, {}).get(key, 0))
 
 
+## Материалы, что лежат на самой стройке или вплотную к ней (привёз лифт, выкопали тут
+## же), сразу засчитываются ей — заносить их не нужно (раньше камень лежал у насосной,
+## пока кто-нибудь не придёт его поднять).
+func _absorb_site_drops() -> void:
+	if drops.is_empty():
+		return
+	for p in projects:
+		if p.phase == Project.Phase.DONE and not p.repairing:
+			continue
+		var req := required(p)
+		if req.is_empty():
+			continue
+		var area := p.rect.grow(1)
+		var got := false
+		for c: Vector2i in drops.keys():
+			if not area.has_point(c) or in_drill_lift(c) or not drops.has(c):
+				continue
+			for k in drops[c].keys():
+				var need: int = int(req.get(k, 0)) - int(p.delivered.get(k, 0))
+				if need <= 0:
+					continue
+				var n := _take_drop(c, k, need)
+				if n > 0:
+					p.delivered[k] = int(p.delivered.get(k, 0)) + n
+					got = true
+				if not drops.has(c):
+					break
+		if got:
+			_try_pay(p)
+
+
 func _take_drop(c: Vector2i, key: String, n: int) -> int:
 	var have := drop_amount(c, key)
 	var take := mini(have, n)
@@ -8031,6 +8063,7 @@ func advance_offline(dt: float) -> int:
 		elements._temp_memo.clear()
 		_tick_exposure(step)
 		_wear_tick(step)
+		_absorb_site_drops()
 		_power_tick(step)
 		_lifts_tick(step)
 		_drills_tick(step)

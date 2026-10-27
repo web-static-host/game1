@@ -4670,6 +4670,12 @@ func test_unit_tap() -> void:
 	var c := Vector2i(x + 1, s - 1)
 	check(colony._awaited_drop(c, "wood"), "дерево на стройке, которой оно нужно, — ждёт её")
 	check(not colony._awaited_drop(c, "copper"), "ненужное ей — можно уносить")
+	# Лежащее на стройке засчитывается ей само — заносить не нужно.
+	var need: int = int(colony.required(room).get("wood", 0))
+	colony.drop_item(c, "wood", need + 3)
+	colony._absorb_site_drops()
+	check(room.paid or int(room.delivered.get("wood", 0)) >= need, "дерево на стройке засчиталось само")
+	check(colony.drop_amount(c, "wood") == 3, "лишнее осталось лежать (%d)" % colony.drop_amount(c, "wood"))
 	room.paid = true
 	check(not colony._awaited_drop(c, "wood"), "оплаченной стройке дерево уже не нужно")
 
