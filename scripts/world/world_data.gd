@@ -266,11 +266,13 @@ func reveal_around(x: int, y: int, radius := 1) -> Array[Vector2i]:
 				if get_flags(nx, ny) & ChunkData.F_CAVE and get_mat(nx, ny) == Mat.AIR:
 					caves.append(Vector2i(nx, ny))
 	for start in caves:
-		found.append_array(_flood_reveal_cave(start))
+		found.append_array(_flood_reveal_cave(start, radius))
 	return found
 
 
-func _flood_reveal_cave(start: Vector2i) -> Array[Vector2i]:
+## Из природной полости стены видно вглубь на depth клеток — как от своих выработок
+## (раньше открывалась только полость и по клетке стены вокруг).
+func _flood_reveal_cave(start: Vector2i, depth := 1) -> Array[Vector2i]:
 	var found: Array[Vector2i] = []
 	var queue: Array[Vector2i] = [start]
 	var seen := {start: true}
@@ -290,6 +292,40 @@ func _flood_reveal_cave(start: Vector2i) -> Array[Vector2i]:
 				# Распространяемся только по воздуху полости (вода видна, но в неё не заходим).
 				if dx * dy == 0 and get_flags(n.x, n.y) & ChunkData.F_CAVE and get_mat(n.x, n.y) == Mat.AIR:
 					queue.append(n)
+		if depth > 1:
+			_cave_wall_sight(p, depth, found)
+	return found
+
+
+## У края полости (рядом не воздух) — порода видна на depth клеток.
+func _cave_wall_sight(p: Vector2i, depth: int, found: Array[Vector2i]) -> void:
+	var edge := false
+	for d in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		if get_mat(p.x + d.x, p.y + d.y) != Mat.AIR:
+			edge = true
+			break
+	if not edge:
+		return
+	for dy in range(-depth, depth + 1):
+		for dx in range(-depth, depth + 1):
+			if reveal(p.x + dx, p.y + dy):
+				found.append(Vector2i(p.x + dx, p.y + dy))
+
+
+## Уже открытые полости: стены видно вглубь на depth (новая геология, старые сохранения).
+func deepen_caves(depth: int) -> Array[Vector2i]:
+	var found: Array[Vector2i] = []
+	if depth <= 1:
+		return found
+	var flags_by_chunk := modified_flags()
+	for key: Vector2i in flags_by_chunk:
+		var flags: PackedByteArray = flags_by_chunk[key]
+		for i in flags.size():
+			var f := flags[i]
+			if f & ChunkData.F_CAVE and f & ChunkData.F_REVEALED:
+				var c := Vector2i(key.x * SIZE + (i & MASK), key.y * SIZE + (i >> ChunkData.SHIFT))
+				if get_mat(c.x, c.y) == Mat.AIR:
+					_cave_wall_sight(c, depth, found)
 	return found
 
 

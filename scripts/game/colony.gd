@@ -2163,16 +2163,27 @@ func lift_station(p: Project, end: int) -> Variant:
 			best = c
 	if best != null:
 		return best
-	# У самого конца выхода нет — ближайший выход вдоль шахты.
+	# У самого конца выхода нет — ближайший выход вдоль шахты; рядом (в 6 м) выход в
+	# комнату или на стройку лучше, чем в пустую пещеру по другую сторону шахты.
 	var step := 1 if end == 0 else -1
+	var fallback = null
+	var until := 0
 	for i in range(1, absi(ends[1] - ends[0]) + 1):
+		if fallback != null and i > until:
+			break
 		var axis: int = ends[end] + i * step
 		var sides := [Vector2i(p.rect.position.x - 1, axis), Vector2i(p.rect.end.x, axis)] if p.lift_vertical() \
 			else [Vector2i(axis, p.rect.position.y - 1), Vector2i(axis, p.rect.end.y)]
 		for c: Vector2i in sides:
-			if pathing.node(c) and not skip.has_point(c):
+			if not pathing.node(c) or skip.has_point(c):
+				continue
+			var q := project_at(c)
+			if q != null and q != p and q.kind == Project.Kind.ROOM:
 				return c
-	return null
+			if fallback == null:
+				fallback = c
+				until = i + 6
+	return fallback
 
 
 func _rect_cells(r: Rect2i) -> Array[Vector2i]:
@@ -2249,6 +2260,18 @@ func _cargo_unload(p: Project, end: int) -> void:
 	var spot = lift_station(p, end)
 	for k in p.lift_load.keys():
 		var n := int(p.lift_load[k])
+		# Стройкам у этого конца — сразу в стройку (раньше клал на площадку, а она могла
+		# оказаться по другую сторону шахты — материалы лежали, гаврик ходил переносить).
+		for q in projects:
+			if n <= 0:
+				break
+			if q == p or not _needs_key(q, k) or not _lift_serves(p, 1 - end, q):
+				continue
+			var give := mini(n, int(required(q).get(k, 0)) - int(q.delivered.get(k, 0)))
+			if give > 0:
+				q.delivered[k] = int(q.delivered.get(k, 0)) + give
+				n -= give
+				_try_pay(q)
 		for room in stores:
 			if n <= 0:
 				break
@@ -6340,6 +6363,14 @@ func drop_amount(c: Vector2i, key: String) -> int:
 func _absorb_site_drops() -> void:
 	if drops.is_empty():
 		return
+	# Площадки грузовых лифтов: выгруженное там для стройки у этого конца — тоже её.
+	var stations := []
+	for l in lifts():
+		if l.cargo and lift_powered(l):
+			for e in 2:
+				var st = lift_station(l, e)
+				if st != null and drops.has(st):
+					stations.append([st, l, e])
 	for p in projects:
 		if p.phase == Project.Phase.DONE and not p.repairing:
 			continue
@@ -6347,9 +6378,13 @@ func _absorb_site_drops() -> void:
 		if req.is_empty():
 			continue
 		var area := p.rect.grow(1)
+		var mine := {}
+		for s3 in stations:
+			if s3[1] != p and _lift_serves(s3[1], 1 - int(s3[2]), p):
+				mine[s3[0]] = true
 		var got := false
 		for c: Vector2i in drops.keys():
-			if not area.has_point(c) or in_drill_lift(c) or not drops.has(c):
+			if not (area.has_point(c) or mine.has(c)) or in_drill_lift(c) or not drops.has(c):
 				continue
 			for k in drops[c].keys():
 				var need: int = int(req.get(k, 0)) - int(p.delivered.get(k, 0))
@@ -7694,6 +7729,8 @@ func _reveal_known() -> void:
 	for c in world.dug_cells():
 		for n in world.reveal_around(c.x, c.y, r):
 			_note_discovery(world.get_mat(n.x, n.y), n)
+	for n in world.deepen_caves(r):
+		_note_discovery(world.get_mat(n.x, n.y), n)
 
 
 func _research(work: float) -> void:
@@ -8825,5 +8862,7 @@ func load_dict(d: Dictionary) -> void:
 			cancel_project(p)
 			_log("Бур переделан: теперь это машина 3×3, которой в карточке велят, куда и сколько сверлить. Старый бур убран, материалы вернулись — поставьте его заново.", "warning")
 	loads.loads = loads.compute()
+	# Стены открытых пещер — на дальность геологоразведки (старые сохранения).
+	world.deepen_caves(see_radius())
 	explore()
 	_refresh_bushes()

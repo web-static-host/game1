@@ -3660,6 +3660,12 @@ func test_lifts() -> void:
 	colony._add("wood", 10, st)
 	check(colony.lift_feeds(top_site, "wood"), "дерево со склада у лифта к стройке у другого конца везёт лифт")
 	check(not colony.lift_feeds(top_site, "iron"), "чего нет на складе у лифта — носят как обычно")
+	# Привезённое для стройки у этого конца лифт отдаёт прямо в неё, а не на площадку.
+	colony.projects.append(top_site)
+	cl.lift_load = {"wood": 3}
+	colony._cargo_unload(cl, 0)
+	check(int(top_site.delivered.get("wood", 0)) == 3, "лифт отдал дерево прямо в стройку (%s)" % top_site.delivered)
+	colony.projects.erase(top_site)
 	# Грузовой возит и людей — вдвое больше пассажирского; высадив, возвращается к концу шахты.
 	check(colony.lift_cap(cl) == Colony.LIFT_CAP * 2, "в грузовой входит вдвое больше людей")
 	var rd := colony.units[0]
