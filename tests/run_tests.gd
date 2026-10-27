@@ -108,6 +108,7 @@ func _initialize() -> void:
 	test_gas_masks()
 	test_drill_lift()
 	test_geoprobe()
+	test_unit_tap()
 	test_room_move()
 	test_lift_route()
 	test_old_metal_to_ore()
@@ -4649,6 +4650,30 @@ func test_gas_masks() -> void:
 
 ## Бур-лифт 3×5: внизу бур, вверху грузовой лифт. Бурит вниз, шахта лифта растёт следом,
 ## добытое кабина сама везёт наверх — на склад вплотную к верху лифта.
+func test_unit_tap() -> void:
+	# Гаврика выбирают касанием по нему самому, а не над ним (там склад или комната).
+	var colony := _new_colony(38)
+	_start(colony, 0)
+	var u := colony.units[0]
+	for o in colony.units:
+		o.pos = Vector2(-100, -100)
+	u.pos = Vector2(10, 5)
+	check(colony.unit_at(Vector2(10.5, 5.5)) == u, "касание по телу — гаврик")
+	check(colony.unit_at(Vector2(10.5, 4.9)) == u, "по голове — тоже он")
+	check(colony.unit_at(Vector2(10.5, 4.4)) == null, "выше головы — не гаврик")
+	check(colony.unit_at(Vector2(11.4, 5.5)) == null, "рядом сбоку — не гаврик")
+	# Привезённое на стройку на склад не уносят, пока стройке это нужно.
+	var x := _find_solid_column(colony.world, 30)
+	var s := colony.world.gen.surface_y(x)
+	var room := _dug_project(colony, Project.Kind.ROOM, Rect2i(x, s - 3, 6, 3), 960)
+	room.phase = Project.Phase.BUILD
+	var c := Vector2i(x + 1, s - 1)
+	check(colony._awaited_drop(c, "wood"), "дерево на стройке, которой оно нужно, — ждёт её")
+	check(not colony._awaited_drop(c, "copper"), "ненужное ей — можно уносить")
+	room.paid = true
+	check(not colony._awaited_drop(c, "wood"), "оплаченной стройке дерево уже не нужно")
+
+
 func test_geoprobe() -> void:
 	# Геоскважина 2×2: зонд из её середины открывает породу полосой, ничего не копая.
 	var colony := _new_colony(37)

@@ -341,10 +341,16 @@ func project_at(c: Vector2i) -> Project:
 
 
 func unit_at(p: Vector2) -> Unit:
+	# Только по самому гаврику — от ступней до макушки и по ширине тела (раньше круг
+	# с центром над головой ловил касания выше гаврика: склад над ним было не выбрать).
 	var best: Unit = null
-	var best_d := 1.2
+	var best_d := INF
 	for u in units:
-		var d := (u.pos + Vector2(0, -0.5)).distance_to(p)
+		var h := 1.3 * (lerpf(0.5, 0.9, u.growth()) if u.child else 1.0)
+		var foot := u.pos + Vector2(0.5, 1.0)
+		if absf(p.x - foot.x) > 0.6 or p.y > foot.y + 0.1 or p.y < foot.y - h:
+			continue
+		var d := (foot - Vector2(0, h * 0.5)).distance_to(p)
 		if d < best_d:
 			best_d = d
 			best = u
@@ -1878,6 +1884,8 @@ const LIFT_WAIT := 6.0
 const CARGO_WAIT := 8.0
 ## Бездельник без дела ищет работу не реже, чем раз в столько секунд.
 const IDLE_RETRY_MAX := 12.0
+## После стольких неудачных поисков работы (около 10 с) бездельник идёт домой.
+const IDLE_HOME_AFTER := 4
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
 const LIFT_MIN_RIDE := 3
 ## Кабину ждут не дольше стольких секунд — потом лезут по аварийной лестнице и минуту
@@ -2230,9 +2238,20 @@ func _cargo_autoload(p: Project) -> void:
 				continue
 			if not _lift_serves(p, e, q):
 				continue
-			var need := remaining(q)
-			for k in need:
-				var want: int = int(need[k]) - drop_amount(far, k) - int(p.lift_buf[e].get(k, 0)) - int(p.lift_load.get(k, 0))
+			# Несущих издалека (со склада наверху, через лифты — минуты) не ждём: лифт
+			# везёт сам, а кто ещё только идёт за этим на склад — свободен. Считаются только
+			# те, кто разносит уже привезённое с площадки.
+			var req := required(q)
+			for k in req:
+				var want: int = int(req[k]) - int(q.delivered.get(k, 0)) - drop_amount(far, k) \
+					- int(p.lift_buf[e].get(k, 0)) - int(p.lift_load.get(k, 0))
+				for u in units:
+					if u.task == Unit.Task.HAUL and u.project_id == q.id and u.carry_key == k and u.gather_room == 0:
+						if u.from_drop or u.haul_stage == 1:
+							want -= u.carry_amount
+				if want <= 0:
+					continue
+				var loaded := 0
 				for room in stores:
 					if want <= 0:
 						break
@@ -2240,6 +2259,12 @@ func _cargo_autoload(p: Project) -> void:
 					if got > 0:
 						p.lift_buf[e][k] = int(p.lift_buf[e].get(k, 0)) + got
 						want -= got
+						loaded += got
+				if loaded > 0:
+					for u in units:
+						if u.task == Unit.Task.HAUL and u.project_id == q.id and u.carry_key == k \
+								and not u.from_drop and u.haul_stage == 0 and u.gather_room == 0:
+							_drop(u)
 
 
 ## Стройка q у дальнего от конца e края грузового лифта p (не дальше 25 м от его площадки и
@@ -4502,9 +4527,16 @@ func _update_unit(u: Unit, dt: float) -> void:
 					# появляется реже — долгие бездельники ищут раз в IDLE_RETRY_MAX с (поиск
 					# пути дорогой: два десятка бездельников съедали половину расчёта игры).
 					u.retry = 0.5 if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, IDLE_RETRY_MAX)
+					# Давно без дела — идёт отдыхать домой, в свою спальню (раньше стоял толпой,
+					# где кончил работу: у склада, в дегазации).
+					var here := project_at(u.cell())
+					var at_home := here != null and (here.id == u.bed_room or (u.bed_room == 0 and here.purpose == RoomType.HOME))
+					if not offline and u.idle_fails == IDLE_HOME_AFTER and not u.waiting_own and not u.child and u.workplace == 0 \
+							and not at_home and _stroll(u, true):
+						pass
 					# Бездельники не стоят толпой в одной точке и не торчат на лестнице (мешают
 					# проходу) — расходятся по комнатам.
-					if not offline and u.state == Unit.State.IDLE:
+					elif not offline and u.state == Unit.State.IDLE:
 						var on_ladder := pathing.climbable(u.cell()) and not u.waiting_own
 						if (on_ladder or _crowded(u)) and not _stroll(u) and on_ladder:
 							_off_ladder(u)
@@ -4547,8 +4579,9 @@ func _crowded(u: Unit) -> bool:
 
 
 ## Гаврик без дела отходит на свободное место: в свою спальню, а если до неё
-## не дойти — в ближайшую комнату, где никто не стоит.
-func _stroll(u: Unit) -> bool:
+## не дойти — в ближайшую комнату, где никто не стоит. home_only — только домой, хоть
+## и далеко (давно без дела — идёт отдыхать).
+func _stroll(u: Unit, home_only := false) -> bool:
 	var reach := pathing.explore(u.cell())
 	var dist: Dictionary = reach[1]
 	var taken := {}
@@ -4566,9 +4599,11 @@ func _stroll(u: Unit) -> bool:
 			var c := Vector2i(x, p.rect.end.y - 1)
 			if taken.has(c) or not dist.has(c) or c == u.cell() or pathing.climbable(c):
 				continue
-			if p.id == u.bed_room and dist[c] <= 80:
+			# Своя спальня; кровати ещё нет — любой жилой дом.
+			var mine := p.id == u.bed_room or (home_only and u.bed_room == 0 and p.purpose == RoomType.HOME)
+			if mine and (dist[c] <= 80 or home_only):
 				home.append(c)
-			elif dist[c] <= 40:
+			elif dist[c] <= 40 and not home_only:
 				near.append(c)
 	var pool := home if not home.is_empty() else near
 	if pool.is_empty():
@@ -6398,6 +6433,31 @@ func can_store(key: String) -> bool:
 	return false
 
 
+## Стройке q ещё нужен ресурс key.
+func _needs_key(q: Project, key: String) -> bool:
+	if q.phase == Project.Phase.DONE and not q.repairing:
+		return false
+	return int(required(q).get(key, 0)) > int(q.delivered.get(key, 0))
+
+
+## Куча ждёт стройку: лежит на стройке, которой этот ресурс нужен, или у площадки
+## грузового лифта, который везёт его такой стройке.
+func _awaited_drop(c: Vector2i, key: String) -> bool:
+	var site := project_at(c)
+	if site != null and _needs_key(site, key):
+		return true
+	for p in lifts():
+		if not p.cargo:
+			continue
+		for e in 2:
+			if lift_station(p, e) != c:
+				continue
+			for q in projects:
+				if q != p and _needs_key(q, key) and _lift_serves(p, 1 - e, q):
+					return true
+	return false
+
+
 ## Свободный гаврик уносит лежащее на земле на склад (если там есть место).
 func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
 	var may_mine := may_haul_mine(u)
@@ -6420,6 +6480,9 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			# Работник склада носит стройматериалы, амбара — еду; на любой склад, где есть
 			# работник и место.
 			if only != null and not RoomType.same_kind(only, k):
+				continue
+			# Привезённое на стройку (лифтом к ней или прямо на неё) на склад не уносят.
+			if _awaited_drop(c, k):
 				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
 			if avail <= 0 or not _worth_carrying(c, k, avail):
