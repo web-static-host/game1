@@ -4684,6 +4684,20 @@ func test_unit_tap() -> void:
 	check(colony.drop_amount(c, "wood") == 3, "лишнее осталось лежать (%d)" % colony.drop_amount(c, "wood"))
 	room.paid = true
 	check(not colony._awaited_drop(c, "wood"), "оплаченной стройке дерево уже не нужно")
+	# Над тоннелем, который ещё копают, комнату ставить можно: его крепь станет полом.
+	var tx := _find_solid_column(colony.world, 70)
+	var ts := colony.world.gen.surface_y(tx)
+	var tun := Project.new()
+	tun.id = 962
+	tun.kind = Project.Kind.TUNNEL
+	tun.rect = Rect2i(tx, ts + 8, 6, 2)
+	colony.projects.append(tun)
+	for xx in range(tx, tx + 6):
+		colony.world.set_material(xx, ts + 8, Mat.AIR)
+		colony.world.set_dug(xx, ts + 8)
+		colony.world.reveal(xx, ts + 8)
+	var err := colony.validate(Project.Kind.ROOM, Rect2i(tx, ts + 5, 6, 3), "wood")
+	check(not err.begins_with("Комнате не на что опереться"), "над строящимся тоннелем комнату ставить можно («%s»)" % err)
 
 
 func test_geoprobe() -> void:
@@ -4773,6 +4787,13 @@ func test_drill_lift() -> void:
 	colony.elements._gas_alarm()
 	check(not drill.paused and not lift.paused, "бур-лифту газ безразличен")
 	colony.elements.gas.clear()
+	# Пока к месту не пройти — не роет.
+	colony._drills_tick(0.5)
+	check(colony.remaining_dig(lift).size() == 6 and drill.blocked.begins_with("Нет доступа"), "без прохода бур-лифт себе место не роет")
+	# Ход сбоку от бур-лифта — теперь роет.
+	var s13 := w.gen.surface_y(x + 13)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 13, s13, 1, s + 9 - s13), 961)
+	colony._rebuild_climb()
 	var dt0 := 0.0
 	while dt0 < 600.0 and (not colony.remaining_dig(drill).is_empty() or not colony.remaining_dig(lift).is_empty()):
 		colony._power_tick(0.5)

@@ -429,11 +429,15 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 			if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y))):
 				return "%s не на что встать — нужен грунт или пол снизу" % ("Буру" if kind == Project.Kind.DRILL else "Геоскважине")
 	if kind == Project.Kind.ROOM:
-		# Каждая колонна комнаты должна на что-то опираться.
+		# Каждая колонна комнаты должна на что-то опираться. Строящийся тоннель или шахта
+		# снизу — тоже опора: их крепь станет полом (раньше над копающимся тоннелем склад
+		# было не поставить, пока тот не докопан).
 		for x in range(r.position.x, r.end.x):
 			var below := Vector2i(x, r.end.y)
+			var under := project_at(below)
 			var ok := interior.has(below) or not world.is_revealed(below.x, below.y) \
-				or Mat.is_solid(world.get_mat(below.x, below.y))
+				or Mat.is_solid(world.get_mat(below.x, below.y)) \
+				or (under != null and (under.kind == Project.Kind.TUNNEL or under.kind == Project.Kind.MINE))
 			if not ok:
 				return "Комнате не на что опереться — нужен грунт или постройка снизу"
 		var floors_err := _floors_error(r, material)
@@ -1640,6 +1644,13 @@ func _drill_lift_dig(dt: float) -> void:
 					row.append([c, q])
 		if row.is_empty():
 			continue
+		# Пока к месту не пройти — не роет (машину туда ещё не доставить).
+		var site := p.rect.merge(lift.rect) if lift != null else p.rect
+		if not can_reach(site):
+			p.blocked = "Нет доступа — проложите тоннель к стройке"
+			continue
+		if p.blocked.begins_with("Нет доступа"):
+			p.blocked = ""
 		var on_diesel := false
 		if not powered() or power_ratio <= 0.0:
 			if research.has("combustion") and (p.fuel > 0.0 or _remove("diesel", 1) >= 1):
