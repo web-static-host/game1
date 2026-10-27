@@ -4821,6 +4821,10 @@ func test_drill_lift() -> void:
 	# Выгружать груз вниз — не на сам бур: иначе кабина подберёт его обратно (ездил по кругу).
 	var bottom = colony.lift_station(lift, 1)
 	check(bottom == null or not Colony.drill_lift_area(drill, lift).has_point(bottom), "нижняя площадка бур-лифта — не в его столбе")
+	# Бур видит породу под собой на дальность геологоразведки.
+	colony._drill_sight()
+	var sr := colony.see_radius()
+	check(colony.world.is_revealed(drill.rect.position.x + 1, drill.rect.end.y + sr - 1), "под буром видно на %d м" % sr)
 	check(not colony.start_drill(drill, Vector2i.LEFT, 5).is_empty(), "бур-лифт вбок не бурит")
 	check(colony.start_drill(drill, Vector2i.DOWN, 10).is_empty(), "бурит вниз")
 	var before := 0
@@ -4848,6 +4852,12 @@ func test_drill_lift() -> void:
 				if not RoomType.BULK.has(k):
 					left += int(colony.drops[Vector2i(xx, y)][k])
 	check(left == 0, "в шахте ничего не осталось лежать (%d)" % left)
+	# Бур-лифт — одна постройка: снос убирает и бур, и его лифт.
+	if colony.drilling(drill):
+		colony.stop_drill(drill)
+	check(colony.demolish_error(lift) == colony.demolish_error(drill), "снести лифт — значит снести бур-лифт")
+	if colony.demolish(drill):
+		check(not colony.projects.has(drill) and not colony.projects.has(lift), "снесли бур-лифт — нет ни бура, ни лифта")
 
 
 func _load_left(lift: Project) -> int:

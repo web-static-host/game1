@@ -1049,7 +1049,12 @@ func cancel_project(p: Project) -> void:
 		# Возвращаем неизрасходованную часть материалов.
 		_refund(p.cost(), 1.0 - p.build_done / p.build_work())
 	_return_delivered(p)
+	# Бур-лифт — одна постройка: отменяют и бур, и его лифт.
+	var partner: Project = project_by_id(p.link_id) if drill_lift_part(p) else null
 	projects.erase(p)
+	if partner != null and projects.has(partner) and partner.phase != Project.Phase.DONE:
+		partner.link_id = 0
+		cancel_project(partner)
 	_by_id_n = -1
 	for c in p.cells():
 		room_cells.erase(c)
@@ -1070,6 +1075,8 @@ func cancel_project(p: Project) -> void:
 
 ## Можно ли снести постройку (сверху ничего не стоит).
 func demolish_error(p: Project) -> String:
+	if drill_lift_part(p) and p.kind == Project.Kind.LIFT and project_by_id(p.link_id) != null:
+		return demolish_error(project_by_id(p.link_id))
 	if drilling(p):
 		return "Бур сверлит — сначала остановите его"
 	if p.phase != Project.Phase.DONE and p.phase != Project.Phase.EQUIP:
@@ -1086,6 +1093,16 @@ func demolish_error(p: Project) -> String:
 func demolish(p: Project) -> bool:
 	if not demolish_error(p).is_empty():
 		return false
+	# Бур-лифт сносят целиком: бур и его лифт.
+	if drill_lift_part(p):
+		var partner := project_by_id(p.link_id)
+		if partner != null and projects.has(partner):
+			partner.link_id = 0
+			p.link_id = 0
+			if partner.phase == Project.Phase.DONE or partner.phase == Project.Phase.EQUIP:
+				demolish(partner)
+			else:
+				cancel_project(partner)
 	var spent := p.cost()
 	if p.purpose != RoomType.NONE:
 		var eq := RoomType.equip_cost(p.purpose, p)
@@ -1461,9 +1478,10 @@ func _drill_lift_step(p: Project) -> void:
 	_rebuild_climb()
 
 
-## Столб бур-лифта: шахта его лифта, сам бур и ряд под ним. Что там лежит — забирает кабина.
+## Столб бур-лифта: шахта его лифта, сам бур и три ряда под ним (туда скатывается и
+## падает добытое). Что там лежит — забирает кабина, гаврики это не носят.
 static func drill_lift_area(drill: Project, lift: Project) -> Rect2i:
-	return lift.rect.merge(drill.rect).grow_individual(0, 0, 0, 1)
+	return lift.rect.merge(drill.rect).grow_individual(0, 0, 0, 3)
 
 
 ## Всё, что лежит в столбе бур-лифта (добытое, выгруженное), — в кабину у нижнего конца:
@@ -1534,6 +1552,10 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 func _drills_tick(dt: float) -> void:
 	_drill_lift_dig(dt)
 	_probes_tick(dt)
+	_drill_sight_t += dt
+	if _drill_sight_t >= 1.0:
+		_drill_sight_t = 0.0
+		_drill_sight()
 	for p: Project in projects.duplicate():
 		if not drilling(p) or p.paused:
 			continue
@@ -1680,6 +1702,25 @@ func _end_bore(p: Project, arrived: bool) -> void:
 func stop_drill(p: Project) -> void:
 	if drilling(p):
 		_end_bore(p, false)
+
+
+## Бур (и бур-лифт) видит породу вокруг себя на дальность геологоразведки — и ту, что
+## под ним, ещё не пройденную (раньше открывалось только при копке, и после новой
+## «Геологоразведки» под буром оставалось тёмное).
+var _drill_sight_t := 0.0
+
+
+func _drill_sight() -> void:
+	var r := see_radius()
+	for p in projects:
+		if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DONE:
+			continue
+		var area := p.rect.grow(r)
+		for y in range(area.position.y, area.end.y):
+			for x in range(area.position.x, area.end.x):
+				if world.reveal(x, y):
+					_note_discovery(world.get_mat(x, y), Vector2i(x, y))
+					world.dirty[WorldData.chunk_of(x, y)] = true
 
 
 # --- Геоскважина -----------------------------------------------------------------------

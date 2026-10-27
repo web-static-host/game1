@@ -721,6 +721,9 @@ func _feature_near(c: Vector2i) -> Variant:
 
 
 func _select(u: Unit, p: Project) -> void:
+	# Бур-лифт — одна постройка: касание по его лифту открывает бур-лифт.
+	if p != null and p.kind == Project.Kind.LIFT and p.link_id != 0 and colony.project_by_id(p.link_id) != null:
+		p = colony.project_by_id(p.link_id)
 	world_view.units_layer.selected_unit = u.id if u != null else 0
 	world_view.structures.selected_project = p.id if p != null else 0
 	if u != null:
@@ -1413,14 +1416,25 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				var went := absi(p.rect.position.x - p.bore_from.position.x) + absi(p.rect.position.y - p.bore_from.position.y)
 				var all := went + p.drill_left
 				rows.append(_progress("Пройдено", float(went) / maxf(1.0, all), "%d из %d м" % [went, all], Color(0.6, 0.7, 0.8)))
+			if p.link_id != 0:
+				var lift := colony.drill_lift_of(p)
+				if lift != null and lift.phase == Project.Phase.DONE:
+					chips.append(["", "лифт %d м" % lift.rect.size.y])
+					chips.append(["", "в кабине %d из %d" % [colony._load_total(lift.lift_load), Colony.CARGO_CAP]])
+					var riders := colony.units.filter(func(o: Unit) -> bool: return o.lift_id == lift.id and o.riding).size()
+					chips.append(["people", "людей %d из %d" % [riders, colony.lift_cap(lift)]])
 			if colony.drilling(p):
-				rows.append({"type": "text", "text": "Бур едет и сверлит ход 3 м шириной втрое быстрее гаврика. Породу уносят гаврики. «Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
+				rows.append({"type": "text", "text": ("Бур идёт вниз, шахта лифта растёт следом, добытое кабина сама везёт наверх. " if p.link_id != 0 else "Бур едет и сверлит ход 3 м шириной втрое быстрее гаврика. Породу уносят гаврики. ") + "«Остановить» — пройденное остаётся ходом, бур стоит, где остановился."})
 			if p.phase == Project.Phase.DONE and not colony.drilling(p):
 				var diesel := colony.research.has("combustion")
 				chips.append(["power", "энергия: %s" % ("есть" if colony.powered() else ("нет — на дизеле" if diesel else "нет — бур стоит"))])
 				chips.append(["", "скорость ×%.1f от гаврика" % colony.drill_speed(true)])
-				rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее гаврика, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят гаврики. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
-					" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
+				if p.link_id != 0:
+					rows.append({"type": "text", "text": "Выберите, на сколько метров бурить вниз. Бур идёт сам, на энергии%s; обсадка — 1 железо на %d м со склада. Добытое кабина сама везёт наверх — гаврики его не носят. Перед газом, водой или магмой бур останавливается с тревогой. Вокруг бура видно породу на дальность геологоразведки." % [
+						" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
+				else:
+					rows.append({"type": "text", "text": "Выберите, на сколько метров и куда сверлить. Бур сам едет и сверлит ход 3 м шириной втрое быстрее гаврика, на энергии%s. Обсадка хода — 1 железо на %d м, берётся со склада. Породу уносят гаврики. Перед газом, водой или магмой бур останавливается с тревогой. Ход вниз — тоннель, вбок — как шахта: можно ставить лифт и комнаты. «Остановить» — пройденное остаётся ходом." % [
+						" или дизеле" if diesel else "", Colony.DRILL_CASING_M]})
 			else:
 				rows.append({"type": "text", "text": "Место под бур выкапывают, потом собирают машину. Готовым буром командуют из его карточки: куда и сколько сверлить."})
 		Project.Kind.LIFT:

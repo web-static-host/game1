@@ -154,7 +154,8 @@ func _draw_done(p: Project) -> void:
 		draw_rect(bar, BAR_BG)
 		draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), Color(0.4, 0.7, 1.0))
 		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
-	if p.id == selected_project:
+	# Бур-лифт выделяется целиком: и бур, и его лифт.
+	if p.id == selected_project or (p.link_id != 0 and p.link_id == selected_project):
 		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
 
