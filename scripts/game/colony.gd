@@ -321,9 +321,12 @@ func project_by_id(pid: int) -> Project:
 
 ## Игрок что-то поручил — гаврики без дела ищут работу сразу, а не через несколько секунд.
 func wake_idle() -> void:
+	var i := 0
 	for u in units:
 		if u.state == Unit.State.IDLE:
-			u.retry = 0.0
+			# Вразбивку по кадрам: два десятка поисков работы разом — заметная заминка.
+			u.retry = 0.05 * (i % 10)
+			i += 1
 			u.idle_fails = 0
 		elif u.task == Unit.Task.STROLL:
 			_drop(u)
@@ -1887,7 +1890,7 @@ const LIFT_WAIT := 6.0
 ## Сколько грузовой ждёт, пока наберётся груз, сек.
 const CARGO_WAIT := 8.0
 ## Бездельник без дела ищет работу не реже, чем раз в столько секунд.
-const IDLE_RETRY_MAX := 12.0
+const IDLE_RETRY_MAX := 20.0
 ## Ждущий у своей выработки смотрит снова через столько; докопали клетку или поставили крепь —
 ## сразу (_wake_waiting). Раньше — каждые полсекунды: десяток ждущих съедал треть расчёта.
 const WAIT_OWN_RETRY := 2.0
@@ -2953,6 +2956,12 @@ func _check_liquids(p: Project) -> void:
 
 
 ## Начинает этап строительства, обустройства или ремонта, когда всё принесено.
+## «Не хватает: …» — надпись, а не расчёт: обновляем раз в секунду (раньше — на каждом
+## подшаге по всем постройкам).
+var _supply_due := true
+var _supply_n := 0
+
+
 func _try_pay(p: Project) -> void:
 	var cost: Dictionary
 	if p.phase == Project.Phase.BUILD and not p.paid:
@@ -2962,13 +2971,15 @@ func _try_pay(p: Project) -> void:
 	elif p.phase == Project.Phase.DONE and p.repairing and not p.repair_paid:
 		cost = p.repair_need
 	else:
-		_check_supply(p)
+		if _supply_due:
+			_check_supply(p)
 		return
 	# Топливо (дизель, метан, нефть) не носят — берут по трубам прямо из баков.
 	for k in cost:
 		var have: int = inventory.get(k, 0) if RoomType.PIPED.has(k) else p.delivered.get(k, 0)
 		if have < cost[k]:
-			_check_supply(p)
+			if _supply_due:
+				_check_supply(p)
 			return
 	for k in cost:
 		if RoomType.PIPED.has(k):
@@ -4507,6 +4518,8 @@ func update(dt: float) -> void:
 		var sdt := _slow_acc
 		if slow:
 			_slow_acc = 0.0
+			_supply_n += 1
+			_supply_due = _supply_n % 5 == 0
 			for p in projects:
 				if not p.paused:
 					_try_pay(p)

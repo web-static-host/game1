@@ -257,14 +257,18 @@ func _explore(start: Vector2i, cap := MAX_NODES) -> Array:
 		return [parents, dist]
 	var queue: Array[Vector2i] = [start]
 	var head := 0
+	var lo := start.x - MAX_RADIUS
+	var hi := start.x + MAX_RADIUS
+	# Самое горячее место игры: соседи — прямо из памяти, без лишних вызовов.
 	while head < queue.size() and queue.size() < cap:
-		var c := queue[head]
+		var c: Vector2i = queue[head]
 		head += 1
 		var d: int = dist[c] + 1
-		for n in neighbors(c):
-			if parents.has(n):
-				continue
-			if absi(n.x - start.x) > MAX_RADIUS:
+		var nb = _nbr_memo.get(c)
+		if nb == null:
+			nb = neighbors(c)
+		for n: Vector2i in nb:
+			if dist.has(n) or n.x < lo or n.x > hi:
 				continue
 			parents[n] = c
 			dist[n] = d
