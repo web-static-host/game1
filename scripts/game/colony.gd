@@ -1554,6 +1554,10 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 	return ""
 
 
+## Бур: где и когда последний раз осматривали забой без тревоги (id -> [место, ход, секунда]).
+var _hazard_seen := {}
+
+
 func _drills_tick(dt: float) -> void:
 	_probes_tick(dt)
 	_drill_sight_t += dt
@@ -1590,12 +1594,17 @@ func _drills_tick(dt: float) -> void:
 				solid.append(c)
 		if stop:
 			continue
-		for c in solid:
-			if _hazard_stop(p, c):
-				stop = true
-				break
-		if stop:
-			continue
+		# Осмотр вокруг забоя (до 21×21 на клетку) — когда бур сдвинулся и раз в секунду, а не
+		# на каждом подшаге: два бура съедали четверть расчёта игры.
+		var hk := [p.rect.position, p.drill_dir, floori(game_time)]
+		if _hazard_seen.get(p.id) != hk:
+			for c in solid:
+				if _hazard_stop(p, c):
+					stop = true
+					break
+			if stop:
+				continue
+			_hazard_seen[p.id] = hk
 		if on_diesel:
 			p.fuel = maxf(0.0, p.fuel - dt)
 		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
@@ -2096,7 +2105,28 @@ func _approaching(p: Project, here: int) -> bool:
 
 
 ## Площадка у конца грузового лифта: где стоят, кладя груз, и куда он выгружает.
+## Запомненные площадки: поиск дорогой (клетки вдоль шахты, project_at по всем постройкам), а
+## уборка спрашивает его на каждую кучу — 56 гавриков и 150 построек тормозили игру в разы.
+## Сбрасываются, когда меняются порода, постройки или лестницы, и раз в секунду игры.
+var _station_memo := {}
+var _station_key := []
+
+
 func lift_station(p: Project, end: int) -> Variant:
+	pathing.sync()
+	var key := [pathing._cache_key, projects.size(), floori(game_time)]
+	if key != _station_key:
+		_station_key = key
+		_station_memo.clear()
+	var mk := [p.id, end, p.rect, p.link_id]
+	if _station_memo.has(mk):
+		return _station_memo[mk]
+	var st = _lift_station(p, end)
+	_station_memo[mk] = st
+	return st
+
+
+func _lift_station(p: Project, end: int) -> Variant:
 	var ends := _lift_ends(p)
 	var slice := Rect2i(p.rect.position.x, ends[end], p.rect.size.x, 1) if p.lift_vertical() \
 		else Rect2i(ends[end], p.rect.position.y, 1, p.rect.size.y)
@@ -5311,6 +5341,13 @@ func _task_order(u: Unit) -> Array[String]:
 
 ## Ищет занятие для гаврика. true — назначено.
 func _assign(u: Unit) -> bool:
+	# Ждёт у своей выработки, пока другой докопает клетку: если там заведомо нечего взять,
+	# обход колонии (самое дорогое в игре) не нужен — посмотрим снова через полсекунды.
+	if u.waiting_own and not u.child and u.satiety >= HUNGRY and not needs_warmth(u):
+		var mine := _own_project(u)
+		if mine != null and not _own_work_open(u, mine):
+			u.idle_fails = 0
+			return false
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
@@ -5381,6 +5418,22 @@ func _assign(u: Unit) -> bool:
 				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
 					return true
 	return _return_home(u, parents, dist)
+
+
+## Может ли на своей выработке найтись дело (грубо, без обхода): свободная клетка, крепь,
+## расчистка, клетка у идущего издалека или у помощника, которого сменит строитель. Сомнение — «да».
+func _own_work_open(u: Unit, p: Project) -> bool:
+	if not uncleared(p).is_empty() or slice_to_support(p) >= 0:
+		return true
+	var now := diggable_now(p)
+	if now.is_empty():
+		return true
+	var crew := builder_or_miner(u)
+	for c in now:
+		var o := _unit_by_id(int(reserved.get(c, 0)))
+		if o == null or o.state == Unit.State.MOVE or o.task != Unit.Task.DIG or (crew and not builder_or_miner(o)):
+			return true
+	return false
 
 
 ## Ушёл далеко (на разведку, за кучей на краю карты) и дела рядом нет: работа ищется только
@@ -6562,6 +6615,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_d := 1 << 30
 	var best_room: Project = null
 	var best_lift_end := -1
+	var routes := {}
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
 		if stand == null or dist[stand] >= best_d or in_drill_lift(c):
@@ -6575,20 +6629,25 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			# работник и место.
 			if only != null and not RoomType.same_kind(only, k):
 				continue
-			# Привезённое на стройку (лифтом к ней или прямо на неё) на склад не уносят.
-			if _awaited_drop(c, k):
-				continue
 			var avail := drop_amount(c, k) - _claimed_drop(c, k)
 			if avail <= 0 or not _worth_carrying(c, k, avail):
 				continue
-			var to = _store_target(k, dist, only)
-			# До грузового лифта ближе, чем до склада, — несут в лифт (он довезёт до склада).
-			var lift = _cargo_route(k, dist, dist[to[0]] if to != null else (1 << 30), only)
+			# Куда нести, зависит только от ресурса — считаем раз на ресурс, а не на каждую кучу.
+			if not routes.has(k):
+				var to_k = _store_target(k, dist, only)
+				# До грузового лифта ближе, чем до склада, — несут в лифт (он довезёт до склада).
+				routes[k] = [to_k, _cargo_route(k, dist, dist[to_k[0]] if to_k != null else (1 << 30), only)]
+			var to = routes[k][0]
+			var lift = routes[k][1]
 			if to == null and lift == null:
 				continue
 			# На почти полный склад по одной штуке не носят: ждут, пока освободится место
 			# под всю ношу.
 			if lift == null and room_free(to[1], k) < mini(carry_cap(), avail):
+				continue
+			# Привезённое на стройку (лифтом к ней или прямо на неё) на склад не уносят.
+			# (Проверка дорогая — последней, только для кучи, которую готовы взять.)
+			if _awaited_drop(c, k):
 				continue
 			best = stand
 			best_c = c

@@ -155,9 +155,17 @@ func _accepts(c: Vector2i) -> bool:
 
 func _flow(kind: int) -> void:
 	var cells: Array = []
+	var gone: Array = []
 	for c in active:
-		if world.get_mat(c.x, c.y) == kind:
+		var m := world.get_mat(c.x, c.y)
+		if m == kind:
 			cells.append(c)
+		elif m != Mat.WATER and m != Mat.MAGMA:
+			gone.append(c)
+	# Жидкость отсюда ушла (стекла, откачали, застыла) — клетку больше не перебираем (копились
+	# тысячами и перебирались шесть раз в секунду вечно).
+	for c in gone:
+		active.erase(c)
 	if cells.is_empty():
 		return
 	for c in cells:
@@ -362,15 +370,24 @@ func _pump_once() -> void:
 			surf.append(world.gen.surface_y(x))
 		# Видимую воду, ближайшую к насосной (раньше — первую сверху, хоть и скрытую в
 		# породе: насос минутами осушал невидимую полость, а пруд под ним стоял).
-		for y in range(center.y - pr, center.y + pr + 1):
-			for x in range(center.x - pr, center.x + pr + 1):
-				if surf[x - center.x + pr] > y:
-					continue # озёра на поверхности не откачиваем
-				if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
-					var d := absi(x - center.x) + absi(y - center.y)
-					if d < best_d:
-						best_d = d
-						best = Vector2i(x, y)
+		# Кольцами от насосной наружу: первая найденная — ближайшая (раньше обходили весь квадрат
+		# до 81×81 клеток каждые 2 с на каждую насосную, даже когда вода рядом).
+		for d in 2 * pr + 1:
+			if best != null:
+				break
+			for dx in range(-mini(d, pr), mini(d, pr) + 1):
+				var rest := d - absi(dx)
+				if rest > pr:
+					continue
+				for dy in ([rest, -rest] if rest != 0 else [0]):
+					var x := center.x + dx
+					var y: int = center.y + dy
+					if surf[dx + pr] > y:
+						continue # озёра на поверхности не откачиваем
+					if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
+						if d < best_d:
+							best_d = d
+							best = Vector2i(x, y)
 		if best == null:
 			_pump_dry[p.id] = colony.game_time + PUMP_DRY_WAIT
 		if best != null:
