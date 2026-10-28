@@ -708,7 +708,7 @@ func _check_access() -> void:
 		var blocked_access := p.blocked.begins_with("Нет доступа")
 		if not p.blocked.is_empty() and not blocked_access:
 			continue
-		if can_reach(p.rect):
+		if can_reach(site_rect(p)):
 			if blocked_access:
 				p.blocked = ""
 		elif not blocked_access:
@@ -762,7 +762,7 @@ func _source_reachable(key: String, p: Project) -> bool:
 		if Pathing.truncated(dist):
 			# Обход оборвался — не знаем наверняка, не пугаем.
 			return true
-		if _near_rect(p.rect, dist, true) == null:
+		if _near_rect(site_rect(p), dist, true) == null:
 			tried += 1
 			if tried >= 6:
 				break
@@ -5553,7 +5553,7 @@ func _projects_for(u: Unit, dist: Dictionary = {}) -> Array[Project]:
 		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
 			continue
 		out.append(p)
-		var c = _near_rect(p.rect, dist) if not dist.is_empty() else null
+		var c = _near_rect(site_rect(p), dist) if not dist.is_empty() else null
 		near[p.id] = dist[c] if c != null else 1 << 30
 	# Приоритетные — первыми, потом своя, потом ближайшие: на работу идут те, кто рядом.
 	out.sort_custom(func(a: Project, b: Project) -> bool:
@@ -6109,8 +6109,18 @@ func _unit_by_id(uid: int) -> Unit:
 	return null
 
 
+## Где стоять, работая на стройке: у лифта бур-лифта — и у самого бура (над буром стоять
+## негде — лифт бур-лифта горел «Нет доступа», хотя к буру тоннель есть).
+func site_rect(p: Project) -> Rect2i:
+	if drill_lift_part(p):
+		var o := project_by_id(p.link_id)
+		if o != null:
+			return p.rect.merge(o.rect)
+	return p.rect
+
+
 func _try_build(u: Unit, p: Project, task: int, parents: Dictionary, dist: Dictionary) -> bool:
-	var best = _near_rect(p.rect, dist)
+	var best = _near_rect(site_rect(p), dist)
 	if best == null:
 		return false
 	_start(u, task, p.rect.get_center(), best, p.id, parents)
@@ -6656,7 +6666,7 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_o
 			if n > 0:
 				# Раз уж пошёл — берёт на несколько срезов вперёд (полную ношу), а не одно бревно.
 				left[k] = maxi(n, mini(carry_cap(), int(rest.get(k, 0))))
-	if left.is_empty() or _near_rect(p.rect, dist) == null:
+	if left.is_empty() or _near_rect(site_rect(p), dist) == null:
 		return false
 	# Сначала то, без чего стройка стоит прямо сейчас.
 	var keys := left.keys()
@@ -6898,9 +6908,9 @@ func _haul_pickup(u: Unit) -> void:
 				stand = to[0]
 				u.project_id = to[1].id
 	else:
-		stand = _near_rect(p.rect, reach[1])
-		if stand == null and _reach_far(u.cell(), p.rect, reach[0], reach[1]):
-			stand = _near_rect(p.rect, reach[1], true)
+		stand = _near_rect(site_rect(p), reach[1])
+		if stand == null and _reach_far(u.cell(), site_rect(p), reach[0], reach[1]):
+			stand = _near_rect(site_rect(p), reach[1], true)
 	if stand == null:
 		# Нести некуда — кладёт обратно.
 		var back := u.carry_amount

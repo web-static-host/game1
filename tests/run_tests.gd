@@ -4789,6 +4789,7 @@ func test_drill_lift() -> void:
 	check(colony._try_project(dg, lift, rch[0], rch[1], true, true) or colony._try_project(dg, drill, rch[0], rch[1], true, true),
 		"гаврики копают место под бур-лифт")
 	colony._drop(dg)
+	check(colony.site_rect(lift) == lift.rect.merge(drill.rect), "лифт бур-лифта строят и с места у бура")
 	# Построено (как будто гаврики уже собрали).
 	for p in [drill, lift]:
 		for c in p.cells():
