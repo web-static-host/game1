@@ -207,8 +207,8 @@ func _target(c: Vector2i, kind: int) -> Variant:
 
 ## Подземная вода, застывшая лесенкой или стенкой (старые сохранения, вода у края откачки):
 ## понемногу обходим загруженные чанки и будим воду, у которой сбоку или снизу пусто.
-const SETTLE_TIME := 2.0
-const SETTLE_CHUNKS := 4
+const SETTLE_TIME := 0.5
+const SETTLE_CHUNKS := 1
 var _settle_t := 0.0
 var _settle_keys: Array = []
 
@@ -221,7 +221,8 @@ func _settle() -> void:
 			return
 		var key: Vector2i = _settle_keys.pop_back()
 		var ch: ChunkData = world.chunks.get(key)
-		if ch == null:
+		# Без воды в куске — пропускаем сразу (проверка всего куска — встроенная, быстрая).
+		if ch == null or not (ch.mat.has(Mat.WATER) or (ch.has_fluid_overlay() and ch.fluid.has(Mat.WATER))):
 			continue
 		for i in ch.mat.size():
 			if ch.effective(i) != Mat.WATER:
@@ -370,24 +371,33 @@ func _pump_once() -> void:
 			surf.append(world.gen.surface_y(x))
 		# Видимую воду, ближайшую к насосной (раньше — первую сверху, хоть и скрытую в
 		# породе: насос минутами осушал невидимую полость, а пруд под ним стоял).
-		# Кольцами от насосной наружу: первая найденная — ближайшая (раньше обходили весь квадрат
-		# до 81×81 клеток каждые 2 с на каждую насосную, даже когда вода рядом).
-		for d in 2 * pr + 1:
-			if best != null:
-				break
-			for dx in range(-mini(d, pr), mini(d, pr) + 1):
-				var rest := d - absi(dx)
-				if rest > pr:
+		# Смотрим только куски карты (32×32), где вода вообще есть, от ближних к дальним, и
+		# останавливаемся, когда дальше ближе найденного не будет (раньше обходили квадрат до
+		# 81×81 клеток — у сухой насосной кадр до 60 мс).
+		var area := Rect2i(center - Vector2i(pr, pr), Vector2i(2 * pr + 1, 2 * pr + 1))
+		var cand := []
+		for ky in range(area.position.y >> ChunkData.SHIFT, ((area.end.y - 1) >> ChunkData.SHIFT) + 1):
+			for kx in range(area.position.x >> ChunkData.SHIFT, ((area.end.x - 1) >> ChunkData.SHIFT) + 1):
+				var ch: ChunkData = world.chunks.get(Vector2i(kx, ky))
+				if ch == null or not (ch.mat.has(Mat.WATER) or (ch.has_fluid_overlay() and ch.fluid.has(Mat.WATER))):
 					continue
-				for dy in ([rest, -rest] if rest != 0 else [0]):
-					var x := center.x + dx
-					var y: int = center.y + dy
-					if surf[dx + pr] > y:
+				var r := Rect2i(kx << ChunkData.SHIFT, ky << ChunkData.SHIFT, ChunkData.SIZE, ChunkData.SIZE).intersection(area)
+				var nx := clampi(center.x, r.position.x, r.end.x - 1)
+				var ny := clampi(center.y, r.position.y, r.end.y - 1)
+				cand.append([absi(nx - center.x) + absi(ny - center.y), r])
+		cand.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+		for e in cand:
+			if int(e[0]) >= best_d:
+				break
+			var r: Rect2i = e[1]
+			for y in range(r.position.y, r.end.y):
+				for x in range(r.position.x, r.end.x):
+					var d := absi(x - center.x) + absi(y - center.y)
+					if d >= best_d or surf[x - center.x + pr] > y:
 						continue # озёра на поверхности не откачиваем
 					if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
-						if d < best_d:
-							best_d = d
-							best = Vector2i(x, y)
+						best_d = d
+						best = Vector2i(x, y)
 		if best == null:
 			_pump_dry[p.id] = colony.game_time + PUMP_DRY_WAIT
 		if best != null:

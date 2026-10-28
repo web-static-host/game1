@@ -15,6 +15,9 @@ const START_INVENTORY := {}
 ## Срубленное (не под стройку) дерево с такой вероятностью даёт поросль — лес восстанавливается.
 const STUMP_REGROW := 0.6
 const SUBSTEP := 0.2
+## Шаг медленной части расчёта (см. update).
+const SLOW_STEP := 0.2
+var _slow_acc := 0.0
 const WALK_SPEED := 3.0
 const CLIMB_SPEED := 1.6
 const FALL_SPEED := 8.0
@@ -1597,12 +1600,11 @@ func _drills_tick(dt: float) -> void:
 		# Осмотр вокруг забоя (до 21×21 на клетку) — когда бур сдвинулся и раз в секунду, а не
 		# на каждом подшаге: два бура съедали четверть расчёта игры.
 		var hk := [p.rect.position, p.drill_dir, floori(game_time)]
-		if _hazard_seen.get(p.id) != hk:
+		if _hazard_seen.get(p.id) != hk and not solid.is_empty():
+			var box := Rect2i(solid[0], Vector2i.ONE)
 			for c in solid:
-				if _hazard_stop(p, c):
-					stop = true
-					break
-			if stop:
+				box = box.expand(c).merge(Rect2i(c, Vector2i.ONE))
+			if _hazard_stop_rect(p, box):
 				continue
 			_hazard_seen[p.id] = hk
 		if on_diesel:
@@ -1886,6 +1888,17 @@ const LIFT_WAIT := 6.0
 const CARGO_WAIT := 8.0
 ## Бездельник без дела ищет работу не реже, чем раз в столько секунд.
 const IDLE_RETRY_MAX := 12.0
+## Ждущий у своей выработки смотрит снова через столько; докопали клетку или поставили крепь —
+## сразу (_wake_waiting). Раньше — каждые полсекунды: десяток ждущих съедал треть расчёта.
+const WAIT_OWN_RETRY := 2.0
+
+
+func _wake_waiting(p: Project) -> void:
+	if p == null:
+		return
+	for o in units:
+		if o.waiting_own and o.state == Unit.State.IDLE and o.last_project == p.id:
+			o.retry = minf(o.retry, 0.0)
 ## После стольких неудачных поисков работы (около 10 с) бездельник идёт домой.
 const IDLE_HOME_AFTER := 4
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
@@ -2483,6 +2496,15 @@ func _rebuild_climb() -> void:
 			for c in p.cells():
 				_lift_cells[c] = p
 	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors:
+		var diff := []
+		for pair in [[lad, pathing.ladders], [site, pathing.sites], [fl, pathing.floors]]:
+			for c in pair[0]:
+				if not pair[1].has(c):
+					diff.append(c)
+			for c in pair[1]:
+				if not pair[0].has(c):
+					diff.append(c)
+		pathing.forget(diff)
 		pathing.ladders.clear()
 		pathing.ladders.merge(lad)
 		pathing.sites.clear()
@@ -2829,6 +2851,7 @@ func _pay_support(p: Project, i: int) -> bool:
 
 
 func _finish_support(p: Project) -> void:
+	_wake_waiting(p)
 	p.supported.append(p.support_slice)
 	p.support_slice = -1
 	p.support_paid = false
@@ -3711,6 +3734,7 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 # --- Копка -----------------------------------------------------------------------
 
 func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
+	_wake_waiting(p)
 	var m := world.get_mat(c.x, c.y)
 	dig_progress.erase(c)
 	world.set_dug(c.x, c.y)
@@ -4474,10 +4498,19 @@ func update(dt: float) -> void:
 			if sig != _climb_sig:
 				_climb_sig = sig
 				_rebuild_climb()
-		for p in projects:
-			if not p.paused:
-				_try_pay(p)
-		_tick_exposure(step)
+		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
+		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
+		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
+		# Ходьба и работа гавриков — на каждом подшаге (плавно).
+		_slow_acc += step
+		var slow := _slow_acc >= SLOW_STEP - 0.0001
+		var sdt := _slow_acc
+		if slow:
+			_slow_acc = 0.0
+			for p in projects:
+				if not p.paused:
+					_try_pay(p)
+			_tick_exposure(sdt)
 		# Износ — медленный: считаем раз в секунду игры (обход всех построек дорогой).
 		_wear_acc += step
 		if _wear_acc >= 1.0:
@@ -4491,11 +4524,12 @@ func update(dt: float) -> void:
 			_power_tick(_power_acc)
 			_power_acc = 0.0
 		_lifts_tick(step)
-		_drills_tick(step)
-		_oil_tick(step)
-		_plant_tick(step)
-		_season_tick()
-		_life_tick(step, false)
+		if slow:
+			_drills_tick(sdt)
+			_oil_tick(sdt)
+			_plant_tick(sdt)
+			_season_tick()
+			_life_tick(sdt, false)
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)
@@ -4508,10 +4542,13 @@ func update(dt: float) -> void:
 		explore()
 		_priority_tick()
 		_access_t += 1
+		# Проверки дорогие (обходы от многих гавриков) — в разные секунды, чтобы не складывались
+		# в один долгий кадр.
+		if _access_t == 2:
+			_check_sources()
 		if _access_t >= 5:
 			_access_t = 0
 			_check_access()
-			_check_sources()
 			_check_under_drills()
 			_settle_drops()
 		# Воду откачали — затопленная стройка продолжается сама.
@@ -4573,7 +4610,7 @@ func _update_unit(u: Unit, dt: float) -> void:
 					# Новая стройка или приказ будят сразу (wake_idle); сама собой работа
 					# появляется реже — долгие бездельники ищут раз в IDLE_RETRY_MAX с (поиск
 					# пути дорогой: два десятка бездельников съедали половину расчёта игры).
-					u.retry = 0.5 if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, IDLE_RETRY_MAX)
+					u.retry = WAIT_OWN_RETRY if u.waiting_own else minf(1.5 + 0.75 * u.idle_fails, IDLE_RETRY_MAX)
 					# Давно без дела — идёт отдыхать домой, в свою спальню (раньше стоял толпой,
 					# где кончил работу: у склада, в дегазации).
 					var here := project_at(u.cell())
@@ -6064,17 +6101,23 @@ const WATER_WARN_RADIUS := 2
 
 
 func _hazard_stop(p: Project, c: Vector2i) -> bool:
+	return _hazard_stop_rect(p, Rect2i(c, Vector2i.ONE))
+
+
+## То же для нескольких клеток сразу (забой бура): один обход общей области, а не по
+## квадрату на клетку. Сначала порода (дёшево), «вскрыто ли» — только у опасной.
+func _hazard_stop_rect(p: Project, cells: Rect2i) -> bool:
 	var r := 2 + 2 * geology_level()
-	for dy in range(-r, r + 1):
-		for dx in range(-r, r + 1):
-			var n := c + Vector2i(dx, dy)
-			# Уже вскрытое — не тревога; видимое, но ещё в толще породы — тревога.
-			if world.is_dug(n.x, n.y):
-				continue
+	var area := cells.grow(r)
+	var last := cells.end - Vector2i.ONE
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
 			var kind := ""
-			match world.get_mat(n.x, n.y):
+			match world.get_mat(x, y):
 				Mat.WATER:
-					if maxi(absi(dx), absi(dy)) <= WATER_WARN_RADIUS:
+					var dx := maxi(maxi(cells.position.x - x, x - last.x), 0)
+					var dy := maxi(maxi(cells.position.y - y, y - last.y), 0)
+					if maxi(dx, dy) <= WATER_WARN_RADIUS:
 						kind = "water"
 				Mat.MAGMA:
 					kind = "magma"
@@ -6082,9 +6125,12 @@ func _hazard_stop(p: Project, c: Vector2i) -> bool:
 					# Дегазация рядом — газ из вскрытого кармана она уберёт; в противогазах газ не
 					# страшен — геолог не останавливает. Машине (бур, бур-лифт) газ безразличен:
 					# искру даёт кирка.
-					if not degas_covers(c) and not research.has("gas_masks") and not is_machine(p):
+					if not degas_covers(cells.position) and not research.has("gas_masks") and not is_machine(p):
 						kind = "gas"
 			if kind.is_empty() or p.hazard_ack.has(kind):
+				continue
+			# Уже вскрытое — не тревога; видимое, но ещё в толще породы — тревога.
+			if world.is_dug(x, y):
 				continue
 			p.paused = true
 			p.hazard_pending = kind
@@ -6781,10 +6827,11 @@ func _try_logistics(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	for p in projects:
 		if _is_supply(p) and not p.paused and _try_supply(u, p, parents, dist):
 			return true
-	# Без склада и амбара добытое не копят — носить некуда.
+	# Без склада и амбара добытое не копят — носить некуда. Один проход по кучам на все склады
+	# (ближайший подходящий выбирает _store_target): раньше — проход на каждый склад, а куч сотни.
 	for room in store_rooms():
-		if not room.paused and _try_cleanup(u, parents, dist, room):
-			return true
+		if not room.paused:
+			return _try_cleanup(u, parents, dist)
 	return false
 
 

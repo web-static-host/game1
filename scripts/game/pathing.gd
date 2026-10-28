@@ -42,7 +42,7 @@ var _pass_memo := {}
 var _nbr_memo := {}
 var _memo_age := 0.0
 const CACHE_TIME := 4.0
-const MEMO_TIME := 20.0
+const MEMO_TIME := 300.0
 
 
 func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
@@ -181,9 +181,11 @@ func sync() -> void:
 	_take_changes()
 	var key := [world.revision, interior.size(), room_cells.size(), deck.size(), climb_rev]
 	if key != _cache_key:
-		# Изменилась только порода (копают) — проверки клеток уже сброшены рядом с ней,
-		# обходы — заново. Остальное (комнаты, лестницы) — сбрасываем всё.
-		if key.slice(1) == _cache_key.slice(1):
+		# Изменилась только порода (копают) или лестницы и леса — проверки клеток уже сброшены
+		# рядом с изменёнными (forget), обходы — заново. Комнаты и постройки — сбрасываем всё.
+		# (Раньше лестницы тоже сбрасывали всё: леса строек меняются каждые пару секунд, и первый
+		# обход после этого пересчитывал соседей всей колонии — кадр до 150 мс.)
+		if _cache_key.size() == key.size() and key.slice(1, 4) == _cache_key.slice(1, 4):
 			_cache.clear()
 		else:
 			clear_cache()
@@ -214,15 +216,30 @@ func _take_changes() -> void:
 		_nbr_memo.clear()
 	else:
 		for c in world.changed:
-			for dy in [-1, 0, 1]:
-				var n := c + Vector2i(0, dy)
-				_node_memo.erase(n)
-				_pass_memo.erase(n)
-			if not _nbr_memo.is_empty():
-				for dy in range(-3, 4):
-					for dx in range(-2, 3):
-						_nbr_memo.erase(c + Vector2i(dx, dy))
+			_forget_cell(c)
 	world.changed.clear()
+
+
+## Лестницы, леса или настил поменялись в этих клетках: проверки рядом с ними забываем.
+func forget(cells: Array) -> void:
+	if cells.size() >= 4096:
+		_node_memo.clear()
+		_pass_memo.clear()
+		_nbr_memo.clear()
+		return
+	for c in cells:
+		_forget_cell(c)
+
+
+func _forget_cell(c: Vector2i) -> void:
+	for dy in [-1, 0, 1]:
+		var n := c + Vector2i(0, dy)
+		_node_memo.erase(n)
+		_pass_memo.erase(n)
+	if not _nbr_memo.is_empty():
+		for dy in range(-3, 4):
+			for dx in range(-2, 3):
+				_nbr_memo.erase(c + Vector2i(dx, dy))
 
 
 func clear_cache() -> void:

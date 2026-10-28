@@ -31,6 +31,8 @@ var _sky: ColorRect
 var _sky_ground := NAN
 var _night: CanvasModulate
 var _speed_idx := 0
+## Средняя цена секунды игры, мс (см. _process).
+var _sim_cost := 0.0
 var _autosave := 0.0
 var _status_timer := 0.0
 var _home := Vector2i.ZERO
@@ -223,10 +225,12 @@ func _process(delta: float) -> void:
 	universe.update(step)
 	if step > 0.0:
 		var ms := (Time.get_ticks_usec() - t0) / 1000.0
-		if ms > budget:
-			_step_cap = maxf(dt, step * budget / ms)
-		elif ms < budget * 0.7:
-			_step_cap = minf(maxf(_step_cap, step) * 1.15, 2.0)
+		# Шаг — по средней цене секунды игры, а не по одному кадру: редкий долгий кадр (проверка
+		# доступа, первый обход после стройки) раньше сбрасывал ускорение до ×1, и оно секунду
+		# ползло обратно — на большой колонии ×20 так и не включалось.
+		var per := ms / step
+		_sim_cost = per if _sim_cost <= 0.0 else lerpf(_sim_cost, per, 0.15)
+		_step_cap = clampf(budget / _sim_cost, dt, 2.0)
 	_clamp_camera()
 	if _shake > 0.0:
 		_shake -= delta
