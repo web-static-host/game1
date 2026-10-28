@@ -186,12 +186,12 @@ func _build_scene() -> void:
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.export_pressed.connect(_export_save)
-	hud.save_pressed.connect(func() -> void:
+	hud.save_requested.connect(func(sid: String, name: String) -> void:
 		if _world_id.is_empty():
 			_save()
 			hud.log_event("Игра сохранена", "good")
 			return
-		hud.log_event("Сохранено: %s" % _save(true), "good"))
+		hud.log_event("Сохранено: %s" % _save(true, sid, name), "good"))
 	hud.load_requested.connect(_load_save)
 	hud.exit_requested.connect(_exit_to_menu)
 	hud.science_pressed.connect(_show_science)
@@ -306,8 +306,9 @@ func _load_save(sid: String) -> void:
 	get_tree().reload_current_scene()
 
 
-## Сохранить: в автосохранение мира или (manual) в новое сохранение игрока.
-func _save(manual := false) -> String:
+## Сохранить: в автосохранение мира или (manual) в сохранение игрока: в слот sid (пусто —
+## новый) под названием name (пусто — «Сохранение N» или прежнее имя слота).
+func _save(manual := false, sid := "", name := "") -> String:
 	if _restarting:
 		return ""
 	_cameras[_planet] = world_view.camera_cell()
@@ -327,9 +328,11 @@ func _save(manual := false) -> String:
 		"depth": maxi(0, earth_colony.deepest_y - _home.y)}
 	if manual:
 		var ns := Worlds.new_save_id(_world_id)
-		info["name"] = ns[1]
+		if not sid.is_empty():
+			ns[0] = sid
+		info["name"] = name if not name.is_empty() else ns[1]
 		Worlds.write_save(_world_id, ns[0], data, info)
-		return ns[1]
+		return info["name"]
 	info["name"] = "Автосохранение"
 	Worlds.write_save(_world_id, Worlds.AUTO, data, info)
 	return info["name"]

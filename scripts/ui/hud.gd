@@ -18,7 +18,8 @@ signal build_opened
 signal speed_selected(index: int)
 signal science_pressed
 signal people_pressed
-signal save_pressed
+## Сохранить: sid — слот для перезаписи (пусто — новый), name — название (пусто — как было).
+signal save_requested(sid: String, name: String)
 ## Выгрузить сохранение файлом в «Загрузки» (прислать разработчику).
 signal export_pressed
 signal load_requested(sid: String)
@@ -1859,9 +1860,7 @@ func _build_menu(center: CenterContainer) -> void:
 	var resume := _menu_button(v, "Продолжить")
 	resume.pressed.connect(func() -> void: _menu.visible = false)
 	var save := _menu_button(v, "Сохранить")
-	save.pressed.connect(func() -> void:
-		save_pressed.emit()
-		_menu.visible = false)
+	save.pressed.connect(_open_save)
 	_menu_load = _menu_button(v, "Загрузить")
 	_menu_load.pressed.connect(_open_load)
 	var settings := _menu_button(v, "Настройки")
@@ -1916,6 +1915,44 @@ func _open_sub(title: String, body: Control, buttons: Array) -> void:
 func _back_to_menu() -> void:
 	_sub.visible = false
 	_menu.visible = true
+
+
+## «Сохранить»: название и новый слот или перезапись своего (как в других играх).
+func _open_save() -> void:
+	if world_id.is_empty():
+		_menu.visible = false
+		save_requested.emit("", "")
+		return
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 10)
+	body.add_child(_label("Название", 18, MUTED))
+	var edit := LineEdit.new()
+	edit.text = Worlds.new_save_id(world_id)[1]
+	edit.max_length = 40
+	edit.select_all_on_focus = true
+	edit.custom_minimum_size = Vector2(0, 58)
+	edit.add_theme_font_size_override("font_size", 22)
+	body.add_child(edit)
+	var fresh := _menu_button(body, "Новое сохранение")
+	fresh.add_theme_stylebox_override("normal", btn_box(GREEN))
+	var done := func(sid: String, name: String) -> void:
+		_sub.visible = false
+		edit.release_focus()
+		save_requested.emit(sid, name)
+	fresh.pressed.connect(func() -> void: done.call("", edit.text.strip_edges()))
+	var hint := _label("Или перезаписать своё (название — из поля, если его меняли):", 16, MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(560, 0)
+	body.add_child(hint)
+	var sv := SavesView.new()
+	sv.save_mode = true
+	sv.show_world(world_id)
+	var start_name := edit.text
+	sv.slot_chosen.connect(func(sid: String, old_name: String) -> void:
+		var typed := edit.text.strip_edges()
+		done.call(sid, typed if not typed.is_empty() and typed != start_name else old_name))
+	body.add_child(sv)
+	_open_sub("Сохранить", body, [["Назад", _back_to_menu]])
 
 
 func _open_load() -> void:
