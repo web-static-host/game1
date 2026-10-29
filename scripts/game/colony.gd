@@ -662,7 +662,11 @@ var _far_at := -100000
 func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionary) -> bool:
 	if _near_rect(r, dist, true) != null:
 		return true
-	if not Pathing.truncated(dist):
+	# Обход мог не дойти, если упёрся в предел клеток или в предел по горизонтали
+	# (Pathing.MAX_RADIUS): стройку дальше 140 м раньше никто не строил — и молча, ведь общая
+	# карта достижимости до неё доходит и «Нет доступа» не показывалось.
+	if not Pathing.truncated(dist) and r.position.x - 1 >= start.x - Pathing.MAX_RADIUS \
+			and r.end.x + 1 <= start.x + Pathing.MAX_RADIUS:
 		return false
 	var key := "%d,%d,%d,%d" % [r.position.x, r.position.y, r.size.x, r.size.y]
 	if game_time - float(_far_fail.get(key, -INF)) < FAR_RETRY:
@@ -4580,6 +4584,15 @@ func explore() -> void:
 		explored_max = maxi(explored_max, roundi(u.pos.x) + EXPLORE_RADIUS)
 		deepest_y = maxi(deepest_y, roundi(u.pos.y))
 		highest_y = mini(highest_y, roundi(u.pos.y))
+	# Бур и геоскважина тоже разведывают: туман по сторонам отступает и за ними (раньше бур
+	# уходил в сторону, а тьма стояла там, куда ещё не дошёл ни один гаврик).
+	for p in projects:
+		if p.phase == Project.Phase.DONE and (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE):
+			var r := p.rect
+			if p.kind == Project.Kind.PROBE and p.probe_done > 0:
+				r = r.merge(Rect2i(p.rect.get_center() + p.drill_dir * p.probe_done, Vector2i.ONE))
+			explored_min = mini(explored_min, r.position.x - EXPLORE_RADIUS)
+			explored_max = maxi(explored_max, r.end.x - 1 + EXPLORE_RADIUS)
 
 
 func is_explored(x: int) -> bool:
