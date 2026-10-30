@@ -19,6 +19,8 @@ var pending_mats := {}
 var pending_fluids := {}
 ## Чанки, которые нужно перерисовать: Vector2i -> true
 var dirty := {}
+## Четверти чанков (по 16×16 клеток), которые нужно перерисовать: Vector2i(x >> 4, y >> 4) -> true
+var dirty_parts := {}
 ## Собранные объекты поверхности: x -> true
 var removed_features := {}
 ## Объекты, помеченные игроком на сбор: x -> true
@@ -145,19 +147,20 @@ func _touch(x: int, y: int) -> void:
 	touches += 1
 	if changed.size() < 4096:
 		changed.append(Vector2i(x, y))
-	var key := chunk_of(x, y)
-	dirty[key] = true
-	# Края клетки рисуются с учётом соседей — соседний чанк тоже обновляем.
-	var lx := x & MASK
-	var ly := y & MASK
+	# Перерисовать четверть куска (16×16), где клетка; края клетки рисуются с учётом соседей —
+	# соседнюю четверть тоже.
+	var key := Vector2i(x >> 4, y >> 4)
+	dirty_parts[key] = true
+	var lx := x & 15
+	var ly := y & 15
 	if lx == 0:
-		dirty[key + Vector2i(-1, 0)] = true
-	elif lx == MASK:
-		dirty[key + Vector2i(1, 0)] = true
+		dirty_parts[key + Vector2i(-1, 0)] = true
+	elif lx == 15:
+		dirty_parts[key + Vector2i(1, 0)] = true
 	if ly == 0:
-		dirty[key + Vector2i(0, -1)] = true
-	elif ly == MASK:
-		dirty[key + Vector2i(0, 1)] = true
+		dirty_parts[key + Vector2i(0, -1)] = true
+	elif ly == 15:
+		dirty_parts[key + Vector2i(0, 1)] = true
 
 
 func feature_at(x: int) -> int:

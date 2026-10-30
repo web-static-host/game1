@@ -31,7 +31,8 @@ static func texture(key: String) -> Texture2D:
 
 
 ## Значок ресурса key с центром c и радиусом r: картинка, а если её нет — рисунок кодом.
-static func draw(ci: CanvasItem, key: String, c: Vector2, r: float) -> void:
+## ci — узел (CanvasItem) или сборщик сеток (MeshBatch): нужны только его draw_*.
+static func draw(ci: Object, key: String, c: Vector2, r: float) -> void:
 	var t := texture(key)
 	if t != null:
 		var h := Vector2(r, r) * 1.12

@@ -31,29 +31,96 @@ var selected_project := 0
 var _signs: Node2D
 
 
+## Слой рисуется в два узла. Этот (live = false) — неподвижное: стены, мебель, крепь, стройки,
+## кучи, подписи; перерисовывается раз в STATIC_REFRESH с или когда камера ушла за нарисованное
+## (раньше — всё каждый кадр, это была большая часть кадра). Дочерний (live = true) — то, что
+## движется: лифты, буры, геоскважины, насосы, вентиляторы, огонь в печах, корабль, «?» у пустой
+## комнаты, трещины копки, падающая порода и лампы, — каждый кадр, но их немного.
+var live := false
+var _live: StructureLayer
+## Куда рисуем: сам узел (живой слой) или сборщик сеток (неподвижный слой).
+var _c: Variant = self
+var _batch := MeshBatch.new()
+var _meshes: Array = []
+const STATIC_REFRESH := 0.25
+var _static_t := 0.0
+var _drawn_vis := Rect2i()
+var _drawn_sig := []
+
+
 func _ready() -> void:
+	if live:
+		return
+	_live = StructureLayer.new()
+	_live.live = true
+	_live.view = view
+	_live.colony = colony
+	add_child(_live)
 	_signs = Node2D.new()
 	_signs.z_index = 11
 	_signs.draw.connect(_draw_signs)
 	add_child(_signs)
 
 
-func _process(_delta: float) -> void:
-	queue_redraw()
+func _process(delta: float) -> void:
+	if live:
+		var parent := get_parent() as StructureLayer
+		colony = parent.colony
+		selected_project = parent.selected_project
+		queue_redraw()
+		return
+	if _live != null:
+		_live.colony = colony
+		_live.view = view
+	_static_t -= delta
+	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin]
+	var vis := _vis_rect().grow(-VIS_MARGIN + 2)
+	if _static_t <= 0.0 or sig != _drawn_sig or not _drawn_vis.encloses(vis):
+		_static_t = STATIC_REFRESH
+		_drawn_sig = sig
+		queue_redraw()
 	if _signs != null:
 		_signs.queue_redraw()
+
+
+## Постройка, у которой что-то движется, — рисуется живым слоем каждый кадр.
+static func animated(p: Project) -> bool:
+	match p.kind:
+		Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE:
+			return p.phase == Project.Phase.DONE
+		Project.Kind.ROOM:
+			if p.phase != Project.Phase.DONE:
+				return false
+			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE]
+	return false
 
 
 func _draw_signs() -> void:
 	if colony == null:
 		return
+	_vis = _vis_rect()
 	for p in colony.projects:
+		if not p.rect.intersects(_vis):
+			continue
 		if p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
 			_draw_wear_sign(p)
 		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE and not p.paused and colony.assigned_to(p).is_empty():
 			_draw_no_worker_sign(p)
 		if colony.home_freezing(p):
 			_draw_frost_sign(p)
+
+
+## Что видно на экране (в клетках, с запасом на подписи и леса): рисуем только это — раньше
+## каждый кадр рисовались все постройки и все кучи на карте (десятки тысяч команд).
+const VIS_MARGIN := 8
+var _vis := Rect2i()
+
+
+func _vis_rect() -> Rect2i:
+	var half := view.get_viewport_rect().size * 0.5 / view.camera.zoom
+	var a := view.local_to_cell(view.camera.position - half)
+	var b := view.local_to_cell(view.camera.position + half)
+	return Rect2i(a, b - a + Vector2i.ONE).grow(VIS_MARGIN)
 
 
 func _rect_px(r: Rect2i) -> Rect2:
@@ -64,45 +131,74 @@ func _draw() -> void:
 	if colony == null:
 		return
 	var font := ThemeDB.fallback_font
-	_draw_stockpile(font)
+	_vis = _vis_rect()
+	if not live:
+		_drawn_vis = _vis
+	var shown: Array[Project] = []
 	for p in colony.projects:
+		if p.rect.intersects(_vis) and animated(p) == live:
+			shown.append(p)
+	if live:
+		_c = self
+		_draw_live(shown)
+		return
+	_batch.clear()
+	_batch.strict = true
+	_c = _batch
+	_draw_static(shown, font)
+	_c = self
+	_meshes = _batch.build()
+	_batch.render(self, _meshes)
+
+
+func _draw_static(shown: Array[Project], font: Font) -> void:
+	_draw_stockpile(font)
+	for p in shown:
 		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			_draw_done(p)
-	for p in colony.projects:
+	for p in shown:
 		if p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD:
 			_draw_site(p, font)
-	# Бур — поверх хода, который сверлит.
-	for p in colony.projects:
-		if p.kind == Project.Kind.DRILL and p.phase == Project.Phase.DONE:
-			_draw_drill(p, _rect_px(p.rect), 1.0)
-		elif p.kind == Project.Kind.PROBE and p.phase == Project.Phase.DONE:
-			_draw_probe(p, _rect_px(p.rect), 1.0)
-	_draw_dig_progress()
 	_draw_drops(font)
 	_draw_gas()
 	for p in colony.projects:
-		_draw_supply(p, font)
+		if p.rect.intersects(_vis):
+			_draw_supply(p, font)
+	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
+	if preview.size != Vector2i.ZERO:
+		var r := _rect_px(preview)
+		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
+		_c.draw_rect(r, Color(col, 0.18))
+		_c.draw_rect(r, col, false, 3.0)
+		_label(font, r.position + Vector2(4, -8), preview_text, col)
+
+
+## Живой слой: движущиеся постройки, трещины копки, падающая порода, лампы на стройках.
+func _draw_live(shown: Array[Project]) -> void:
+	for p in shown:
+		if p.kind == Project.Kind.DRILL:
+			_draw_drill(p, _rect_px(p.rect), 1.0)
+		elif p.kind == Project.Kind.PROBE:
+			_draw_probe(p, _rect_px(p.rect), 1.0)
+		else:
+			_draw_done(p)
+	_draw_dig_progress()
 	# Падающая порода.
 	for f in colony.physics.fx:
 		var t := clampf(f[3] / Physics.FX_TIME, 0.0, 1.0)
 		var pos: Vector2 = (f[0] as Vector2).lerp(f[1], t * t)
 		var px := view.cell_to_local(Vector2i.ZERO) + pos * TILE
 		var col := ChunkView.rock_color(f[2], 0.5)
-		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col)
-		draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col.darkened(0.3), false, 2.0)
+		_c.draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col)
+		_c.draw_rect(Rect2(px + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), col.darkened(0.3), false, 2.0)
 	# Лампы там, где сейчас идёт работа на стройке или в шахте.
 	for c in colony.work_lamps:
+		if not _vis.has_point(c):
+			continue
 		var at := view.cell_to_local(c) + Vector2(TILE * 0.5, 2)
 		_glow(at + Vector2(0, 8), TILE * 2.2, Color(1.0, 0.86, 0.45, 0.3))
-		draw_line(at + Vector2(-6, -2), at + Vector2(6, -2), Color(0.3, 0.3, 0.32), 2.0)
-		draw_circle(at + Vector2(0, 3), 4, LAMP)
-	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
-	if preview.size != Vector2i.ZERO:
-		var r := _rect_px(preview)
-		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
-		draw_rect(r, Color(col, 0.18))
-		draw_rect(r, col, false, 3.0)
-		_label(font, r.position + Vector2(4, -8), preview_text, col)
+		_c.draw_line(at + Vector2(-6, -2), at + Vector2(6, -2), Color(0.3, 0.3, 0.32), 2.0)
+		_c.draw_circle(at + Vector2(0, 3), 4, LAMP)
 
 
 ## Цвета по материалу стен: [задняя стена, рама, линии кладки].
@@ -135,8 +231,8 @@ func _draw_done(p: Project) -> void:
 			else:
 				_draw_furniture(p, r, RoomType.base_type(p.equip_target), 0.25 + 0.6 * t)
 			var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
-			draw_rect(bar, BAR_BG)
-			draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
+			_c.draw_rect(bar, BAR_BG)
+			_c.draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
 			_dashed_rect(r, PAUSED if p.paused else BUILD_EDGE, 2.5)
 		else:
 			_draw_furniture(p, r, p.purpose, 1.0)
@@ -151,12 +247,12 @@ func _draw_done(p: Project) -> void:
 	if p.repairing:
 		var t := clampf(p.repair_done / maxf(1.0, p.repair_work), 0.0, 1.0) if p.repair_paid else 0.0
 		var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
-		draw_rect(bar, BAR_BG)
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), Color(0.4, 0.7, 1.0))
+		_c.draw_rect(bar, BAR_BG)
+		_c.draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), Color(0.4, 0.7, 1.0))
 		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
 	# Бур-лифт выделяется целиком: и бур, и его лифт.
 	if p.id == selected_project or (p.link_id != 0 and p.link_id == selected_project):
-		draw_rect(r.grow(2), Color.WHITE, false, 2.0)
+		_c.draw_rect(r.grow(2), Color.WHITE, false, 2.0)
 
 
 ## Корабль: койки в два яруса, пульт, иллюминаторы; снаружи — нос, стабилизаторы, опоры.
@@ -167,22 +263,22 @@ const HULL_DARK := Color(0.45, 0.48, 0.55)
 func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
 	# Нос справа, стабилизаторы слева, опоры снизу — вокруг комнаты.
 	var mid := r.get_center().y
-	draw_colored_polygon(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+	_c.draw_colored_polygon(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
 		Vector2(r.end.x, r.end.y - 4)]), Color(HULL, alpha))
-	draw_polyline(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
+	_c.draw_polyline(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
 		Vector2(r.end.x, r.end.y - 4)]), Color(HULL_DARK, alpha), 3.0)
 	for sgn in [-1.0, 1.0]:
 		var base: Vector2 = Vector2(r.position.x, mid + sgn * r.size.y * 0.35)
-		draw_colored_polygon(PackedVector2Array([base, base + Vector2(-TILE * 1.4, sgn * TILE * 1.2),
+		_c.draw_colored_polygon(PackedVector2Array([base, base + Vector2(-TILE * 1.4, sgn * TILE * 1.2),
 			base + Vector2(TILE * 0.8, 0)]), Color(0.85, 0.35, 0.3, alpha))
 	for k in 3:
 		var lx := r.position.x + r.size.x * (0.2 + 0.3 * k)
-		draw_line(Vector2(lx, r.end.y), Vector2(lx - 6, r.end.y + 10), Color(HULL_DARK, alpha), 3.0)
+		_c.draw_line(Vector2(lx, r.end.y), Vector2(lx - 6, r.end.y + 10), Color(HULL_DARK, alpha), 3.0)
 	# Иллюминаторы под потолком.
 	for k in 4:
 		var wc := Vector2(r.position.x + r.size.x * (0.15 + 0.23 * k), r.position.y + 14)
-		draw_circle(wc, 7, Color(HULL_DARK, alpha))
-		draw_circle(wc, 5, Color(0.55, 0.8, 1.0, alpha))
+		_c.draw_circle(wc, 7, Color(HULL_DARK, alpha))
+		_c.draw_circle(wc, 5, Color(0.55, 0.8, 1.0, alpha))
 	# Койки в два яруса вдоль стены.
 	var n := 5
 	for i in n:
@@ -197,7 +293,7 @@ func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
 	_rbox(Rect2(cx, r.end.y - 34, 44, 28), 5, Color(0.3, 0.33, 0.4, alpha), Color(0.15, 0.16, 0.2, alpha), 2)
 	var blink := int(Time.get_ticks_msec() / 500) % 3
 	for k in 3:
-		draw_circle(Vector2(cx + 9 + k * 13, r.end.y - 25), 3.5,
+		_c.draw_circle(Vector2(cx + 9 + k * 13, r.end.y - 25), 3.5,
 			Color(0.4, 1.0, 0.5, alpha) if k == blink else Color(0.25, 0.45, 0.3, alpha))
 
 
@@ -206,10 +302,10 @@ func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 	_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
 	var tx := r.end.x - TILE * 0.8
 	for y in range(int(r.position.y - TILE * 12), int(r.end.y - 16), 18):
-		draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
-		draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
-	draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
-	draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+		_c.draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+		_c.draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+	_c.draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	_c.draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
 	var t := 0.0
 	if not p.rocket.is_empty():
 		t = 1.0
@@ -228,16 +324,16 @@ func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 	_rbox(body, 6, Color(HULL, alpha * 0.18), Color(HULL_DARK, alpha * 0.4), 1)
 	_rbox(built, 6, Color(HULL, a), Color(HULL_DARK, a), 2)
 	if t >= 0.999:
-		draw_colored_polygon(PackedVector2Array([Vector2(body.position.x, body.position.y), Vector2(cx, top),
+		_c.draw_colored_polygon(PackedVector2Array([Vector2(body.position.x, body.position.y), Vector2(cx, top),
 			Vector2(body.end.x, body.position.y)]), Color(0.85, 0.3, 0.28, alpha) if not nuclear else Color(0.3, 0.75, 0.4, alpha))
 		for sgn in [-1.0, 1.0]:
 			var fx: float = cx + sgn * w * 0.5
-			draw_colored_polygon(PackedVector2Array([Vector2(fx, body.end.y - TILE * 2.5), Vector2(fx + sgn * TILE, body.end.y),
+			_c.draw_colored_polygon(PackedVector2Array([Vector2(fx, body.end.y - TILE * 2.5), Vector2(fx + sgn * TILE, body.end.y),
 				Vector2(fx, body.end.y)]), Color(0.85, 0.3, 0.28, alpha))
-		draw_circle(Vector2(cx, body.position.y + TILE * 2), 9, Color(HULL_DARK, alpha))
-		draw_circle(Vector2(cx, body.position.y + TILE * 2), 6.5, Color(0.55, 0.8, 1.0, alpha))
+		_c.draw_circle(Vector2(cx, body.position.y + TILE * 2), 9, Color(HULL_DARK, alpha))
+		_c.draw_circle(Vector2(cx, body.position.y + TILE * 2), 6.5, Color(0.55, 0.8, 1.0, alpha))
 		if nuclear:
-			draw_circle(Vector2(cx, body.end.y - TILE * 3), 8, Color(1.0, 0.85, 0.2, alpha))
+			_c.draw_circle(Vector2(cx, body.end.y - TILE * 3), 8, Color(1.0, 0.85, 0.2, alpha))
 
 
 ## Бур — машина 3×3: корпус с мотором сзади, сверло спереди (куда едет; стоит — вниз).
@@ -262,23 +358,23 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 	for k in 3:
 		var off := (k - 1) * 7.0
 		if dir == Vector2i.DOWN:
-			draw_line(mc + Vector2(-12, off), mc + Vector2(12, off), Color(0.45, 0.3, 0.1, alpha), 2.0)
+			_c.draw_line(mc + Vector2(-12, off), mc + Vector2(12, off), Color(0.45, 0.3, 0.1, alpha), 2.0)
 		else:
-			draw_line(mc + Vector2(off, -12), mc + Vector2(off, 12), Color(0.45, 0.3, 0.1, alpha), 2.0)
+			_c.draw_line(mc + Vector2(off, -12), mc + Vector2(off, 12), Color(0.45, 0.3, 0.1, alpha), 2.0)
 	var lamp_on := colony.powered() or p.fuel > 0.0
-	draw_circle(body.position + Vector2(9, 9), 4, Color(LAMP, alpha) if lamp_on else Color(0.35, 0.35, 0.38, alpha))
+	_c.draw_circle(body.position + Vector2(9, 9), 4, Color(LAMP, alpha) if lamp_on else Color(0.35, 0.35, 0.38, alpha))
 	var d := Vector2(dir)
 	var side := Vector2(-d.y, d.x)
 	var base_c := face.get_center() - d * TILE * 0.5
 	var tip := face.get_center() + d * TILE * 0.45
 	var half := side * TILE * 1.3
-	draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68, alpha))
+	_c.draw_colored_polygon(PackedVector2Array([base_c - half, base_c + half, tip]), Color(0.6, 0.62, 0.68, alpha))
 	var spin := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and lamp_on else 0.0
 	for k in 3:
 		var t := fmod(spin + k / 3.0, 1.0)
 		var m := base_c.lerp(tip, t)
 		var w := half * (1.0 - t)
-		draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
+		_c.draw_line(m - w, m + w, Color(0.3, 0.31, 0.35, alpha), 2.0)
 
 
 ## Геоскважина 2×2: вышка-тренога с мотором, из середины — штанга зонда (пока идёт,
@@ -290,25 +386,25 @@ func _draw_probe(p: Project, r: Rect2, alpha: float) -> void:
 	var top := Vector2(c.x, r.position.y + 4)
 	# Ноги вышки и перекладины.
 	for sx in [-1.0, 1.0]:
-		draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, dark, 5.0)
-		draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, steel, 3.0)
+		_c.draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, dark, 5.0)
+		_c.draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, steel, 3.0)
 	for k in [0.4, 0.7]:
 		var y: float = lerpf(top.y, r.end.y - 2, k)
 		var half: float = (r.size.x * 0.5 - 4) * k
-		draw_line(Vector2(c.x - half, y), Vector2(c.x + half, y), steel, 2.5)
+		_c.draw_line(Vector2(c.x - half, y), Vector2(c.x + half, y), steel, 2.5)
 	# Мотор и лампа (горит, когда есть энергия).
 	_rbox(Rect2(c.x - 9, r.end.y - 16, 18, 13), 4, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
-	draw_circle(top + Vector2(0, 2), 3.5, Color(LAMP, alpha) if colony.powered() else Color(0.35, 0.35, 0.38, alpha))
+	_c.draw_circle(top + Vector2(0, 2), 3.5, Color(LAMP, alpha) if colony.powered() else Color(0.35, 0.35, 0.38, alpha))
 	if not colony.probing(p) or alpha < 1.0:
 		return
 	var d := Vector2(p.drill_dir)
 	var start := c + d * r.size.x * 0.5
 	var tip := start + d * TILE * p.probe_done
-	draw_line(start, tip, Color(0.2, 0.2, 0.24, 0.9), 5.0)
-	draw_line(start, tip, Color(0.75, 0.78, 0.84), 2.5)
+	_c.draw_line(start, tip, Color(0.2, 0.2, 0.24, 0.9), 5.0)
+	_c.draw_line(start, tip, Color(0.75, 0.78, 0.84), 2.5)
 	var a := Time.get_ticks_msec() * 0.012 if not p.paused and colony.powered() else 0.0
 	var side := Vector2(-d.y, d.x) * 5.0
-	draw_line(tip - side.rotated(a), tip + side.rotated(a), Color(0.9, 0.9, 0.95), 2.5)
+	_c.draw_line(tip - side.rotated(a), tip + side.rotated(a), Color(0.9, 0.9, 0.95), 2.5)
 
 
 ## Лифт: железные направляющие вдоль шахты, трос и кабина (у грузового — с ящиками).
@@ -321,18 +417,18 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 	var cab_col := Color(0.5, 0.56, 0.62) if p.cargo else LIFT_CAB
 	if p.lift_vertical():
 		for x in [r.position.x + 3, r.end.x - 3]:
-			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
-			draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
+			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
+			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
 		var y := r.end.y - TILE
 		if p.lift_pos != Project.LIFT_UNSET:
 			y = view.cell_to_local(Vector2i(0, 0)).y + p.lift_pos * TILE
 		# Кабина — на высоту человека (2 м) над полом клетки, где стоит.
 		var cab := Rect2(r.position.x + 5, y - TILE + 2, r.size.x - 10, TILE * 2 - 2)
-		draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, cab.position.y), Color(0.15, 0.15, 0.17), 2.0)
+		_c.draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, cab.position.y), Color(0.15, 0.15, 0.17), 2.0)
 		_draw_cabin(cab, cab_col, p)
 	else:
-		draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
-		draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
+		_c.draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
+		_c.draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
 		var x0 := r.position.x
 		if p.lift_pos != Project.LIFT_UNSET:
 			x0 = view.cell_to_local(Vector2i(0, 0)).x + p.lift_pos * TILE
@@ -349,7 +445,7 @@ func _draw_cabin(cab: Rect2, col: Color, p: Project) -> void:
 			var by := cab.end.y - 12 - (i / 2) * 11
 			_rbox(Rect2(bx, by, cab.size.x * 0.5 - 8, 10), 2, Color(0.65, 0.45, 0.25), Color(0.4, 0.27, 0.15), 1)
 	# Лампочка: горит, когда лифт под током.
-	draw_circle(Vector2(cab.get_center().x, cab.position.y + 5), 3.0,
+	_c.draw_circle(Vector2(cab.get_center().x, cab.position.y + 5), 3.0,
 		LAMP if colony.lift_powered(p) else Color(0.35, 0.35, 0.38))
 
 
@@ -363,23 +459,23 @@ func _draw_zone(p: Project) -> void:
 		var c := p.rect.get_center()
 		var col := Color(0.45, 0.75, 1.0) if p.purpose != RoomType.VENT else Color(0.6, 0.95, 1.0)
 		var zr := _rect_px(Rect2i(c - Vector2i(rad, rad), Vector2i(rad * 2 + 1, rad * 2 + 1)))
-		draw_rect(zr, Color(col, 0.13))
+		_c.draw_rect(zr, Color(col, 0.13))
 		_dashed_rect(zr, Color(col, 0.85), 3.0)
 		return
 	if p.purpose == RoomType.HEARTH or p.purpose in RoomType.GENERATORS:
 		var zone := RoomType.heat_zone(p, colony.research.has("insulation"))
 		var reach := _rect_px(p.rect.grow(zone.y))
 		var full := _rect_px(p.rect.grow(zone.x))
-		draw_rect(reach, Color(1.0, 0.6, 0.2, 0.09))
+		_c.draw_rect(reach, Color(1.0, 0.6, 0.2, 0.09))
 		_dashed_rect(reach, Color(1.0, 0.6, 0.2, 0.6), 2.5)
-		draw_rect(full, Color(1.0, 0.45, 0.15, 0.12))
+		_c.draw_rect(full, Color(1.0, 0.45, 0.15, 0.12))
 		_dashed_rect(full, Color(1.0, 0.5, 0.2, 0.9), 3.0)
 
 
 func _draw_room_shell(p: Project, r: Rect2) -> void:
 	var tex := room_texture(p.material, p.rect.size.x)
 	if tex != null:
-		draw_texture_rect(tex, r, false)
+		_c.draw_texture_rect(tex, r, false)
 	else:
 		_draw_room_walls(p, r)
 	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
@@ -392,13 +488,13 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 		var n := RoomType.blocks(p)
 		for i in n:
 			var lamp := Vector2(r.position.x + r.size.x * (i + 0.5) / n, r.position.y + 10)
-			draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
+			_c.draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
 			if p.lit:
 				_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
-				draw_circle(lamp + Vector2(0, 4), 5, LAMP)
-				draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+				_c.draw_circle(lamp + Vector2(0, 4), 5, LAMP)
+				_c.draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
 			else:
-				draw_circle(lamp + Vector2(0, 4), 5, Color(0.35, 0.35, 0.38))
+				_c.draw_circle(lamp + Vector2(0, 4), 5, Color(0.35, 0.35, 0.38))
 
 
 ## Готовая картинка комнаты (рендер из Blender, assets/rooms/) или null — тогда рисуем сами.
@@ -415,7 +511,7 @@ static func room_texture(material: String, w: int) -> Texture2D:
 func _draw_room_walls(p: Project, r: Rect2) -> void:
 	var c: Array = WALLS.get(p.material, WALLS["wood"])
 	var wall: Color = c[0]
-	draw_rect(r, wall)
+	_c.draw_rect(r, wall)
 	match p.material:
 		"wood":
 			# Доски — полосы чуть разного тона.
@@ -423,17 +519,17 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 			var i := 0
 			while y < r.end.y:
 				var h := minf(12.0, r.end.y - y)
-				draw_rect(Rect2(r.position.x, y, r.size.x, h), wall if i % 2 == 0 else c[2])
-				draw_line(Vector2(r.position.x, y + h - 1), Vector2(r.end.x, y + h - 1), Color(c[1], 0.35), 1.0)
+				_c.draw_rect(Rect2(r.position.x, y, r.size.x, h), wall if i % 2 == 0 else c[2])
+				_c.draw_line(Vector2(r.position.x, y + h - 1), Vector2(r.end.x, y + h - 1), Color(c[1], 0.35), 1.0)
 				y += 12
 				i += 1
 		"iron":
 			# Железные панели с заклёпками.
 			var x := r.position.x + 5
 			while x < r.end.x - 5:
-				draw_line(Vector2(x, r.position.y + 5), Vector2(x, r.end.y - 6), c[2], 2.0)
-				draw_circle(Vector2(x + 5, r.position.y + 12), 1.8, c[1])
-				draw_circle(Vector2(x + 5, r.end.y - 14), 1.8, c[1])
+				_c.draw_line(Vector2(x, r.position.y + 5), Vector2(x, r.end.y - 6), c[2], 2.0)
+				_c.draw_circle(Vector2(x + 5, r.position.y + 12), 1.8, c[1])
+				_c.draw_circle(Vector2(x + 5, r.end.y - 14), 1.8, c[1])
 				x += 24
 		"stone", "brick":
 			# Кладка блоками со смещением, у каждого блока светлый верх.
@@ -449,42 +545,37 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 					var bwid := minf(x + bw, r.end.x - 5) - bx
 					if bwid > 2:
 						var tone := WorldGen.hash01(int(x), int(y), p.id) * 0.08
-						draw_rect(Rect2(bx + 1, y + 1, bwid - 2, h - 2), wall.lightened(tone) if p.material == "stone" else wall.darkened(tone))
-						draw_line(Vector2(bx + 2, y + 2), Vector2(bx + bwid - 3, y + 2), Color(1, 1, 1, 0.22), 1.5)
+						_c.draw_rect(Rect2(bx + 1, y + 1, bwid - 2, h - 2), wall.lightened(tone) if p.material == "stone" else wall.darkened(tone))
+						_c.draw_line(Vector2(bx + 2, y + 2), Vector2(bx + bwid - 3, y + 2), Color(1, 1, 1, 0.22), 1.5)
 					x += bw
 				y += bh
 				row += 1
 			# Швы.
 			y = r.position.y + 5
 			while y < r.end.y - 6:
-				draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), Color(c[2], 0.8), 1.5)
+				_c.draw_line(Vector2(r.position.x + 5, y), Vector2(r.end.x - 5, y), Color(c[2], 0.8), 1.5)
 				y += bh
 	# Тень под потолком.
-	draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), Vector2(r.end.x, r.position.y + 16), Vector2(r.position.x, r.position.y + 16)]),
+	_c.draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), Vector2(r.end.x, r.position.y + 16), Vector2(r.position.x, r.position.y + 16)]),
 		PackedColorArray([Color(0, 0, 0, 0.3), Color(0, 0, 0, 0.3), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
 	# Пол — доски с бликом.
-	draw_rect(Rect2(r.position.x, r.end.y - 7, r.size.x, 7), ROOM_FLOOR)
-	draw_line(Vector2(r.position.x, r.end.y - 6), Vector2(r.end.x, r.end.y - 6), ROOM_FLOOR.lightened(0.25), 1.5)
+	_c.draw_rect(Rect2(r.position.x, r.end.y - 7, r.size.x, 7), ROOM_FLOOR)
+	_c.draw_line(Vector2(r.position.x, r.end.y - 6), Vector2(r.end.x, r.end.y - 6), ROOM_FLOOR.lightened(0.25), 1.5)
 	# Рама тоном стены, со скруглёнными углами.
-	var frame := StyleBoxFlat.new()
-	frame.draw_center = false
-	frame.border_color = c[1]
-	frame.set_border_width_all(5)
-	frame.set_corner_radius_all(6)
-	draw_style_box(frame, r)
+	_rbox(r, 6, Color(0, 0, 0, 0), c[1], 5)
 
 
 
 ## Полка у задней стены: доска с бликом сверху, тенью снизу и кронштейнами.
 func _shelf(x0: float, x1: float, y: float, alpha: float) -> void:
 	var wood := Color(BED_FRAME.lightened(0.1), alpha)
-	draw_rect(Rect2(x0, y + 3, x1 - x0, 4), Color(0, 0, 0, 0.18 * alpha))
+	_c.draw_rect(Rect2(x0, y + 3, x1 - x0, 4), Color(0, 0, 0, 0.18 * alpha))
 	_rbox(Rect2(x0, y - 1, x1 - x0, 4), 1, wood, Color(BED_FRAME.darkened(0.35), alpha), 1)
-	draw_line(Vector2(x0 + 2, y - 0.5), Vector2(x1 - 2, y - 0.5), Color(1, 1, 1, 0.25 * alpha), 1.0)
+	_c.draw_line(Vector2(x0 + 2, y - 0.5), Vector2(x1 - 2, y - 0.5), Color(1, 1, 1, 0.25 * alpha), 1.0)
 	var n := maxi(2, int((x1 - x0) / (TILE * 2.0)) + 1)
 	for i in n:
 		var bx := lerpf(x0 + 6, x1 - 6, float(i) / (n - 1))
-		draw_colored_polygon(PackedVector2Array([Vector2(bx - 1.5, y + 3), Vector2(bx + 1.5, y + 3), Vector2(bx + 1.5, y + 9), Vector2(bx - 1.5, y + 5)]),
+		_c.draw_colored_polygon(PackedVector2Array([Vector2(bx - 1.5, y + 3), Vector2(bx + 1.5, y + 3), Vector2(bx + 1.5, y + 9), Vector2(bx - 1.5, y + 5)]),
 			Color(BED_FRAME.darkened(0.25), alpha))
 
 
@@ -495,19 +586,36 @@ func _glow(c: Vector2, rad: float, col: Color) -> void:
 	for i in n:
 		var a0 := TAU * i / n
 		var a1 := TAU * (i + 1) / n
-		draw_polygon(PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * rad, c + Vector2(cos(a1), sin(a1)) * rad]),
+		_c.draw_polygon(PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * rad, c + Vector2(cos(a1), sin(a1)) * rad]),
 			PackedColorArray([col, edge, edge]))
 
 
 ## Прямоугольник со скруглением (мебель, плашки).
 func _rbox(r: Rect2, rad: int, col: Color, border := Color(0, 0, 0, 0), bw := 0) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = col
-	sb.set_corner_radius_all(rad)
-	if bw > 0:
-		sb.border_color = border
-		sb.set_border_width_all(bw)
-	draw_style_box(sb, r)
+	# Многоугольником, а не StyleBoxFlat: без нового объекта на каждую плашку, и собирается в
+	# общую сетку слоя.
+	if col.a > 0.0:
+		_c.draw_colored_polygon(_round_poly(r, rad), col)
+	if bw > 0 and border.a > 0.0:
+		var pts := _round_poly(r.grow(-bw * 0.5), maxf(0.0, rad - bw * 0.5))
+		pts.append(pts[0])
+		_c.draw_polyline(pts, border, bw)
+
+
+## Скруглённый прямоугольник: по четыре отрезка на угол.
+static func _round_poly(r: Rect2, rad: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	rad = minf(rad, minf(r.size.x, r.size.y) * 0.5)
+	if rad <= 0.5:
+		return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
+	var cs := [Vector2(r.end.x - rad, r.position.y + rad), Vector2(r.end.x - rad, r.end.y - rad),
+		Vector2(r.position.x + rad, r.end.y - rad), Vector2(r.position.x + rad, r.position.y + rad)]
+	for k in 4:
+		var a0 := -PI * 0.5 + k * PI * 0.5
+		for j in 5:
+			var a := a0 + PI * 0.5 * j / 4.0
+			pts.append(cs[k] + Vector2(cos(a), sin(a)) * rad)
+	return pts
 
 
 ## Снаружи у стены комнаты (side −1 — слева, 1 — справа) на уровне пола не выйти.
@@ -523,11 +631,11 @@ func _draw_question(r: Rect2) -> void:
 	var fs := int(clampf(r.size.y * 0.75, 28.0, 72.0))
 	var c := r.get_center()
 	var pulse := 0.75 + 0.25 * sin(Time.get_ticks_msec() * 0.004)
-	draw_circle(c, fs * 0.55, Color(0.98, 0.72, 0.25, 0.35 * pulse))
+	_c.draw_circle(c, fs * 0.55, Color(0.98, 0.72, 0.25, 0.35 * pulse))
 	var w := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var p := c + Vector2(-w * 0.5, fs * 0.36)
-	draw_string_outline(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 8, Color(0.25, 0.15, 0.05, 0.9))
-	draw_string(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.85, 0.3))
+	_c.draw_string_outline(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 8, Color(0.25, 0.15, 0.05, 0.9))
+	_c.draw_string(font, p, "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.85, 0.3))
 
 
 ## Мебель-картинки (assets/furniture/<комната>/<предмет>.png, нарезка art_src/rooms/cut_sheets.py).
@@ -554,8 +662,8 @@ func _furn_at(t: Texture2D, cx: float, bottom: float, alpha: float, shadow := 0,
 	if shadow == 1:
 		_soft_ellipse(Vector2(cx, bottom - 1.0), sz.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
 	elif shadow == 2:
-		draw_texture_rect(t, Rect2(rect.position + Vector2(1.5, 2.5), rect.size), false, Color(0, 0, 0, 0.22 * alpha))
-	draw_texture_rect(t, rect, false, Color(1, 1, 1, alpha))
+		_c.draw_texture_rect(t, Rect2(rect.position + Vector2(1.5, 2.5), rect.size), false, Color(0, 0, 0, 0.22 * alpha))
+	_c.draw_texture_rect(t, rect, false, Color(1, 1, 1, alpha))
 
 
 ## Сплюснутое мягкое пятно: тёмный центр, прозрачный край.
@@ -568,7 +676,7 @@ func _soft_ellipse(c: Vector2, rx: float, ry: float, col: Color) -> void:
 		pts.append(c + Vector2(cos(a) * rx, sin(a) * ry))
 		cols.append(edge)
 	for i in 20:
-		draw_polygon(PackedVector2Array([pts[0], pts[i + 1], pts[i + 2]]), PackedColorArray([cols[0], cols[i + 1], cols[i + 2]]))
+		_c.draw_polygon(PackedVector2Array([pts[0], pts[i + 1], pts[i + 2]]), PackedColorArray([cols[0], cols[i + 1], cols[i + 2]]))
 
 
 ## Стойки на задней стене комнаты-картинки (art_src/rooms/build_rooms.py: через 3 м и в углах),
@@ -812,7 +920,7 @@ func _draw_granary_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var t := furniture("granary", HANGERS[(first + i) % HANGERS.size()])
 		var cx := left + TILE * 0.25 + (i + 0.5) * (right - left - TILE * 0.5) / n
 		var hs := t.get_size() * k * 0.85
-		draw_texture_rect(t, Rect2(cx - hs.x * 0.5, top + 47 * k, hs.x, hs.y), false, Color(1, 1, 1, alpha))
+		_c.draw_texture_rect(t, Rect2(cx - hs.x * 0.5, top + 47 * k, hs.x, hs.y), false, Color(1, 1, 1, alpha))
 
 
 ## Предмет, растянутый от left до right: торцы <name>_l, <name>_r и повторяющийся <name>_mid.
@@ -826,10 +934,10 @@ func _draw_span(room: String, name: String, left: float, right: float, top: floa
 	var end := right - rt.get_width() * k
 	while x < end:
 		var seg := minf(m.get_width() * k, end - x)
-		draw_texture_rect_region(m, Rect2(x, top, seg, m.get_height() * k), Rect2(0, 0, seg / k, m.get_height()), mod)
+		_c.draw_texture_rect_region(m, Rect2(x, top, seg, m.get_height() * k), Rect2(0, 0, seg / k, m.get_height()), mod)
 		x += seg
-	draw_texture_rect(l, Rect2(left, top, l.get_width() * k, l.get_height() * k), false, mod)
-	draw_texture_rect(rt, Rect2(end, top, rt.get_width() * k, rt.get_height() * k), false, mod)
+	_c.draw_texture_rect(l, Rect2(left, top, l.get_width() * k, l.get_height() * k), false, mod)
+	_c.draw_texture_rect(rt, Rect2(end, top, rt.get_width() * k, rt.get_height() * k), false, mod)
 
 
 ## Ферма: грядка на каждые 2 м, на ней грибы трёх стадий роста (в холоде — блёклые); с
@@ -860,9 +968,9 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		if lamp != null:
 			# Лампа на настенных креплениях — прямо над грибами, как на прототипе.
 			var lsz := lamp.get_size() * k
-			draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.9 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
+			_c.draw_texture_rect(lamp, Rect2(cx - lsz.x * 0.5, fy - TILE * 0.9 * sc - lsz.y, lsz.x, lsz.y), false, Color(1, 1, 1, alpha))
 		var sz := shoots.get_size() * k
-		draw_texture_rect(shoots, Rect2(cx - sz.x * 0.5, fy - (bed.get_height() - 7) * k - sz.y, sz.x, sz.y), false, tint)
+		_c.draw_texture_rect(shoots, Rect2(cx - sz.x * 0.5, fy - (bed.get_height() - 7) * k - sz.y, sz.x, sz.y), false, tint)
 		_furn_at(bed, cx, fy, alpha, 1, sc)
 
 
@@ -894,7 +1002,7 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		for i in n:
 			var vx: float = (xs[i] + xs[i + 1]) * 0.5 if i + 1 < n else (xs[i] + right) * 0.5 + TILE * 0.2
 			var vs := valve.get_size() * k
-			draw_texture_rect(valve, Rect2(vx - vs.x * 0.5, fy - sh * 0.68 - vs.y * 0.5, vs.x, vs.y), false, mod)
+			_c.draw_texture_rect(valve, Rect2(vx - vs.x * 0.5, fy - sh * 0.68 - vs.y * 0.5, vs.x, vs.y), false, mod)
 	var chimney := furniture("hearth", "chimney")
 	if not gas:
 		_tools_between(p, r, lay, xs, furniture("hearth", "tools"), fy, alpha)
@@ -1000,7 +1108,7 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var line_y := fy - TILE * 2.25
 	var right: float = lay.x + n * 3 * lay.unit
 	_tile_h(furniture("generator", "bulbs_on" if on else "bulbs_off"), lay.x + TILE * 0.1, right - ps.x, line_y, alpha)
-	draw_texture_rect(panel, Rect2(right - ps.x, line_y - ps.y * 0.3, ps.x, ps.y), false, mod)
+	_c.draw_texture_rect(panel, Rect2(right - ps.x, line_y - ps.y * 0.3, ps.x, ps.y), false, mod)
 	var cable := Color(0.12, 0.12, 0.14, alpha)
 	var chimney := furniture("hearth", "chimney")
 	var pipe := furniture("generator", "gas_pipe")
@@ -1009,12 +1117,12 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var top := fy - mh
 		# Провод от динамо (справа) вверх к гирлянде.
 		var dx := x + mw * 0.36
-		draw_line(Vector2(dx, top + 6 * k), Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
+		_c.draw_line(Vector2(dx, top + 6 * k), Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
 		if gas:
 			var gx := x + (0.17 - 0.5) * mw
 			_tile_v(pipe, gx - pipe.get_width() * k * 0.5, fy - TILE * CEILING, top + 8 * k, alpha)
 			var vs := valve.get_size() * k
-			draw_texture_rect(valve, Rect2(gx - vs.x * 0.5, (fy - TILE * CEILING + top) * 0.5 - vs.y * 0.5, vs.x, vs.y), false, mod)
+			_c.draw_texture_rect(valve, Rect2(gx - vs.x * 0.5, (fy - TILE * CEILING + top) * 0.5 - vs.y * 0.5, vs.x, vs.y), false, mod)
 		else:
 			var cx := x + (0.145 - 0.5) * mw
 			_tile_v(chimney, cx - chimney.get_width() * k * 0.5, fy - TILE * CEILING, top + 4 * k, alpha)
@@ -1054,7 +1162,7 @@ func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var ts := t.get_size() * k * sc
 			var tx: float = px + it[1] * (ts.x * 0.5 + TILE * 0.15)
 			if tx - ts.x * 0.5 >= b0 and tx + ts.x * 0.5 <= b0 + lay.unit * 3:
-				draw_texture_rect(t, Rect2(tx - ts.x * 0.5, line_y - ts.y * 0.5, ts.x, ts.y), false, mod)
+				_c.draw_texture_rect(t, Rect2(tx - ts.x * 0.5, line_y - ts.y * 0.5, ts.x, ts.y), false, mod)
 		_furn_at(pump, x, fy, alpha, 1, sc)
 		_furn_at(tank, x + pw * 0.5 + tw * 0.5 + TILE * 0.05, fy, alpha, 1, sc)
 
@@ -1084,17 +1192,17 @@ func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var left: float = lay.x + TILE * 0.05
 	var right: float = lay.x + span - TILE * 0.05
 	_tile_h(pipe, left + is_.x * 0.6, right - is_.x * 0.6, line_y - pipe.get_height() * k * 0.5, alpha)
-	draw_texture_rect(intake, Rect2(left, line_y - is_.y * 0.5, is_.x, is_.y), false, mod)
-	draw_texture_rect(intake, Rect2(right, line_y - is_.y * 0.5, -is_.x, is_.y), false, mod)
+	_c.draw_texture_rect(intake, Rect2(left, line_y - is_.y * 0.5, is_.x, is_.y), false, mod)
+	_c.draw_texture_rect(intake, Rect2(right, line_y - is_.y * 0.5, -is_.x, is_.y), false, mod)
 	# Труба вниз к баку.
 	var pc := Color(0.5, 0.53, 0.58, alpha)
-	draw_rect(Rect2(tank_x - TILE * 0.06, line_y, TILE * 0.12, fy - tank.get_height() * k * sc - line_y + 4), pc)
+	_c.draw_rect(Rect2(tank_x - TILE * 0.06, line_y, TILE * 0.12, fy - tank.get_height() * k * sc - line_y + 4), pc)
 	var gauge := furniture("degas", "gauge")
 	var gs := gauge.get_size() * k
 	for i in n:
 		var gx: float = lay.x + (i * 3 + 0.9) * lay.unit
 		if absf(gx - tank_x) > TILE * 0.4:
-			draw_texture_rect(gauge, Rect2(gx - gs.x * 0.5, line_y - gs.y * 0.3, gs.x, gs.y), false, mod)
+			_c.draw_texture_rect(gauge, Rect2(gx - gs.x * 0.5, line_y - gs.y * 0.3, gs.x, gs.y), false, mod)
 	_furn_at(tank, tank_x, fy, alpha, 1, sc)
 	_furn_at(comp, x0 + tw + TILE * 0.1 * sc + comp.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
 
@@ -1125,10 +1233,10 @@ func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	for i in n:
 		var x: float = xs[i]
 		_tile_v(box, x - box.get_width() * k * 0.5, fy - TILE * CEILING, top + 2, alpha)
-		draw_texture_rect(grille, Rect2(x - gw * 0.5, top, gw, dh), false, mod)
+		_c.draw_texture_rect(grille, Rect2(x - gw * 0.5, top, gw, dh), false, mod)
 		if on:
 			var asz := air.get_size() * k
-			draw_texture_rect(air, Rect2(x - asz.x * 0.5, top + dh * 0.8, asz.x, asz.y), false, Color(1, 1, 1, 0.85 * alpha))
+			_c.draw_texture_rect(air, Rect2(x - asz.x * 0.5, top + dh * 0.8, asz.x, asz.y), false, Color(1, 1, 1, 0.85 * alpha))
 		_furn_at(fan, x, fy, alpha, 1, sc)
 	# Термометр — на стене возле первой установки (между установками или справа от неё).
 	var a := (xs[0] - r.position.x) / TILE + 0.85 * sc
@@ -1240,7 +1348,7 @@ func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float) 
 	var x := left
 	while x < right - 0.5:
 		var seg := minf(t.get_width() * k, right - x)
-		draw_texture_rect_region(t, Rect2(x, top, seg, t.get_height() * k), Rect2(0, 0, seg / k, t.get_height()), Color(1, 1, 1, alpha))
+		_c.draw_texture_rect_region(t, Rect2(x, top, seg, t.get_height() * k), Rect2(0, 0, seg / k, t.get_height()), Color(1, 1, 1, alpha))
 		x += seg
 
 
@@ -1250,7 +1358,7 @@ func _tile_v(t: Texture2D, x: float, top: float, bottom: float, alpha: float) ->
 	var y := top
 	while y < bottom - 0.5:
 		var seg := minf(t.get_height() * k, bottom - y)
-		draw_texture_rect_region(t, Rect2(x, y, t.get_width() * k, seg), Rect2(0, 0, t.get_width(), seg / k), Color(1, 1, 1, alpha))
+		_c.draw_texture_rect_region(t, Rect2(x, y, t.get_width() * k, seg), Rect2(0, 0, t.get_width(), seg / k), Color(1, 1, 1, alpha))
 		y += seg
 
 
@@ -1263,9 +1371,9 @@ func _draw_rack(t: Texture2D, cx: float, bottom: float, width: float, post_px: f
 	var x := cx - width * 0.5
 	var mod := Color(1, 1, 1, alpha)
 	_soft_ellipse(Vector2(cx, bottom - 1.0), width * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
-	draw_texture_rect_region(t, Rect2(x, bottom - h, post, h), Rect2(0, 0, post_px, sz.y), mod)
-	draw_texture_rect_region(t, Rect2(x + post, bottom - h, width - 2 * post, h), Rect2(post_px, 0, sz.x - 2 * post_px, sz.y), mod)
-	draw_texture_rect_region(t, Rect2(x + width - post, bottom - h, post, h), Rect2(sz.x - post_px, 0, post_px, sz.y), mod)
+	_c.draw_texture_rect_region(t, Rect2(x, bottom - h, post, h), Rect2(0, 0, post_px, sz.y), mod)
+	_c.draw_texture_rect_region(t, Rect2(x + post, bottom - h, width - 2 * post, h), Rect2(post_px, 0, sz.x - 2 * post_px, sz.y), mod)
+	_c.draw_texture_rect_region(t, Rect2(x + width - post, bottom - h, post, h), Rect2(sz.x - post_px, 0, post_px, sz.y), mod)
 
 
 ## Таль: брус от left до right (торец, повторяющийся кусок, лебёдка справа), блок с цепью
@@ -1285,16 +1393,16 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 	var x := left + cap.get_width() * k
 	while x < winch_x:
 		var seg := minf(bw, winch_x - x)
-		draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
+		_c.draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
 		x += seg
-	draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
+	_c.draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
 	if is_nan(block_x):
-		draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
+		_c.draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
 		return
 	# Трос: от шкива каретки (правый край) к барабану лебёдки (координаты в пикселях спрайтов).
-	draw_line(Vector2(block_x + 25 * k, top + 38 * k), Vector2(winch_x + 12 * k, top + 46 * k), Color(0.55, 0.5, 0.45, alpha), maxf(1.0, 3 * k))
-	draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
-	draw_texture_rect(block, Rect2(block_x - block.get_width() * k * 0.5, top, block.get_width() * k, block.get_height() * k), false, mod)
+	_c.draw_line(Vector2(block_x + 25 * k, top + 38 * k), Vector2(winch_x + 12 * k, top + 46 * k), Color(0.55, 0.5, 0.45, alpha), maxf(1.0, 3 * k))
+	_c.draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
+	_c.draw_texture_rect(block, Rect2(block_x - block.get_width() * k * 0.5, top, block.get_width() * k, block.get_height() * k), false, mod)
 
 
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
@@ -1355,7 +1463,7 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				_rbox(Rect2(bx, floor_y - 26, 5, 26), 2, Color(BED_FRAME.darkened(0.15), alpha))
 				_rbox(Rect2(bx + 6, floor_y - 22, 15, 9), 4, Color(0.98, 0.97, 0.94, alpha))
 				_rbox(Rect2(bx + 18, floor_y - 21, bw - 18, 12), 6, Color(blanket, alpha), Color(blanket.darkened(0.25), alpha), 1)
-				draw_line(Vector2(bx + 23, floor_y - 18), Vector2(bx + bw - 5, floor_y - 18), Color(1, 1, 1, 0.35 * alpha), 2.0)
+				_c.draw_line(Vector2(bx + 23, floor_y - 18), Vector2(bx + bw - 5, floor_y - 18), Color(1, 1, 1, 0.35 * alpha), 2.0)
 		RoomType.STORAGE, RoomType.GRANARY:
 			var w := RoomType.usable_width(p)
 			# Полка на половине высоты и ящики по видам ресурсов: чем больше, тем больше ящиков.
@@ -1376,7 +1484,7 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 					var bx := x0 + 6 + (slot % slots) * TILE * 0.5
 					var by := floor_y - 16 - lvl * 40
 					_rbox(Rect2(bx, by, 14, 16), 3, Color(CRATE, alpha), Color(CRATE.darkened(0.35), alpha), 1)
-					draw_line(Vector2(bx + 2, by + 2), Vector2(bx + 12, by + 14), Color(CRATE.darkened(0.2), alpha), 1.5)
+					_c.draw_line(Vector2(bx + 2, by + 2), Vector2(bx + 12, by + 14), Color(CRATE.darkened(0.2), alpha), 1.5)
 					_rbox(Rect2(bx + 3, by + 3, 8, 6), 2, Color(res_color(k), alpha))
 					slot += 1
 		RoomType.FARM:
@@ -1391,36 +1499,36 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				if not warm:
 					cap = cap.lerp(Color(0.6, 0.62, 0.7), 0.6) # в холоде грибы блёклые
 				var top := Vector2(mx, floor_y - 9 - h)
-				draw_line(Vector2(mx, floor_y - 9), top, Color(MUSHROOM, alpha), 3.0)
+				_c.draw_line(Vector2(mx, floor_y - 9), top, Color(MUSHROOM, alpha), 3.0)
 				var rad := 4.0 + h * 0.18
 				if warm:
-					draw_circle(top, rad * 1.9, Color(cap, 0.12 * alpha))
+					_c.draw_circle(top, rad * 1.9, Color(cap, 0.12 * alpha))
 				var dome := PackedVector2Array()
 				for j in 9:
 					var a := PI + PI * j / 8.0
 					dome.append(top + Vector2(cos(a) * rad, sin(a) * rad * 0.85 + 1.5))
-				draw_colored_polygon(dome, Color(cap, alpha))
-				draw_circle(top + Vector2(-rad * 0.35, -rad * 0.3), rad * 0.22, Color(1, 1, 1, 0.75 * alpha))
+				_c.draw_colored_polygon(dome, Color(cap, alpha))
+				_c.draw_circle(top + Vector2(-rad * 0.35, -rad * 0.3), rad * 0.22, Color(1, 1, 1, 0.75 * alpha))
 		RoomType.PUMP:
 			# Насос и труба вверх через потолок.
 			var px := x0 + TILE * 1.2
-			draw_rect(Rect2(px - 14, floor_y - 26, 28, 26), Color(0.35, 0.45, 0.55, alpha))
-			draw_rect(Rect2(px - 4, r.position.y, 8, floor_y - 26 - r.position.y), Color(0.45, 0.5, 0.55, alpha))
+			_c.draw_rect(Rect2(px - 14, floor_y - 26, 28, 26), Color(0.35, 0.45, 0.55, alpha))
+			_c.draw_rect(Rect2(px - 4, r.position.y, 8, floor_y - 26 - r.position.y), Color(0.45, 0.5, 0.55, alpha))
 			var a := Time.get_ticks_msec() / 300.0
-			draw_arc(Vector2(px + 26, floor_y - 18), 10, 0, TAU, 16, Color(0.55, 0.38, 0.2, alpha), 3.0)
-			draw_line(Vector2(px + 26, floor_y - 18), Vector2(px + 26, floor_y - 18) + Vector2(cos(a), sin(a)) * 10, Color(0.55, 0.38, 0.2, alpha), 3.0)
-			draw_line(Vector2(px + 14, floor_y - 18), Vector2(px + 26, floor_y - 18), Color(0.45, 0.5, 0.55, alpha), 3.0)
+			_c.draw_arc(Vector2(px + 26, floor_y - 18), 10, 0, TAU, 16, Color(0.55, 0.38, 0.2, alpha), 3.0)
+			_c.draw_line(Vector2(px + 26, floor_y - 18), Vector2(px + 26, floor_y - 18) + Vector2(cos(a), sin(a)) * 10, Color(0.55, 0.38, 0.2, alpha), 3.0)
+			_c.draw_line(Vector2(px + 14, floor_y - 18), Vector2(px + 26, floor_y - 18), Color(0.45, 0.5, 0.55, alpha), 3.0)
 		RoomType.VENT:
 			# Вентилятор в стене и короб воздуховода.
 			var cx := x0 + RoomType.usable_width(p) * TILE * 0.5
 			var cy := (r.position.y + floor_y) * 0.5
-			draw_rect(Rect2(x0 + 4, r.position.y + 6, RoomType.usable_width(p) * TILE - 8, 10), Color(0.55, 0.58, 0.62, alpha))
-			draw_circle(Vector2(cx, cy), 20, Color(0.3, 0.33, 0.38, alpha))
+			_c.draw_rect(Rect2(x0 + 4, r.position.y + 6, RoomType.usable_width(p) * TILE - 8, 10), Color(0.55, 0.58, 0.62, alpha))
+			_c.draw_circle(Vector2(cx, cy), 20, Color(0.3, 0.33, 0.38, alpha))
 			var a := Time.get_ticks_msec() / 120.0
 			for k in 3:
 				var dir := Vector2(cos(a + k * TAU / 3.0), sin(a + k * TAU / 3.0))
-				draw_line(Vector2(cx, cy), Vector2(cx, cy) + dir * 17, Color(0.85, 0.88, 0.92, alpha), 5.0)
-			draw_circle(Vector2(cx, cy), 4, Color(0.2, 0.2, 0.22, alpha))
+				_c.draw_line(Vector2(cx, cy), Vector2(cx, cy) + dir * 17, Color(0.85, 0.88, 0.92, alpha), 5.0)
+			_c.draw_circle(Vector2(cx, cy), 4, Color(0.2, 0.2, 0.22, alpha))
 		RoomType.HEARTH:
 			# Печи (по одной на 3 м): каменные серые, кирпичные красные; горят — огонь и свет.
 			var n := RoomType.stoves(p)
@@ -1433,47 +1541,47 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 				var cx := x0 + span * (i + 0.5) / n
 				_rbox(Rect2(cx - 24, floor_y - 34, 48, 34), 5, body, edge, 2)
 				for row in 3:
-					draw_line(Vector2(cx - 22, floor_y - 10 - row * 9), Vector2(cx + 22, floor_y - 10 - row * 9), Color(1, 1, 1, 0.25 * alpha), 1.0)
+					_c.draw_line(Vector2(cx - 22, floor_y - 10 - row * 9), Vector2(cx + 22, floor_y - 10 - row * 9), Color(1, 1, 1, 0.25 * alpha), 1.0)
 				_rbox(Rect2(cx - 14, floor_y - 22, 28, 22), 8, Color(0.16, 0.1, 0.1, alpha))
 				_rbox(Rect2(cx - 28, floor_y - 40, 56, 8), 3, top, Color(0, 0, 0, 0), 0)
 				# Труба в потолок.
-				draw_rect(Rect2(cx - 6, r.position.y + 4, 12, floor_y - 40 - r.position.y - 4), top.lightened(0.08))
+				_c.draw_rect(Rect2(cx - 6, r.position.y + 4, 12, floor_y - 40 - r.position.y - 4), top.lightened(0.08))
 				if p.gas_boiler and p.phase == Project.Phase.DONE:
 					# Железный газовый котёл на печи: бак с заклёпками, манометр и газовая труба.
 					var steel := Color(0.46, 0.5, 0.56, alpha)
 					var b := Rect2(cx - 17, floor_y - 68, 34, 27)
 					_rbox(b, 7, steel, Color(0.26, 0.29, 0.33, alpha), 2)
-					draw_rect(Rect2(b.position.x + 2, b.position.y + 6, b.size.x - 4, 3), Color(1, 1, 1, 0.18 * alpha))
+					_c.draw_rect(Rect2(b.position.x + 2, b.position.y + 6, b.size.x - 4, 3), Color(1, 1, 1, 0.18 * alpha))
 					for k in 4:
-						draw_circle(Vector2(b.position.x + 6 + k * 7.3, b.end.y - 5), 1.6, Color(0.3, 0.32, 0.36, alpha))
-					draw_circle(Vector2(cx + 9, b.position.y + 12), 4.5, Color(0.92, 0.9, 0.84, alpha))
-					draw_line(Vector2(cx + 9, b.position.y + 12), Vector2(cx + 11, b.position.y + 9), Color(0.7, 0.15, 0.1, alpha), 1.2)
-					draw_rect(Rect2(b.position.x - 8, b.position.y + 14, 9, 4), Color(0.75, 0.62, 0.2, alpha))
+						_c.draw_circle(Vector2(b.position.x + 6 + k * 7.3, b.end.y - 5), 1.6, Color(0.3, 0.32, 0.36, alpha))
+					_c.draw_circle(Vector2(cx + 9, b.position.y + 12), 4.5, Color(0.92, 0.9, 0.84, alpha))
+					_c.draw_line(Vector2(cx + 9, b.position.y + 12), Vector2(cx + 11, b.position.y + 9), Color(0.7, 0.15, 0.1, alpha), 1.2)
+					_c.draw_rect(Rect2(b.position.x - 8, b.position.y + 14, 9, 4), Color(0.75, 0.62, 0.2, alpha))
 				if p.burning and alpha >= 1.0:
 					var tt := Time.get_ticks_msec() / 1000.0 + i * 1.3
 					_glow(Vector2(cx, floor_y - 12), r.size.y * 1.2, Color(1.0, 0.6, 0.25, 0.22))
 					for k in 3:
 						var fx := cx + (k - 1) * 7.0
 						var fh := 11.0 + 5.0 * sin(tt * 7.0 + k * 2.0)
-						draw_colored_polygon(PackedVector2Array([Vector2(fx - 5, floor_y - 2), Vector2(fx + 5, floor_y - 2), Vector2(fx + sin(tt * 5.0 + k) * 2.0, floor_y - 2 - fh)]),
+						_c.draw_colored_polygon(PackedVector2Array([Vector2(fx - 5, floor_y - 2), Vector2(fx + 5, floor_y - 2), Vector2(fx + sin(tt * 5.0 + k) * 2.0, floor_y - 2 - fh)]),
 							Color(0.3, 0.55, 1.0) if p.on_gas else Color(1.0, 0.5, 0.15))
-						draw_colored_polygon(PackedVector2Array([Vector2(fx - 3, floor_y - 2), Vector2(fx + 3, floor_y - 2), Vector2(fx, floor_y - 2 - fh * 0.6)]),
+						_c.draw_colored_polygon(PackedVector2Array([Vector2(fx - 3, floor_y - 2), Vector2(fx + 3, floor_y - 2), Vector2(fx, floor_y - 2 - fh * 0.6)]),
 							Color(0.7, 0.88, 1.0) if p.on_gas else Color(1.0, 0.85, 0.35))
 			# Поленница у последней печи.
 			var wx := x0 + span * (n - 0.5) / n + 32
 			for k in 3:
-				draw_circle(Vector2(wx + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 4.5, Color(0.66, 0.44, 0.25, alpha))
-				draw_circle(Vector2(wx + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 2.0, Color(0.9, 0.75, 0.5, alpha))
+				_c.draw_circle(Vector2(wx + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 4.5, Color(0.66, 0.44, 0.25, alpha))
+				_c.draw_circle(Vector2(wx + (k % 2) * 8, floor_y - 5 - (k / 2) * 8), 2.0, Color(0.9, 0.75, 0.5, alpha))
 		RoomType.DINING:
 			var w := RoomType.usable_width(p)
 			var tx := x0 + 8
 			while tx + 40 < x0 + w * TILE:
-				draw_rect(Rect2(tx, floor_y - 18, 40, 4), Color(BED_FRAME, alpha))
-				draw_line(Vector2(tx + 6, floor_y - 14), Vector2(tx + 6, floor_y), Color(BED_FRAME, alpha), 3.0)
-				draw_line(Vector2(tx + 34, floor_y - 14), Vector2(tx + 34, floor_y), Color(BED_FRAME, alpha), 3.0)
-				draw_circle(Vector2(tx + 20, floor_y - 21), 4, Color(0.9, 0.9, 0.85, alpha))
-				draw_rect(Rect2(tx - 8, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
-				draw_rect(Rect2(tx + 40, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
+				_c.draw_rect(Rect2(tx, floor_y - 18, 40, 4), Color(BED_FRAME, alpha))
+				_c.draw_line(Vector2(tx + 6, floor_y - 14), Vector2(tx + 6, floor_y), Color(BED_FRAME, alpha), 3.0)
+				_c.draw_line(Vector2(tx + 34, floor_y - 14), Vector2(tx + 34, floor_y), Color(BED_FRAME, alpha), 3.0)
+				_c.draw_circle(Vector2(tx + 20, floor_y - 21), 4, Color(0.9, 0.9, 0.85, alpha))
+				_c.draw_rect(Rect2(tx - 8, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
+				_c.draw_rect(Rect2(tx + 40, floor_y - 9, 8, 3), Color(BED_FRAME.lightened(0.2), alpha))
 				tx += 64
 
 
@@ -1493,10 +1601,10 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 		var x := r.position.x + TILE * 0.5
 		while x < r.end.x:
 			for sx in [-8.0, 8.0]:
-				draw_line(Vector2(x + sx + 1.5, r.end.y), Vector2(x + sx + 1.5, r.position.y + 3), dark, 4.5)
-				draw_line(Vector2(x + sx, r.end.y), Vector2(x + sx, r.position.y + 3), col, 4.5)
-			draw_line(Vector2(x - 13, r.position.y + 5), Vector2(x + 13, r.position.y + 5), dark, 6.0)
-			draw_line(Vector2(x - 13, r.position.y + 3), Vector2(x + 13, r.position.y + 3), col, 6.0)
+				_c.draw_line(Vector2(x + sx + 1.5, r.end.y), Vector2(x + sx + 1.5, r.position.y + 3), dark, 4.5)
+				_c.draw_line(Vector2(x + sx, r.end.y), Vector2(x + sx, r.position.y + 3), col, 4.5)
+			_c.draw_line(Vector2(x - 13, r.position.y + 5), Vector2(x + 13, r.position.y + 5), dark, 6.0)
+			_c.draw_line(Vector2(x - 13, r.position.y + 3), Vector2(x + 13, r.position.y + 3), col, 6.0)
 			x += TILE * 3.0
 
 
@@ -1507,9 +1615,9 @@ func _draw_rails(r: Rect2, alpha: float) -> void:
 	var y := r.end.y - 4
 	var sx := r.position.x + 4
 	while sx < r.end.x - 4:
-		draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
+		_c.draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
 		sx += 10
-	draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
+	_c.draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
 
 
 func _draw_site(p: Project, font: Font) -> void:
@@ -1522,11 +1630,11 @@ func _draw_site(p: Project, font: Font) -> void:
 	if p.priority:
 		# Приоритет — значок «!» в углу стройки.
 		var at := r.position + Vector2(r.size.x - 12, 12)
-		draw_circle(at, 10, Color(1.0, 0.72, 0.2))
-		draw_string(font, at + Vector2(-3, 6), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.25, 0.15, 0.05))
+		_c.draw_circle(at, 10, Color(1.0, 0.72, 0.2))
+		_c.draw_string(font, at + Vector2(-3, 6), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.25, 0.15, 0.05))
 	if p.phase == Project.Phase.DIG:
 		for c in colony.remaining_dig(p):
-			draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)
+			_c.draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), DIG_FILL)
 		# Закреплённые срезы и срез, где сейчас ставят крепь.
 		for i in p.supported:
 			_draw_slice_support(p, i, 1.0)
@@ -1549,7 +1657,7 @@ func _draw_site(p: Project, font: Font) -> void:
 			_draw_deck(p, r, 0.3 + 0.7 * t)
 		elif p.kind == Project.Kind.ROOM:
 			var wall: Color = WALLS.get(p.material, WALLS["wood"])[0]
-			draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
+			_c.draw_rect(Rect2(r.position.x, r.end.y - r.size.y * t, r.size.x, r.size.y * t), Color(wall, 0.55))
 		elif p.kind == Project.Kind.DRILL:
 			_draw_drill(p, r, 0.3 + 0.7 * t)
 		elif p.kind == Project.Kind.PROBE:
@@ -1557,13 +1665,13 @@ func _draw_site(p: Project, font: Font) -> void:
 		else:
 			_draw_supports(p, r, 0.3 + 0.7 * t)
 		var bar := Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 6)
-		draw_rect(bar, BAR_BG)
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
+		_c.draw_rect(bar, BAR_BG)
+		_c.draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
 	_dashed_rect(r, edge, 2.5 if p.id != selected_project else 4.0)
 	if p.paused:
 		var c := r.get_center()
-		draw_rect(Rect2(c + Vector2(-10, -12), Vector2(7, 24)), PAUSED)
-		draw_rect(Rect2(c + Vector2(3, -12), Vector2(7, 24)), PAUSED)
+		_c.draw_rect(Rect2(c + Vector2(-10, -12), Vector2(7, 24)), PAUSED)
+		_c.draw_rect(Rect2(c + Vector2(3, -12), Vector2(7, 24)), PAUSED)
 
 
 func _draw_dig_progress() -> void:
@@ -1571,6 +1679,8 @@ func _draw_dig_progress() -> void:
 		if u.task != Unit.Task.DIG or u.state != Unit.State.WORK:
 			continue
 		var c := u.target
+		if not _vis.has_point(c):
+			continue
 		var need := colony.dig_time(c)
 		if need <= 0.0:
 			continue
@@ -1578,25 +1688,25 @@ func _draw_dig_progress() -> void:
 		var r := Rect2(view.cell_to_local(c), Vector2(TILE, TILE))
 		# Трещины по мере копки.
 		var crack := Color(0, 0, 0, 0.25 + 0.4 * t)
-		draw_line(r.get_center(), r.get_center() + Vector2(-9, -8) * t * 1.4, crack, 2.0)
-		draw_line(r.get_center(), r.get_center() + Vector2(10, 4) * t * 1.4, crack, 2.0)
-		draw_line(r.get_center(), r.get_center() + Vector2(-2, 11) * t * 1.4, crack, 2.0)
+		_c.draw_line(r.get_center(), r.get_center() + Vector2(-9, -8) * t * 1.4, crack, 2.0)
+		_c.draw_line(r.get_center(), r.get_center() + Vector2(10, 4) * t * 1.4, crack, 2.0)
+		_c.draw_line(r.get_center(), r.get_center() + Vector2(-2, 11) * t * 1.4, crack, 2.0)
 		var bar := Rect2(r.position.x + 3, r.end.y - 7, r.size.x - 6, 5)
-		draw_rect(bar, BAR_BG)
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
+		_c.draw_rect(bar, BAR_BG)
+		_c.draw_rect(Rect2(bar.position, Vector2(bar.size.x * t, bar.size.y)), BAR)
 
 
 func _dashed_rect(r: Rect2, col: Color, width: float) -> void:
 	var pts := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y), r.position]
 	for i in 4:
-		draw_dashed_line(pts[i], pts[i + 1], col, width, 10.0)
+		_c.draw_dashed_line(pts[i], pts[i + 1], col, width, 10.0)
 
 
 func _label(font: Font, p: Vector2, text: String, col: Color) -> void:
 	if text.is_empty():
 		return
-	draw_string_outline(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 6, Color(0, 0, 0, 0.85))
-	draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, col)
+	_c.draw_string_outline(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 6, Color(0, 0, 0, 0.85))
+	_c.draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, col)
 
 
 func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
@@ -1604,12 +1714,12 @@ func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
 	var dark := Color(BEAM_DARK, alpha)
 	var y := top + 8
 	while y < bottom:
-		draw_line(Vector2(cx - 7, y + 1.5), Vector2(cx + 7, y + 1.5), dark, 3.0)
-		draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 3.0)
+		_c.draw_line(Vector2(cx - 7, y + 1.5), Vector2(cx + 7, y + 1.5), dark, 3.0)
+		_c.draw_line(Vector2(cx - 7, y), Vector2(cx + 7, y), col, 3.0)
 		y += 10
 	for sx in [-8.0, 8.0]:
-		draw_line(Vector2(cx + sx + 1, top), Vector2(cx + sx + 1, bottom), dark, 3.5)
-		draw_line(Vector2(cx + sx, top), Vector2(cx + sx, bottom), col, 3.5)
+		_c.draw_line(Vector2(cx + sx + 1, top), Vector2(cx + sx + 1, bottom), dark, 3.5)
+		_c.draw_line(Vector2(cx + sx, top), Vector2(cx + sx, bottom), col, 3.5)
 
 
 const RES_COLORS := {
@@ -1649,15 +1759,17 @@ func _draw_supply(p: Project, font: Font) -> void:
 		var bg := Color(0.17, 0.13, 0.16, 0.9) if e[3] else Color(0.86, 0.3, 0.25, 0.95)
 		_rbox(Rect2(box.position + Vector2(0, 3), box.size), 14, bg.darkened(0.4))
 		_rbox(box, 14, bg, bg.lightened(0.15), 1)
-		ResIcon.draw(self, e[0], Vector2(x + 16, y + 14), 10)
+		ResIcon.draw(_c, e[0], Vector2(x + 16, y + 14), 10)
 		var tp := Vector2(x + 30, y + 21)
-		draw_string(Fonts.black(), tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+		_c.draw_string(Fonts.black(), tp, "%d/%d" % [e[1], e[2]], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
 		x += widths[i] + 6.0
 
 
 ## Добытое, лежащее на земле: кучка значков и число.
 func _draw_drops(font: Font) -> void:
 	for c: Vector2i in colony.drops:
+		if not _vis.has_point(c):
+			continue
 		var d: Dictionary = colony.drops[c]
 		var p := view.cell_to_local(c) + Vector2(TILE * 0.5, TILE)
 		# Готовое у производства — в ящиках внутри комнаты, а не кучей на полу.
@@ -1673,7 +1785,7 @@ func _draw_drops(font: Font) -> void:
 			var n: int = d[k]
 			var piles := clampi(ceili(n / 3.0), 1, 4)
 			for j in piles:
-				ResIcon.draw(self, k, p + Vector2((j - (piles - 1) * 0.5) * 9.0 + i * 6.0, -7.0 - (j % 2) * 5.0 - i * 9.0), 8.0)
+				ResIcon.draw(_c, k, p + Vector2((j - (piles - 1) * 0.5) * 9.0 + i * 6.0, -7.0 - (j % 2) * 5.0 - i * 9.0), 8.0)
 			i += 1
 			if i >= 2:
 				break
@@ -1698,20 +1810,22 @@ func _draw_output_crates(font: Font, d: Dictionary, bottom: Vector2, full: bool)
 	for i in n:
 		var box := Rect2(bottom.x - w * 0.5, bottom.y - 3 - h * (i + 1), w, h - 2)
 		_rbox(box, 3, CRATE, CRATE.darkened(0.45), 2)
-		draw_line(Vector2(box.position.x + 3, box.get_center().y), Vector2(box.end.x - 3, box.get_center().y), CRATE.darkened(0.3), 1.5)
+		_c.draw_line(Vector2(box.position.x + 3, box.get_center().y), Vector2(box.end.x - 3, box.get_center().y), CRATE.darkened(0.3), 1.5)
 	var top := bottom - Vector2(0, 3 + h * n + 9)
-	ResIcon.draw(self, key, top, 8.0)
+	ResIcon.draw(_c, key, top, 8.0)
 	_label(font, top + Vector2(10, 4), str(total), Color(1.0, 0.45, 0.4) if full else Color(1, 1, 1, 0.9))
 
 
 ## Метан: зеленоватая дымка, гуще — опаснее.
 func _draw_gas() -> void:
 	for c: Vector2i in colony.elements.gas:
+		if not _vis.has_point(c):
+			continue
 		var g: float = colony.elements.gas[c]
 		var col := Color(0.55, 0.8, 0.25, clampf(g * 0.8, 0.05, 0.55))
 		if g >= Elements.GAS_EXPLOSIVE:
 			col = Color(0.75, 0.85, 0.2, clampf(g * 0.8, 0.2, 0.65))
-		draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), col)
+		_c.draw_rect(Rect2(view.cell_to_local(c), Vector2(TILE, TILE)), col)
 
 
 ## Трещины на ветхой постройке — тем больше, чем сильнее износ.
@@ -1722,7 +1836,7 @@ func _draw_cracks(p: Project, r: Rect2) -> void:
 		var a := r.position + Vector2(10 + WorldGen.hash01(p.id, k, 81) * (r.size.x - 20), 8 + WorldGen.hash01(p.id, k, 82) * (r.size.y - 20))
 		var b := a + Vector2(WorldGen.hash01(p.id, k, 83) * 14 - 7, 9)
 		var c := b + Vector2(WorldGen.hash01(p.id, k, 84) * 14 - 7, 9)
-		draw_polyline(PackedVector2Array([a, b, c]), col, 2.0)
+		_c.draw_polyline(PackedVector2Array([a, b, c]), col, 2.0)
 
 
 ## Знак «нужен ремонт» над ветхой постройкой (мигает, если вот-вот рухнет).
@@ -1783,8 +1897,8 @@ func _draw_stockpile(font: Font) -> void:
 		for i in 13:
 			var a := PI + i * PI / 12.0
 			pts.append(base + Vector2(cos(a) * rad * 1.4, sin(a) * rad * 0.7))
-		draw_colored_polygon(pts, res_color("sand").lerp(res_color("soil"), 0.5))
-		draw_circle(base + Vector2(-rad * 0.3, -rad * 0.45), rad * 0.18, res_color("gravel"))
+		_c.draw_colored_polygon(pts, res_color("sand").lerp(res_color("soil"), 0.5))
+		_c.draw_circle(base + Vector2(-rad * 0.3, -rad * 0.45), rad * 0.18, res_color("gravel"))
 		_label(font, base + Vector2(-20, -rad * 0.8 - 6), "отвал %d" % bulk, Color(0.95, 0.9, 0.8))
 	var keys: Array = colony.inventory.keys()
 	keys.sort()
@@ -1808,8 +1922,8 @@ func _draw_stockpile(font: Font) -> void:
 				var in_row := mini(left, 4 - row)
 				for j in in_row:
 					var c := base + Vector2((j - (in_row - 1) * 0.5) * 9.0, -5.0 - row * 8.0)
-					draw_circle(c, 4.5, col)
-					draw_circle(c, 2.0, col.lightened(0.35))
+					_c.draw_circle(c, 4.5, col)
+					_c.draw_circle(c, 2.0, col.lightened(0.35))
 				left -= in_row
 				row += 1
 		else:
@@ -1818,8 +1932,8 @@ func _draw_stockpile(font: Font) -> void:
 			for j in 11:
 				var a := PI + j * PI / 10.0
 				pts.append(base + Vector2(cos(a) * rad, sin(a) * rad * 0.8))
-			draw_colored_polygon(pts, col)
-			draw_circle(base + Vector2(-rad * 0.3, -rad * 0.5), rad * 0.2, col.lightened(0.25))
+			_c.draw_colored_polygon(pts, col)
+			_c.draw_circle(base + Vector2(-rad * 0.3, -rad * 0.5), rad * 0.2, col.lightened(0.25))
 		_label(font, base + Vector2(-8, -30), str(ground), Color(1, 1, 1, 0.9))
 
 
@@ -1829,33 +1943,33 @@ func _draw_deck(p: Project, r: Rect2, alpha: float) -> void:
 	var plank := Color(0.6, 0.43, 0.25, alpha)
 	var dark := Color(0.42, 0.29, 0.16, alpha)
 	var deck_y := r.end.y - (8 if p.kind == Project.Kind.PIER else 6)
-	draw_rect(Rect2(r.position.x, deck_y, r.size.x, r.end.y - deck_y), plank)
+	_c.draw_rect(Rect2(r.position.x, deck_y, r.size.x, r.end.y - deck_y), plank)
 	var x := r.position.x
 	while x < r.end.x:
-		draw_line(Vector2(x, deck_y), Vector2(x, r.end.y), dark, 1.0)
+		_c.draw_line(Vector2(x, deck_y), Vector2(x, r.end.y), dark, 1.0)
 		x += 8
 	# Сваи уходят в воду.
 	x = r.position.x + 4
 	while x < r.end.x:
-		draw_rect(Rect2(x, r.end.y, 5, TILE * 1.5), dark)
+		_c.draw_rect(Rect2(x, r.end.y, 5, TILE * 1.5), dark)
 		x += TILE * (1.5 if p.kind == Project.Kind.PIER else 2.0)
 	if p.kind == Project.Kind.BRIDGE:
-		draw_line(Vector2(r.position.x, deck_y - 16), Vector2(r.end.x, deck_y - 16), plank, 3.0)
+		_c.draw_line(Vector2(r.position.x, deck_y - 16), Vector2(r.end.x, deck_y - 16), plank, 3.0)
 		x = r.position.x + 2
 		while x < r.end.x:
-			draw_line(Vector2(x, deck_y - 16), Vector2(x, deck_y), plank, 2.0)
+			_c.draw_line(Vector2(x, deck_y - 16), Vector2(x, deck_y), plank, 2.0)
 			x += TILE
 	else:
 		# Навес рыбаков на береговом конце.
 		var land_left := Mat.is_solid(colony.world.get_mat(p.rect.position.x, p.rect.position.y + 1))
 		var hx := r.position.x if land_left else r.end.x - TILE * 1.6
 		var hw := TILE * 1.6
-		draw_rect(Rect2(hx + 4, deck_y - TILE * 1.3, hw - 8, TILE * 1.3), Color(0.72, 0.56, 0.36, alpha))
-		draw_colored_polygon(PackedVector2Array([
+		_c.draw_rect(Rect2(hx + 4, deck_y - TILE * 1.3, hw - 8, TILE * 1.3), Color(0.72, 0.56, 0.36, alpha))
+		_c.draw_colored_polygon(PackedVector2Array([
 			Vector2(hx - 4, deck_y - TILE * 1.3), Vector2(hx + hw * 0.5, deck_y - TILE * 2.1),
 			Vector2(hx + hw + 4, deck_y - TILE * 1.3)]), Color(0.55, 0.25, 0.2, alpha))
 		# Сети на шестах.
-		draw_line(Vector2(hx + hw + 10, deck_y), Vector2(hx + hw + 10, deck_y - 30), dark, 2.0)
+		_c.draw_line(Vector2(hx + hw + 10, deck_y), Vector2(hx + hw + 10, deck_y - 30), dark, 2.0)
 
 
 
@@ -1870,6 +1984,6 @@ func _draw_slice_support(p: Project, i: int, alpha: float) -> void:
 	if p.vertical():
 		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha)
 		return
-	draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
-	draw_line(Vector2(b.x - 4, a.y + 3), Vector2(b.x - 4, b.y), col, 4.0)
-	draw_line(Vector2(a.x, a.y + 3), Vector2(b.x, a.y + 3), col, 5.0)
+	_c.draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
+	_c.draw_line(Vector2(b.x - 4, a.y + 3), Vector2(b.x - 4, b.y), col, 4.0)
+	_c.draw_line(Vector2(a.x, a.y + 3), Vector2(b.x, a.y + 3), col, 5.0)

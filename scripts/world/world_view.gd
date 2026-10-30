@@ -178,14 +178,17 @@ func set_season(winter: bool, month: float) -> void:
 			hi = maxi(hi, sy)
 		var top := key.y * size
 		if top + size - 1 >= lo - 16 and top <= hi + 30:
-			_views[key].queue_redraw()
+			_views[key].redraw_all()
 
 
 func _redraw_dirty() -> void:
-	if world.dirty.is_empty():
-		return
 	for key in world.dirty:
 		var v: ChunkView = _views.get(key)
 		if v != null:
-			v.queue_redraw()
+			v.redraw_all()
 	world.dirty.clear()
+	for q: Vector2i in world.dirty_parts:
+		var v: ChunkView = _views.get(Vector2i(q.x >> 1, q.y >> 1))
+		if v != null:
+			v.redraw_part((q.x & 1) + 2 * (q.y & 1))
+	world.dirty_parts.clear()
