@@ -35,7 +35,13 @@ const MATERIALS := {
 
 var id := 0
 var kind := Kind.TUNNEL
-var rect := Rect2i()
+var rect := Rect2i():
+	set(v):
+		rect = v
+		geo_rev += 1
+## Меняется при любом изменении rect любой постройки — по нему колония знает, что указатель
+## «клетка → постройки» устарел.
+static var geo_rev := 0
 var phase := Phase.DIG
 var paused := false
 ## Ресурсы на этап строительства уже списаны со склада.

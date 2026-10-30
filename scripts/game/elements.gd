@@ -455,14 +455,20 @@ func _pump_once() -> void:
 			if int(e[0]) >= best_d:
 				break
 			var r: Rect2i = e[1]
-			for y in range(r.position.y, r.end.y):
-				for x in range(r.position.x, r.end.x):
-					var d := absi(x - center.x) + absi(y - center.y)
-					if d >= best_d or surf[x - center.x + pr] > y:
-						continue # озёра на поверхности не откачиваем
-					if world.get_mat(x, y) == Mat.WATER and world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
-						best_d = d
-						best = Vector2i(x, y)
+			# Только клетки с водой (их ищет движок, а не перебор всего куска 32×32), в том же
+			# порядке — по рядам сверху вниз, в ряду слева направо.
+			var base := Vector2i(r.position.x & ~ChunkData.MASK, r.position.y & ~ChunkData.MASK)
+			for i in _water_idx(world.chunks[Vector2i(r.position.x >> ChunkData.SHIFT, r.position.y >> ChunkData.SHIFT)]):
+				var x := base.x + (i & ChunkData.MASK)
+				var y := base.y + (i >> ChunkData.SHIFT)
+				if not r.has_point(Vector2i(x, y)):
+					continue
+				var d := absi(x - center.x) + absi(y - center.y)
+				if d >= best_d or surf[x - center.x + pr] > y:
+					continue # озёра на поверхности не откачиваем
+				if world.get_mat(x, y - 1) != Mat.WATER and world.is_revealed(x, y):
+					best_d = d
+					best = Vector2i(x, y)
 		if best == null:
 			_pump_dry[p.id] = colony.game_time + PUMP_DRY_WAIT
 		if best != null:
@@ -476,6 +482,27 @@ func _pump_once() -> void:
 				var n: Vector2i = best + d
 				if world.get_mat(n.x, n.y) == Mat.WATER:
 					active[n] = true
+
+
+## Номера клеток куска с водой (природной или натёкшей), по возрастанию.
+func _water_idx(ch: ChunkData) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var i := ch.mat.find(Mat.WATER)
+	while i != -1:
+		if ch.flags[i] & ChunkData.F_DUG == 0:
+			out.append(i)
+		i = ch.mat.find(Mat.WATER, i + 1)
+	if ch.has_fluid_overlay():
+		var overlay := false
+		i = ch.fluid.find(Mat.WATER)
+		while i != -1:
+			if ch.flags[i] & ChunkData.F_DUG and ch.flags[i] & ChunkData.F_FLUID:
+				out.append(i)
+				overlay = true
+			i = ch.fluid.find(Mat.WATER, i + 1)
+		if overlay:
+			out.sort()
+	return out
 
 
 # --- Газ ------------------------------------------------------------------------------
@@ -521,6 +548,7 @@ func _gas_tick() -> void:
 	# по шесть раз, с шумом рельефа: тысяча клеток метана стоила 20 мс в секунду).
 	var open := {}
 	var surf := {}
+	# Самое частое в расчёте газа — без вызовов функций и временных массивов.
 	for c: Vector2i in gas:
 		var g: float = gas[c]
 		var sy = surf.get(c.x)
@@ -528,24 +556,36 @@ func _gas_tick() -> void:
 			sy = world.gen.surface_y(c.x)
 			surf[c.x] = sy
 		# Над землёй газ уходит в небо.
-		if c.y < int(sy) or not _open_memo(c, open):
+		if c.y < int(sy):
 			continue
-		var targets: Array[Vector2i] = []
-		for d in DIRS4:
-			if _open_memo(c + d, open):
-				targets.append(c + d)
-		# Метан легче воздуха: больше уходит вверх.
-		var keep := g * 0.4
-		var share := g - keep
+		var o = open.get(c)
+		if o == null:
+			o = world.get_mat(c.x, c.y) == Mat.AIR
+			open[c] = o
+		if not o:
+			continue
+		# Соседи в порядке DIRS4; вверх — с весом 2 (метан легче воздуха: больше уходит вверх).
 		var weights := 0.0
-		for t in targets:
-			weights += 2.0 if t.y < c.y else 1.0
+		var ok := [false, false, false, false]
+		for k in 4:
+			var n: Vector2i = c + DIRS4[k]
+			var v = open.get(n)
+			if v == null:
+				v = world.get_mat(n.x, n.y) == Mat.AIR
+				open[n] = v
+			if v:
+				ok[k] = true
+				weights += 2.0 if n.y < c.y else 1.0
 		if weights == 0.0:
 			next[c] = next.get(c, 0.0) + g
 			continue
+		var keep := g * 0.4
+		var share := g - keep
 		next[c] = next.get(c, 0.0) + keep
-		for t in targets:
-			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
+		for k in 4:
+			if ok[k]:
+				var t: Vector2i = c + DIRS4[k]
+				next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
 	# Дегазация собирает метан — это топливо для газового генератора и котлов.
 	# Зоны дегазаций — один проход по облаку (раньше — по облаку на каждую дегазацию).
 	var zones := []
@@ -572,14 +612,6 @@ func _gas_tick() -> void:
 	for c in next:
 		if next[c] >= GAS_MIN:
 			gas[c] = next[c]
-
-
-func _open_memo(c: Vector2i, memo: Dictionary) -> bool:
-	var v = memo.get(c)
-	if v == null:
-		v = world.get_mat(c.x, c.y) == Mat.AIR
-		memo[c] = v
-	return v
 
 
 func gas_at(c: Vector2i) -> float:

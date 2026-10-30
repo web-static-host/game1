@@ -346,7 +346,9 @@ func wake_idle() -> void:
 
 func project_at(c: Vector2i) -> Project:
 	var found: Project = null
-	for p in projects:
+	# Только постройки своего столбца карты (раньше — перебор всех построек на каждый вопрос,
+	# а спрашивают тысячи раз: осыпи, вода, кучи). Порядок — как в projects.
+	for p: Project in _projects_near(c.x):
 		if p.has_cell(c):
 			# Мост и пристань могут лежать друг на друге — берём меньшую (пристань);
 			# тоннели, шахты и лифты пересекаются — берём лифт.
@@ -356,6 +358,31 @@ func project_at(c: Vector2i) -> Project:
 			if not p.is_water_structure() and not is_passage(p.kind):
 				return p
 	return found
+
+
+## Указатель «столбец карты (по 16 клеток) → постройки, что его задевают». Заново, когда
+## поменялся список построек (его хеш) или чей-то прямоугольник (Project.geo_rev).
+const NEAR_COL := 4
+var _near_cols := {}
+var _near_hash := 0
+var _near_rev := -1
+const _NO_PROJECTS: Array[Project] = []
+
+
+func _projects_near(x: int) -> Array[Project]:
+	var h := projects.hash()
+	if h != _near_hash or Project.geo_rev != _near_rev:
+		_near_hash = h
+		_near_rev = Project.geo_rev
+		_near_cols.clear()
+		for p in projects:
+			for k in range(p.rect.position.x >> NEAR_COL, ((p.rect.end.x - 1) >> NEAR_COL) + 1):
+				var col: Array[Project] = _near_cols.get(k, _NO_PROJECTS)
+				if col.is_empty():
+					col = []
+					_near_cols[k] = col
+				col.append(p)
+	return _near_cols.get(x >> NEAR_COL, _NO_PROJECTS)
 
 
 func unit_at(p: Vector2) -> Unit:
