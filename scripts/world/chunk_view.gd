@@ -24,6 +24,10 @@ const SNOW_DARK := Color(0.75, 0.83, 0.93)
 static var snow := false
 ## Время года для листвы: месяцы от 1 января (0..12), меняет WorldView.set_season.
 static var season_m := 4.5
+## Оттенок пород планеты (Planet geo.palette; на Земле — белый, без изменений) и цвет листвы
+## её деревьев (прозрачный — земная листва по временам года).
+static var palette := Color(1, 1, 1)
+static var leaf := Color(0, 0, 0, 0)
 ## Неразведанная земля — тёплый землистый тон, как на прототипе (поверх — общая фактура
 ## почвы): что внутри, не видно, пока не вскопают.
 const FOG_TOP := Color(0.51, 0.3, 0.18)
@@ -140,6 +144,8 @@ static func fog_color(depth: int, v: float) -> Color:
 
 static func rock_color(m: int, v: float) -> Color:
 	var c := Mat.color(m)
+	if palette != Color(1, 1, 1) and not Mat.is_ore(m) and m != Mat.ICE and m != Mat.OIL and Mat.is_solid(m):
+		c = Color(minf(1.0, c.r * palette.r), minf(1.0, c.g * palette.g), minf(1.0, c.b * palette.b))
 	if m == Mat.OIL:
 		return c.lightened((v - 0.5) * 0.05) if v >= 0.5 else c.darkened((0.5 - v) * 0.05)
 	if Mat.is_ore(m):
@@ -511,6 +517,9 @@ static func is_spruce(x: int) -> bool:
 ## Весной листья распускаются, летом зелёные, осенью желтеют (местами краснеют)
 ## и опадают, зимой ветки голые. У каждого дерева чуть свой срок.
 static func foliage(x: int) -> Array:
+	if leaf.a > 0.0:
+		# Деревья чужой планеты: листва круглый год, свой цвет.
+		return [1.0, leaf.lerp(leaf.darkened(0.35), WorldGen.hash01(x, 79, 0))]
 	var m := fposmod(season_m - (WorldGen.hash01(x, 78, 0) - 0.5) * 0.6, 12.0)
 	var autumn := LEAF_RED if WorldGen.hash01(x, 79, 0) < 0.3 else LEAF_YELLOW.lerp(Color(0.95, 0.55, 0.15), WorldGen.hash01(x, 80, 0) * 0.5)
 	if m < 2.5:
@@ -539,7 +548,7 @@ func _draw_feature(f: int, x: int, foot: Vector2) -> void:
 		var g := world.growth(x)
 		var h := gen.tree_height(x) * TILE * (0.25 + 0.75 * g)
 		var top := Vector2.ZERO
-		if is_spruce(x):
+		if is_spruce(x) and leaf.a == 0.0:
 			top = _draw_spruce(x, foot, h, g)
 		else:
 			top = _draw_leafy(x, foot, h, g)

@@ -815,7 +815,7 @@ func affect_unit(u: Unit, dt: float) -> void:
 		u.health -= minf(2.0, (cold - t) / 40.0) * dt
 		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning", u.cell())
 		_hurt_check(u, "замёрз(ла)")
-	var o2 := 1.0 if colony.ship_at(c) != null else world.gen.oxygen_ratio(c.y, world.gen.surface_y(c.x))
+	var o2 := 1.0 if colony.ship_at(c) != null or colony.sky_clear(c.x) else world.gen.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:
 		u.health -= (0.55 - o2) * 10.0 * dt
 		_hurt_check(u, "задохнулся(лась) на высоте")

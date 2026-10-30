@@ -54,6 +54,8 @@ func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_de
 
 ## Безвоздушная планета (не меняется у мира).
 var _airless := false
+## Столбцы, где ядовитый газ над поверхностью убрала дегазация: туда выходят (x -> true).
+var clear_sky := {}
 
 
 ## Можно находиться в клетке: пусто или вода (вброд).
@@ -105,7 +107,8 @@ func standable(c: Vector2i) -> bool:
 ## Узел графа: можно стоять, голова не упирается и над водой.
 func node(c: Vector2i) -> bool:
 	# На безвоздушной планете на поверхность не выходят — только внутри построек.
-	if _airless and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c):
+	if _airless and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c) \
+			and not clear_sky.has(c.x):
 		return false
 	return world.is_open(c.x, c.y - 1) and standable(c)
 

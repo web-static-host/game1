@@ -402,11 +402,11 @@ func _switch_world(planet: String) -> void:
 	colony = e["colony"]
 	_planet = planet
 	_home = colony.home
+	_apply_planet_sky()
 	world_view = WorldView.new()
 	add_child(world_view)
 	world_view.setup(world, colony, camera)
 	world_view.focus_cell(_cameras.get(planet, colony.home + Vector2i(0, -3)))
-	_apply_planet_sky()
 	_sky_ground = NAN
 	_update_status()
 	hud.log_event("%s: гавриков %d" % [Planet.planet_name(planet), colony.units.size()], "info")
@@ -506,8 +506,11 @@ func _launch_crew() -> void:
 			if u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL:
 				what.append(Unit.TASK_NAMES[u.task])
 			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
+		# Подходит ли планете — и шанс выжить; взять можно любого.
+		var chance := colony.survival_chance(u, planet)
+		var fit := "подходит" if chance >= 80 else ("подходит с трудом" if chance >= 50 else "НЕ ПОДХОДИТ")
 		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
-			"info": "%s · %s %d%%%s%s" % [_family_text(u), stat, roundi(u.stat(stat_key) * 100),
+			"info": "%s, шанс выжить ~%d%% · %s · %s %d%%%s%s" % [fit, chance, _family_text(u), stat, roundi(u.stat(stat_key) * 100),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
 				if crew.has(u):
@@ -579,6 +582,10 @@ func _apply_planet_sky() -> void:
 		m.set_shader_parameter(n, load("res://assets/background/%s.png" % n) if earth else _blank_tex())
 	var tint: Color = Planet.data(_planet)["sky"]
 	m.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+	# Породы и листва — своего цвета у каждой планеты.
+	var geo: Dictionary = Planet.data(_planet).get("geo", {})
+	ChunkView.palette = geo.get("palette", Color(1, 1, 1))
+	ChunkView.leaf = geo.get("leaf", Color(0, 0, 0, 0))
 
 
 var _blank: ImageTexture

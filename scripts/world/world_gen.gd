@@ -27,8 +27,10 @@ var planet: Dictionary = {}
 ## 4 — озёра ещё чаще и одно — недалеко от базы; 5 — серебро, золото и алмазы чаще
 ## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди;
 ## 6 — подземная вода в полостях ровная (уровень общий на участок, без «стенок»),
-## на дне подземных вод часто золото.
-const LATEST := 7
+## на дне подземных вод часто золото; 7 — нефтяные залежи разного размера;
+## 8 — у каждой планеты свой облик (Planet.DATA[...]["geo"]): рельеф, грунт, ледяная кора,
+## толщина пластов, глубина базальта и магмы, пещеры и то, как залегают руды; на Венере — деревья.
+const LATEST := 8
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
@@ -38,6 +40,8 @@ var _home_clear := 60
 ## Насколько ниже порог кимберлитовых трубок и какая доля алмазов в них (версия 5 — чаще).
 var _kimb_shift := 0.0
 var _diamond_share := 0.04
+## Облик планеты (версия 8+, не Земля): Planet.DATA[...]["geo"]; пусто — как на Земле.
+var geo: Dictionary = {}
 
 var _n_surface: FastNoiseLite
 var _n_hills: FastNoiseLite
@@ -82,6 +86,8 @@ func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
 	if version >= 5:
 		_kimb_shift = 0.22
 		_diamond_share = 0.08
+	if version >= 8 and planet_id != "earth":
+		geo = planet.get("geo", {})
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -137,7 +143,19 @@ const FEATURE_BUSH := 3
 
 func feature_at(x: int) -> int:
 	if not planet["plants"]:
-		# На других планетах ни деревьев, ни кустов, ни валунов на поверхности.
+		# На других планетах ни деревьев, ни кустов, ни валунов на поверхности — кроме Венеры
+		# (версия 8): там свои деревья (рубят, когда дегазация очистит воздух) и валуны.
+		var trees := float(planet.get("trees", 0.0)) if not geo.is_empty() else 0.0
+		if trees <= 0.0:
+			return FEATURE_NONE
+		var sv := surface_y(x)
+		if absi(surface_y(x - 1) - sv) > 1 or absi(surface_y(x + 1) - sv) > 1:
+			return FEATURE_NONE
+		var hv := hash01(x, 7, world_seed + 11)
+		if hv < trees:
+			return FEATURE_TREE
+		if hv < trees + 0.05:
+			return FEATURE_BOULDER
 		return FEATURE_NONE
 	var s := surface_y(x)
 	if absi(surface_y(x - 1) - s) > 1 or absi(surface_y(x + 1) - s) > 1:
@@ -183,7 +201,42 @@ func tint(x: int, y: int) -> float:
 ## y первой твёрдой клетки в столбце x.
 func _base_surface(x: int) -> int:
 	var h := _n_surface.get_noise_1d(x) * 45.0 + _n_hills.get_noise_1d(x) * 5.0
+	if not geo.is_empty():
+		h = _relief(x, h)
 	return int(round(-h))
+
+
+## Рельеф планеты (версия 8): высота над нулём в столбце x из земной h.
+func _relief(x: int, h: float) -> float:
+	match str(geo.get("relief", "")):
+		"craters":
+			# Изрытая равнина: кратеры с валами, у базы — ровно (там садится корабль).
+			h *= 0.5
+			var seg := 70
+			var k := floori(float(x) / seg)
+			for kk: int in [k - 1, k, k + 1]:
+				if absi(kk * seg) < 40:
+					continue
+				var cx := kk * seg + int(hash01(kk, 1, world_seed + 61) * seg)
+				var r := 7.0 + hash01(kk, 2, world_seed + 61) * 16.0
+				var dx := absf(float(x - cx)) / r
+				if dx < 1.0:
+					h -= (1.0 - dx * dx) * r * 0.45
+				elif dx < 1.35:
+					h += sin((dx - 1.0) / 0.35 * PI) * r * 0.12
+		"volcanic":
+			# Пологие вулканические холмы.
+			h = h * 0.7 + maxf(0.0, _n_hills.get_noise_1d(x * 0.25 + 300.0)) * 38.0
+		"mesas":
+			# Столовые горы: ровные плато и крутые уступы между ними.
+			var step := 9.0
+			var t := h / step
+			var f := t - floorf(t)
+			h = (floorf(t) + smoothstep(0.75, 1.0, f)) * step
+		"ice":
+			# Ровные ледяные равнины с редкими торосами.
+			h = h * 0.3 + absf(_n_hills.get_noise_1d(x * 2.0)) * 3.0
+	return h
 
 
 ## Уровень земли в столбце x без озёр (у озера — уровень воды).
@@ -363,6 +416,14 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 	if d < 4 and water_level(x) < surf:
 		# Дно озера — в основном песок, местами глина.
 		return Mat.SAND if hash01(x, y, world_seed + 8) < 0.8 else Mat.CLAY
+	if not geo.is_empty():
+		# Ледяная кора газовых гигантов (неровная снизу).
+		var ice := int(geo.get("ice", 0))
+		if ice > 0 and d < ice + int(_n_sub.get_noise_1d(x * 0.5) * ice * 0.3):
+			return Mat.ICE
+		if d < soil:
+			var reg: Array = geo.get("regolith", [Mat.SAND, Mat.GRAVEL])
+			return reg[0] if hash01(x, y, world_seed + 3) < 0.6 else reg[1]
 	if d < soil:
 		# Без растений почвы нет — сверху песок и щебень (реголит).
 		return Mat.TOPSOIL if planet["plants"] else (Mat.SAND if hash01(x, y, world_seed + 3) < 0.6 else Mat.GRAVEL)
@@ -389,10 +450,17 @@ func _cell(x: int, y: int, surf: int, soil: int, sed: int, kimb: bool, water_tab
 
 func _is_cave(x: int, y: int, d: int) -> bool:
 	var region := _n_cave_region.get_noise_2d(x, y)
-	if region < 0.08:
+	# Планета (версия 8): больше или меньше пещер; лавовые трубки — длинные по горизонтали.
+	var lo := 0.08
+	var sy := 1.4
+	if not geo.is_empty():
+		lo = 0.08 - (float(geo.get("caves", 1.0)) - 1.0) * 0.25
+		if geo.get("tubes", false):
+			sy = 4.0
+	if region < lo:
 		return false
 	var w := 0.045 if d < 3000 else 0.025
-	return absf(_n_cave.get_noise_2d(x, y * 1.4)) < w * minf(1.0, (region - 0.08) * 6.0)
+	return absf(_n_cave.get_noise_2d(x * (0.5 if sy > 2.0 else 1.0), y * sy)) < w * minf(1.0, (region - lo) * 6.0)
 
 
 func _rock(x: int, y: int, d: int, sed: int, kimb: bool) -> int:
@@ -412,13 +480,24 @@ func _rock(x: int, y: int, d: int, sed: int, kimb: bool) -> int:
 	if ore != Mat.AIR:
 		return ore
 
+	var basalt_start := BASALT_START
+	var magma_start := MAGMA_START
+	if not geo.is_empty():
+		# Своя толщина осадочных пород, глубина базальта и магмы.
+		sed = int(sed * float(geo.get("sed", 1.0)))
+		basalt_start = int(geo.get("basalt", BASALT_START))
+		magma_start = int(geo.get("magma", MAGMA_START))
 	if wd < sed:
 		return _sedimentary(x, y, d, wd)
 
-	if d >= MAGMA_START and _is_magma(x, y, d):
+	if d >= magma_start and _is_magma(x, y, d, magma_start):
 		return Mat.MAGMA
-	var t := clampf(float(d - BASALT_START) / float(BASALT_FULL - BASALT_START), 0.0, 1.0)
-	if t > 0.0 and hash01(x >> 3, y >> 3, world_seed + 9) < t:
+	var t := clampf(float(d - basalt_start) / float(maxi(1, BASALT_FULL * basalt_start / BASALT_START - basalt_start)), 0.0, 1.0)
+	if not geo.is_empty():
+		# Планеты: базальт — плавными потоками, а не квадратами.
+		if t > 0.0 and (_n_crystal.get_noise_2d(y * 1.3, x) + 1.0) * 0.5 < t:
+			return Mat.BASALT
+	elif t > 0.0 and hash01(x >> 3, y >> 3, world_seed + 9) < t:
 		return Mat.BASALT
 	return Mat.GNEISS if _n_crystal.get_noise_2d(x, y) > 0.2 else Mat.GRANITE
 
@@ -460,6 +539,9 @@ func _ore(x: int, y: int, d: int) -> int:
 	if d < 20:
 		return Mat.AIR
 	var richness := clampf(d / 3000.0, 0.0, 1.0)
+	var mode := str(geo.get("ores", "veins"))
+	if mode != "veins":
+		return _ore_planet(x, y, d, mode)
 	var w := (0.018 + 0.03 * richness) * float(planet["ore"])
 	if absf(_n_vein.get_noise_2d(x, y)) >= w:
 		return Mat.AIR
@@ -491,6 +573,48 @@ func _ore(x: int, y: int, d: int) -> int:
 	return Mat.IRON_ORE
 
 
+## Руда на планете с особым залеганием (версия 8). Тип руды — по таблице планеты, один на всё
+## гнездо или пласт (по участку), чтобы они были видны как цельные.
+func _ore_planet(x: int, y: int, d: int, mode: String) -> int:
+	var ore := float(planet["ore"])
+	var key := Vector2i.ZERO
+	match mode:
+		"blobs":
+			# Крупные гнёзда, богаче всего у поверхности (до ~400 м), глубже — реже.
+			var near := clampf(1.0 - float(d - 20) / 600.0, 0.25, 1.0)
+			if _n_vein.get_noise_2d(x * 0.6, y * 0.6) < 0.62 - 0.12 * near * ore:
+				return Mat.AIR
+			key = Vector2i(x >> 4, y >> 4)
+		"layers":
+			# Тонкие пласты вдоль горизонта, каждый — своей руды.
+			if absf(_n_band.get_noise_2d(x * 0.015, y * 0.7 + 900.0)) > 0.022 * ore:
+				return Mat.AIR
+			key = Vector2i(x >> 6, y >> 2)
+		"deep":
+			# У поверхности бедно, глубже 250 м — широкие жилы.
+			var w := (0.008 if d < 250 else 0.04) * ore
+			if absf(_n_vein.get_noise_2d(x, y)) >= w:
+				return Mat.AIR
+			key = Vector2i(x >> 3, y >> 3)
+		"pockets":
+			# Редкие, но очень богатые гнёзда.
+			if _n_vein.get_noise_2d(x * 0.8, y * 0.8) < 0.7:
+				return Mat.AIR
+			key = Vector2i(x >> 4, y >> 4)
+	var xen := float(planet.get("amethyst", 0.0))
+	if xen > 0.0 and d > 150 and hash01(x >> 2, y >> 2, world_seed + 57) < xen:
+		return Mat.AMETHYST
+	# Тип руды — плавными областями (соседние гнёзда и куски пласта — одной рудой).
+	var r := clampf((_n_ore_type.get_noise_2d(key.x * 16.0, key.y * 16.0) + 0.6) / 1.2, 0.0, 0.999)
+	var table: Array = planet["ores"]
+	if table.is_empty():
+		table = [[0.45, Mat.IRON_ORE], [0.75, Mat.COPPER_ORE], [0.88, Mat.SILVER_ORE], [0.96, Mat.GOLD_ORE], [1.0, Mat.URANIUM_ORE]]
+	for entry in table:
+		if r < entry[0]:
+			return entry[1]
+	return Mat.IRON_ORE
+
+
 ## Версия 5: редкие металлы — участками жилы по 8×8 м с заданной долей (шум типа руды
 ## почти не доходит до краёв, и золото раньше почти не встречалось). Остальное — железо и медь.
 func _ore_v5(x: int, y: int, d: int, r: float) -> int:
@@ -510,8 +634,8 @@ func _ore_v5(x: int, y: int, d: int, r: float) -> int:
 	return Mat.IRON_ORE if r < (0.78 if d < 80 else 0.55) else Mat.COPPER_ORE
 
 
-func _is_magma(x: int, y: int, d: int) -> bool:
-	var t := clampf(float(d - MAGMA_START) / float(MANTLE_DEPTH - MAGMA_START), 0.0, 1.0)
+func _is_magma(x: int, y: int, d: int, start := MAGMA_START) -> bool:
+	var t := clampf(float(d - start) / float(MANTLE_DEPTH - start), 0.0, 1.0)
 	var threshold := lerpf(0.78, 0.35, t)
 	return _n_magma.get_noise_2d(x, y) > threshold
 

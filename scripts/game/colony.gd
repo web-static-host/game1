@@ -4827,6 +4827,7 @@ func update(dt: float) -> void:
 		_lifts_tick(step)
 		if slow:
 			_drills_tick(sdt)
+			_sky_tick()
 			_oil_tick(sdt)
 			_plant_tick(sdt)
 			_season_tick()
@@ -8795,6 +8796,67 @@ func room_temp(p: Project) -> float:
 
 
 ## Ниже какой температуры гаврику холодно: синим и пушистым — ниже, красным — выше.
+## Ядовитый газ над поверхностью (Венера, газовые гиганты): дегазация, чья зона достаёт до
+## поверхности, очищает воздух над ней — там можно выходить, дышать и рубить деревья. В
+## пустоте (Меркурий, Марс) очищать нечего.
+func _sky_tick() -> void:
+	if str(world.gen.planet.get("atm", "air")) != "gas":
+		return
+	var clear := {}
+	for p in rooms_of(RoomType.DEGAS):
+		if p.paused:
+			continue
+		var center := p.rect.get_center()
+		var dr := RoomType.effect_radius(p)
+		for x in range(center.x - dr, center.x + dr + 1):
+			if center.y - dr <= world.gen.surface_y(x):
+				clear[x] = true
+	if clear == pathing.clear_sky:
+		return
+	var cells := []
+	var opened := 0
+	for x in clear:
+		if not pathing.clear_sky.has(x):
+			opened += 1
+	for pair in [[clear, pathing.clear_sky], [pathing.clear_sky, clear]]:
+		for x in pair[0]:
+			if not pair[1].has(x):
+				var s := world.gen.surface_y(x)
+				for y in range(s - 10, s + 2):
+					cells.append(Vector2i(x, y))
+	pathing.clear_sky.clear()
+	pathing.clear_sky.merge(clear)
+	pathing.forget(cells)
+	pathing.climb_rev += 1
+	if opened > 0:
+		_log("Дегазация очистила воздух над поверхностью: там можно выходить и рубить деревья", "good",
+			Vector2i(clear.keys()[0], world.gen.surface_y(clear.keys()[0])))
+
+
+## Воздух над поверхностью в столбце x очищен дегазацией.
+func sky_clear(x: int) -> bool:
+	return pathing.clear_sky.has(x)
+
+
+## Шанс выжить на планете, %: по температуре недр (там живут) и стойкости гаврика. Холод
+## закрывают очаги (по HEAT °C каждый, но не теплее Elements.FIRE_MAX_TEMP), жару — вентиляция
+## (Elements.VENT_COOLING, с энергией — вдвое). Чем больше нужно очагов или вентиляции и чем
+## дальше до них, тем ниже шанс. Супер-гаврику стихии не страшны.
+func survival_chance(u: Unit, planet_id: String) -> int:
+	if u.invulnerable():
+		return 100
+	var under := float(Planet.data(planet_id)["under"])
+	var need_heat := cold_limit(u) - under
+	var need_cool := under - elements.heat_limit(u)
+	if need_heat > 0.0:
+		if cold_limit(u) > Elements.FIRE_MAX_TEMP:
+			return 5
+		return [80, 60, 40, 20][mini(ceili(need_heat / HEAT) - 1, 3)]
+	if need_cool > 0.0:
+		return [75, 45, 15][mini(ceili(need_cool / Elements.VENT_COOLING) - 1, 2)]
+	return 95
+
+
 static func cold_limit(u: Unit) -> float:
 	return COLD - (u.stat("cold") - 1.0) * 30.0
 

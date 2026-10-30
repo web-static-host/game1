@@ -109,6 +109,8 @@ func _initialize() -> void:
 	test_drill_lift()
 	test_drill_lift_side()
 	test_amethyst()
+	test_planet_looks()
+	test_venus_sky()
 	test_geoprobe()
 	test_unit_tap()
 	test_room_move()
@@ -2778,6 +2780,19 @@ func test_space() -> void:
 	var n0 := colony.units.size()
 	var flight := colony.launch(pad, "mars", crew, {"food": 100, "wood": 50})
 	check(not flight.has("error") and colony.units.size() == n0 - 3 and pad.rocket.is_empty(), "экспедиция улетела: 3 гаврика, 150 груза")
+	var su: Unit = colony.units[0]
+	var st0: Dictionary = su.stats.duplicate()
+	su.stats["cold"] = 1.0
+	su.stats["heat"] = 1.0
+	var c_mars := colony.survival_chance(su, "mars")
+	var c_nep := colony.survival_chance(su, "neptune")
+	su.stats["cold"] = 1.6
+	var c_nep_blue := colony.survival_chance(su, "neptune")
+	su.stats["heat"] = 0.5
+	var c_venus_weak := colony.survival_chance(su, "venus")
+	su.stats = st0
+	check(c_mars == 80 and c_nep == 60 and c_nep_blue > c_nep and c_venus_weak < 80,
+		"шанс выжить: Марс %d%%, Нептун %d%% (синему %d%%), Венера нестойкому к жаре %d%%" % [c_mars, c_nep, c_nep_blue, c_venus_weak])
 	check(colony.inventory.get("food", 0) <= 20, "груз списан со склада")
 	var uni := Universe.new()
 	uni.base_seed = 40
@@ -4987,6 +5002,81 @@ func test_amethyst() -> void:
 		check(counts[pid][0] > 0 and counts[pid][0] * 10 < counts[pid][1], "%s: аметист есть и редкий (%d на %d рудных)" % [pid, counts[pid][0], counts[pid][1]])
 	check(RoomType.ROCKET_COST["nuclear"].has("amethyst") and not RoomType.ROCKET_COST["chem"].has("amethyst"), "аметист нужен ядерной ракете")
 	check(Mat.resource(Mat.AMETHYST) == "amethyst" and Mat.resource_name("amethyst") == "Аметист", "ресурс «Аметист»")
+
+
+## Планеты (версия 8): у каждой свой рельеф, кора, руды и цвет пород; на Венере — деревья.
+func test_planet_looks() -> void:
+	var stats := {}
+	for pid in ["earth", "mercury", "venus", "mars", "jupiter", "uranus"]:
+		var g := WorldGen.new(21, WorldGen.LATEST, pid)
+		var ice := 0
+		var ores := {}
+		var ore_n := 0
+		var basalt := 0
+		var lo := 1 << 30
+		var hi := -(1 << 30)
+		for x in range(-400, 400, 2):
+			var surf := g.surface_y(x)
+			lo = mini(lo, surf)
+			hi = maxi(hi, surf)
+			for y in range(surf, surf + 400, 3):
+				var m := g.material_at(x, y)
+				if m == Mat.ICE:
+					ice += 1
+				elif m == Mat.BASALT:
+					basalt += 1
+				elif Mat.is_ore(m):
+					ore_n += 1
+					ores[m] = true
+		var trees := 0
+		for x in range(-400, 400):
+			if g.feature_at(x) == WorldGen.FEATURE_TREE:
+				trees += 1
+		stats[pid] = {"ice": ice, "ore": ore_n, "basalt": basalt, "relief": hi - lo, "trees": trees}
+	check(stats["jupiter"]["ice"] > 1000 and stats["uranus"]["ice"] > stats["jupiter"]["ice"] and stats["mars"]["ice"] == 0 and stats["earth"]["ice"] == 0,
+		"ледяная кора — на газовых гигантах (у Урана толще), на Марсе и Земле — нет (%s)" % [stats])
+	check(stats["venus"]["basalt"] > stats["mars"]["basalt"] * 3, "Венера — вулканическая: базальт почти сразу (%d против %d на Марсе)" % [stats["venus"]["basalt"], stats["mars"]["basalt"]])
+	check(stats["venus"]["trees"] > 50 and stats["mars"]["trees"] == 0 and stats["mercury"]["trees"] == 0, "на Венере растут деревья (%d), на Марсе и Меркурии — нет" % stats["venus"]["trees"])
+	check(stats["mercury"]["ore"] != stats["mars"]["ore"] and stats["mars"]["ore"] != stats["jupiter"]["ore"], "руды залегают по-разному (%d / %d / %d)" % [stats["mercury"]["ore"], stats["mars"]["ore"], stats["jupiter"]["ore"]])
+	var g7 := WorldGen.new(21, 7, "jupiter")
+	check(g7.material_at(50, g7.surface_y(50) + 10) != Mat.ICE and g7.feature_at(0) == WorldGen.FEATURE_NONE, "старые миры планет не меняются (версия 7 — без льда)")
+	var g7v := WorldGen.new(21, 7, "venus")
+	var old_trees := 0
+	for x in range(-400, 400):
+		if g7v.feature_at(x) == WorldGen.FEATURE_TREE:
+			old_trees += 1
+	check(old_trees == 0, "в старом мире Венеры деревья не появляются из ниоткуда")
+	var pals := {}
+	for pid in Planet.ORDER:
+		pals[str(Planet.data(pid)["geo"]["palette"])] = true
+	check(pals.size() == Planet.ORDER.size(), "у каждой планеты свой цвет пород")
+	check(Mat.name_of(Mat.ICE) == "Лёд" and Mat.resource(Mat.ICE) == "" and Mat.is_diggable(Mat.ICE), "лёд копается и ничего не даёт")
+
+
+## Ядовитый газ над Венерой: дегазация, достающая до поверхности, очищает воздух — туда
+## выходят; в пустоте Марса очищать нечего.
+func test_venus_sky() -> void:
+	for pid in ["venus", "mars"]:
+		var w := WorldData.new(WorldGen.new(33, WorldGen.LATEST, pid))
+		var c := Colony.new(w)
+		c.home = Vector2i(0, w.gen.surface_y(0))
+		var x := 40
+		var room := _fake_room(c, RoomType.DEGAS, x)
+		var r := RoomType.effect_radius(room)
+		var cx := room.rect.get_center().x
+		var out := Vector2i(cx + r - 2, w.gen.surface_y(cx + r - 2) - 1)
+		var far := Vector2i(cx + r + 60, w.gen.surface_y(cx + r + 60) - 1)
+		for c2 in [out, far, out + Vector2i(0, 1), far + Vector2i(0, 1)]:
+			w.reveal(c2.x, c2.y)
+		c._sky_tick()
+		if pid == "venus":
+			check(c.sky_clear(out.x) and not c.sky_clear(far.x), "Венера: дегазация очистила воздух над собой (до %d м), дальше — газ" % r)
+			check(c.pathing.node(out) and not c.pathing.node(far), "Венера: на очищенную поверхность выходят, на отравленную — нет")
+			room.paused = true
+			c._sky_tick()
+			check(not c.sky_clear(out.x) and not c.pathing.node(out), "дегазация выключена — снова газ, наружу не выйти")
+		else:
+			check(not c.sky_clear(out.x) and not c.pathing.node(out), "Марс: там пустота — дегазация поверхность не открывает")
 
 
 func _load_left(lift: Project) -> int:

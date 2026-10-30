@@ -32,6 +32,7 @@ enum {
 	PERIDOTITE,
 	RUBBLE,
 	AMETHYST,
+	ICE,
 	COUNT,
 }
 
@@ -70,6 +71,8 @@ const _RAW := [
 	["Обломки породы", "6f6862", 6.0, 1900, 0.0, "stone", false, Hazard.NONE],
 	# Только на Меркурии, Венере и Марсе, очень редко: нужен для ядерной ракеты.
 	["Аметист", "a24bff", 50.0, 3200, 150.0, "amethyst", true, Hazard.NONE],
+	# Ледяная кора газовых гигантов: копается легко, ничего не даёт.
+	["Лёд", "bfe6f2", 8.0, 917, 10.0, "", false, Hazard.NONE],
 ]
 
 ## Сыпучие породы: осыпаются в пустоту под собой, пролёт не держат.
@@ -79,6 +82,7 @@ const SPAN := {
 	TOPSOIL: 3, CLAY: 3, SANDSTONE: 5, SHALE: 4, LIMESTONE: 6, COAL: 3,
 	GRANITE: 10, GNEISS: 9, BASALT: 12, IRON_ORE: 6, COPPER_ORE: 6, SILVER_ORE: 6, GOLD_ORE: 6,
 	URANIUM_ORE: 6, KIMBERLITE: 5, DIAMOND: 5, ROCK_SALT: 6, GAS_POCKET: 3, OIL: 4, PERIDOTITE: 12, AMETHYST: 6,
+	ICE: 4,
 }
 
 const RESOURCE_NAMES := {
