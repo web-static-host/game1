@@ -2923,12 +2923,12 @@ func test_drill() -> void:
 	colony.inventory["iron"] = 0
 	check(colony.start_drill(d, Vector2i.DOWN, 12).begins_with("Нужно"), "без железа на обсадку не сверлит")
 	colony.inventory["iron"] = 20
-	check(not colony.drill_error(d, Vector2i.UP, 5).is_empty(), "вверх бур не сверлит")
+	check(not colony.drill_error(d, Vector2i.UP, 5).is_empty(), "вверх из земли наружу бур не сверлит")
 	check(colony.start_drill(d, Vector2i.DOWN, 12).is_empty(), "приказ: 12 м вниз")
-	check(colony.inventory.get("iron", 0) == 20 - Colony.drill_casing(12), "обсадка взята со склада")
+	check(d.order_len == 12, "длина приказа запомнена у бура")
 	var bore := colony.project_by_id(d.bore_id)
-	check(bore != null and bore.kind == Project.Kind.TUNNEL and bore.bored_by == d.id and bore.rect == Rect2i(x, s, 3, 12),
-		"ход вниз размечен тоннелем 3×12")
+	check(bore != null and bore.kind == Project.Kind.TUNNEL and bore.bored_by == d.id and bore.rect.size.y <= 1,
+		"ход не размечен сразу на всю длину — растёт за буром (%s)" % [bore.rect if bore != null else null])
 	var t := 0.0
 	while t < 2000.0 and colony.drilling(d):
 		colony._power_tick(0.5)
@@ -2937,6 +2937,8 @@ func test_drill() -> void:
 		if d.paused:
 			colony.set_paused(d, false)
 	check(not colony.drilling(d) and d.rect == Rect2i(x, s + 9, 3, 3), "бур доехал до конца хода (%.0f с)" % t)
+	check(colony.inventory.get("iron", 0) == 20 - Colony.drill_casing(12), "обсадка взята со склада по ходу (%d железа)" % colony.inventory.get("iron", 0))
+	check(bore.rect == Rect2i(x, s, 3, 12), "ход вниз — тоннель 3×12 (%s)" % bore.rect)
 	check(bore.phase == Project.Phase.DONE and bore.kind == Project.Kind.TUNNEL, "готов тоннель")
 	var cells := 0
 	for c in bore.cells():

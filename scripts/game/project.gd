@@ -75,6 +75,11 @@ var move_dir := Vector2i.ZERO
 ## ход, который он проходит, и где стоял, когда получил приказ.
 var drill_dir := Vector2i.ZERO
 var drill_left := 0
+## Сколько метров заказывали в прошлый раз (бур — сверлить, выработка — продлить): у каждой
+## постройки своё, хранится в сохранении. 0 — ещё не заказывали.
+var order_len := 0
+## Пройдено бором с приказа (обсадку — железо — берут по мере хода).
+var bore_done := 0
 var drill_t := 0.0
 var bore_id := 0
 var bore_from := Rect2i()
@@ -476,6 +481,8 @@ func to_dict() -> Dictionary:
 		"lift_goal": lift_goal,
 		"drill_dir": [drill_dir.x, drill_dir.y],
 		"drill_left": drill_left,
+		"order_len": order_len,
+		"bore_done": bore_done,
 		"drill_t": drill_t,
 		"bore_id": bore_id,
 		"bore_from": [bore_from.position.x, bore_from.position.y, bore_from.size.x, bore_from.size.y],
@@ -550,6 +557,8 @@ static func from_dict(d: Dictionary) -> Project:
 	var dd: Array = d.get("drill_dir", [0, 0])
 	p.drill_dir = Vector2i(int(dd[0]), int(dd[1]))
 	p.drill_left = int(d.get("drill_left", 0))
+	p.order_len = int(d.get("order_len", 0))
+	p.bore_done = int(d.get("bore_done", 0))
 	p.drill_t = float(d.get("drill_t", 0.0))
 	p.bore_id = int(d.get("bore_id", 0))
 	var bf: Array = d.get("bore_from", [0, 0, 0, 0])

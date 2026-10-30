@@ -1018,13 +1018,19 @@ func _show_project(p: Project) -> void:
 					colony.stop_drill(p)
 					_show_project(p), "danger"])
 			else:
-				controls.append({"label": "Сверлить, м", "value": _drill_len, "min": 1, "max": Colony.DRILL_MAX,
-					"changed": func(v: int) -> void: _drill_len = v})
+				# Сколько сверлить — своё у каждого бура (запоминается и сохраняется).
+				if p.order_len <= 0:
+					p.order_len = _drill_len
+				controls.append({"label": "Сверлить, м · железо: 1 на %d м (есть %d)" % [Colony.DRILL_CASING_M, int(colony.inventory.get("iron", 0))],
+					"value": p.order_len, "min": 1, "max": Colony.DRILL_MAX,
+					"changed": func(v: int) -> void:
+						p.order_len = v
+						_drill_len = v})
 				# Бур-лифт — только вниз: лифт идёт следом.
-				for d: Vector2i in ([Vector2i.DOWN] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]):
-					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.RIGHT: "Вправо →"}[d]
+				for d: Vector2i in ([Vector2i.DOWN] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP, Vector2i.LEFT]):
+					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.UP: "↑ Вверх", Vector2i.RIGHT: "Вправо →"}[d]
 					actions.push_front([label, func() -> void:
-						var err := colony.start_drill(p, d, _drill_len)
+						var err := colony.start_drill(p, d, p.order_len)
 						if not err.is_empty():
 							hud.log_event(err, "warning")
 						_show_project(p), "primary"])
@@ -1035,18 +1041,22 @@ func _show_project(p: Project) -> void:
 			if ext != null:
 				actions.append(["К продолжению", func() -> void: _select(null, ext)])
 			else:
-				controls.append({"label": "Продлить на, м", "value": _extend_len, "min": 1, "max": Colony.EXTEND_MAX,
-					"changed": func(v: int) -> void: _extend_len = v})
+				if p.order_len <= 0:
+					p.order_len = _extend_len
+				controls.append({"label": "Продлить на, м", "value": p.order_len, "min": 1, "max": Colony.EXTEND_MAX,
+					"changed": func(v: int) -> void:
+						p.order_len = v
+						_extend_len = v})
 				# push_front переворачивает порядок: идём справа налево, чтобы «← Продлить» встал слева.
 				dirs.reverse()
 				for d: Vector2i in dirs:
 					var label: String = {Vector2i.LEFT: "← Продлить", Vector2i.DOWN: "Продлить ↓", Vector2i.RIGHT: "Продлить →"}[d]
 					actions.push_front([label, func() -> void:
-						var err := colony.extend_error(p, d, _extend_len)
+						var err := colony.extend_error(p, d, p.order_len)
 						if not err.is_empty():
 							hud.log_event(err, "warning")
 							return
-						var q := colony.extend_project(p, d, _extend_len)
+						var q := colony.extend_project(p, d, p.order_len)
 						if q != null:
 							_select(null, q), "primary"])
 		if not colony.drilling(p):

@@ -1337,7 +1337,7 @@ const DRILL_DIESEL_TIME := 30.0
 const DRILL_SPEED := 3.0
 ## Без породы впереди бур проезжает метр за столько секунд.
 const DRILL_MOVE_TIME := 1.0
-const DRILL_MAX := 64
+const DRILL_MAX := 500
 ## Обсадка хода: 1 железо на столько метров (берут со склада при приказе).
 const DRILL_CASING_M := 4
 
@@ -1362,6 +1362,8 @@ static func drill_path(p: Project, dir: Vector2i, n: int) -> Rect2i:
 	var r := p.rect
 	if dir == Vector2i.DOWN:
 		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.UP:
+		return Rect2i(r.position.x, r.position.y - n, r.size.x, n)
 	if dir == Vector2i.LEFT:
 		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
 	return Rect2i(r.end.x, r.position.y, n, r.size.y)
@@ -1396,8 +1398,8 @@ func drill_error(p: Project, dir: Vector2i, n: int) -> String:
 		return "Бур ещё не собран"
 	if drilling(p):
 		return "Бур уже сверлит — сначала остановите"
-	if not [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT].has(dir):
-		return "Бур сверлит вниз, влево или вправо"
+	if not [Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP].has(dir):
+		return "Бур сверлит вниз, вверх, влево или вправо"
 	if p.link_id != 0 and dir != Vector2i.DOWN:
 		return "Бур-лифт сверлит только вниз — лифт идёт следом"
 	if p.link_id != 0:
@@ -1415,9 +1417,9 @@ func drill_error(p: Project, dir: Vector2i, n: int) -> String:
 			return "На пути постройка: %s" % other.title()
 		if world.is_revealed(c.x, c.y) and Mat.is_fluid(world.get_mat(c.x, c.y)):
 			return "На пути %s" % Mat.name_of(world.get_mat(c.x, c.y)).to_lower()
-	var iron := drill_casing(n)
-	if int(inventory.get("iron", 0)) < iron:
-		return "Нужно %d железа на обсадку хода (на складе %d)" % [iron, int(inventory.get("iron", 0))]
+	# Обсадку (железо) берут по мере хода; без железа на складе бур и не трогается.
+	if int(inventory.get("iron", 0)) < 1:
+		return "Нужно железо на обсадку хода: 1 на %d м (всего %d), на складе нет" % [DRILL_CASING_M, drill_casing(n)]
 	return ""
 
 
@@ -1537,14 +1539,15 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 	var err := drill_error(p, dir, n)
 	if not err.is_empty():
 		return err
-	_remove("iron", drill_casing(n))
-	var path := drill_path(p, dir, n)
-	# Бур стоит под землёй — его место тоже становится частью хода.
-	var r := path.merge(p.rect) if _underground(p.rect) else path
+	# Ход растёт за буром по мере сверления (раньше сразу размечался на всю длину — по целой
+	# породе). Бур стоит под землёй — его место тоже часть хода.
+	var r := p.rect if _underground(p.rect) else drill_path(p, dir, 1)
+	p.bore_done = 0
+	p.order_len = n
 	var q := Project.new()
 	q.id = next_project_id
 	next_project_id += 1
-	q.kind = Project.Kind.TUNNEL if dir == Vector2i.DOWN else Project.Kind.MINE
+	q.kind = Project.Kind.TUNNEL if dir.x == 0 else Project.Kind.MINE
 	q.rect = r
 	q.workers = 0
 	q.bored_by = p.id
@@ -1560,7 +1563,7 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 	p.hazard_ack.clear()
 	p.blocked = ""
 	_rebuild_climb()
-	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info", p.rect.get_center())
+	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.UP: "вверх", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info", p.rect.get_center())
 	return ""
 
 
@@ -1622,11 +1625,22 @@ func _drills_tick(dt: float) -> void:
 			need = maxf(need, dig_time(c))
 		if p.drill_t < need:
 			continue
+		# Обсадка: 1 железо на DRILL_CASING_M м — берут, въезжая в очередной участок.
+		if p.bore_done % DRILL_CASING_M == 0:
+			if _remove("iron", 1) < 1:
+				p.blocked = "Нет железа на обсадку хода — бур стоит (1 на %d м)" % DRILL_CASING_M
+				continue
+		if p.blocked.begins_with("Нет железа"):
+			p.blocked = ""
 		p.drill_t = 0.0
 		for c in solid:
 			_complete_dig(c, bore, null)
 		_machine_dug(solid)
+		# Ход дорастает на пройденный ряд (сам бур на поверхности в ход не входит).
+		if bore != null:
+			bore.rect = bore.rect.merge(drill_path(p, p.drill_dir, 1))
 		p.rect.position += p.drill_dir
+		p.bore_done += 1
 		_drill_lift_step(p)
 		p.drill_left -= 1
 		if p.drill_left <= 0:
@@ -2590,7 +2604,7 @@ func active_slices(p: Project) -> Array[int]:
 ## --- Продолжение выработок ------------------------------------------------------------
 ## Готовую шахту, тоннель или лифт продлевают на n м: рядом закладывается продолжение
 ## (копают, крепят, у лифта — тянут рельсы), а готовое сливается с исходной постройкой.
-const EXTEND_MAX := 64
+const EXTEND_MAX := 200
 
 
 ## Куда можно продлить: вертикальное — вниз, горизонтальное — влево и вправо.
@@ -2610,6 +2624,8 @@ static func extend_rect(p: Project, dir: Vector2i, n: int) -> Rect2i:
 	var r := p.rect
 	if dir == Vector2i.DOWN:
 		return Rect2i(r.position.x, r.end.y, r.size.x, n)
+	if dir == Vector2i.UP:
+		return Rect2i(r.position.x, r.position.y - n, r.size.x, n)
 	if dir == Vector2i.LEFT:
 		return Rect2i(r.position.x - n, r.position.y, n, r.size.y)
 	return Rect2i(r.end.x, r.position.y, n, r.size.y)

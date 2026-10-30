@@ -1206,6 +1206,12 @@ func _stepper_widgets(row: HBoxContainer, start: int, lo: int, hi: int, step: in
 	row.add_child(minus)
 	row.add_child(value)
 	row.add_child(plus)
+	# Зажал «−»/«+» — значение бежит само, всё быстрее (см. _hold_tick).
+	for b: Button in [minus, plus]:
+		b.set_meta("repeat", true)
+		_repeat_buttons.append(b)
+		b.button_down.connect(func() -> void: _hold_start(b))
+		b.button_up.connect(func() -> void: _hold_end())
 	var state := {"v": start}
 	var refresh := func() -> void:
 		value.text = str(options[state["v"]]) if not options.is_empty() else str(state["v"])
@@ -1299,20 +1305,27 @@ func _input(event: InputEvent) -> void:
 			_drag_vel = Vector2.ZERO
 			_drag_samples = [[event.position, Time.get_ticks_msec()]]
 			_panel_scroll_f = (_sub_scroll if region == "sub" else _scroll).scroll_vertical
+			var rb := _repeat_button_at(event.position)
+			if rb != null:
+				_hold_start(rb)
 			get_viewport().set_input_as_handled()
 		elif _press_event != null:
 			var press := _press_event
 			_press_event = null
 			get_viewport().set_input_as_handled()
+			var held := _hold_fired
+			_hold_end()
+			_hold_fired = false
 			if _dragging:
 				_drag_vel = _release_velocity()
 				_inertia_region = _press_region if _drag_vel.length() > 30.0 else ""
-			else:
+			elif not held:
 				_replay_tap.call_deferred(press, event.duplicate())
 	elif event is InputEventMouseMotion and _press_event != null:
 		get_viewport().set_input_as_handled()
 		if not _dragging and (event.position - _press_event.position).length() > DRAG_DEADZONE:
 			_dragging = true
+			_hold_end()
 			_drag_prev = _press_event.position
 		if _dragging:
 			var d: Vector2 = event.position - _drag_prev
@@ -1362,7 +1375,59 @@ func _scroll_by(region: String, d: Vector2) -> void:
 		_clamp_tree_pan()
 
 
+## --- Зажатие «−»/«+» ---------------------------------------------------------------------
+## Держишь кнопку степпера дольше HOLD_DELAY — она сама нажимается снова и снова, всё чаще.
+const HOLD_DELAY := 0.4
+var _repeat_buttons: Array[Button] = []
+var _hold_btn: Button = null
+var _hold_t := 0.0
+var _hold_next := 0.0
+var _hold_count := 0
+## В карточке нажатие откладывается до отпускания (прокрутка пальцем): если кнопку уже
+## «назажимали», отпускание её второй раз не нажимает.
+var _hold_fired := false
+
+
+func _hold_start(b: Button) -> void:
+	_hold_btn = b
+	_hold_t = 0.0
+	_hold_next = HOLD_DELAY
+	_hold_count = 0
+	_hold_fired = false
+
+
+func _hold_end() -> void:
+	_hold_btn = null
+
+
+## Кнопка-повторялка под точкой (в карточке нажатие перехвачено прокруткой).
+func _repeat_button_at(pos: Vector2) -> Button:
+	_repeat_buttons = _repeat_buttons.filter(func(b: Button) -> bool: return is_instance_valid(b))
+	for b in _repeat_buttons:
+		if b.is_visible_in_tree() and not b.disabled and b.get_global_rect().has_point(pos):
+			return b
+	return null
+
+
+func _hold_tick(delta: float) -> void:
+	if _hold_btn == null:
+		return
+	if not is_instance_valid(_hold_btn) or not _hold_btn.is_visible_in_tree() or _hold_btn.disabled:
+		_hold_btn = null
+		return
+	_hold_t += delta
+	while _hold_t >= _hold_next:
+		_hold_count += 1
+		_hold_fired = true
+		_hold_btn.pressed.emit()
+		# Быстрее с каждым шагом: 0,15 с → 0,03 с.
+		_hold_next += maxf(0.03, 0.15 - 0.01 * _hold_count)
+		if _hold_btn == null or _hold_btn.disabled:
+			break
+
+
 func _process(delta: float) -> void:
+	_hold_tick(delta)
 	if _inertia_region.is_empty():
 		return
 	if _drag_vel.length() < 30.0 or (_inertia_region == "panel" and not _info_panel.visible) \
