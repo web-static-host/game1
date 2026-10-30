@@ -724,7 +724,7 @@ func _check_access() -> void:
 		elif not blocked_access:
 			p.blocked = "Нет доступа — гаврики не могут дойти до стройки" if p.is_water_structure() \
 				else "Нет доступа — проложите тоннель к стройке"
-			_log("%s: %s" % [p.title(), p.blocked], "warning")
+			_log("%s: %s" % [p.title(), p.blocked], "warning", p.rect.get_center())
 
 
 ## Материал на складе есть, но склад отрезан (яма без лестницы, обвал): гаврики не могут
@@ -754,7 +754,7 @@ func _check_sources() -> void:
 			var msg := "%s: %s лежит там, куда гаврикам не дойти — проложите путь (лестница, тоннель)" % [NO_SOURCE, ", ".join(cut)]
 			if p.blocked != msg:
 				p.blocked = msg
-				_log("%s: %s" % [p.title(), msg], "warning")
+				_log("%s: %s" % [p.title(), msg], "warning", p.rect.get_center())
 
 
 ## Может ли кто-то из тех, кто доходит до стройки p, дойти и до склада (или кучи) с ресурсом
@@ -978,7 +978,7 @@ func set_paused(p: Project, on: bool) -> void:
 		p.exposed_t = 0.0
 	if not on and p.blocked.begins_with("В зоне"):
 		_check_liquids(p)
-	_log("%s: %s" % [p.title(), "пауза" if on else "работы возобновлены"], "info")
+	_log("%s: %s" % [p.title(), "пауза" if on else "работы возобновлены"], "info", p.rect.get_center())
 
 
 ## Газовая тревога: бригада бросает работу, пока метан не уйдёт или игрок не прикажет продолжать.
@@ -989,7 +989,7 @@ func gas_stop(p: Project, pocket := true) -> void:
 	p.blocked = HAZARD_TEXT["methane" if pocket else "methane_air"]
 	# Газ то копится, то уходит — не засыпаем сообщениями: о стройке не чаще раза в 5 минут.
 	if game_time - float(_gas_logged.get(p.id, -1000.0)) > GAS_LOG_EVERY:
-		_log("%s: %s" % [p.title(), p.blocked], "danger")
+		_log("%s: %s" % [p.title(), p.blocked], "danger", p.rect.get_center())
 	_gas_logged[p.id] = game_time
 	for u in units:
 		if u.project_id == p.id:
@@ -1030,7 +1030,7 @@ func flee_gas(u: Unit) -> void:
 	# Где скопился газ — подсказываем (не чаще раза в 5 минут): там нужна дегазация.
 	if game_time - _gas_hint_t > GAS_LOG_EVERY:
 		_gas_hint_t = game_time
-		_log("%s уходит из облака метана (глубина %s) — там метан копится: поставьте рядом дегазацию" % [u.name, _depth_text(from)], "warning")
+		_log("%s уходит из облака метана (глубина %s) — там метан копится: поставьте рядом дегазацию" % [u.name, _depth_text(from)], "warning", from)
 
 
 func cancel_project(p: Project) -> void:
@@ -1083,7 +1083,7 @@ func cancel_project(p: Project) -> void:
 			through = p.rect.has_point(u.path[i])
 		if through:
 			_drop(u)
-	_log("%s отменена" % p.title(), "info")
+	_log("%s отменена" % p.title(), "info", p.rect.get_center())
 	physics.check_area(p.cells())
 
 
@@ -1136,7 +1136,7 @@ func demolish(p: Project) -> bool:
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
-	_log("%s снесена, возвращено: %s" % [p.title(), _cost_line(spent, 0.5)], "info")
+	_log("%s снесена, возвращено: %s" % [p.title(), _cost_line(spent, 0.5)], "info", p.rect.get_center())
 	physics.check_area(p.cells())
 	return true
 
@@ -1322,7 +1322,7 @@ func _check_supply(p: Project) -> void:
 	var msg := "Не хватает: " + ", ".join(lacking)
 	if p.blocked != msg:
 		p.blocked = msg
-		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning")
+		_log("%s ждёт материалы. %s" % [p.title(), msg], "warning", p.rect.get_center())
 
 
 # --- Бур ------------------------------------------------------------------------------
@@ -1560,7 +1560,7 @@ func start_drill(p: Project, dir: Vector2i, n: int) -> String:
 	p.hazard_ack.clear()
 	p.blocked = ""
 	_rebuild_climb()
-	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info")
+	_log("%s: сверлим %d м %s" % [p.title(), n, {Vector2i.DOWN: "вниз", Vector2i.LEFT: "влево", Vector2i.RIGHT: "вправо"}[dir]], "info", p.rect.get_center())
 	return ""
 
 
@@ -1650,7 +1650,7 @@ func _end_bore(p: Project, arrived: bool) -> void:
 		projects.erase(bore)
 		_by_id_n = -1
 		_rebuild_climb()
-		_log("%s: остановлен, не пройдя ни метра" % p.title(), "info")
+		_log("%s: остановлен, не пройдя ни метра" % p.title(), "info", p.rect.get_center())
 		return
 	if bore.phase != Project.Phase.DONE:
 		bore.rect = r
@@ -1660,7 +1660,7 @@ func _end_bore(p: Project, arrived: bool) -> void:
 		_finish_project(bore)
 	_log("%s %s %d м%s — готов %s" % [p.title(), "прошёл" if arrived else "остановлен:", went,
 		"" if arrived else " из %d" % total,
-		"тоннель (можно ставить лифт)" if bore.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good")
+		"тоннель (можно ставить лифт)" if bore.kind == Project.Kind.TUNNEL else "ход (как шахта: можно ставить комнаты и лифт)"], "good", p.rect.get_center())
 	var cut: Array[Vector2i] = []
 	for c in old:
 		if not bore.has_cell(c):
@@ -1737,7 +1737,7 @@ func start_probe(p: Project, dir: Vector2i) -> String:
 	p.probe_done = 0
 	p.drill_t = 0.0
 	p.blocked = ""
-	_log("%s: зонд пошёл %s на %d м" % [p.title(), _dir_word(dir), p.drill_left], "info")
+	_log("%s: зонд пошёл %s на %d м" % [p.title(), _dir_word(dir), p.drill_left], "info", p.rect.get_center())
 	return ""
 
 
@@ -1823,7 +1823,7 @@ func _end_probe(p: Project, why: String) -> void:
 	for k in found:
 		parts.append("%s ×%d" % [k, found[k]])
 	_log("%s: зонд прошёл %d м %s%s. %s" % [p.title(), went, _dir_word(dir), (" (" + why + ")") if not why.is_empty() else "",
-		("Найдено: " + ", ".join(parts)) if not parts.is_empty() else "Ничего ценного — пустая порода"], "good" if not parts.is_empty() else "info")
+		("Найдено: " + ", ".join(parts)) if not parts.is_empty() else "Ничего ценного — пустая порода"], "good" if not parts.is_empty() else "info", p.rect.get_center())
 
 
 ## Остановить зонд: открытое остаётся открытым.
@@ -2641,7 +2641,7 @@ func extend_project(p: Project, dir: Vector2i, n: int) -> Project:
 	if q == null:
 		return null
 	q.extends_id = p.id
-	_log("%s: продлеваем на %d м" % [p.title(), n], "info")
+	_log("%s: продлеваем на %d м" % [p.title(), n], "info", p.rect.get_center())
 	return q
 
 
@@ -2671,7 +2671,7 @@ func _merge_extension(q: Project) -> bool:
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	highest_y = mini(highest_y, host.rect.position.y)
 	_rebuild_climb()
-	_log("Продлено: %s" % host.title(), "good")
+	_log("Продлено: %s" % host.title(), "good", host.rect.get_center())
 	if host.kind == Project.Kind.LIFT:
 		_merge_lifts(host)
 	return true
@@ -2712,7 +2712,7 @@ func _merge_lifts(p: Project) -> void:
 			for c in p.cells():
 				interior[c] = p.id
 			merged = true
-			_log("Лифты соединены: %s" % p.title(), "good")
+			_log("Лифты соединены: %s" % p.title(), "good", p.rect.get_center())
 			break
 	_rebuild_climb()
 
@@ -2779,7 +2779,7 @@ func stop_mine(p: Project) -> void:
 	p.supported = sp
 	p.clear_x.clear()
 	_finish_project(p)
-	_log("%s остановлена: готово %d м из %d" % [p.title(), best_n, total], "info")
+	_log("%s остановлена: готово %d м из %d" % [p.title(), best_n, total], "info", p.rect.get_center())
 	var cut: Array[Vector2i] = []
 	for c in old:
 		if not p.has_cell(c):
@@ -2816,7 +2816,7 @@ func stop_bridge(p: Project) -> void:
 		if not p.has_cell(c):
 			deck.erase(c)
 	_finish_project(p)
-	_log("Мост остановлен: готово %d м из %d — стоит пристанью у берега" % [m, total], "info")
+	_log("Мост остановлен: готово %d м из %d — стоит пристанью у берега" % [m, total], "info", p.rect.get_center())
 
 
 ## Срез выкопан целиком.
@@ -2934,7 +2934,7 @@ func _check_phase(p: Project) -> void:
 			for k in p.found:
 				found.append("%s %d" % [Mat.resource_name(k), p.found[k]])
 			if not found.is_empty():
-				_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(found)], "good")
+				_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(found)], "good", p.rect.get_center())
 			_finish_project(p)
 			return
 		p.phase = Project.Phase.BUILD
@@ -2944,9 +2944,9 @@ func _check_phase(p: Project) -> void:
 			lines.append("%s %d" % [Mat.resource_name(k), p.found[k]])
 		if lines.is_empty():
 			if not p.needs_support.is_empty():
-				_log("%s: копка завершена, начинаем строительство" % p.title(), "info")
+				_log("%s: копка завершена, начинаем строительство" % p.title(), "info", p.rect.get_center())
 		else:
-			_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(lines)], "good")
+			_log("%s: копка завершена. Найдено: %s" % [p.title(), ", ".join(lines)], "good", p.rect.get_center())
 		_try_pay(p)
 
 
@@ -3032,15 +3032,15 @@ func _finish_project(p: Project) -> void:
 		# Комнату строили под назначение — сразу обустраивают.
 		var t := p.plan_purpose
 		p.plan_purpose = 0
-		_log("Построено: %s — обустраиваем: %s" % [p.title(), RoomType.purpose_name(t)], "good")
+		_log("Построено: %s — обустраиваем: %s" % [p.title(), RoomType.purpose_name(t)], "good", p.rect.get_center())
 		if not set_purpose(p, t):
 			_return_delivered(p)
 	elif p.kind == Project.Kind.ROOM:
 		_return_delivered(p)
-		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good")
+		_log("Построено: %s. Выберите назначение комнаты." % p.title(), "good", p.rect.get_center())
 	else:
 		_return_delivered(p)
-		_log("Построено: %s" % p.title(), "good")
+		_log("Построено: %s" % p.title(), "good", p.rect.get_center())
 	if p.kind == Project.Kind.LIFT:
 		_merge_lifts(p)
 
@@ -3096,7 +3096,7 @@ func set_purpose(p: Project, t: int) -> bool:
 	if p.purpose == RoomType.SHIP:
 		return false
 	if t == RoomType.LAUNCHPAD and not launchpad_error(p).is_empty():
-		_log(launchpad_error(p), "warning")
+		_log(launchpad_error(p), "warning", p.rect.get_center())
 		return false
 	if is_hearth_upgrade(p, t):
 		# Печи перекладывают кирпичом или ставят котлы: очаг остаётся очагом.
@@ -3105,7 +3105,7 @@ func set_purpose(p: Project, t: int) -> bool:
 		p.equip_paid = false
 		p.equip_done = 0.0
 		p.phase = Project.Phase.EQUIP
-		_log("%s: %s" % [p.title(), "ставим газовые котлы" if t == RoomType.HEARTH_GAS else "перекладываем печи кирпичом"], "info")
+		_log("%s: %s" % [p.title(), "ставим газовые котлы" if t == RoomType.HEARTH_GAS else "перекладываем печи кирпичом"], "info", p.rect.get_center())
 		_try_pay(p)
 		return true
 	_release_beds(p)
@@ -3117,7 +3117,7 @@ func set_purpose(p: Project, t: int) -> bool:
 	if t == RoomType.NONE:
 		_finish_equip(p)
 		return true
-	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info")
+	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
 
@@ -3162,7 +3162,7 @@ func start_rocket(p: Project, engine: String) -> String:
 	p.equip_paid = false
 	p.equip_done = 0.0
 	p.phase = Project.Phase.EQUIP
-	_log("%s: собираем ракету (%s двигатель)" % [p.title(), Planet.engine_name(engine)], "info")
+	_log("%s: собираем ракету (%s двигатель)" % [p.title(), Planet.engine_name(engine)], "info", p.rect.get_center())
 	_try_pay(p)
 	return ""
 
@@ -3347,7 +3347,7 @@ func change_material(p: Project, mat: String) -> bool:
 	p.equip_paid = false
 	p.equip_done = 0.0
 	p.phase = Project.Phase.EQUIP
-	_log("%s: перестраиваем стены — %s" % [p.title(), Project.MATERIALS[mat][0].to_lower()], "info")
+	_log("%s: перестраиваем стены — %s" % [p.title(), Project.MATERIALS[mat][0].to_lower()], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
 
@@ -3362,7 +3362,7 @@ func add_ladder(p: Project) -> bool:
 	p.equip_paid = false
 	p.equip_done = 0.0
 	p.phase = Project.Phase.EQUIP
-	_log("%s: строим лестницу" % p.title(), "info")
+	_log("%s: строим лестницу" % p.title(), "info", p.rect.get_center())
 	_try_pay(p)
 	return true
 
@@ -3383,7 +3383,7 @@ func cancel_equip(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id:
 			_drop(u)
-	_log("%s: обустройство отменено" % p.title(), "info")
+	_log("%s: обустройство отменено" % p.title(), "info", p.rect.get_center())
 
 
 func _finish_equip(p: Project) -> void:
@@ -3396,7 +3396,7 @@ func _finish_equip(p: Project) -> void:
 		for u in units:
 			if u.project_id == p.id:
 				_drop(u)
-		_log("Ракета собрана (%s двигатель) — готова к старту! Нажмите на космодром → «Запустить»" % Planet.engine_name(p.rocket), "good")
+		_log("Ракета собрана (%s двигатель) — готова к старту! Нажмите на космодром → «Запустить»" % Planet.engine_name(p.rocket), "good", p.rect.get_center())
 		return
 	if not p.equip_material.is_empty():
 		p.material = p.equip_material
@@ -3408,7 +3408,7 @@ func _finish_equip(p: Project) -> void:
 		for u in units:
 			if u.project_id == p.id:
 				_drop(u)
-		_log("%s: стены перестроены — %s" % [p.title(), Project.MATERIALS[p.material][0].to_lower()], "good")
+		_log("%s: стены перестроены — %s" % [p.title(), Project.MATERIALS[p.material][0].to_lower()], "good", p.rect.get_center())
 		return
 	if p.equip_ladder:
 		p.equip_ladder = false
@@ -3420,7 +3420,7 @@ func _finish_equip(p: Project) -> void:
 		for u in units:
 			if u.project_id == p.id:
 				_drop(u)
-		_log("%s: лестница готова" % p.title(), "good")
+		_log("%s: лестница готова" % p.title(), "good", p.rect.get_center())
 		return
 	if is_hearth_upgrade(p, p.equip_target):
 		if p.equip_target == RoomType.HEARTH_GAS:
@@ -3431,7 +3431,7 @@ func _finish_equip(p: Project) -> void:
 			if u.project_id == p.id:
 				_drop(u)
 		_log("Готово: %s — %s (%s)" % [p.title(), "газовые котлы" if p.equip_target == RoomType.HEARTH_GAS else "печи кирпичные",
-			RoomType.purpose_hint(p.equip_target)], "good")
+			RoomType.purpose_hint(p.equip_target)], "good", p.rect.get_center())
 		return
 	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
 	p.gas_boiler = false
@@ -3450,7 +3450,7 @@ func _finish_equip(p: Project) -> void:
 			if not p.targets.has(k):
 				p.targets[k] = defaults[k]
 	if p.purpose != RoomType.NONE:
-		_log("Готово: %s (%s)" % [p.title(), RoomType.purpose_hint(p.equip_target)], "good")
+		_log("Готово: %s (%s)" % [p.title(), RoomType.purpose_hint(p.equip_target)], "good", p.rect.get_center())
 
 
 func rooms_of(t: int) -> Array[Project]:
@@ -3741,7 +3741,7 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 				what = "разбила валун" if fem else "разбил валун"
 			_:
 				what = "собрала ягоды" if fem else "собрал ягоды"
-		_log("%s %s: +%d %s" % [u.name if u != null else "Гаврики", what, y[1], Mat.resource_name(y[0]).to_lower()], "info")
+		_log("%s %s: +%d %s" % [u.name if u != null else "Гаврики", what, y[1], Mat.resource_name(y[0]).to_lower()], "info", u.cell() if u != null else null)
 	for p in projects:
 		if p.phase == Project.Phase.DIG:
 			_check_phase(p)
@@ -3770,7 +3770,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		if NOTABLE.has(key):
 			_log("%s %s: %s ×%d (глубина %s)" % [
 				u.name if u != null else "Гаврики", "нашла" if u != null and u.sex == Unit.Sex.FEMALE else "нашёл",
-				Mat.resource_name(key).to_lower(), amount, _depth_text(c)], "good")
+				Mat.resource_name(key).to_lower(), amount, _depth_text(c)], "good", c)
 	_note_discovery(m, c)
 	# Дерево или валун над выкопанной клеткой падают.
 	if c.y == world.gen.surface_y(c.x) and world.feature_at(c.x) != WorldGen.FEATURE_NONE:
@@ -3787,10 +3787,10 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		_report_hazard(hm, hazards[hm])
 	match Mat.hazard(m):
 		Mat.Hazard.GAS:
-			_log("Выброс метана на глубине %s! Нужна дегазация." % _depth_text(c), "danger")
+			_log("Выброс метана на глубине %s! Нужна дегазация." % _depth_text(c), "danger", c)
 			elements.release_gas(c)
 		Mat.Hazard.WATER:
-			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning")
+			_log("Из водоносного пласта сочится вода (глубина %s)." % _depth_text(c), "warning", c)
 	elements.on_opened(c)
 	physics.on_opened(c)
 	for other in projects:
@@ -3801,9 +3801,9 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 func _report_hazard(m: int, c: Vector2i) -> void:
 	if m == Mat.MAGMA:
 		_log("КАТАСТРОФА: прорыв к магме на глубине %s! Температура %d °C." % [
-			_depth_text(c), int(world.gen.temperature(c.y, world.gen.surface_y(c.x)))], "danger")
+			_depth_text(c), int(world.gen.temperature(c.y, world.gen.surface_y(c.x)))], "danger", c)
 	else:
-		_log("Вскрыта подземная полость с водой (глубина %s)." % _depth_text(c), "warning")
+		_log("Вскрыта подземная полость с водой (глубина %s)." % _depth_text(c), "warning", c)
 
 
 ## Старые сохранения: находка уже видна на карте, а «Новая находка» о ней не было (её
@@ -3835,7 +3835,7 @@ func _note_discovery(m: int, c: Vector2i) -> void:
 		return
 	discovered[m] = true
 	if Mat.is_ore(m) or m == Mat.ROCK_SALT or m == Mat.KIMBERLITE or m == Mat.GAS_POCKET:
-		_log("Новая находка: %s на глубине %s!" % [Mat.name_of(m), _depth_text(c)], "good")
+		_log("Новая находка: %s на глубине %s!" % [Mat.name_of(m), _depth_text(c)], "good", c)
 
 
 # --- Физика: осыпи, обвалы, травмы ------------------------------------------------------
@@ -3849,12 +3849,12 @@ func on_slide(c: Vector2i, moved: int, m: int) -> void:
 	if offline or now - _last_slide_ms < 5000:
 		return
 	_last_slide_ms = now
-	_log("Осыпь: %s засыпал выработку (%d м³, глубина %s)" % [Mat.name_of(m).to_lower(), moved, _depth_text(c)], "warning")
+	_log("Осыпь: %s засыпал выработку (%d м³, глубина %s)" % [Mat.name_of(m).to_lower(), moved, _depth_text(c)], "warning", c)
 
 
 func on_collapse(c: Vector2i, span: int, limit: int, m: int) -> void:
 	_log("ОБВАЛ на глубине %s: потолок из «%s» не выдержал пролёт %d м (держит %d м без укрепления)" % [
-		_depth_text(c), Mat.name_of(m).to_lower(), span, limit], "danger")
+		_depth_text(c), Mat.name_of(m).to_lower(), span, limit], "danger", c)
 
 
 ## Порода упала из src в land: задевает гавриков по пути, засыпает стройку.
@@ -3881,17 +3881,17 @@ func injure(u: Unit, dmg: float, why: String) -> void:
 		u.health = maxf(u.health, 1.0)
 		return
 	if u.ability("collapse_proof") == true and (why.contains("обвал") or why.contains("обломк") or why.contains("засыпало") or why.contains("обрушен")):
-		_log("%s: %s — панцирь выдержал!" % [u.name, why], "good")
+		_log("%s: %s — панцирь выдержал!" % [u.name, why], "good", u.cell())
 		return
 	dmg /= maxf(0.3, u.stat("health"))
 	u.health -= dmg
 	if u.health > 0.0:
-		_log("%s: %s, здоровье %d%%" % [u.name, why, roundi(u.health)], "danger")
+		_log("%s: %s, здоровье %d%%" % [u.name, why, roundi(u.health)], "danger", u.cell())
 		return
 	if offline:
 		# Пока игрока нет, гаврики не гибнут — только тяжело ранены.
 		u.health = 1.0
-		_log("%s: %s, тяжело ранен(а)" % [u.name, why], "danger")
+		_log("%s: %s, тяжело ранен(а)" % [u.name, why], "danger", u.cell())
 		return
 	_kill(u, why)
 
@@ -3899,7 +3899,7 @@ func injure(u: Unit, dmg: float, why: String) -> void:
 ## Смерть от старости — тихо, без «погиб».
 func _die_of_age(u: Unit) -> void:
 	_kill(u, "", false)
-	_log("%s %s от старости в %s, поколение %d" % [u.name, "умерла" if u.sex == Unit.Sex.FEMALE else "умер", u.age_text(), u.generation], "info")
+	_log("%s %s от старости в %s, поколение %d" % [u.name, "умерла" if u.sex == Unit.Sex.FEMALE else "умер", u.age_text(), u.generation], "info", u.cell())
 
 
 func _kill(u: Unit, why: String, report := true) -> void:
@@ -3914,7 +3914,7 @@ func _kill(u: Unit, why: String, report := true) -> void:
 			acquaint.erase(k)
 	if not report:
 		return
-	_log("%s погиб(ла): %s" % [u.name, why], "danger")
+	_log("%s погиб(ла): %s" % [u.name, why], "danger", u.cell())
 
 
 func _tick_exposure(dt: float) -> void:
@@ -3926,7 +3926,7 @@ func _tick_exposure(dt: float) -> void:
 		var before := p.exposed_t
 		p.exposed_t += dt
 		if before < Physics.GRACE * 0.5 and p.exposed_t >= Physics.GRACE * 0.5:
-			_log("%s простаивает без укрепления — может обвалиться" % p.title(), "warning")
+			_log("%s простаивает без укрепления — может обвалиться" % p.title(), "warning", p.rect.get_center())
 		if before < Physics.GRACE and p.exposed_t >= Physics.GRACE:
 			physics.check_area(p.cells())
 
@@ -4094,7 +4094,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.health -= dt * 100.0 / STARVE_TIME / maxf(0.3, u.stat("fasting"))
 			if u.health < 50.0 and not u.starving_warned:
 				u.starving_warned = true
-				_log("%s %s от голода — срочно нужна еда!" % [u.name, "истощена" if u.sex == Unit.Sex.FEMALE else "истощён"], "danger")
+				_log("%s %s от голода — срочно нужна еда!" % [u.name, "истощена" if u.sex == Unit.Sex.FEMALE else "истощён"], "danger", u.cell())
 			if u.health <= 0.0:
 				if offline:
 					u.health = 1.0
@@ -4123,9 +4123,9 @@ func _life_tick(dt: float, offline: bool) -> void:
 			_apprentice(u, dt)
 		if u.child and u.age >= Unit.CHILD_TIME:
 			u.child = false
-			_log("%s %s — теперь может работать" % [u.name, "выросла" if u.sex == Unit.Sex.FEMALE else "вырос"], "good")
+			_log("%s %s — теперь может работать" % [u.name, "выросла" if u.sex == Unit.Sex.FEMALE else "вырос"], "good", u.cell())
 		if not was_elder and u.is_elder():
-			_log("%s %s — работает медленнее" % [u.name, "состарилась" if u.sex == Unit.Sex.FEMALE else "состарился"], "info")
+			_log("%s %s — работает медленнее" % [u.name, "состарилась" if u.sex == Unit.Sex.FEMALE else "состарился"], "info", u.cell())
 		if u.lifespan > 0.0 and u.age >= u.lifespan:
 			_die_of_age(u)
 			continue
@@ -4161,7 +4161,7 @@ func _social() -> void:
 		if best != null and rng.randf() < 0.2:
 			f.partner_id = best.id
 			best.partner_id = f.id
-			_log("%s и %s стали парой" % [f.name, best.name], "good")
+			_log("%s и %s стали парой" % [f.name, best.name], "good", f.cell())
 	# Дети — только если есть свободная кровать и еда.
 	for f in units:
 		if f.child or f.is_elder() or f.sex != Unit.Sex.FEMALE or f.pregnancy >= 0.0 or f.partner_id == 0:
@@ -4175,7 +4175,7 @@ func _social() -> void:
 			continue
 		if rng.randf() < 0.12 * sqrt(f.stat("fertility") * partner.stat("fertility")):
 			f.pregnancy = 0.0
-			_log("%s и %s ждут ребёнка!" % [f.name, partner.name], "good")
+			_log("%s и %s ждут ребёнка!" % [f.name, partner.name], "good", f.cell())
 
 
 func _birth(mother: Unit) -> void:
@@ -4201,11 +4201,11 @@ func _birth(mother: Unit) -> void:
 		baby.skills[k] = parent_xp * 0.1
 	var who := "дочь" if baby.sex == Unit.Sex.FEMALE else "сын"
 	var parents := mother.name + (" и " + father.name if father != null else "")
-	_log("Родился ребёнок: %s (%s %s)" % [baby.name, who, parents], "good")
+	_log("Родился ребёнок: %s (%s %s)" % [baby.name, who, parents], "good", baby.cell())
 	if Genetics.is_super(genome):
-		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good")
+		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good", baby.cell())
 	elif Genetics.is_mutant(genome):
-		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info")
+		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info", baby.cell())
 
 
 ## Уран радиоактивен: кто его копает, носит или обогащает — облучён (один раз): живёт на
@@ -4219,7 +4219,7 @@ func irradiate(u: Unit) -> void:
 	u.irradiated = true
 	if u.lifespan > 0.0:
 		u.lifespan *= RADIATION_LIFE
-	_log("%s %s ураном — проживёт на 10%% меньше, дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning")
+	_log("%s %s ураном — проживёт на 10%% меньше, дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning", u.cell())
 
 
 # --- Места работы: игрок ставит конкретных гавриков (как в Fallout Shelter) ---------------
@@ -4268,7 +4268,7 @@ func assign_work(u: Unit, p: Project) -> String:
 	u.calling = calling_of(u)
 	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 		_drop(u)
-	_log("%s теперь работает: %s" % [u.name, workplace_name(p)], "info")
+	_log("%s теперь работает: %s" % [u.name, workplace_name(p)], "info", u.cell())
 	return ""
 
 
@@ -4285,7 +4285,7 @@ func set_profession(u: Unit, prof: int) -> String:
 	if u.state != Unit.State.FALL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT:
 		_drop(u)
 	if prof != Unit.Prof.ANY:
-		_log("%s теперь %s" % [u.name, Unit.PROF_NAMES[prof].to_lower()], "info")
+		_log("%s теперь %s" % [u.name, Unit.PROF_NAMES[prof].to_lower()], "info", u.cell())
 	return ""
 
 
@@ -4599,7 +4599,7 @@ func update(dt: float) -> void:
 				_check_liquids(p)
 				if p.blocked.is_empty():
 					p.paused = false
-					_log("%s: вода ушла, работы продолжаются" % p.title(), "good")
+					_log("%s: вода ушла, работы продолжаются" % p.title(), "good", p.rect.get_center())
 
 
 ## Гаврики открывают карту вокруг себя.
@@ -4854,7 +4854,7 @@ func send_unit(u: Unit, target: Vector2i) -> Variant:
 
 ## Затопило готовую постройку.
 func on_flooded(p: Project, _c: Vector2i) -> void:
-	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger")
+	elements._warn_once("flood%d" % p.id, "Затопило: %s! Нужна насосная (назначение комнаты)" % p.title(), "danger", p.rect.get_center())
 
 
 ## Удобно ли гаврику в клетке: не холоднее и не жарче, чем он терпит.
@@ -5169,7 +5169,7 @@ func _work(u: Unit, dt: float) -> void:
 		var grow: float = [0.5, 1.0, 1.5][calling_of(u, u.task) + 1]
 		u.skills[skill] += dt * u.stat("learning") * grow
 		if u.level(skill) > before:
-			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good")
+			_log("%s: навык «%s» вырос до %d" % [u.name, Unit.SKILL_NAMES[skill], u.level(skill)], "good", u.cell())
 		rate = dt * u.speed(skill) * u.need_factor() * work_factor(u, u.task, u.target) * u.age_factor() * light_factor(u)
 	match u.task:
 		Unit.Task.DIG:
@@ -5730,7 +5730,7 @@ func set_priority(p: Project, on: bool) -> void:
 		projects.erase(p)
 		_by_id_n = -1
 		projects.push_front(p)
-		_log("%s: приоритет — бригада идёт сюда в первую очередь" % p.title(), "info")
+		_log("%s: приоритет — бригада идёт сюда в первую очередь" % p.title(), "info", p.rect.get_center())
 	_priority_tick()
 
 
@@ -6186,7 +6186,7 @@ func _hazard_stop_rect(p: Project, cells: Rect2i) -> bool:
 			p.paused = true
 			p.hazard_pending = kind
 			p.blocked = HAZARD_TEXT[kind]
-			_log("%s: %s" % [p.title(), p.blocked], "danger" if kind == "magma" else "warning")
+			_log("%s: %s" % [p.title(), p.blocked], "danger" if kind == "magma" else "warning", p.rect.get_center())
 			for u in units:
 				if u.project_id == p.id:
 					_drop(u)
@@ -7248,7 +7248,7 @@ func _try_scout(u: Unit, parents: Dictionary, dist: Dictionary, key: String) -> 
 	_scout_at = game_time
 	_start(u, Unit.Task.GOTO, best, best, 0, parents)
 	var what := {"wood": "деревьев", "stone": "валунов", "berries": "кустов", "clay": "глины"}
-	_log("%s идёт на разведку: рядом не осталось %s" % [u.name, what.get(key, "сырья")], "info")
+	_log("%s идёт на разведку: рядом не осталось %s" % [u.name, what.get(key, "сырья")], "info", u.cell())
 	return true
 
 
@@ -7357,9 +7357,9 @@ func _wear_tick(dt: float) -> void:
 				continue
 			if i == 0:
 				_log("%s: износ %d%% — пора ремонтировать (нажмите на постройку → «Ремонт»)" % [
-					p.title(), roundi(WEAR_WARN[i] * 100)], "warning")
+					p.title(), roundi(WEAR_WARN[i] * 100)], "warning", p.rect.get_center())
 			else:
-				_log("%s: износ %d%%! Скоро рухнет — срочно нужен ремонт" % [p.title(), roundi(WEAR_WARN[i] * 100)], "danger")
+				_log("%s: износ %d%%! Скоро рухнет — срочно нужен ремонт" % [p.title(), roundi(WEAR_WARN[i] * 100)], "danger", p.rect.get_center())
 		if p.wear >= 1.0:
 			if offline:
 				# Без игрока ничего не рушится: постройка держится «на честном слове».
@@ -7398,7 +7398,7 @@ func start_repair(p: Project) -> bool:
 	p.repair_done = 0.0
 	p.repair_need = repair_cost(p)
 	p.repair_work = maxf(10.0, p.build_work() * p.wear * 0.5)
-	_log("%s: ремонт, нужно %s" % [p.title(), _cost_line(p.repair_need, 1.0)], "info")
+	_log("%s: ремонт, нужно %s" % [p.title(), _cost_line(p.repair_need, 1.0)], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
 
@@ -7418,7 +7418,7 @@ func _finish_repair(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
 			_drop(u)
-	_log("%s: ремонт закончен, как новая" % p.title(), "good")
+	_log("%s: ремонт закончен, как новая" % p.title(), "good", p.rect.get_center())
 
 
 # --- Сдвиг комнаты ------------------------------------------------------------------------
@@ -7506,7 +7506,7 @@ func start_move(p: Project, dir: Vector2i, n := 1) -> String:
 		if not p.rect.has_point(c) and Mat.is_solid(world.get_mat(c.x, c.y)):
 			solid += 1
 	p.repair_work = maxf(10.0, p.build_work() * 0.35 + solid * 4.0)
-	_log("%s: сдвигаем на %d м %s, нужно %s" % [p.title(), n, MOVE_DIRS[dir], _cost_line(p.repair_need, 1.0)], "info")
+	_log("%s: сдвигаем на %d м %s, нужно %s" % [p.title(), n, MOVE_DIRS[dir], _cost_line(p.repair_need, 1.0)], "info", p.rect.get_center())
 	_try_pay(p)
 	return ""
 
@@ -7524,7 +7524,7 @@ func _finish_move(p: Project) -> void:
 	p.move_dir = Vector2i.ZERO
 	p.blocked = ""
 	if not move_check_cells_ok(p, nr):
-		_log("%s: сдвинуть не вышло — место занято" % p.title(), "warning")
+		_log("%s: сдвинуть не вышло — место занято" % p.title(), "warning", p.rect.get_center())
 		return
 	_carve_passages(nr)
 	for c in Project.rect_cells(nr):
@@ -7557,7 +7557,7 @@ func _finish_move(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
 			_drop(u)
-	_log("%s: сдвинута на %d м %s" % [p.title(), maxi(absi(dir.x), absi(dir.y)), MOVE_DIRS.get(Vector2i(signi(dir.x), signi(dir.y)), "")], "good")
+	_log("%s: сдвинута на %d м %s" % [p.title(), maxi(absi(dir.x), absi(dir.y)), MOVE_DIRS.get(Vector2i(signi(dir.x), signi(dir.y)), "")], "good", p.rect.get_center())
 
 
 ## Новое место всё ещё свободно (пока сдвигали, рядом могли что-то заложить).
@@ -7582,7 +7582,7 @@ func _cancel_repair(p: Project) -> void:
 	for u in units:
 		if u.project_id == p.id and (u.task == Unit.Task.REPAIR or u.task == Unit.Task.HAUL):
 			_drop(u)
-	_log("%s: ремонт отменён" % p.title(), "info")
+	_log("%s: ремонт отменён" % p.title(), "info", p.rect.get_center())
 
 
 ## Постройка рухнула: всё, что в ней лежало, пропадает, кто был внутри — гибнет (кроме
@@ -7590,7 +7590,7 @@ func _cancel_repair(p: Project) -> void:
 func collapse(p: Project, why: String) -> void:
 	if not projects.has(p):
 		return
-	_log("ОБРУШЕНИЕ: %s (%s)" % [p.title(), why], "danger")
+	_log("ОБРУШЕНИЕ: %s (%s)" % [p.title(), why], "danger", p.rect.get_center())
 	# Запасы, сырьё мастерской и привезённые материалы гибнут вместе с постройкой.
 	var lost: PackedStringArray = []
 	for k in p.held:
@@ -7602,7 +7602,7 @@ func collapse(p: Project, why: String) -> void:
 	p.stock.clear()
 	p.delivered.clear()
 	if not lost.is_empty():
-		_log("Под обломками пропало: %s" % ", ".join(lost), "danger")
+		_log("Под обломками пропало: %s" % ", ".join(lost), "danger", p.rect.get_center())
 	_release_beds(p)
 	projects.erase(p)
 	_by_id_n = -1
@@ -7662,7 +7662,7 @@ func collapse(p: Project, why: String) -> void:
 func _explode(p: Project) -> void:
 	var rad: int = [3, 6, 9][clampi(RoomType.blocks(p), 1, 3) - 1]
 	var area := p.rect.grow(rad)
-	_log("ВЗРЫВ: %s — разрушено всё вокруг на %d м" % [p.title(), rad], "danger")
+	_log("ВЗРЫВ: %s — разрушено всё вокруг на %d м" % [p.title(), rad], "danger", p.rect.get_center())
 	for u: Unit in units.duplicate():
 		if area.has_point(u.cell()):
 			injure(u, 100000.0, "погиб(ла) при взрыве")
@@ -8035,7 +8035,7 @@ func _hearth_tick(dt: float) -> void:
 				p.blocked = ""
 		elif p.blocked.is_empty():
 			p.blocked = "Нет дров и угля — очаг погас"
-			_log("%s: %s" % [p.title(), p.blocked], "warning")
+			_log("%s: %s" % [p.title(), p.blocked], "warning", p.rect.get_center())
 		if was != p.burning:
 			elements._temp_memo.clear()
 
@@ -8072,7 +8072,7 @@ func _power_tick(dt: float) -> void:
 		elif p.blocked.is_empty():
 			p.blocked = "Нет дизеля: нужен нефтезавод и топливо в нефтехранилище" if diesel else \
 				("Нет метана: нужна дегазация с газом в баке" if gas else "Нет топлива: нужен уголь или дрова")
-			_log("%s: %s" % [p.title(), p.blocked], "warning")
+			_log("%s: %s" % [p.title(), p.blocked], "warning", p.rect.get_center())
 	_hearth_tick(dt)
 	for p in lifts():
 		if not p.paused:
@@ -8853,8 +8853,15 @@ func _depth_text(c: Vector2i) -> String:
 	return "%s м" % Fmt.int_spaced(c.y - world.gen.surface_y(c.x))
 
 
-func _log(text: String, kind: String) -> void:
+## Где случилось последнее событие журнала (клетка) или null — по нажатию на строку журнала
+## камера переходит туда (читается в обработчике event_logged).
+var log_at: Variant = null
+
+
+func _log(text: String, kind: String, at: Variant = null) -> void:
+	log_at = Vector2i(at) if at != null else null
 	event_logged.emit(text, kind)
+	log_at = null
 
 
 # --- Сохранение -----------------------------------------------------------------------

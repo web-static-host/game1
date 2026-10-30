@@ -188,6 +188,7 @@ func _build_scene() -> void:
 	hud.home_pressed.connect(func() -> void: world_view.focus_cell(_home + Vector2i(0, -3)))
 	hud.speed_selected.connect(func(i: int) -> void: _speed_idx = i)
 	hud.export_pressed.connect(_export_save)
+	hud.log_pressed.connect(func(at: Vector2i) -> void: world_view.focus_cell(at))
 	hud.save_requested.connect(func(sid: String, name: String) -> void:
 		if _world_id.is_empty():
 			_save()
@@ -367,7 +368,7 @@ func _hook(e: Dictionary) -> void:
 	var planet: String = e["planet"]
 	c.event_logged.connect(func(t: String, k: String) -> void:
 		if c == colony:
-			hud.log_event(t, k)
+			hud.log_event(t, k, c.log_at)
 		elif k == "danger" or k == "good":
 			hud.log_event("[%s] %s" % [Planet.planet_name(planet), t], k))
 	c.quaked.connect(func(mag: int) -> void:

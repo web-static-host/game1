@@ -164,7 +164,7 @@ func _check_overload() -> void:
 		var t: float = overload_t.get(p.id, 0.0)
 		if t == 0.0:
 			colony._log("%s перегружена (%d т при допустимых %d т) и трещит! Разгрузите — снесите верхний этаж или отремонтируйте" % [
-				p.title(), roundi(load_on(p)), roundi(bearing(p))], "danger")
+				p.title(), roundi(load_on(p)), roundi(bearing(p))], "danger", p.rect.get_center())
 		overload_t[p.id] = t + 1.0
 		if t + 1.0 >= OVERLOAD_GRACE:
 			overload_t.erase(p.id)

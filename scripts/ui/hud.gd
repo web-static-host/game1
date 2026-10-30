@@ -20,6 +20,8 @@ signal science_pressed
 signal people_pressed
 ## Сохранить: sid — слот для перезаписи (пусто — новый), name — название (пусто — как было).
 signal save_requested(sid: String, name: String)
+## Нажали на строку журнала, у которой есть место (клетка): камера — туда.
+signal log_pressed(at: Vector2i)
 ## Выгрузить сохранение файлом в «Загрузки» (прислать разработчику).
 signal export_pressed
 signal load_requested(sid: String)
@@ -153,7 +155,8 @@ func _ready() -> void:
 	_log = VBoxContainer.new()
 	_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_log)
-	_log.position = Vector2(SIDE, TOP_H)
+	# Справа, под датой: слева — карточка и кнопка стройки.
+	_log.position = Vector2(size.x - SIDE - PANEL_WIDTH, TOP_H)
 	_log.size = Vector2(PANEL_WIDTH, 0)
 	_build_hint()
 	_build_panel()
@@ -366,7 +369,7 @@ func _fit_top() -> void:
 	var avail := size.x - SIDE * 2.0 - _date_panel.get_combined_minimum_size().x - 12.0 - 20.0
 	_res_box.custom_minimum_size.x = maxf(200.0, minf(natural, avail))
 	if _log != null:
-		_log.position.y = _top_h()
+		_log.position = Vector2(size.x - SIDE - PANEL_WIDTH, _top_h())
 	if _hint != null and _hint.is_visible_in_tree():
 		_place_hint()
 
@@ -2091,11 +2094,20 @@ func show_message(title: String, text: String) -> void:
 	_dialog.visible = true
 
 
-func log_event(text: String, kind: String = "info") -> void:
-	# Строка журнала на полупрозрачной подложке — читается и на небе, и на земле.
+func log_event(text: String, kind: String = "info", at: Variant = null) -> void:
+	# Строка журнала на полупрозрачной подложке — читается и на небе, и на земле. Есть место —
+	# строку можно нажать: камера перейдёт туда (метка «›» в конце).
 	var l := PanelContainer.new()
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE if at == null else Control.MOUSE_FILTER_STOP
+	l.size_flags_horizontal = Control.SIZE_SHRINK_END
+	if at != null:
+		text += "  ›"
+		var cell: Vector2i = at
+		l.gui_input.connect(func(e: InputEvent) -> void:
+			if (e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT) \
+					or (e is InputEventScreenTouch and e.pressed):
+				l.accept_event()
+				log_pressed.emit(cell))
 	var sb := _box(Color(TOP_BG, 0.62), 10, 4)
 	sb.content_margin_left = 10
 	sb.content_margin_right = 10

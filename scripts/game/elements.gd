@@ -357,7 +357,7 @@ func _entered(c: Vector2i, kind: int) -> void:
 			if uc == c or uc + UP == c:
 				colony.injure(u, 200.0, "попал(а) в лаву")
 		_warn_once("lava%d" % (c.y / 32), "КАТАСТРОФА: лава течёт в выработки на глубине %d м! Уходите, вода её остудит" % (
-			c.y - world.gen.surface_y(c.x)), "danger")
+			c.y - world.gen.surface_y(c.x)), "danger", c)
 	else:
 		var p := colony.project_at(c)
 		if p != null and (p.phase == Project.Phase.DIG or p.phase == Project.Phase.BUILD):
@@ -402,7 +402,7 @@ func _spring(c: Vector2i) -> void:
 			world.set_fluid(n.x, n.y, Mat.WATER)
 			active[n] = true
 			_warn_once("spring%d,%d" % [c.x / 16, c.y / 16], "Водоносный пласт сочится водой (глубина %d м) — нужен насос" % (
-				c.y - world.gen.surface_y(c.x)), "warning")
+				c.y - world.gen.surface_y(c.x)), "warning", c)
 			return
 	# Вокруг уже вода или порода — пласт затих.
 	var open := false
@@ -608,7 +608,7 @@ func _gas_alarm() -> void:
 			p.hazard_pending = ""
 			p.paused = false
 			p.blocked = ""
-			colony._log("%s: %s, работы продолжаются" % [p.title(), "в противогазах газ не страшен" if masks else "рядом дегазация — газ из породы она уберёт"], "info")
+			colony._log("%s: %s, работы продолжаются" % [p.title(), "в противогазах газ не страшен" if masks else "рядом дегазация — газ из породы она уберёт"], "info", p.rect.get_center())
 			continue
 		if p.hazard_pending == "methane":
 			if g < (GAS_ALARM if masks else GAS_CLEAR) or (digging and not near_pocket(p.rect) and g < stop_at):
@@ -616,7 +616,7 @@ func _gas_alarm() -> void:
 				p.hazard_pending = ""
 				p.blocked = ""
 				if colony.game_time - float(colony._gas_logged.get(p.id, -1000.0)) > Colony.GAS_LOG_EVERY:
-					colony._log("%s: метан ушёл, работы возобновлены" % p.title(), "info")
+					colony._log("%s: метан ушёл, работы возобновлены" % p.title(), "info", p.rect.get_center())
 		elif p.hazard_ack.has("methane"):
 			if g < GAS_CLEAR:
 				p.hazard_ack.erase("methane")
@@ -639,7 +639,7 @@ func explode(c: Vector2i) -> void:
 			var n := Vector2i(x, y)
 			gas.erase(n)
 			cells.append(n)
-	colony._log("ВЗРЫВ МЕТАНА на глубине %d м! Нужна дегазация" % (c.y - world.gen.surface_y(c.x)), "danger")
+	colony._log("ВЗРЫВ МЕТАНА на глубине %d м! Нужна дегазация" % (c.y - world.gen.surface_y(c.x)), "danger", c)
 	for u: Unit in colony.units.duplicate():
 		if u.cell().distance_to(c) <= 4.0:
 			colony.injure(u, 55.0, "взрыв метана")
@@ -733,13 +733,13 @@ func affect_unit(u: Unit, dt: float) -> void:
 	var hot := heat_limit(u)
 	if t > hot:
 		u.health -= minf(20.0, (t - hot) / 8.0) * dt
-		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning")
+		_warn_once("hot%d" % u.id, "%s: невыносимая жара (%d °C) — нужна вентиляция" % [u.name, roundi(t)], "warning", u.cell())
 		_hurt_check(u, "погиб(ла) от жары")
 	var cold := Colony.cold_limit(u)
 	if t < cold:
 		# −8 °C без тепла: около 0,2 здоровья в секунду — сон в холодном доме не спасает.
 		u.health -= minf(2.0, (cold - t) / 40.0) * dt
-		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning")
+		_warn_once("cold%d" % u.id, "%s мёрзнет (%d °C) — нужно тепло: очаг рядом" % [u.name, roundi(t)], "warning", u.cell())
 		_hurt_check(u, "замёрз(ла)")
 	var o2 := 1.0 if colony.ship_at(c) != null else world.gen.oxygen_ratio(c.y, world.gen.surface_y(c.x))
 	if o2 < 0.55:
@@ -752,12 +752,12 @@ func _hurt_check(u: Unit, why: String) -> void:
 		colony.injure(u, 1.0, why)
 
 
-func _warn_once(key: String, text: String, kind: String) -> void:
+func _warn_once(key: String, text: String, kind: String, at: Variant = null) -> void:
 	var now := Time.get_ticks_msec()
 	if _warned.has(key) and now - int(_warned[key]) < 60000:
 		return
 	_warned[key] = now
-	colony._log(text, kind)
+	colony._log(text, kind, at)
 
 
 # --- Сохранение -------------------------------------------------------------------------
