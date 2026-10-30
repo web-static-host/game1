@@ -54,9 +54,12 @@ const TOOL_HINTS := {
 	Mode.LIFT: "Проведите строго вверх-вниз (шахта 2 м) или вбок (ход 3 м). Можно по готовому тоннелю",
 	Mode.CARGO_LIFT: "Проведите строго вверх-вниз (шахта 3 м) или вбок. Поставьте склад вплотную к концам",
 	Mode.DRILL: "Коснитесь, где поставить бур (машина 3×3). Куда и сколько сверлить — в его карточке",
-	Mode.DRILL_LIFT: "Коснитесь, где поставить бур-лифт (3×5: внизу бур, вверху грузовой лифт). Склад — вплотную к верху лифта",
+	Mode.DRILL_LIFT: "Коснитесь, где поставить бур (лифт — позади него). Куда бурить — выберете в карточке, потом не сменить",
 	Mode.PROBE: "Коснитесь, где поставить геоскважину (2×2). Куда пустить зонд — в её карточке",
 }
+## Ключ карточки постройки (BuildInfo) у проходов.
+const TOOL_INFO := {Mode.TUNNEL: "tunnel", Mode.MINE: "mine", Mode.BRIDGE: "bridge", Mode.LIFT: "lift",
+	Mode.CARGO_LIFT: "cargo_lift", Mode.DRILL: "drill", Mode.DRILL_LIFT: "drill_lift", Mode.PROBE: "probe", Mode.ROOM: "room"}
 const ROOM_SIZES := [[3, "Малая 3×3"], [6, "Средняя 6×3"], [9, "Большая 9×3"]]
 const SPEED_NAMES := ["×1", "×2", "×10", "×20"]
 ## Отступы от краёв экрана (скруглённые углы, вырезы камеры).
@@ -545,6 +548,7 @@ func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 	_build_btn.set_caption(caption)
 	set_hint(TOOL_HINTS.get(mode, ""))
 	_show_room_strip(mode == Mode.ROOM)
+	_show_build_info(BuildInfo.card(TOOL_INFO.get(mode, ""), _room_purpose))
 	mode_changed.emit(mode, _room_w if mode == Mode.ROOM else 0)
 
 
@@ -663,6 +667,43 @@ func set_mode(mode: int) -> void:
 	_build_btn.set_caption("Стройка")
 	set_hint("")
 	_show_room_strip(false)
+	_show_build_info([])
+
+
+## --- Карточка постройки в меню стройки ------------------------------------------------
+## Справа: что это, куда ставить, как работает, кто работает (пока выбираете место).
+var _build_info: PanelContainer
+var _build_info_box: VBoxContainer
+const BUILD_INFO_W := 460
+
+
+func _show_build_info(card: Array) -> void:
+	if _build_info == null:
+		_build_info = PanelContainer.new()
+		_build_info.add_theme_stylebox_override("panel", _box(PANEL_BG, 16, 12))
+		_build_info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_build_info)
+		_build_info_box = VBoxContainer.new()
+		_build_info_box.add_theme_constant_override("separation", 6)
+		_build_info.add_child(_build_info_box)
+	for c in _build_info_box.get_children():
+		_build_info_box.remove_child(c)
+		c.queue_free()
+	_build_info.visible = not card.is_empty()
+	if _log != null:
+		_log.visible = card.is_empty() and not _info_panel.visible
+	if card.is_empty():
+		return
+	_build_info_box.add_child(_label(card[0], 22, ACCENT))
+	for line: String in card[1]:
+		var l := _label(line, 17, Color(0.9, 0.92, 0.96))
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(BUILD_INFO_W - 24, 0)
+		_build_info_box.add_child(l)
+	_build_info.reset_size()
+	_build_info.position = Vector2(size.x - SIDE - BUILD_INFO_W, _top_limit())
+	_build_info.size.x = BUILD_INFO_W
+	_place_hint.call_deferred()
 
 
 ## Подсказка сверху по центру — что сейчас делать (с кнопкой «Отмена»).
@@ -704,6 +745,8 @@ func _place_hint() -> void:
 	box.position = Vector2((size.x - box.size.x) * 0.5, _top_h() + 18)
 	_room_strip.reset_size()
 	_room_strip.position = Vector2((size.x - _room_strip.size.x) * 0.5, box.position.y + box.size.y + 8)
+	if _build_info != null and _build_info.visible:
+		_build_info.position = Vector2(size.x - SIDE - BUILD_INFO_W, _top_limit())
 
 
 ## Сколько места сверху занято подсказкой и полоской выбора.
