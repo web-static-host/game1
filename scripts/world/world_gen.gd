@@ -28,7 +28,7 @@ var planet: Dictionary = {}
 ## (кимберлитовые трубки — примерно в 20–400 м от базы), но реже железа и меди;
 ## 6 — подземная вода в полостях ровная (уровень общий на участок, без «стенок»),
 ## на дне подземных вод часто золото.
-const LATEST := 6
+const LATEST := 7
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
@@ -60,6 +60,9 @@ var _n_ore_type: FastNoiseLite
 var _n_kimberlite: FastNoiseLite
 var _n_magma: FastNoiseLite
 var _n_tint: FastNoiseLite
+## Нефтяные поля (с 7-й версии): где пятна нефти крупнее и чаще — от мелких до огромных.
+var _n_oil: FastNoiseLite
+var _n_oil_field: FastNoiseLite
 
 
 func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
@@ -98,6 +101,8 @@ func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
 	_n_vein_region = _noise(17, 0.01, 1)
 	_n_ore_type = _noise(18, 0.006, 1)
 	_n_kimberlite = _noise(19, 0.02, 1)
+	_n_oil = _noise(41, 0.035, 2)
+	_n_oil_field = _noise(42, 0.004, 1)
 	_n_magma = _noise(20, 0.012, 2)
 	_n_tint = _noise(21, 0.07, 2)
 
@@ -431,10 +436,23 @@ func _sedimentary(x: int, y: int, d: int, wd: float) -> int:
 			return Mat.GAS_POCKET
 		return Mat.SHALE
 	if band < 0.18:
-		if d > int(planet["oil_depth"]) and _n_gas.get_noise_2d(y, x) > float(planet["oil"]):
+		if d > int(planet["oil_depth"]) and _is_oil(x, y):
 			return Mat.OIL
 		return Mat.SANDSTONE
 	return Mat.LIMESTONE
+
+
+## Нефть в песчанике: пятна разного размера — где «нефтяное поле» богаче, порог ниже, там
+## пятна сливаются в залежи на сотни клеток, где беднее — мелкие или их нет. Залежей вдвое
+## меньше, чем было, но они крупнее (нефти в целом чуть больше).
+func _is_oil(x: int, y: int) -> bool:
+	var th := float(planet["oil"])
+	var field := _n_oil_field.get_noise_2d(x, y)
+	if _n_oil.get_noise_2d(x, y) > th - 0.6 * field:
+		return true
+	# Старые миры: прежние залежи остаются там же (их уже могли найти) и становятся крупнее,
+	# новые поля — поверх.
+	return version < 7 and _n_gas.get_noise_2d(y, x) > th - 0.1
 
 
 ## Рудные жилы: чем глубже, тем шире, чаще и ценнее.

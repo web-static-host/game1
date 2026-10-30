@@ -685,22 +685,51 @@ func _reach_far(start: Vector2i, r: Rect2i, parents: Dictionary, dist: Dictionar
 
 ## Прицельный путь от start к любой из goals дописывается в обход гаврика (с клетками вокруг
 ## конца пути). Неудачу по ключу key помнят FAR_RETRY секунд.
+## Найденные пути к дальним целям — общие для всех: key -> [путь от старта (со стартом),
+## обход вокруг конца, ключ построек, время]. Каждый гаврик подхватывает путь с первой его
+## клетки, до которой сам доходит (раньше каждый искал свой — по 5 мс на дальнюю стройку
+## при каждом поиске работы, и это была половина расчёта игры).
+var _far_routes := {}
+const FAR_ROUTE_TIME := 20.0
+
+
 func _extend_far(start: Vector2i, goals: Dictionary, key: String, parents: Dictionary, dist: Dictionary) -> bool:
 	if game_time - float(_far_fail.get(key, -INF)) < FAR_RETRY:
 		return false
-	var path := pathing.find_path(start, goals)
-	if path.is_empty():
-		_far_fail[key] = game_time
-		return false
+	pathing.sync()
+	var sig: Array = pathing._cache_key.slice(1)
+	var route = _far_routes.get(key)
+	if route != null and (game_time - float(route[3]) > FAR_ROUTE_TIME or route[2] != sig):
+		_far_routes.erase(key)
+		route = null
+	var path: Array[Vector2i] = []
+	var local: Array = []
+	var from := -1
+	if route != null:
+		var rp: Array = route[0]
+		for i in rp.size():
+			if dist.has(rp[i]):
+				from = i
+		if from >= 0:
+			path.assign(rp.slice(from))
+			local = route[1]
+	if from < 0:
+		var found := pathing.find_path(start, goals)
+		if found.is_empty():
+			_far_fail[key] = game_time
+			return false
+		path.append(start)
+		path.append_array(found)
+		# Вокруг стройки — небольшой обход: чтобы подойти к любой её клетке.
+		local = pathing._explore(path[-1], 400)
+		_far_routes[key] = [path.duplicate(), local, sig, game_time]
 	_far_fail.erase(key)
-	var prev := start
+	var prev: Vector2i = path[0]
 	for c in path:
 		if not parents.has(c):
 			parents[c] = prev
 			dist[c] = int(dist[prev]) + 1
 		prev = c
-	# Вокруг стройки — небольшой обход: чтобы подойти к любой её клетке.
-	var local := pathing._explore(prev, 400)
 	var base := int(dist[prev])
 	for c in local[0]:
 		if not parents.has(c):
@@ -1953,9 +1982,20 @@ const WAIT_OWN_RETRY := 2.0
 func _wake_waiting(p: Project) -> void:
 	if p == null:
 		return
+	var waiting: Array[Unit] = []
 	for o in units:
 		if o.waiting_own and o.state == Unit.State.IDLE and o.last_project == p.id:
-			o.retry = minf(o.retry, 0.0)
+			waiting.append(o)
+	if waiting.is_empty():
+		return
+	# Будим столько, сколько открылось свободной работы (раньше — всех на каждую клетку, и
+	# десяток ждущих обходил колонию по нескольку раз в секунду). Крепь — одному.
+	var free := 1 if slice_to_support(p) >= 0 else 0
+	for c in diggable_now(p):
+		if not reserved.has(c):
+			free += 1
+	for i in mini(free + 1, waiting.size()):
+		waiting[i].retry = minf(waiting[i].retry, 0.0)
 ## После стольких неудачных поисков работы (около 10 с) бездельник идёт домой.
 const IDLE_HOME_AFTER := 4
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
@@ -5493,7 +5533,7 @@ func _assign(u: Unit) -> bool:
 	# обход колонии (самое дорогое в игре) не нужен — посмотрим снова через полсекунды.
 	if u.waiting_own and not u.child and u.satiety >= HUNGRY and not needs_warmth(u):
 		var mine := _own_project(u)
-		if mine != null and not _own_work_open(u, mine):
+		if mine != null and (not _own_work_open(u, mine) or _own_sig(mine) == u.wait_sig):
 			u.idle_fails = 0
 			return false
 	var reach := pathing.explore(u.cell())
@@ -5522,6 +5562,7 @@ func _assign(u: Unit) -> bool:
 		# Работа своей выработки сейчас у другого — ждём рядом (ищем снова скоро).
 		u.idle_fails = 0
 		u.waiting_own = true
+		u.wait_sig = _own_sig(own)
 		return false
 	for kind in _task_order(u):
 		match kind:
@@ -5566,6 +5607,16 @@ func _assign(u: Unit) -> bool:
 				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
 					return true
 	return _return_home(u, parents, dist)
+
+
+## Состояние выработки для ждущего: что осталось копать и крепить и кто какие клетки держит
+## (и раз в 10 с — на всякий случай: рядом могли прокопать подход).
+func _own_sig(p: Project) -> int:
+	var a := [p.phase, remaining_dig(p).size(), p.supported.size(), p.support_slice, p.support_paid, uncleared(p).size(),
+		workers_on(p), pathing.climb_rev, floori(game_time / 10.0)]
+	for c in diggable_now(p):
+		a.append(reserved.get(c, 0))
+	return hash(a)
 
 
 ## Может ли на своей выработке найтись дело (грубо, без обхода): свободная клетка, крепь,
