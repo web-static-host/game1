@@ -140,6 +140,8 @@ static func fog_color(depth: int, v: float) -> Color:
 
 static func rock_color(m: int, v: float) -> Color:
 	var c := Mat.color(m)
+	if m == Mat.OIL:
+		return c.lightened((v - 0.5) * 0.05) if v >= 0.5 else c.darkened((0.5 - v) * 0.05)
 	if Mat.is_ore(m):
 		c = c.lerp(Color(0.35, 0.33, 0.33), 0.65).darkened(0.15)
 	# Мультяшнее: сочнее и светлее природного.
@@ -290,7 +292,8 @@ func _solid_tex(lx: int, ly: int) -> int:
 
 
 func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: int, surf: int) -> void:
-	var host := _ore_host(lx, ly) if Mat.is_ore(m) else m
+	# Нефть — сплошная чёрная, с пузырьками (от пустоты и угля отличают по ним).
+	var host := m if m == Mat.OIL else (_ore_host(lx, ly) if Mat.is_ore(m) else m)
 	var base := rock_color(host, v)
 	var ti := rock_tex_of(host)
 	var open_l := _is_open(lx - 1, ly)
@@ -323,13 +326,27 @@ func _draw_solid_cell(lx: int, ly: int, r: Rect2, m: int, v: float, x: int, y: i
 	if open_d and mask & 12 == 0:
 		draw_rect(Rect2(r.position.x, r.end.y - 3, TILE, 3), shade)
 
-	if Mat.is_ore(m):
+	if m == Mat.OIL:
+		_draw_oil_bubbles(r, x, y)
+	elif Mat.is_ore(m):
 		_draw_ore(r, m, x, y)
 	elif m == Mat.MAGMA:
 		draw_circle(r.get_center(), TILE * 0.3, Color(1.0, 0.85, 0.3, 0.8))
 
 	if m == Mat.TOPSOIL and y == surf and open_u:
 		_draw_grass(r, x, mask)
+
+
+## Пузырьки в нефти: кольца с бликом, разного размера.
+func _draw_oil_bubbles(r: Rect2, x: int, y: int) -> void:
+	for k in 4:
+		var hx := WorldGen.hash01(x, y, 510 + k)
+		var hy := WorldGen.hash01(x, y, 520 + k)
+		var rad := 2.0 + WorldGen.hash01(x, y, 530 + k) * 3.5
+		var p := r.position + Vector2(4 + rad + hx * (TILE - 8 - 2 * rad), 4 + rad + hy * (TILE - 8 - 2 * rad))
+		draw_circle(p, rad, Color(0.13, 0.12, 0.14))
+		draw_arc(p, rad, 0.0, TAU, 12, Color(0.42, 0.43, 0.5, 0.9), 1.2)
+		draw_circle(p + Vector2(-rad, -rad) * 0.35, maxf(0.8, rad * 0.25), Color(0.85, 0.87, 0.95, 0.85))
 
 
 ## open_sides: [лево, право, верх, низ] — вкрапления видны только у открытых сторон.

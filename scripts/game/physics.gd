@@ -77,7 +77,8 @@ func drop_column(c: Vector2i) -> int:
 			land += DOWN
 		world.set_dug(src.x, src.y)
 		world.set_material(land.x, land.y, m)
-		world.reveal_around(src.x, src.y, colony.see_radius())
+		for n in world.reveal_around(src.x, src.y, colony.see_radius()):
+			colony.note_discovery(world.get_mat(n.x, n.y), n)
 		_landed(src, land, m)
 		moved += 1
 		k = src
@@ -121,7 +122,8 @@ func check_span(c: Vector2i) -> bool:
 			land += DOWN
 		world.set_dug(cc.x, cc.y)
 		world.set_material(land.x, land.y, Mat.RUBBLE)
-		world.reveal_around(cc.x, cc.y, colony.see_radius())
+		for n in world.reveal_around(cc.x, cc.y, colony.see_radius()):
+			colony.note_discovery(world.get_mat(n.x, n.y), n)
 		_landed(cc, land, Mat.RUBBLE)
 		fell += 1
 	colony.on_collapse(Vector2i((left + right) / 2, top.y), span, limit, m)

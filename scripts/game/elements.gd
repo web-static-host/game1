@@ -173,6 +173,9 @@ func _flow(kind: int) -> void:
 	# Снизу вверх: нижние клетки освобождают место верхним за один шаг.
 	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y > b.y)
 	var moves := 0
+	var level_seen := {}
+	var levels := 0
+	var level_bfs := 0
 	for c: Vector2i in cells:
 		if moves >= MAX_MOVES:
 			active[c] = true
@@ -180,10 +183,72 @@ func _flow(kind: int) -> void:
 		if world.get_mat(c.x, c.y) != kind:
 			continue
 		var to = _target(c, kind)
+		# Сообщающиеся сосуды: если водоёму, где лежит c, есть куда опуститься (пустая клетка
+		# рядом с ним ниже его верха), верхняя вода уходит туда (раньше вода в тоннеле стояла
+		# «горой» выше, чем в пещере, с которой он соединён).
+		if to == null and kind == Mat.WATER and levels < LEVEL_MOVES and level_bfs < 2 and not level_seen.has(c) \
+				and world.get_mat(c.x, c.y - 1) != Mat.WATER and colony.game_time >= float(_level_quiet.get(c, -1.0)):
+			level_bfs += 1
+			var pairs: Array = _level(c, level_seen, LEVEL_MOVES - levels)
+			for pr in pairs:
+				levels += 1
+				moves += 1
+				_move(pr[0], pr[1], kind)
+			if not pairs.is_empty():
+				active[c] = true
+			continue
 		if to == null:
 			continue
 		moves += 1
 		_move(c, to, kind)
+
+
+## Сколько клеток водоёма обходим, выравнивая уровень, и сколько капель переносим за шаг.
+const LEVEL_CAP := 1200
+const LEVEL_MOVES := 12
+const LEVEL_QUIET := 5.0
+var _level_quiet := {}
+
+
+## Водоём, где лежит c: пары [верхняя вода, пустая клетка рядом с ним ниже неё] — самые
+## верхние к самым нижним, не больше limit за раз (один обход на пачку). Пар нет — водоём
+## ровный: его клетки — в seen и LEVEL_QUIET секунд не перепроверяем.
+func _level(c: Vector2i, seen: Dictionary, limit: int) -> Array:
+	var queue: Array[Vector2i] = [c]
+	var body := {c: true}
+	var frees := {}
+	var head := 0
+	while head < queue.size() and queue.size() < LEVEL_CAP:
+		var w := queue[head]
+		head += 1
+		for d in DIRS4:
+			var n := w + d
+			if body.has(n):
+				continue
+			var m := world.get_mat(n.x, n.y)
+			if m == Mat.WATER:
+				body[n] = true
+				queue.append(n)
+			elif d != UP and not frees.has(n) and _accepts(n):
+				frees[n] = true
+	var out := []
+	if not frees.is_empty():
+		var low: Array = frees.keys()
+		low.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y > b.y)
+		var tops: Array = queue.filter(func(w: Vector2i) -> bool: return world.get_mat(w.x, w.y - 1) != Mat.WATER)
+		tops.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y < b.y)
+		for i in mini(limit, mini(low.size(), tops.size())):
+			if low[i].y <= tops[i].y:
+				break
+			out.append([tops[i], low[i]])
+	if out.is_empty():
+		seen.merge(body)
+		var until := colony.game_time + LEVEL_QUIET
+		for b in body:
+			_level_quiet[b] = until
+		if _level_quiet.size() > 50000:
+			_level_quiet.clear()
+	return out
 
 
 ## Куда течь: вниз; вбок — если там можно пролиться ниже или сверху давит столб.

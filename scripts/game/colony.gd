@@ -3805,11 +3805,35 @@ func _report_hazard(m: int, c: Vector2i) -> void:
 		_log("Вскрыта подземная полость с водой (глубина %s)." % _depth_text(c), "warning")
 
 
+## Старые сохранения: находка уже видна на карте, а «Новая находка» о ней не было (её
+## открыло обвалом или осмотром пещер) — сообщаем при загрузке. Только куски карты, где
+## такая порода есть (проверка куска встроенная, быстрая).
+func _note_seen_finds() -> void:
+	for m in [Mat.OIL, Mat.GAS_POCKET, Mat.ROCK_SALT, Mat.KIMBERLITE, Mat.DIAMOND, Mat.IRON_ORE, Mat.COPPER_ORE,
+			Mat.SILVER_ORE, Mat.GOLD_ORE, Mat.URANIUM_ORE]:
+		if discovered.has(m):
+			continue
+		for key in world.chunks:
+			var ch: ChunkData = world.chunks[key]
+			if not ch.mat.has(m):
+				continue
+			for i in ch.mat.size():
+				if ch.mat[i] == m and ch.flags[i] & ChunkData.F_REVEALED and not ch.flags[i] & ChunkData.F_DUG:
+					_note_discovery(m, Vector2i(key.x * ChunkData.SIZE + (i & ChunkData.MASK), key.y * ChunkData.SIZE + (i >> ChunkData.SHIFT)))
+					break
+			if discovered.has(m):
+				break
+
+
+func note_discovery(m: int, c: Vector2i) -> void:
+	_note_discovery(m, c)
+
+
 func _note_discovery(m: int, c: Vector2i) -> void:
 	if discovered.has(m):
 		return
 	discovered[m] = true
-	if Mat.is_ore(m) or m == Mat.ROCK_SALT or m == Mat.KIMBERLITE:
+	if Mat.is_ore(m) or m == Mat.ROCK_SALT or m == Mat.KIMBERLITE or m == Mat.GAS_POCKET:
 		_log("Новая находка: %s на глубине %s!" % [Mat.name_of(m), _depth_text(c)], "good")
 
 
@@ -8981,7 +9005,9 @@ func load_dict(d: Dictionary) -> void:
 			_log("Бур переделан: теперь это машина 3×3, которой в карточке велят, куда и сколько сверлить. Старый бур убран, материалы вернулись — поставьте его заново.", "warning")
 	loads.loads = loads.compute()
 	# Стены открытых пещер — на дальность геологоразведки (старые сохранения).
-	world.deepen_caves(see_radius())
+	for n in world.deepen_caves(see_radius()):
+		_note_discovery(world.get_mat(n.x, n.y), n)
+	_note_seen_finds()
 	world.scan_deepest_seen()
 	explore()
 	_refresh_bushes()

@@ -63,7 +63,7 @@ const _RAW := [
 	["Каменная соль", "e8dfe6", 10.0, 2200, 25.0, "salt", false, Hazard.NONE],
 	["Подземная вода", "2f6fb5", 0.0, 1000, 0.0, "", false, Hazard.WATER],
 	["Газовый карман", "8a9a5b", 12.0, 2300, 20.0, "stone", false, Hazard.GAS],
-	["Нефтеносный пласт", "1d1611", 12.0, 2300, 30.0, "oil", true, Hazard.OIL],
+	["Нефтеносный пласт", "0d0c0e", 12.0, 2300, 30.0, "oil", true, Hazard.OIL],
 	["Магма", "ff5a1f", 0.0, 2700, 0.0, "", false, Hazard.MAGMA],
 	["Перидотит (мантия)", "5f7a4a", 90.0, 3300, 300.0, "stone", false, Hazard.NONE],
 	["Обломки породы", "6f6862", 6.0, 1900, 0.0, "stone", false, Hazard.NONE],

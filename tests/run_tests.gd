@@ -4262,6 +4262,28 @@ func test_water_levels() -> void:
 	for i in 600:
 		el.update(0.2)
 	check(_count(w, Rect2i(o.x + 1, o.y + 1, 1, 6), Mat.WATER) <= 1, "старая «стенка» воды сама растеклась")
+	# Сообщающиеся сосуды: два ствола, соединённые внизу ходом; вода — только в левом.
+	# Уровни выравниваются (раньше в левом стояла «горой»).
+	var u := Vector2i(360, w.gen.surface_y(360) + 40)
+	_granite_box(w, u, Vector2i(14, 14))
+	var tube := []
+	for y in range(u.y + 1, u.y + 13):
+		tube.append(Vector2i(u.x + 1, y))
+		tube.append(Vector2i(u.x + 12, y))
+	for x in range(u.x + 2, u.x + 12):
+		tube.append(Vector2i(x, u.y + 12))
+	_dig_cells(w, tube)
+	for c in tube:
+		colony.interior[c] = 999
+	el.active.clear()
+	for y in range(u.y + 1, u.y + 13):
+		w.set_fluid(u.x + 1, y, Mat.WATER)
+		el.active[Vector2i(u.x + 1, y)] = true
+	for i in 900:
+		el.update(0.2)
+	var left := _count(w, Rect2i(u.x + 1, u.y + 1, 1, 11), Mat.WATER)
+	var right := _count(w, Rect2i(u.x + 12, u.y + 1, 1, 11), Mat.WATER)
+	check(absi(left - right) <= 1, "сообщающиеся сосуды: уровни выровнялись (слева %d, справа %d)" % [left, right])
 	# Насос: радиус как у дегазации.
 	var pump := Project.new()
 	pump.purpose = RoomType.PUMP

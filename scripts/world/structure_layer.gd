@@ -546,6 +546,9 @@ static func furniture(room: String, item: String) -> Texture2D:
 ## Предмет низом на bottom, по центру cx (размер — из картинки, 128 px на метр).
 ## shadow: 1 — мягкая тень на полу под предметом, 2 — тень на стене за ним (вниз-вправо).
 func _furn_at(t: Texture2D, cx: float, bottom: float, alpha: float, shadow := 0, scale := 1.0) -> void:
+	# Ресурсу без своей картинки ящика (нефть, уран…) — не рисуем (раньше рисование падало).
+	if t == null:
+		return
 	var sz := t.get_size() / FURN_PX_PER_M * TILE * scale
 	var rect := Rect2(cx - sz.x * 0.5, bottom - sz.y, sz.x, sz.y)
 	if shadow == 1:
