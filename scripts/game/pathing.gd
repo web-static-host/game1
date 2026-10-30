@@ -185,8 +185,16 @@ func sync() -> void:
 	# (копают постоянно, и раньше кэш почти не работал: каждый поиск работы обходил колонию
 	# заново). Комнаты и постройки — сбрасываем всё.
 	var structural := _cache_key.size() != key.size() or key.slice(1, 4) != _cache_key.slice(1, 4)
+	# Комнаты, ходы и настил поменялись — забываем только клетки, что поменялись (раньше сбрасывалось
+	# всё, и следующий поиск пути по большой колонии стоил в двадцать раз дороже).
+	if structural and _cache_key.size() == key.size():
+		var diff := _structure_diff()
+		if diff.size() <= STRUCT_DIFF_MAX:
+			forget(diff)
+			structural = false
 	if structural:
 		clear_cache()
+		_snap_structure()
 	elif not _changed_cells.is_empty() or not _climb_cells.is_empty() or key[4] != _cache_key[4]:
 		if _changed_cells.size() > PATCH_MAX or (key[4] != _cache_key[4] and _climb_cells.is_empty()):
 			_cache.clear()
@@ -278,8 +286,11 @@ func _patch_cache() -> void:
 		var dist: Dictionary = entry[1]
 		var queue: Array[Vector2i] = []
 		var broken := false
-		for q: Vector2i in zone:
-			if not dist.has(q):
+		# Перебираем меньшее из двух: зону изменений или сам обход.
+		var small: Dictionary = zone if zone.size() <= dist.size() else dist
+		var big: Dictionary = dist if small == zone else zone
+		for q: Vector2i in small:
+			if not big.has(q):
 				continue
 			# Лестница или леса поменялись прямо в клетке обхода — пути через неё могли пропасть.
 			if removed.has(q) or not _node_m(q):
@@ -304,6 +315,35 @@ func _patch_cache() -> void:
 				parents[n] = c
 				dist[n] = d
 				queue.append(n)
+
+
+## Снимки комнат, ходов и настила на момент прошлой сверки: по ним видно, какие клетки поменялись.
+var _snaps := [{}, {}, {}]
+## Больше поменявшихся клеток — проще забыть всё.
+const STRUCT_DIFF_MAX := 3000
+
+
+func _snap_structure() -> void:
+	_snaps = [interior.duplicate(), room_cells.duplicate(), deck.duplicate()]
+
+
+## Клетки, где комнаты, ходы или настил поменялись с прошлой сверки (снимки обновляются).
+func _structure_diff() -> Array:
+	var diff := []
+	var cur := [interior, room_cells, deck]
+	for i in 3:
+		var now: Dictionary = cur[i]
+		var old: Dictionary = _snaps[i]
+		if now.size() == old.size() and i != 1:
+			continue
+		for c in now:
+			if not old.has(c) or (i == 1 and old[c] != now[c]):
+				diff.append(c)
+		for c in old:
+			if not now.has(c):
+				diff.append(c)
+		_snaps[i] = now.duplicate()
+	return diff
 
 
 func clear_cache() -> void:

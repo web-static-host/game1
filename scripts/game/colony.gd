@@ -265,6 +265,7 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 	u.env_t = fmod(float(u.id) * 0.618034, 1.0)
 	u.pos = pos
 	units.append(u)
+	_units_rev += 1
 	return u
 
 
@@ -281,10 +282,21 @@ func _free_name(sex: int) -> String:
 
 
 func unit_by_id(uid: int) -> Unit:
-	for u in units:
-		if u.id == uid:
-			return u
-	return null
+	if _ubi_n != units.size() or _ubi_rev != _units_rev:
+		_ubi.clear()
+		for u in units:
+			_ubi[u.id] = u
+		_ubi_n = units.size()
+		_ubi_rev = _units_rev
+	return _ubi.get(uid)
+
+
+## Гаврики по id (спрашивают про каждую клетку и стройку при поиске работы — раньше перебор
+## всех). Сбрасывается, когда гаврик появился или ушёл (_units_rev, число гавриков).
+var _ubi := {}
+var _ubi_n := -1
+var _ubi_rev := -1
+var _units_rev := 0
 
 
 func adults() -> int:
@@ -899,12 +911,38 @@ func _floor_below_surface(r: Rect2i) -> bool:
 
 
 func workers_on(p: Project) -> int:
+	# Пока гаврик ищет работу — счёт по всем стройкам сразу, одним проходом (раньше — проход
+	# по всем гаврикам на каждую стройку: с сотнями гавриков и строек это была главная часть
+	# поиска). Кто-то взял или бросил дело (_start, _drop) — счёт заново.
+	if _ctx_on:
+		if _ctx_workers.is_empty():
+			_ctx_workers[0] = 0
+			for u in units:
+				if u.project_id != 0 and u.task not in [Unit.Task.SLEEP, Unit.Task.EAT, Unit.Task.HAUL]:
+					_ctx_workers[u.project_id] = int(_ctx_workers.get(u.project_id, 0)) + 1
+		return int(_ctx_workers.get(p.id, 0))
 	# Носильщики — не рабочие стройки или мастерской: материалы и сырьё носят сверх мест.
 	var n := 0
 	for u in units:
 		if u.project_id == p.id and u.task not in [Unit.Task.SLEEP, Unit.Task.EAT, Unit.Task.HAUL]:
 			n += 1
 	return n
+
+
+## Память на время одного поиска работы (_assign): число рабочих на стройках, есть ли
+## носильщики в шахты. Сбрасывается, как только кто-то берёт или бросает дело.
+var _ctx_on := false
+var _ctx_workers := {}
+var _ctx_mine_haulers = null
+var _ctx_src := {}
+var _ctx_incoming := {}
+
+
+func _ctx_reset() -> void:
+	_ctx_incoming.clear()
+	_ctx_workers.clear()
+	_ctx_mine_haulers = null
+	_ctx_src.clear()
 
 
 ## Столбцы объектов поверхности, которые пересекаются с зоной.
@@ -3303,6 +3341,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 		u.bed_room = 0
 		crew_data.append(u.to_dict())
 		units.erase(u)
+		_units_rev += 1
 	for o in units:
 		if not units.has(unit_by_id(o.partner_id)):
 			o.partner_id = 0
@@ -3349,6 +3388,7 @@ func receive_flight(flight: Dictionary) -> void:
 		u.bed_room = 0
 		u.pos = Vector2(RoomType.floor_start(ship) + arrived.size() % RoomType.usable_width(ship), ship.rect.end.y - 1)
 		units.append(u)
+		_units_rev += 1
 		arrived.append(u)
 	for u in arrived:
 		u.partner_id = ids.get(u.partner_id, 0)
@@ -3650,10 +3690,24 @@ func bed_rooms() -> Array[Project]:
 
 ## Корабль, внутри которого клетка c (там воздух, тепло и свет), или null.
 func ship_at(c: Vector2i) -> Project:
-	for p in projects:
+	# Корабли — из короткого списка (спрашивают про каждого гаврика каждую секунду; раньше —
+	# перебор всех построек). Список заново, когда построек стало больше или меньше, и раз в секунду.
+	if _ships_n != projects.size() or absf(game_time - _ships_t) >= 1.0:
+		_ships_n = projects.size()
+		_ships_t = game_time
+		_ships.clear()
+		for p in projects:
+			if p.purpose == RoomType.SHIP and p.kind == Project.Kind.ROOM:
+				_ships.append(p)
+	for p in _ships:
 		if p.purpose == RoomType.SHIP and p.kind == Project.Kind.ROOM and p.rect.has_point(c):
 			return p
 	return null
+
+
+var _ships: Array[Project] = []
+var _ships_n := -1
+var _ships_t := 0.0
 
 
 func pregnant_count() -> int:
@@ -4005,6 +4059,7 @@ func _die_of_age(u: Unit) -> void:
 func _kill(u: Unit, why: String, report := true) -> void:
 	_drop(u)
 	units.erase(u)
+	_units_rev += 1
 	for o in units:
 		if o.partner_id == u.id:
 			o.partner_id = 0
@@ -4580,11 +4635,23 @@ const ACQUAINT_STRANGERS := 0.3
 
 func _meet(dt: float) -> void:
 	var adults := units.filter(func(u: Unit) -> bool: return not u.child)
+	# По x: пары дальше ACQUAINT_NEAR + 3 по горизонтали не знакомятся — их не перебираем
+	# (раньше — все пары: с сотнями гавриков рывок в десятки мс).
+	var cells := {}
+	for u: Unit in adults:
+		cells[u] = u.cell()
+	adults.sort_custom(func(p: Unit, q: Unit) -> bool: return cells[p].x < cells[q].x)
 	for i in adults.size():
 		var a: Unit = adults[i]
+		var ca: Vector2i = cells[a]
 		for j in range(i + 1, adults.size()):
 			var b: Unit = adults[j]
-			var d := a.cell() - b.cell()
+			var cb: Vector2i = cells[b]
+			if cb.x - ca.x > ACQUAINT_NEAR + 3:
+				break
+			var d := ca - cb
+			if absi(d.y) > 4:
+				continue
 			var together := works_together(a, b)
 			var near := absi(d.x) <= ACQUAINT_NEAR + 3 and absi(d.y) <= 4 if together \
 				else absi(d.x) <= ACQUAINT_NEAR and absi(d.y) <= 2
@@ -5477,6 +5544,7 @@ func _task_valid(u: Unit) -> bool:
 
 
 func _drop(u: Unit) -> void:
+	_ctx_reset()
 	var key = _reserve_key(u)
 	if key != null and reserved.get(key) == u.id:
 		reserved.erase(key)
@@ -5547,6 +5615,15 @@ func _task_order(u: Unit) -> Array[String]:
 
 ## Ищет занятие для гаврика. true — назначено.
 func _assign(u: Unit) -> bool:
+	_ctx_on = true
+	_ctx_reset()
+	var found := _assign_core(u)
+	_ctx_on = false
+	_ctx_reset()
+	return found
+
+
+func _assign_core(u: Unit) -> bool:
 	# Ждёт у своей выработки, пока другой докопает клетку: если там заведомо нечего взять,
 	# обход колонии (самое дорогое в игре) не нужен — посмотрим снова через полсекунды.
 	if u.waiting_own and not u.child and u.satiety >= HUNGRY and not needs_warmth(u):
@@ -5934,10 +6011,16 @@ func may_haul_mine(u: Unit) -> bool:
 		return true
 	if builder_or_miner(u):
 		return false
+	if _ctx_on and _ctx_mine_haulers != null:
+		return not _ctx_mine_haulers
+	var any := false
 	for o in units:
 		if not o.child and mine_hauler(o):
-			return false
-	return true
+			any = true
+			break
+	if _ctx_on:
+		_ctx_mine_haulers = any
+	return not any
 
 
 ## Куча в шахте (или у её края).
@@ -5958,6 +6041,7 @@ func _try_mine_logistics(u: Unit, store: Project, parents: Dictionary, dist: Dic
 
 
 func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, parents: Dictionary) -> void:
+	_ctx_reset()
 	u.task = task
 	u.target = target
 	u.project_id = pid
@@ -6403,10 +6487,7 @@ func _arrive_takeover(u: Unit) -> void:
 func _unit_by_id(uid: int) -> Unit:
 	if uid == 0:
 		return null
-	for o in units:
-		if o.id == uid:
-			return o
-	return null
+	return unit_by_id(uid)
 
 
 ## Где стоять, работая на стройке: у лифта бур-лифта — и у самого бура (над буром стоять
@@ -6573,6 +6654,34 @@ func _claimed_drop(c: Vector2i, key: String) -> int:
 		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.from_drop and u.haul_src == c and u.carry_key == key:
 			n += u.carry_amount
 	return n
+
+
+## Сколько с каждой кучи уже взяли в ходку — за один проход по гаврикам: {клетка: {ресурс: n}}
+## (для перебора всех куч: раньше на каждую кучу перебирались все гаврики).
+func _drop_claims() -> Dictionary:
+	var out := {}
+	for u in units:
+		if u.task == Unit.Task.HAUL and u.haul_stage == 0 and u.from_drop:
+			var d: Dictionary = out.get(u.haul_src, {})
+			d[u.carry_key] = int(d.get(u.carry_key, 0)) + u.carry_amount
+			out[u.haul_src] = d
+	return out
+
+
+## Шахты (с каймой в клетку) — для проверки «куча в шахте» по многим кучам сразу.
+func _mine_rects() -> Array[Rect2i]:
+	var out: Array[Rect2i] = []
+	for p in projects:
+		if p.kind == Project.Kind.MINE:
+			out.append(p.rect.grow(1))
+	return out
+
+
+static func _in_rects(rects: Array[Rect2i], c: Vector2i) -> bool:
+	for r in rects:
+		if r.has_point(c):
+			return true
+	return false
 
 
 # --- Добыча на земле ----------------------------------------------------------------------
@@ -6755,6 +6864,19 @@ func _settle_drops() -> void:
 
 ## Ближайший источник ресурса: [где встать, клетка кучи или null, сколько можно взять].
 func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}) -> Array:
+	# В одном поиске работы один и тот же ресурс спрашивают для многих строек и мастерских —
+	# ответ тот же, пока никто не взял дела (каждый раз — проход по сотням куч).
+	if _ctx_on:
+		var m = _ctx_src.get(key)
+		if m != null and is_same(m[0], dist):
+			return m[1]
+		var r := _haul_source_raw(key, dist, u, parents)
+		_ctx_src[key] = [dist, r]
+		return r
+	return _haul_source_raw(key, dist, u, parents)
+
+
+func _haul_source_raw(key: String, dist: Dictionary, u: Unit = null, parents := {}) -> Array:
 	var best := [null, null, 0]
 	var best_d := 1 << 30
 	var store: int = inventory.get(key, 0) - _claimed(key)
@@ -6771,8 +6893,9 @@ func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}) 
 		if s != null:
 			best = [s, null, store]
 			best_d = dist[s]
+	var claims := _drop_claims()
 	for c: Vector2i in drops:
-		var avail := drop_amount(c, key) - _claimed_drop(c, key)
+		var avail := drop_amount(c, key) - int(claims.get(c, {}).get(key, 0))
 		if avail <= 0 or not near_home(c.x) or in_drill_lift(c):
 			continue
 		var stand = _drop_stand(c, dist)
@@ -6869,20 +6992,24 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var best_room: Project = null
 	var best_lift_end := -1
 	var routes := {}
-	for c: Vector2i in drops:
-		var stand = _drop_stand(c, dist)
-		if stand == null or dist[stand] - CARRY_BONUS_MAX >= best_d or in_drill_lift(c):
+	var claims := _drop_claims()
+	var mines := _mine_rects()
+	for c: Vector2i in (_cleanup_cells() if only == null else _storable_cells(only)):
+		if not drops.has(c):
 			continue
 		# Добытое в шахте уносят только работники складов и подсобные.
-		var mined := in_mine(c)
+		var mined := _in_rects(mines, c)
 		if (mines_only and not mined) or (mined and not may_mine):
+			continue
+		var stand = _drop_stand(c, dist)
+		if stand == null or dist[stand] - CARRY_BONUS_MAX >= best_d or in_drill_lift(c):
 			continue
 		for k in drops[c]:
 			# Работник склада носит стройматериалы, амбара — еду; на любой склад, где есть
 			# работник и место.
 			if only != null and not RoomType.same_kind(only, k):
 				continue
-			var avail := drop_amount(c, k) - _claimed_drop(c, k)
+			var avail := drop_amount(c, k) - int(claims.get(c, {}).get(k, 0))
 			if avail <= 0 or not _worth_carrying(c, k, avail):
 				continue
 			# Куда нести, зависит только от ресурса — считаем раз на ресурс, а не на каждую кучу.
@@ -6931,6 +7058,54 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	u.cargo_end = best_lift_end
 	_start(u, Unit.Task.HAUL, best, best, best_room.id, parents)
 	return true
+
+
+## Кучи, которые вообще есть куда унести (для их ресурсов есть место на складе или в лифте), в
+## порядке drops. Кучу, которую никуда не деть, уборка не берёт — а таких сотни (камень и уголь
+## при полных складах), и каждый бездельник перебирал их все. Для всех, кто убирает без своего
+## склада, список общий и обновляется раз в секунду игры (или когда куч стало больше/меньше).
+var _clean_cells: Array[Vector2i] = []
+var _clean_t := -INF
+var _clean_n := -1
+
+
+func _cleanup_cells() -> Array[Vector2i]:
+	if _clean_n != drops.size() or absf(game_time - _clean_t) >= 1.0:
+		_clean_n = drops.size()
+		_clean_t = game_time
+		_clean_cells = _storable_cells(null)
+	return _clean_cells
+
+
+func _storable_cells(only: Project) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var storable := {}
+	for c: Vector2i in drops:
+		for k in drops[c]:
+			var ok = storable.get(k)
+			if ok == null:
+				ok = _storable_anywhere(k, only)
+				storable[k] = ok
+			if ok:
+				out.append(c)
+				break
+	return out
+
+
+## Есть ли вообще, куда отнести ресурс (склад с местом или грузовой лифт к такому складу) —
+## без учёта пути: «нет» значит, что уборка его точно не возьмёт.
+func _storable_anywhere(key: String, only: Project = null) -> bool:
+	for room in ([only] if only != null else store_rooms()):
+		if RoomType.stores(room, key) and store_staffed(room) and room_free(room, key) > 0:
+			return true
+	for p in lifts():
+		if not p.cargo or not lift_powered(p):
+			continue
+		for e in 2:
+			for room in lift_stores(p, 1 - e):
+				if (only == null or room == only) and RoomType.stores(room, key) and room_free(room, key) > 0:
+					return true
+	return false
 
 
 ## Гаврик берёт ресурс с кучи c (рядом с ним) и несёт на склад.
@@ -7047,6 +7222,16 @@ func _try_logistics(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 
 ## Сколько ресурса key уже несут в постройку p.
 func _incoming_to(p: Project, key: String) -> int:
+	# В поиске работы — по всем постройкам одним проходом (см. workers_on).
+	if _ctx_on:
+		if _ctx_incoming.is_empty():
+			_ctx_incoming[0] = {}
+			for o in units:
+				if o.task == Unit.Task.HAUL and o.project_id != 0:
+					var d: Dictionary = _ctx_incoming.get(o.project_id, {})
+					d[o.carry_key] = int(d.get(o.carry_key, 0)) + o.carry_amount
+					_ctx_incoming[o.project_id] = d
+		return int(_ctx_incoming.get(p.id, {}).get(key, 0))
 	var n := 0
 	for o in units:
 		if o.task == Unit.Task.HAUL and o.project_id == p.id and o.carry_key == key:

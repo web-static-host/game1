@@ -694,6 +694,22 @@ func temperature(c: Vector2i) -> float:
 	return v
 
 
+## Что может гореть: готовые очаги, генераторы, корабль (и всё, что горит сейчас) — список
+## обновляется вместе с памятью температур; горит ли — смотрим каждый раз (раньше на каждую
+## клетку перебирались все постройки).
+var _heat_src = null
+const BURNERS := [RoomType.HEARTH, RoomType.SHIP]
+
+
+func _heat_sources() -> Array:
+	if _heat_src == null or _temp_memo.is_empty():
+		_heat_src = []
+		for p in colony.projects:
+			if p.burning or (p.phase == Project.Phase.DONE and (BURNERS.has(p.purpose) or RoomType.GENERATORS.has(p.purpose))):
+				_heat_src.append(p)
+	return _heat_src
+
+
 func _temperature(c: Vector2i) -> float:
 	# В корабле климат держит его реактор.
 	if colony.ship_at(c) != null:
@@ -702,7 +718,7 @@ func _temperature(c: Vector2i) -> float:
 	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг. Несколько очагов
 	# рядом складываются (два — вдвое теплее), но в жару не нагреют: огонь греет не выше +30 °C.
 	var fire := 0.0
-	for p in colony.projects:
+	for p: Project in _heat_sources():
 		if not p.burning or p.phase != Project.Phase.DONE:
 			continue
 		# Расстояние от стен комнаты (внутри — 0): рядом полное тепло, дальше плавно слабеет.
