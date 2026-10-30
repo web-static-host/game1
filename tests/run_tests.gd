@@ -107,6 +107,7 @@ func _initialize() -> void:
 	test_degas_resumes()
 	test_gas_masks()
 	test_drill_lift()
+	test_drill_lift_side()
 	test_geoprobe()
 	test_unit_tap()
 	test_room_move()
@@ -4899,6 +4900,69 @@ func test_drill_lift() -> void:
 	check(colony.demolish_error(lift) == colony.demolish_error(drill), "снести лифт — значит снести бур-лифт")
 	if colony.demolish(drill):
 		check(not colony.projects.has(drill) and not colony.projects.has(lift), "снесли бур-лифт — нет ни бура, ни лифта")
+
+
+## Бур-лифт, поставленный бурить влево: лифт справа от бура, растёт за ним, добытое везёт
+## к дальнему (правому) концу на склад. Направление выбирают при постановке — другое нельзя.
+## Лифт, построенный от бур-лифта, сливается с его лифтом.
+func test_drill_lift_side() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x + 40)
+	var s := w.gen.surface_y(x)
+	_power_up(colony, x)
+	colony.research.learn("drill_lift")
+	colony.inventory["iron"] = 200
+	colony.inventory["copper"] = 50
+	var y := s + 20
+	var r := Rect2i(x + 20, y, 5, 3)
+	check(not colony.drill_lift_error(r, Vector2i.DOWN).is_empty(), "5×3 — не для бурения вниз")
+	check(colony.drill_lift_error(r, Vector2i.LEFT).is_empty(), "бур-лифт влево 5×3: " + colony.drill_lift_error(r, Vector2i.LEFT))
+	var drill := colony.create_drill_lift(r, -1, Vector2i.LEFT)
+	check(drill != null, "бур-лифт влево заложен")
+	if drill == null:
+		return
+	var lift := colony.drill_lift_of(drill)
+	check(drill.rect == Rect2i(x + 20, y, 3, 3) and lift.rect == Rect2i(x + 23, y, 2, 3) and not lift.lift_vertical(),
+		"бур слева, лифт справа, по горизонтали")
+	for p in [drill, lift]:
+		for c in p.cells():
+			w.set_material(c.x, c.y, Mat.AIR)
+			w.set_dug(c.x, c.y)
+			colony.interior[c] = p.id
+		p.phase = Project.Phase.DONE
+	var st := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 25, y, 6, 3), 970)
+	st.purpose = RoomType.STORAGE
+	colony.assign_work(colony.units[1], st)
+	colony._register_room(st)
+	colony._rebuild_climb()
+	colony._power_tick(0.1)
+	check(colony.lift_stores(lift, 1).has(st), "склад у дальнего конца лифта")
+	for yy in range(y, y + 3):
+		for xx in range(x + 8, x + 20):
+			w.set_material(xx, yy, Mat.IRON_ORE)
+	check(not colony.start_drill(drill, Vector2i.DOWN, 5).is_empty(), "поставлен влево — вниз не бурит")
+	check(colony.start_drill(drill, Vector2i.LEFT, 8).is_empty(), "бурит влево")
+	var t := 0.0
+	while t < 600.0 and (colony.drilling(drill) or _load_left(lift) > 0):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		colony._lifts_tick(0.5)
+		t += 0.5
+	check(not colony.drilling(drill) and drill.rect.position.x == x + 12, "бур прошёл 8 м влево (x %d)" % (drill.rect.position.x - x))
+	check(lift.rect.position.x == drill.rect.end.x and lift.rect.end.x == x + 25, "лифт дорос до бура, правый конец на месте (%s)" % lift.rect)
+	check(colony.held_in(st, "iron_ore") > 0, "руду кабина довезла на склад (%d)" % colony.held_in(st, "iron_ore"))
+	# Лифт встык с лифтом бур-лифта (того же сечения) — сливается в него, связь с буром остаётся.
+	var down := colony.create_drill_lift(Rect2i(x + 40, y, 3, 5), -1, Vector2i.DOWN)
+	var dl := colony.drill_lift_of(down)
+	for p in [down, dl]:
+		p.phase = Project.Phase.DONE
+	var up := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 40, y - 6, 3, 6), 971)
+	up.cargo = true
+	colony._merge_lifts(up)
+	check(colony.project_by_id(dl.id) != null and dl.rect == Rect2i(x + 40, y - 6, 3, 8) and dl.link_id == down.id \
+		and colony.project_by_id(971) == null, "лифт сверху слился с лифтом бур-лифта (%s)" % dl.rect)
 
 
 func _load_left(lift: Project) -> int:

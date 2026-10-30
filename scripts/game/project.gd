@@ -69,6 +69,9 @@ const LIFT_UNSET := -1.0e9
 var lift_pos := LIFT_UNSET
 ## Бур-лифт: у бура — id его грузового лифта, у лифта — id бура.
 var link_id := 0
+## Бур-лифт: куда он бурит (выбирают при постановке, потом не меняется); у бура и его лифта.
+## ZERO — старые сохранения: вниз.
+var dl_dir := Vector2i.ZERO
 ## Сдвиг комнаты (идёт как ремонт: строители и материалы): на сколько клеток и куда.
 var move_dir := Vector2i.ZERO
 ## Бур: куда едет (ноль — стоит), сколько метров осталось, сколько уже сверлит срез,
@@ -191,8 +194,15 @@ static func kind_name(k: int) -> String:
 
 ## Лифт вертикальный (иначе — горизонтальный).
 func lift_vertical() -> bool:
-	# Лифт бур-лифта — всегда вертикальный (сначала он 3×2 над буром, потом растёт вниз).
-	return link_id != 0 or rect.size.y > rect.size.x
+	# Лифт бур-лифта — по направлению бура (сначала он 3×2 или 2×3 за буром, потом растёт следом).
+	if link_id != 0:
+		return drill_lift_dir().x == 0
+	return rect.size.y > rect.size.x
+
+
+## Куда бурит бур-лифт, частью которого эта постройка (старые сохранения — вниз).
+func drill_lift_dir() -> Vector2i:
+	return Vector2i.DOWN if dl_dir == Vector2i.ZERO else dl_dir
 
 
 ## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
@@ -474,6 +484,7 @@ func to_dict() -> Dictionary:
 		"store_off": store_off,
 		"cargo": cargo,
 		"link_id": link_id,
+		"dl_dir": [dl_dir.x, dl_dir.y],
 		"move_dir": [move_dir.x, move_dir.y],
 		"lift_pos": lift_pos,
 		"lift_load": lift_load,
@@ -547,6 +558,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.rocket = str(d.get("rocket", ""))
 	p.cargo = bool(d.get("cargo", false))
 	p.link_id = int(d.get("link_id", 0))
+	var dld: Array = d.get("dl_dir", [0, 0])
+	p.dl_dir = Vector2i(int(dld[0]), int(dld[1]))
 	var md: Array = d.get("move_dir", [0, 0])
 	p.move_dir = Vector2i(int(md[0]), int(md[1]))
 	p.lift_pos = float(d.get("lift_pos", LIFT_UNSET))
