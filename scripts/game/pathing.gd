@@ -41,7 +41,7 @@ var _pass_memo := {}
 ## до 2 м вбок и 3 м вверх-вниз.
 var _nbr_memo := {}
 var _memo_age := 0.0
-const CACHE_TIME := 4.0
+const CACHE_TIME := 8.0
 const MEMO_TIME := 300.0
 
 
@@ -180,16 +180,21 @@ func explore(start: Vector2i) -> Array:
 func sync() -> void:
 	_take_changes()
 	var key := [world.revision, interior.size(), room_cells.size(), deck.size(), climb_rev]
-	if key != _cache_key:
-		# Изменилась только порода (копают) или лестницы и леса — проверки клеток уже сброшены
-		# рядом с изменёнными (forget), обходы — заново. Комнаты и постройки — сбрасываем всё.
-		# (Раньше лестницы тоже сбрасывали всё: леса строек меняются каждые пару секунд, и первый
-		# обход после этого пересчитывал соседей всей колонии — кадр до 150 мс.)
-		if _cache_key.size() == key.size() and key.slice(1, 4) == _cache_key.slice(1, 4):
+	# Изменилась только порода (копают, течёт вода) или лестницы и леса — проверки клеток уже
+	# сброшены рядом с изменёнными (forget), обходы не выбрасываем, а дообновляем на месте
+	# (копают постоянно, и раньше кэш почти не работал: каждый поиск работы обходил колонию
+	# заново). Комнаты и постройки — сбрасываем всё.
+	var structural := _cache_key.size() != key.size() or key.slice(1, 4) != _cache_key.slice(1, 4)
+	if structural:
+		clear_cache()
+	elif not _changed_cells.is_empty() or not _climb_cells.is_empty() or key[4] != _cache_key[4]:
+		if _changed_cells.size() > PATCH_MAX or (key[4] != _cache_key[4] and _climb_cells.is_empty()):
 			_cache.clear()
 		else:
-			clear_cache()
-		_cache_key = key
+			_patch_cache()
+	_changed_cells.clear()
+	_climb_cells.clear()
+	_cache_key = key
 
 
 ## Время идёт: старые обходы забываем.
@@ -217,11 +222,13 @@ func _take_changes() -> void:
 	else:
 		for c in world.changed:
 			_forget_cell(c)
+	_changed_cells.append_array(world.changed)
 	world.changed.clear()
 
 
 ## Лестницы, леса или настил поменялись в этих клетках: проверки рядом с ними забываем.
 func forget(cells: Array) -> void:
+	_climb_cells.append_array(cells)
 	if cells.size() >= 4096:
 		_node_memo.clear()
 		_pass_memo.clear()
@@ -240,6 +247,63 @@ func _forget_cell(c: Vector2i) -> void:
 		for dy in range(-3, 4):
 			for dx in range(-2, 3):
 				_nbr_memo.erase(c + Vector2i(dx, dy))
+
+
+## --- Дообновление обходов ----------------------------------------------------------------
+## Клетки, поменявшиеся с прошлой сверки: порода (копка, обвал) и лестницы/леса/полы.
+var _changed_cells: Array = []
+var _climb_cells: Array = []
+## Больше изменений разом — проще обойти заново.
+const PATCH_MAX := 400
+
+
+## Сохранённые обходы правим на месте. Клетка рядом с изменением перестала быть узлом (вынули
+## пол, засыпало, убрали лестницу) — обход выбрасываем: пути через неё больше нет. Иначе —
+## дотягиваем расстояния от клеток обхода рядом с изменением: так в обход попадают только что
+## открытые клетки и короткие пути через них (как при новом обходе).
+func _patch_cache() -> void:
+	if _cache.is_empty():
+		return
+	var zone := {}
+	for c: Vector2i in _changed_cells + _climb_cells:
+		for dy in range(-3, 4):
+			for dx in range(-2, 3):
+				zone[c + Vector2i(dx, dy)] = true
+	var removed := {}
+	for c: Vector2i in _climb_cells:
+		removed[c] = true
+	for start: Vector2i in _cache.keys():
+		var entry: Array = _cache[start]
+		var parents: Dictionary = entry[0]
+		var dist: Dictionary = entry[1]
+		var queue: Array[Vector2i] = []
+		var broken := false
+		for q: Vector2i in zone:
+			if not dist.has(q):
+				continue
+			# Лестница или леса поменялись прямо в клетке обхода — пути через неё могли пропасть.
+			if removed.has(q) or not _node_m(q):
+				broken = true
+				break
+			queue.append(q)
+		if broken or not node(start):
+			_cache.erase(start)
+			continue
+		var lo := start.x - MAX_RADIUS
+		var hi := start.x + MAX_RADIUS
+		var head := 0
+		while head < queue.size() and dist.size() < MAX_NODES:
+			var c := queue[head]
+			head += 1
+			var d: int = dist[c] + 1
+			for n: Vector2i in neighbors(c):
+				if n.x < lo or n.x > hi:
+					continue
+				if dist.has(n) and int(dist[n]) <= d:
+					continue
+				parents[n] = c
+				dist[n] = d
+				queue.append(n)
 
 
 func clear_cache() -> void:

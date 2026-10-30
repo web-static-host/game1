@@ -4623,7 +4623,17 @@ func best_friends(u: Unit, n := 3) -> Array:
 
 # --- Онлайн-симуляция -------------------------------------------------------------
 
+## Бюджет на поиск работы за один вызов update (мкс): поиск работы — самое дорогое в игре,
+## и с сотнями гавриков он съедал бы кадр. Сверх бюджета гаврик думает в следующем кадре.
+const THINK_BUDGET_US := 6000
+const THINK_BUDGET_MAX_US := 20000
+var _think_spent := 0
+var _think_budget := THINK_BUDGET_US
+
+
 func update(dt: float) -> void:
+	_think_spent = 0
+	_think_budget = mini(THINK_BUDGET_US + 2000 * maxi(0, ceili(dt / SUBSTEP) - 1), THINK_BUDGET_MAX_US)
 	var remaining := dt
 	while remaining > 0.0:
 		var step := minf(remaining, SUBSTEP)
@@ -4672,6 +4682,8 @@ func update(dt: float) -> void:
 			_plant_tick(sdt)
 			_season_tick()
 			_life_tick(sdt, false)
+		# Бюджет «размышлений» не держит одних и тех же: кто не нашёл дела, ищет снова не
+		# раньше чем через 1,5 с, и очередь в следующих кадрах доходит до остальных.
 		for u: Unit in units.duplicate():
 			_update_unit(u, step)
 	physics.update(dt)
@@ -4751,8 +4763,14 @@ func _update_unit(u: Unit, dt: float) -> void:
 				u.fall_from = u.pos.y
 				return
 			u.retry -= dt
+			# Бюджет размышлений на кадр исчерпан — подумает в следующем кадре (кадр не затянется).
+			if u.retry <= 0.0 and not offline and _think_spent > _think_budget:
+				return
 			if u.retry <= 0.0:
-				if _assign(u):
+				var t0 := Time.get_ticks_usec()
+				var found := _assign(u)
+				_think_spent += Time.get_ticks_usec() - t0
+				if found:
 					u.idle_fails = 0
 				else:
 					# Дела нет — ищем реже, чтобы толпа бездельников не грузила игру.
@@ -5536,6 +5554,20 @@ func _assign(u: Unit) -> bool:
 		if mine != null and (not _own_work_open(u, mine) or _own_sig(mine) == u.wait_sig):
 			u.idle_fails = 0
 			return false
+	# Своя выработка рядом — хватит маленького обхода вокруг (раньше каждый ждущий обходил всю
+	# колонию: это была треть всего расчёта). Выработку из него не видно — обход целиком.
+	if not u.child and u.satiety >= HUNGRY and not needs_warmth(u):
+		var own0 := _own_project(u)
+		if own0 != null:
+			var near := pathing._explore(u.cell(), LOCAL_NODES)
+			if _near_rect(site_rect(own0), near[1]) != null:
+				u.waiting_own = false
+				if _try_project(u, own0, near[0], near[1], has_crew(Unit.Prof.MINER), has_crew(Unit.Prof.BUILDER)):
+					return true
+				u.idle_fails = 0
+				u.waiting_own = true
+				u.wait_sig = _own_sig(own0)
+				return false
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
@@ -5607,6 +5639,10 @@ func _assign(u: Unit) -> bool:
 				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
 					return true
 	return _return_home(u, parents, dist)
+
+
+## Маленький обход вокруг гаврика — для работы на своей выработке рядом.
+const LOCAL_NODES := 600
 
 
 ## Состояние выработки для ждущего: что осталось копать и крепить и кто какие клетки держит
@@ -5743,7 +5779,10 @@ func _continue_own(u: Unit) -> void:
 	var own := _own_project(u)
 	if own == null:
 		return
-	var reach := pathing.explore(u.cell())
+	# Своя выработка рядом — маленький обход вокруг, а не вся колония (это после каждой клетки).
+	var reach := pathing._explore(u.cell(), LOCAL_NODES)
+	if _near_rect(site_rect(own), reach[1]) == null:
+		reach = pathing.explore(u.cell())
 	if _try_project(u, own, reach[0], reach[1], has_crew(Unit.Prof.MINER), has_crew(Unit.Prof.BUILDER)):
 		u.idle_fails = 0
 

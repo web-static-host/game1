@@ -517,14 +517,22 @@ func _gas_tick() -> void:
 	if gas.is_empty():
 		return
 	var next := {}
+	# Проверки клеток и высота поверхности — по разу на шаг (раньше на каждую клетку газа
+	# по шесть раз, с шумом рельефа: тысяча клеток метана стоила 20 мс в секунду).
+	var open := {}
+	var surf := {}
 	for c: Vector2i in gas:
 		var g: float = gas[c]
+		var sy = surf.get(c.x)
+		if sy == null:
+			sy = world.gen.surface_y(c.x)
+			surf[c.x] = sy
 		# Над землёй газ уходит в небо.
-		if c.y < world.gen.surface_y(c.x) or not _open_for_gas(c):
+		if c.y < int(sy) or not _open_memo(c, open):
 			continue
 		var targets: Array[Vector2i] = []
 		for d in DIRS4:
-			if _open_for_gas(c + d):
+			if _open_memo(c + d, open):
 				targets.append(c + d)
 		# Метан легче воздуха: больше уходит вверх.
 		var keep := g * 0.4
@@ -539,20 +547,24 @@ func _gas_tick() -> void:
 		for t in targets:
 			next[t] = next.get(t, 0.0) + share * (2.0 if t.y < c.y else 1.0) / weights
 	# Дегазация собирает метан — это топливо для газового генератора и котлов.
+	# Зоны дегазаций — один проход по облаку (раньше — по облаку на каждую дегазацию).
+	var zones := []
 	for p in colony.rooms_of(RoomType.DEGAS):
 		if p.paused:
 			continue
 		# Бак полон — газ всё равно откачивают (выработки чистые), лишний выпускают наружу.
-		var store := colony.room_free(p, "methane") > 0
-		var center := p.rect.get_center()
 		var dr := RoomType.effect_radius(p)
-		for c in next:
-			if absi(c.x - center.x) <= dr and absi(c.y - center.y) <= dr:
-				var take: float = next[c] * DEGAS_TAKE
-				next[c] -= take
-				# «Газосборник» — вдвое больше метана с того же газа.
-				if store:
-					_captured += take * (2.0 if colony.research.has("gas_collector") else 1.0)
+		zones.append([Rect2i(p.rect.get_center() - Vector2i(dr, dr), Vector2i(dr * 2 + 1, dr * 2 + 1)), colony.room_free(p, "methane") > 0])
+	if not zones.is_empty():
+		var gain := 2.0 if colony.research.has("gas_collector") else 1.0
+		for c: Vector2i in next:
+			for z in zones:
+				if (z[0] as Rect2i).has_point(c):
+					var take: float = next[c] * DEGAS_TAKE
+					next[c] -= take
+					# «Газосборник» — вдвое больше метана с того же газа.
+					if z[1]:
+						_captured += take * gain
 	while _captured >= 1.0:
 		_captured -= 1.0
 		colony._add("methane", 1)
@@ -560,6 +572,14 @@ func _gas_tick() -> void:
 	for c in next:
 		if next[c] >= GAS_MIN:
 			gas[c] = next[c]
+
+
+func _open_memo(c: Vector2i, memo: Dictionary) -> bool:
+	var v = memo.get(c)
+	if v == null:
+		v = world.get_mat(c.x, c.y) == Mat.AIR
+		memo[c] = v
+	return v
 
 
 func gas_at(c: Vector2i) -> float:
@@ -570,6 +590,12 @@ func gas_at(c: Vector2i) -> float:
 func gas_in(r: Rect2i) -> float:
 	var g := 0.0
 	if gas.is_empty():
+		return g
+	# Длинная выработка (ствол лифта на сотни метров) — дешевле пройти по облаку газа.
+	if r.get_area() > gas.size():
+		for c: Vector2i in gas:
+			if r.has_point(c):
+				g = maxf(g, gas[c])
 		return g
 	for y in range(r.position.y, r.end.y):
 		for x in range(r.position.x, r.end.x):

@@ -854,7 +854,7 @@ func test_roles() -> void:
 			break
 	check(colony.set_profession(builder, Unit.Prof.BUILDER).is_empty(), "назначен строитель")
 	t = 0.0
-	while t < 30.0 and not (builder.project_id == p.id and builder.task != Unit.Task.HAUL):
+	while t < 30.0 and not (builder.project_id == p.id and builder.task != Unit.Task.HAUL and colony.workers_on(p) <= 1):
 		colony.update(0.5)
 		t += 0.5
 	check(builder.project_id == p.id and builder.task != Unit.Task.HAUL and colony.workers_on(p) <= 1,
