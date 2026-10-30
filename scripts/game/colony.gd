@@ -3375,10 +3375,10 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	for k in cargo:
 		_remove(k, int(cargo[k]))
 	p.rocket = ""
-	_log("Старт! Экспедиция на %s: гавриков %d, груза %d. Лететь %d мес." % [Planet.planet_name(planet_id), crew_data.size(), total,
-		int(Planet.data(planet_id)["travel"])], "good")
+	_log("Старт! Экспедиция на %s: гавриков %d, груза %d." % [Planet.planet_name(planet_id), crew_data.size(), total], "good")
+	# Летит мгновенно: садится при следующем шаге игры (раньше — месяцами).
 	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
-		"left": float(Planet.data(planet_id)["travel"]) * MONTH}
+		"left": 0.0}
 
 
 ## Новая колония на планете: корабль садится на поверхность, экипаж и груз — в нём.

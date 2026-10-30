@@ -427,12 +427,11 @@ func _show_worlds() -> void:
 			"button": "" if here else "Перейти", "pick": func() -> void:
 				_switch_world(p)})
 	for f in universe.flights:
-		var days := int(ceilf(float(f["left"]) / Colony.DAY))
 		var cargo := 0
 		for k in f["cargo"]:
 			cargo += int(f["cargo"][k])
 		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
-			"info": "гавриков %d, груза %d · сядет через %d дн." % [f["crew"].size(), cargo, days]})
+			"info": "гавриков %d, груза %d · садится" % [f["crew"].size(), cargo]})
 	hud.show_panel({"title": "Планеты", "subtitle": "время идёт на всех планетах сразу",
 		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракета»): до 10 гавриков и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
 		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
@@ -467,7 +466,7 @@ func _launch_pick_planet(pad: Project) -> void:
 		var d := Planet.data(id)
 		var ok := Colony.rocket_reaches(pad.rocket, id)
 		var col := universe.entry(id)
-		var info := "%s Лететь %d мес.%s" % [d["desc"], int(d["travel"]),
+		var info := "%s%s" % [d["desc"],
 			(" · там колония: гавриков %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
 		if not ok:
 			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]
@@ -486,14 +485,30 @@ func _launch_crew() -> void:
 	var planet: String = _launch["planet"]
 	var hot: bool = float(Planet.data(planet)["under"]) > 30.0
 	var items := []
-	for u in colony.units:
-		if u.child:
-			continue
+	var stat_key := "heat" if hot else "cold"
+	# Сначала — самые подходящие планете: супер-гаврики (стихии им не страшны), потом самые
+	# стойкие к жаре (холоду) — хоть и заняты делом (это видно в строке).
+	var pool := colony.units.filter(func(u: Unit) -> bool: return not u.child)
+	pool.sort_custom(func(a: Unit, b: Unit) -> bool:
+		if a.invulnerable() != b.invulnerable():
+			return a.invulnerable()
+		return a.stat(stat_key) > b.stat(stat_key))
+	for u: Unit in pool:
 		var on := crew.has(u)
 		var stat := "жара" if hot else "холод"
+		var busy := u.workplace != 0 or u.profession != Unit.Prof.ANY \
+			or (u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT)
+		var busy_text := ""
+		if busy:
+			var what: PackedStringArray = []
+			if not colony.is_free(u):
+				what.append(colony.role_name(u).to_lower())
+			if u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL:
+				what.append(Unit.TASK_NAMES[u.task])
+			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
 		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
-			"info": "%s · %s %d%% · %s%s" % [_family_text(u), stat, roundi(u.stat("heat" if hot else "cold") * 100),
-				colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
+			"info": "%s · %s %d%%%s%s" % [_family_text(u), stat, roundi(u.stat(stat_key) * 100),
+				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
 				if crew.has(u):
 					crew.erase(u)
@@ -550,6 +565,8 @@ func _do_launch() -> void:
 		hud.log_event(flight["error"], "warning")
 		return
 	universe.send(flight)
+	# Ракета летит мгновенно — садится сразу, даже на паузе.
+	universe.update(0.0)
 	_launch = {}
 	_show_worlds()
 

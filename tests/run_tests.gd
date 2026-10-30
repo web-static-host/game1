@@ -2783,11 +2783,10 @@ func test_space() -> void:
 	uni.base_seed = 40
 	uni.add_world("earth", w, colony)
 	uni.send(flight)
-	uni.update(Colony.MONTH * 2.0)
-	check(uni.worlds.size() == 1 and uni.flights.size() == 1, "летят — ещё не долетели")
-	uni.update(Colony.MONTH * 1.5)
+	check(float(flight["left"]) == 0.0, "ракета летит мгновенно")
+	uni.update(0.0)
 	var e := uni.entry("mars")
-	check(not e.is_empty(), "долетели — появился мир Марса")
+	check(not e.is_empty() and uni.flights.is_empty(), "сразу долетели — появился мир Марса")
 	if e.is_empty():
 		return
 	var mc: Colony = e["colony"]
