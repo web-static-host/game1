@@ -1910,9 +1910,10 @@ func _wake_waiting(p: Project) -> void:
 const IDLE_HOME_AFTER := 4
 ## Ехать на лифте, только если по шахте не меньше стольких метров.
 const LIFT_MIN_RIDE := 3
-## Кабину ждут не дольше стольких секунд — потом лезут по аварийной лестнице и минуту
-## (LIFT_SKIP) лифтом не пользуются.
-const LIFT_GIVE_UP := 20.0
+## Кабину ждут — по аварийной лестнице лезут, только если лифт обесточен или стоит (тогда сразу),
+## а у работающего — разве что прождав LIFT_GIVE_UP (запасной случай: кабина застряла). Раньше
+## сдавались через 20 с, и при одном лифте на колонию по шахтам вечно ползли десятки гавриков.
+const LIFT_GIVE_UP := 120.0
 const LIFT_SKIP := 60.0
 var _cargo_check_t := 0.0
 var _wear_acc := 0.0
@@ -6702,6 +6703,12 @@ func _awaited_drop(c: Vector2i, key: String) -> bool:
 
 
 ## Свободный гаврик уносит лежащее на земле на склад (если там есть место).
+## Уборка: ценное носят раньше — эти ресурсы считаются ближе на столько клеток пути.
+const CARRY_BONUS := {"iron_ore": 40, "copper_ore": 40, "silver_ore": 60, "gold_ore": 80, "uranium_ore": 80,
+	"diamond": 100, "salt": 20, "coal": 15, "iron": 60, "copper": 60, "silver": 80, "gold": 100}
+const CARRY_BONUS_MAX := 100
+
+
 func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
 	var may_mine := may_haul_mine(u)
 	var best = null
@@ -6714,7 +6721,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var routes := {}
 	for c: Vector2i in drops:
 		var stand = _drop_stand(c, dist)
-		if stand == null or dist[stand] >= best_d or in_drill_lift(c):
+		if stand == null or dist[stand] - CARRY_BONUS_MAX >= best_d or in_drill_lift(c):
 			continue
 		# Добытое в шахте уносят только работники складов и подсобные.
 		var mined := in_mine(c)
@@ -6741,6 +6748,10 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			# под всю ношу.
 			if lift == null and room_free(to[1], k) < mini(carry_cap(), avail):
 				continue
+			# Ценное — в первую очередь: руда, металлы и камни «ближе» на CARRY_BONUS клеток.
+			var score: int = dist[stand] - int(CARRY_BONUS.get(k, 0))
+			if score >= best_d:
+				continue
 			# Привезённое на стройку (лифтом к ней или прямо на неё) на склад не уносят.
 			# (Проверка дорогая — последней, только для кучи, которую готовы взять.)
 			if _awaited_drop(c, k):
@@ -6756,8 +6767,7 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 			else:
 				best_room = to[1]
 				best_n = mini(carry_cap(), mini(avail, room_free(to[1], k)))
-			best_d = dist[stand]
-			break
+			best_d = score
 	if best == null:
 		return false
 	# Что останется на куче — снова «свежее»: следующий не побежит за одной штукой.
