@@ -11,9 +11,31 @@ var view: WorldView
 var colony: Colony
 
 
+## Высота земли по столбцам (рельеф не меняется) — снежинке каждый кадр нужно знать, над
+## землёй ли она, а расчёт высоты — шум.
+var _surf := {}
+var _drawn := false
+
+
+func _surface(x: int) -> int:
+	var s = _surf.get(x)
+	if s == null:
+		s = colony.world.gen.surface_y(x)
+		if _surf.size() > 20000:
+			_surf.clear()
+		_surf[x] = s
+	return s
+
+
 func _process(_delta: float) -> void:
-	if colony != null:
+	if colony == null:
+		return
+	# Ни снега, ни листопада — рисовать нечего (раньше слой перерисовывался каждый кадр).
+	var m := ChunkView.season_m
+	var active := ChunkView.snow or (m >= 8.6 and m < 11.2)
+	if active or _drawn:
 		queue_redraw()
+	_drawn = active
 
 
 func _draw() -> void:
@@ -31,7 +53,7 @@ func _draw() -> void:
 			var fol := ChunkView.foliage(x)
 			if fol[0] <= 0.02:
 				continue
-			var surf := world.gen.surface_y(x)
+			var surf := _surface(x)
 			if surf < a.y - 8 or surf > b.y + 2:
 				continue
 			var h := world.gen.tree_height(x) * TILE
@@ -60,6 +82,6 @@ func _draw() -> void:
 			var sp := 30.0 + WorldGen.hash01(i, 3, 991) * 40.0
 			var p := origin + Vector2(fmod(hx * w + sin(t * 0.8 + i) * 12.0 + w * 10.0, w), fmod(hy * hgt + t * sp, hgt))
 			var cell := view.local_to_cell(p)
-			if cell.y >= world.gen.surface_y(cell.x):
+			if cell.y >= _surface(cell.x):
 				continue
 			draw_circle(p, 1.6 + WorldGen.hash01(i, 4, 991) * 2.0, Color(1, 1, 1, 0.85))

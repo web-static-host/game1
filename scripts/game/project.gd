@@ -119,6 +119,9 @@ var equip_material := ""
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
+## Сборы экспедиции (сохраняются, пока ракета не улетела): {"planet": куда, "crew": [id гавриков],
+## "cargo": {ресурс: сколько}}.
+var launch_draft := {}
 ## Под что строят комнату (выбрано в меню стройки): после постройки сразу обустраивается.
 var plan_purpose := 0
 ## Очаг с кирпичными печами (иначе — каменные).
@@ -491,6 +494,7 @@ func to_dict() -> Dictionary:
 		"equip_material": equip_material,
 		"equip_rocket": equip_rocket,
 		"rocket": rocket,
+		"launch_draft": launch_draft,
 		"plan_purpose": plan_purpose,
 		"brick_stoves": brick_stoves,
 		"gas_boiler": gas_boiler,
@@ -573,6 +577,11 @@ static func from_dict(d: Dictionary) -> Project:
 	p.equip_material = str(d.get("equip_material", ""))
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
+	var ld: Dictionary = d.get("launch_draft", {})
+	p.launch_draft = {"planet": str(ld.get("planet", "")), "crew": (ld.get("crew", []) as Array).map(func(v) -> int: return int(v)),
+		"cargo": {}} if not ld.is_empty() else {}
+	for k in ld.get("cargo", {}):
+		p.launch_draft["cargo"][str(k)] = int(ld["cargo"][k])
 	p.cargo = bool(d.get("cargo", false))
 	p.link_id = int(d.get("link_id", 0))
 	var dld: Array = d.get("dl_dir", [0, 0])

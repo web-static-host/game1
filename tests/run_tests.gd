@@ -2775,6 +2775,11 @@ func test_space() -> void:
 	var crew: Array = [colony.units[0], colony.units[1], colony.units[2]]
 	crew[0].partner_id = crew[1].id
 	crew[1].partner_id = crew[0].id
+	pad.launch_draft = {"planet": "mars", "crew": [crew[0].id, crew[1].id], "cargo": {"food": 40}}
+	var pad2 := Project.from_dict(JSON.parse_string(JSON.stringify(pad.to_dict())))
+	check(pad2.launch_draft["planet"] == "mars" and pad2.launch_draft["crew"] == [crew[0].id, crew[1].id]
+		and int(pad2.launch_draft["cargo"]["food"]) == 40, "сборы экспедиции (экипаж и груз) сохраняются")
+	pad.launch_draft = {}
 	check(colony.launch(pad, "jupiter", crew, {}).has("error"), "на химическом до Юпитера не долететь")
 	check(colony.launch(pad, "mars", crew, {"food": 300}).has("error"), "больше 200 груза не взять")
 	var n0 := colony.units.size()

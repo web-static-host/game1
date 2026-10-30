@@ -165,8 +165,20 @@ func set_season(winter: bool, month: float) -> void:
 		return
 	ChunkView.snow = winter
 	ChunkView.season_m = m
-	for key in _views:
-		_views[key].queue_redraw()
+	# Снег и листва — только у поверхности (земля, деревья, озёра): глубокие куски не трогаем
+	# (раньше перерисовывались все загруженные — рывок на каждой смене сезона).
+	var size := ChunkData.SIZE
+	for key: Vector2i in _views:
+		var x0 := key.x * size
+		var lo := 1 << 30
+		var hi := -(1 << 30)
+		for x in [x0, x0 + size / 2, x0 + size - 1]:
+			var sy := world.gen.surface_y(x)
+			lo = mini(lo, mini(sy, world.gen.water_level(x)))
+			hi = maxi(hi, sy)
+		var top := key.y * size
+		if top + size - 1 >= lo - 16 and top <= hi + 30:
+			_views[key].queue_redraw()
 
 
 func _redraw_dirty() -> void:

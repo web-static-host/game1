@@ -457,10 +457,37 @@ func _rocket_rows(p: Project, rows: Array) -> void:
 		rows.append({"type": "warning", "text": err})
 
 
+## Запуск: сборы продолжаются с того места, где их оставили (экипаж, груз и планета хранятся
+## в космодроме и в сохранении), — сразу к экипажу, если планета уже выбрана.
+func _launch_open(pad: Project) -> void:
+	var d := pad.launch_draft
+	var crew := []
+	for id in d.get("crew", []):
+		var u := colony.unit_by_id(int(id))
+		if u != null and not u.child and crew.size() < RoomType.SHIP_BEDS:
+			crew.append(u)
+	_launch = {"pad": pad, "planet": str(d.get("planet", "")), "crew": crew, "cargo": (d.get("cargo", {}) as Dictionary).duplicate()}
+	if not _launch["planet"].is_empty() and Colony.rocket_reaches(pad.rocket, _launch["planet"]):
+		_launch_crew()
+	else:
+		_launch["planet"] = ""
+		_launch_pick_planet(pad)
+
+
+## Записать сборы в космодром (чтобы выйти и вернуться — и после перезапуска игры).
+func _launch_save() -> void:
+	if _launch.is_empty():
+		return
+	var pad: Project = _launch["pad"]
+	pad.launch_draft = {"planet": _launch["planet"], "crew": _launch["crew"].map(func(u: Unit) -> int: return u.id),
+		"cargo": (_launch["cargo"] as Dictionary).duplicate()}
+
+
 ## Запуск, шаг 1: куда лететь.
 func _launch_pick_planet(pad: Project) -> void:
 	_info_target = []
-	_launch = {"pad": pad, "planet": "", "crew": [], "cargo": {}}
+	if _launch.is_empty() or _launch["pad"] != pad:
+		_launch = {"pad": pad, "planet": "", "crew": [], "cargo": {}}
 	var items := []
 	for id in Planet.ORDER:
 		var d := Planet.data(id)
@@ -472,6 +499,7 @@ func _launch_pick_planet(pad: Project) -> void:
 			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]
 		items.append({"name": d["name"], "info": info, "button": "Сюда" if ok else "", "pick": func() -> void:
 			_launch["planet"] = id
+			_launch_save()
 			_launch_crew()})
 	hud.show_panel({"title": "Запуск: куда лететь?", "subtitle": "ракета: %s двигатель" % Planet.engine_name(pad.rocket),
 		"controls": [{"type": "people", "label": "Планеты:", "items": items, "empty": ""}],
@@ -519,6 +547,7 @@ func _launch_crew() -> void:
 					crew.append(u)
 				else:
 					hud.log_event("В ракете — до %d гавриков" % RoomType.SHIP_BEDS, "warning")
+				_launch_save()
 				_launch_crew()})
 	hud.show_panel({"title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
 		"subtitle": Planet.data(planet)["desc"],
@@ -541,6 +570,7 @@ func _launch_cargo() -> void:
 		controls.append({"label": "%s (есть %d)" % [Mat.resource_name(k), have], "value": int(cargo.get(k, 0)), "min": 0,
 			"max": mini(have, RoomType.SHIP_HOLD), "step": 10, "changed": func(v: int) -> void:
 				cargo[k] = v
+				_launch_save()
 				hud.refresh_panel(_launch_cargo_spec())})
 	var spec := _launch_cargo_spec()
 	spec["controls"] = controls
@@ -570,6 +600,7 @@ func _do_launch() -> void:
 	universe.send(flight)
 	# Ракета летит мгновенно — садится сразу, даже на паузе.
 	universe.update(0.0)
+	(_launch["pad"] as Project).launch_draft = {}
 	_launch = {}
 	_show_worlds()
 
@@ -1142,7 +1173,7 @@ func _show_project(p: Project) -> void:
 		# Космодром: собрать ракету, запустить готовую.
 		if p.purpose == RoomType.LAUNCHPAD:
 			if not p.rocket.is_empty():
-				actions.push_front(["Запустить", func() -> void: _launch_pick_planet(p), "primary"])
+				actions.push_front(["Запустить", func() -> void: _launch_open(p), "primary"])
 			else:
 				if colony.research.has("nuclear_engine"):
 					actions.push_front(["Ядерная ракета", func() -> void:
