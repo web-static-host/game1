@@ -108,7 +108,7 @@ func _initialize() -> void:
 	test_gas_masks()
 	test_drill_lift()
 	test_drill_lift_side()
-	test_xenite()
+	test_amethyst()
 	test_geoprobe()
 	test_unit_tap()
 	test_room_move()
@@ -4966,8 +4966,8 @@ func test_drill_lift_side() -> void:
 		and colony.project_by_id(971) == null, "лифт сверху слился с лифтом бур-лифта (%s)" % dl.rect)
 
 
-## Ксенит: только на Меркурии, Венере и Марсе, глубоко и редко; нужен ядерной ракете.
-func test_xenite() -> void:
+## Аметист: только на Меркурии, Венере и Марсе, глубоко и редко; нужен ядерной ракете.
+func test_amethyst() -> void:
 	var counts := {}
 	for pid in ["earth", "mars", "venus", "mercury", "jupiter"]:
 		var g := WorldGen.new(11, WorldGen.LATEST, pid)
@@ -4977,17 +4977,17 @@ func test_xenite() -> void:
 			var surf := g.surface_y(x)
 			for y in range(surf + 20, surf + 600, 2):
 				var m := g.material_at(x, y)
-				if m == Mat.XENITE:
+				if m == Mat.AMETHYST:
 					n += 1
-					check(y - surf > 150, "ксенит глубже 150 м (%d)" % (y - surf))
+					check(y - surf > 150, "аметист глубже 150 м (%d)" % (y - surf))
 				elif Mat.is_ore(m):
 					ore += 1
 		counts[pid] = [n, ore]
-	check(counts["earth"][0] == 0 and counts["jupiter"][0] == 0, "на Земле и Юпитере ксенита нет (%s)" % [counts])
+	check(counts["earth"][0] == 0 and counts["jupiter"][0] == 0, "на Земле и Юпитере аметиста нет (%s)" % [counts])
 	for pid in ["mars", "venus", "mercury"]:
-		check(counts[pid][0] > 0 and counts[pid][0] * 10 < counts[pid][1], "%s: ксенит есть и редкий (%d на %d рудных)" % [pid, counts[pid][0], counts[pid][1]])
-	check(RoomType.ROCKET_COST["nuclear"].has("xenite") and not RoomType.ROCKET_COST["chem"].has("xenite"), "ксенит нужен ядерной ракете")
-	check(Mat.resource(Mat.XENITE) == "xenite" and Mat.resource_name("xenite") == "Ксенит", "ресурс «Ксенит»")
+		check(counts[pid][0] > 0 and counts[pid][0] * 10 < counts[pid][1], "%s: аметист есть и редкий (%d на %d рудных)" % [pid, counts[pid][0], counts[pid][1]])
+	check(RoomType.ROCKET_COST["nuclear"].has("amethyst") and not RoomType.ROCKET_COST["chem"].has("amethyst"), "аметист нужен ядерной ракете")
+	check(Mat.resource(Mat.AMETHYST) == "amethyst" and Mat.resource_name("amethyst") == "Аметист", "ресурс «Аметист»")
 
 
 func _load_left(lift: Project) -> int:

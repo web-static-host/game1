@@ -85,7 +85,7 @@ const SHIP_POWER := 20
 ## Ракета: материалы на сборку (топливо — по трубам из баков) и время сборки.
 const ROCKET_COST := {
 	"chem": {"iron": 110, "copper": 40, "gold": 10, "silver": 10, "diamond": 4, "diesel": 60},
-	"nuclear": {"iron": 150, "copper": 50, "gold": 20, "silver": 20, "diamond": 8, "uranium": 20, "xenite": 12},
+	"nuclear": {"iron": 150, "copper": 50, "gold": 20, "silver": 20, "diamond": 8, "uranium": 20, "amethyst": 12},
 }
 const ROCKET_WORK := 600.0
 ## Жидкое и газ: хранятся только в баках (метан — в дегазации, нефть и дизель — в
