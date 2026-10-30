@@ -32,7 +32,6 @@ var floors := {}
 var climb_rev := 0
 var _cache := {}
 var _cache_key := []
-var _cache_age := 0.0
 ## Запомненные node() и passable() клеток: изменённые клетки мира (world.changed) сбрасывают
 ## их точечно, постройки — целиком; на всякий случай — целиком раз в MEMO_TIME секунд.
 var _node_memo := {}
@@ -48,13 +47,19 @@ const MEMO_TIME := 300.0
 func _init(p_world: WorldData, p_interior: Dictionary, p_rooms: Dictionary, p_deck: Dictionary) -> void:
 	world = p_world
 	interior = p_interior
+	_airless = world.gen.airless()
 	room_cells = p_rooms
 	deck = p_deck
 
 
+## Безвоздушная планета (не меняется у мира).
+var _airless := false
+
+
 ## Можно находиться в клетке: пусто или вода (вброд).
 func passable(c: Vector2i) -> bool:
-	return world.is_open(c.x, c.y) or (world.get_mat(c.x, c.y) == Mat.WATER and world.is_revealed(c.x, c.y))
+	var m := world.get_mat(c.x, c.y)
+	return (m == Mat.AIR or m == Mat.WATER) and world.is_revealed(c.x, c.y)
 
 
 ## Лазают только по лестницам: в вертикальных тоннелях, у стен комнат (ladders) и по лесам
@@ -77,11 +82,13 @@ func solid(c: Vector2i) -> bool:
 
 ## Можно стоять ногами в клетке (без учёта головы).
 func standable(c: Vector2i) -> bool:
-	if not passable(c):
+	# Одна выборка клетки на всё (раньше — по три-четыре): это самое частое в поиске пути.
+	var m := world.get_mat(c.x, c.y)
+	if (m != Mat.AIR and m != Mat.WATER) or not world.is_revealed(c.x, c.y):
 		return false
 	if deck.has(c) or floors.has(c):
 		return true
-	if world.get_mat(c.x, c.y) == Mat.WATER:
+	if m == Mat.WATER:
 		# В озёра не заходят (вода выше земли) — водоём переходят только по мосту.
 		if c.y < world.gen.surface_y(c.x):
 			return false
@@ -89,7 +96,7 @@ func standable(c: Vector2i) -> bool:
 		if world.is_open(c.x, c.y - 1):
 			return true
 	var below := c + DOWN
-	if solid(below) or climbable(c) or climbable(below):
+	if Mat.is_solid(world.get_mat(below.x, below.y)) or climbable(c) or climbable(below):
 		return true
 	# Пол комнаты, стоящей на другой комнате: перекрытие держит.
 	return room_cells.has(below) and room_cells[below] != room_cells.get(c, -1)
@@ -98,10 +105,9 @@ func standable(c: Vector2i) -> bool:
 ## Узел графа: можно стоять, голова не упирается и над водой.
 func node(c: Vector2i) -> bool:
 	# На безвоздушной планете на поверхность не выходят — только внутри построек.
-	if world.gen.airless() and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c):
+	if _airless and c.y < world.gen.surface_y(c.x) and not interior.has(c) and not room_cells.has(c):
 		return false
-	var h := c + UP
-	return standable(c) and world.is_open(h.x, h.y)
+	return world.is_open(c.x, c.y - 1) and standable(c)
 
 
 func _node_m(c: Vector2i) -> bool:
@@ -173,6 +179,7 @@ func explore(start: Vector2i) -> Array:
 		return _cache[start]
 	var out := _explore(start)
 	_cache[start] = out
+	_cache_born[start] = _clock
 	return out
 
 
@@ -198,6 +205,7 @@ func sync() -> void:
 	elif not _changed_cells.is_empty() or not _climb_cells.is_empty() or key[4] != _cache_key[4]:
 		if _changed_cells.size() > PATCH_MAX or (key[4] != _cache_key[4] and _climb_cells.is_empty()):
 			_cache.clear()
+			_cache_born.clear()
 		else:
 			_patch_cache()
 	_changed_cells.clear()
@@ -207,11 +215,18 @@ func sync() -> void:
 
 ## Время идёт: старые обходы забываем.
 func tick(dt: float) -> void:
-	_cache_age += dt
-	if _cache_age >= CACHE_TIME:
-		_cache_age = 0.0
-		# Обходы — заново; проверки клеток держим дольше: изменения мира сбрасывают их точечно.
-		_cache.clear()
+	_clock += dt
+	# Старые обходы забываем понемногу (раньше — все разом раз в CACHE_TIME: освобождение сотен
+	# больших обходов давало рывок до 75 мс). Обходы и так правятся на месте при изменениях.
+	var n := 0
+	for start in _cache_born.keys():
+		if n >= EVICT_PER_TICK:
+			break
+		if _clock - float(_cache_born[start]) < CACHE_TIME:
+			break
+		_cache.erase(start)
+		_cache_born.erase(start)
+		n += 1
 	_memo_age += dt
 	if _memo_age >= MEMO_TIME:
 		_memo_age = 0.0
@@ -261,6 +276,8 @@ func _forget_cell(c: Vector2i) -> void:
 ## Клетки, поменявшиеся с прошлой сверки: порода (копка, обвал) и лестницы/леса/полы.
 var _changed_cells: Array = []
 var _climb_cells: Array = []
+## Растёт при каждой правке сохранённых обходов (расстояния в них могли поменяться).
+var patch_rev := 0
 ## Больше изменений разом — проще обойти заново.
 const PATCH_MAX := 400
 
@@ -272,6 +289,7 @@ const PATCH_MAX := 400
 func _patch_cache() -> void:
 	if _cache.is_empty():
 		return
+	patch_rev += 1
 	var zone := {}
 	for c: Vector2i in _changed_cells + _climb_cells:
 		for dy in range(-3, 4):
@@ -299,6 +317,7 @@ func _patch_cache() -> void:
 			queue.append(q)
 		if broken or not node(start):
 			_cache.erase(start)
+			_cache_born.erase(start)
 			continue
 		var lo := start.x - MAX_RADIUS
 		var hi := start.x + MAX_RADIUS
@@ -346,8 +365,15 @@ func _structure_diff() -> Array:
 	return diff
 
 
+## Когда обход появился в памяти (по часам _clock), в порядке появления.
+var _cache_born := {}
+var _clock := 0.0
+const EVICT_PER_TICK := 4
+
+
 func clear_cache() -> void:
 	_cache.clear()
+	_cache_born.clear()
 	_node_memo.clear()
 	_pass_memo.clear()
 	_nbr_memo.clear()

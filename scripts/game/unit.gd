@@ -120,6 +120,10 @@ var takeover_by := 0
 var env_t := 0.0
 var path: Array[Vector2i] = []
 var path_i := 0
+## Клетка пути path_i проверена (можно стоять) при этом состоянии мира (Colony._node_key):
+## пока мир не менялся, каждый кадр не перепроверяем.
+var node_ok_i := -1
+var node_ok_key := -1
 var retry := 0.0
 ## Сколько раз подряд не нашёл себе дела — ищет реже (до 5 с).
 var idle_fails := 0
@@ -129,7 +133,12 @@ var facing := 1
 var anim := 0.0
 
 
+## Меняется при каждой смене генома любого гаврика (врождённые умения устарели).
+static var genome_rev := 0
+
+
 func set_genome(g: Dictionary) -> void:
+	genome_rev += 1
 	genome = g
 	stats = Genetics.stats(g)
 	abil = Genetics.abilities(g)

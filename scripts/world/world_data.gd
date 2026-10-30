@@ -32,6 +32,9 @@ var revision := 0
 ## Изменённые клетки (порода, флаги, жидкость) — для поиска путей: он сбрасывает свои
 ## проверки только рядом с ними. Pathing забирает и очищает список.
 var changed: Array[Vector2i] = []
+## Растёт при любом изменении клетки (порода, флаги, жидкость) — по нему видно, что мир
+## поменялся хоть где-то.
+var touches := 0
 const BUSH_BERRIES := 6.0
 
 
@@ -69,36 +72,60 @@ func get_chunk(cx: int, cy: int) -> ChunkData:
 	return c
 
 
+## Последний запрошенный чанк: соседние клетки почти всегда в нём же (доступ к клетке — самое
+## частое в игре: без словаря чанков и лишних вызовов он втрое быстрее).
+var _lc: ChunkData = null
+var _lcx := 0
+var _lcy := 0
+
+
 func _chunk_at(x: int, y: int) -> ChunkData:
-	return get_chunk(x >> SHIFT, y >> SHIFT)
+	var cx := x >> SHIFT
+	var cy := y >> SHIFT
+	if _lc != null and cx == _lcx and cy == _lcy:
+		return _lc
+	_lc = get_chunk(cx, cy)
+	_lcx = cx
+	_lcy = cy
+	return _lc
 
 
 func get_mat(x: int, y: int) -> int:
-	return _chunk_at(x, y).effective(ChunkData.idx(x & MASK, y & MASK))
+	var c := _chunk_at(x, y)
+	var i := ((y & MASK) << SHIFT) | (x & MASK)
+	var f := c.flags[i]
+	if f & ChunkData.F_DUG:
+		return c.fluid[i] if f & ChunkData.F_FLUID else Mat.AIR
+	return c.mat[i]
 
 
 ## Природный материал, даже если клетка уже выкопана.
 func get_natural_mat(x: int, y: int) -> int:
-	return _chunk_at(x, y).mat[ChunkData.idx(x & MASK, y & MASK)]
+	return _chunk_at(x, y).mat[((y & MASK) << SHIFT) | (x & MASK)]
 
 
 func get_flags(x: int, y: int) -> int:
-	return _chunk_at(x, y).flags[ChunkData.idx(x & MASK, y & MASK)]
+	return _chunk_at(x, y).flags[((y & MASK) << SHIFT) | (x & MASK)]
 
 
 func is_revealed(x: int, y: int) -> bool:
-	return get_flags(x, y) & ChunkData.F_REVEALED != 0
+	return _chunk_at(x, y).flags[((y & MASK) << SHIFT) | (x & MASK)] & ChunkData.F_REVEALED != 0
 
 
 func is_dug(x: int, y: int) -> bool:
-	return get_flags(x, y) & ChunkData.F_DUG != 0
+	return _chunk_at(x, y).flags[((y & MASK) << SHIFT) | (x & MASK)] & ChunkData.F_DUG != 0
 
 
 ## Свободное пространство, известное игроку (по нему могут ходить рабочие).
 func is_open(x: int, y: int) -> bool:
 	var c := _chunk_at(x, y)
-	var i := ChunkData.idx(x & MASK, y & MASK)
-	return c.flags[i] & ChunkData.F_REVEALED != 0 and c.effective(i) == Mat.AIR
+	var i := ((y & MASK) << SHIFT) | (x & MASK)
+	var f := c.flags[i]
+	if f & ChunkData.F_REVEALED == 0:
+		return false
+	if f & ChunkData.F_DUG:
+		return (c.fluid[i] if f & ChunkData.F_FLUID else Mat.AIR) == Mat.AIR
+	return c.mat[i] == Mat.AIR
 
 
 func _set_flags(x: int, y: int, add: int) -> bool:
@@ -115,6 +142,7 @@ func _set_flags(x: int, y: int, add: int) -> bool:
 
 
 func _touch(x: int, y: int) -> void:
+	touches += 1
 	if changed.size() < 4096:
 		changed.append(Vector2i(x, y))
 	var key := chunk_of(x, y)
@@ -364,6 +392,7 @@ func evict_outside(keep: Rect2i) -> void:
 		if c.has_fluid_overlay():
 			pending_fluids[key] = c.fluid
 		chunks.erase(key)
+	_lc = null
 
 
 ## Изменённые материалы чанков (загруженные и нет): Vector2i -> PackedByteArray.

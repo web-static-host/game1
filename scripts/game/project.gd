@@ -34,7 +34,10 @@ const MATERIALS := {
 }
 
 var id := 0
-var kind := Kind.TUNNEL
+var kind := Kind.TUNNEL:
+	set(v):
+		kind = v
+		state_rev += 1
 var rect := Rect2i():
 	set(v):
 		rect = v
@@ -42,7 +45,12 @@ var rect := Rect2i():
 ## Меняется при любом изменении rect любой постройки — по нему колония знает, что указатель
 ## «клетка → постройки» устарел.
 static var geo_rev := 0
-var phase := Phase.DIG
+## Меняется, когда у любой постройки меняется вид, этап или назначение (списки комнат устарели).
+static var state_rev := 0
+var phase := Phase.DIG:
+	set(v):
+		phase = v
+		state_rev += 1
 var paused := false
 ## Ресурсы на этап строительства уже списаны со склада.
 var paid := false
@@ -58,7 +66,10 @@ var ladder := false
 ## Материал стен комнаты: ключ ресурса ("wood", "stone", "brick", "iron").
 var material := "wood"
 ## Назначение комнаты (RoomType) и оборудование.
-var purpose := 0
+var purpose := 0:
+	set(v):
+		purpose = v
+		state_rev += 1
 var equip_target := 0
 var equip_paid := false
 var equip_done := 0.0

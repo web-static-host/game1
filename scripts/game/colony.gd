@@ -963,10 +963,18 @@ var _ctx_workers := {}
 var _ctx_mine_haulers = null
 var _ctx_src := {}
 var _ctx_incoming := {}
+var _ctx_transit := {}
+var _ctx_drops = null
+var _ctx_dig := {}
+var _ctx_drills := {}
 
 
 func _ctx_reset() -> void:
+	_ctx_drops = null
+	_ctx_dig.clear()
+	_ctx_drills.clear()
 	_ctx_incoming.clear()
+	_ctx_transit.clear()
 	_ctx_workers.clear()
 	_ctx_mine_haulers = null
 	_ctx_src.clear()
@@ -1337,6 +1345,16 @@ func plan_cost(p: Project) -> Dictionary:
 
 ## Сколько ресурса key несут (или идут брать) на стройку p.
 func in_transit(p: Project, key: String) -> int:
+	# В поиске работы — по всем стройкам одним проходом (см. workers_on).
+	if _ctx_on:
+		if _ctx_transit.is_empty():
+			_ctx_transit[0] = {}
+			for u in units:
+				if u.task == Unit.Task.HAUL and u.project_id != 0 and u.gather_room == 0:
+					var d: Dictionary = _ctx_transit.get(u.project_id, {})
+					d[u.carry_key] = int(d.get(u.carry_key, 0)) + u.carry_amount
+					_ctx_transit[u.project_id] = d
+		return int(_ctx_transit.get(p.id, {}).get(key, 0))
 	var n := 0
 	for u in units:
 		if u.task == Unit.Task.HAUL and u.project_id == p.id and u.carry_key == key and u.gather_room == 0:
@@ -2080,11 +2098,8 @@ var _climb_sig := 0
 
 
 func lifts() -> Array[Project]:
-	var out: Array[Project] = []
-	for p in projects:
-		if p.kind == Project.Kind.LIFT and p.phase == Project.Phase.DONE:
-			out.append(p)
-	return out
+	_sync_lists()
+	return _lifts_list.duplicate()
 
 
 ## Лифт работает: есть энергия и он не на паузе.
@@ -3044,6 +3059,18 @@ func _finish_support(p: Project) -> void:
 ## выкопан и ждёт крепь — уже и в соседнем (раньше копатели стояли, пока ставят крепь, и
 ## уходили на другую работу; незакреплённых срезов — не больше двух).
 func diggable_now(p: Project) -> Array[Vector2i]:
+	# В поиске работы — раз на стройку (спрашивают в нескольких местах, а ответ тот же, пока никто
+	# не взял дела).
+	if _ctx_on:
+		var m = _ctx_dig.get(p.id)
+		if m == null:
+			m = _diggable_now(p)
+			_ctx_dig[p.id] = m
+		return m
+	return _diggable_now(p)
+
+
+func _diggable_now(p: Project) -> Array[Vector2i]:
 	var all := remaining_dig(p)
 	var active := active_slices(p)
 	if active.is_empty():
@@ -3621,11 +3648,39 @@ func _finish_equip(p: Project) -> void:
 
 
 func rooms_of(t: int) -> Array[Project]:
-	var out: Array[Project] = []
+	_sync_lists()
+	var r: Array[Project] = _rooms_by_purpose.get(t, _NO_PROJECTS)
+	return r.duplicate()
+
+
+## Готовые комнаты по назначению и готовые лифты — списки заново, только когда поменялся
+## список построек или у какой-то вид, этап или назначение (раньше — перебор всех построек
+## сотни раз в секунду).
+var _rooms_by_purpose := {}
+var _lifts_list: Array[Project] = []
+var _lists_hash := 0
+var _lists_rev := -1
+
+
+func _sync_lists() -> void:
+	var h := projects.hash()
+	if h == _lists_hash and Project.state_rev == _lists_rev:
+		return
+	_lists_hash = h
+	_lists_rev = Project.state_rev
+	_rooms_by_purpose.clear()
+	_lifts_list.clear()
 	for p in projects:
-		if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and p.purpose == t:
-			out.append(p)
-	return out
+		if p.phase != Project.Phase.DONE:
+			continue
+		if p.kind == Project.Kind.ROOM:
+			var arr: Array[Project] = _rooms_by_purpose.get(p.purpose, _NO_PROJECTS)
+			if arr.is_empty():
+				arr = []
+				_rooms_by_purpose[p.purpose] = arr
+			arr.append(p)
+		elif p.kind == Project.Kind.LIFT:
+			_lifts_list.append(p)
 
 
 ## Все готовые генераторы: на дровах и угле и газовые.
@@ -5194,10 +5249,15 @@ func _move(u: Unit, dt: float) -> void:
 	while budget > 0.0 and u.path_i < u.path.size():
 		if _try_board(u):
 			return
-		# Путь устарел (рухнуло, убрали лестницу) — останавливаемся и ищем заново.
-		if not pathing.node(u.path[u.path_i]):
-			_drop(u)
-			return
+		# Путь устарел (рухнуло, убрали лестницу) — останавливаемся и ищем заново. Проверяем, когда
+		# гаврик идёт к новой клетке или мир где-то поменялся (раньше — каждый кадр).
+		var nk := _node_key()
+		if u.node_ok_i != u.path_i or u.node_ok_key != nk:
+			if not pathing.node(u.path[u.path_i]):
+				_drop(u)
+				return
+			u.node_ok_i = u.path_i
+			u.node_ok_key = nk
 		var next := Vector2(u.path[u.path_i])
 		var delta := next - u.pos
 		var climbing := absf(delta.y) > absf(delta.x)
@@ -5235,6 +5295,13 @@ func _move(u: Unit, dt: float) -> void:
 					u.facing = 1 if mid > u.pos.x else -1
 
 
+## Состояние всего, от чего зависит «можно ли стоять в клетке»: клетки мира, лестницы и леса,
+## ходы, комнаты и настил.
+func _node_key() -> int:
+	return world.touches + pathing.climb_rev * 1000003 + interior.size() * 7919 + room_cells.size() * 104729 \
+		+ deck.size() * 1299709
+
+
 ## Смягчённая характеристика: +30% силы — это +18% к скорости работы.
 # --- Свет -----------------------------------------------------------------------------
 
@@ -5258,10 +5325,29 @@ func is_lit(c: Vector2i) -> bool:
 	for l in work_lamps:
 		if l.distance_squared_to(c) <= LAMP_RADIUS * LAMP_RADIUS:
 			return true
-	for o in units:
-		if o.ability("light") == true and o.cell().distance_squared_to(c) <= GLOW_RADIUS * GLOW_RADIUS:
+	for o in _glowing():
+		if o.cell().distance_squared_to(c) <= GLOW_RADIUS * GLOW_RADIUS:
 			return true
 	return false
+
+
+## Светящиеся гаврики (умение врождённое) — список заново, когда поменялся состав колонии
+## или чей-то геном.
+var _glow: Array[Unit] = []
+var _glow_hash := 0
+var _glow_rev := -1
+
+
+func _glowing() -> Array[Unit]:
+	var h := units.hash()
+	if h != _glow_hash or Unit.genome_rev != _glow_rev:
+		_glow_hash = h
+		_glow_rev = Unit.genome_rev
+		_glow.clear()
+		for o in units:
+			if o.ability("light") == true:
+				_glow.append(o)
+	return _glow
 
 
 ## Солнце: над землёй и в открытой сверху шахте недалеко от неба.
@@ -5672,6 +5758,11 @@ func _assign_core(u: Unit) -> bool:
 				u.waiting_own = true
 				u.wait_sig = _own_sig(own0)
 				return false
+	# Свободный без дела, а работы для свободных в колонии нет вовсе (все места на стройках
+	# заняты, носить нечего и некуда) — обход колонии (самое дорогое) не нужен: ответ тот же.
+	if _free_hopeless(u):
+		u.waiting_own = false
+		return false
 	var reach := pathing.explore(u.cell())
 	var parents: Dictionary = reach[0]
 	var dist: Dictionary = reach[1]
@@ -5745,6 +5836,78 @@ func _assign_core(u: Unit) -> bool:
 	return _return_home(u, parents, dist)
 
 
+## Свободный (или подсобный) без места работы, сытый, в тепле и без своей выработки, а работы,
+## которую он мог бы взять, нет нигде — без учёта пути (что путь ещё и найдётся — неважно:
+## «нет» и так «нет»). Повторяет условия _try_projects, _try_need, _try_logistics и
+## _return_home, только без обхода. Сомнение — «есть» (тогда ищут как обычно).
+func _free_hopeless(u: Unit) -> bool:
+	if u.child or u.workplace != 0 or (u.profession != Unit.Prof.ANY and u.profession != Unit.Prof.HAULER):
+		return false
+	if u.satiety < HUNGRY or needs_warmth(u) or _own_project(u) != null:
+		return false
+	if absi(u.cell().x - home.x) > FAR_FROM_HOME:
+		return false
+	var may_mine := may_haul_mine(u)
+	var sources := {}
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		# Стройка: свободному нужно свободное место.
+		if p.bored_by == 0 and workers_on(p) < p.workers:
+			return false
+		# Нужда: стройке не хватает того, что добывают.
+		if p.blocked.begins_with("Не хватает"):
+			for k in _needed_now(p):
+				if GATHER_SOURCES.has(k) and int(GATHER_SOURCES[k]) >= 0:
+					return false
+		# Переноска на стройку: чего-то не хватает, и это где-то есть.
+		if p.blocked != UNDER_DRILL and (p.kind != Project.Kind.MINE or may_mine):
+			for k in remaining(p):
+				if _source_exists(k, sources):
+					return false
+	if _hearth_starving():
+		return false
+	for p in projects:
+		if not _is_supply(p) or p.paused:
+			continue
+		var r := recipe(p)
+		if r.is_empty():
+			continue
+		var need: Dictionary = r[0]
+		for k in need:
+			if not RoomType.PIPED.has(k) and need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k) > 0 \
+					and _source_exists(k, sources):
+				return false
+		if RoomType.FUELED.has(p.purpose) and SUPPLY_CYCLES - fuel_have(p) - _incoming_to(p, "coal") * 2.0 - _incoming_to(p, "wood") > 0.0 \
+				and (_source_exists("coal", sources) or _source_exists("wood", sources)):
+			return false
+	var store_open := false
+	for room in store_rooms():
+		if not room.paused:
+			store_open = true
+			break
+	if store_open:
+		var mines := _mine_rects()
+		for c in _cleanup_cells():
+			if drops.has(c) and (may_mine or not _in_rects(mines, c)):
+				return false
+	return true
+
+
+## Есть ли откуда взять ресурс: на складе (не обещанное) или в куче. sources — память на вызов.
+func _source_exists(key: String, sources: Dictionary) -> bool:
+	var v = sources.get(key)
+	if v == null:
+		v = int(inventory.get(key, 0)) - _claimed(key) > 0
+		if not v:
+			for c in drops:
+				if int(drops[c].get(key, 0)) > 0:
+					v = true
+					break
+		sources[key] = v
+	return v
+
+
 ## Маленький обход вокруг гаврика — для работы на своей выработке рядом.
 const LOCAL_NODES := 600
 
@@ -5791,18 +5954,29 @@ func near_home(x: int) -> bool:
 	return absi(x - home.x) <= HOME_RANGE
 
 
+var _home_memo = null
+
+
 func _return_home(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	var off := absi(u.cell().x - home.x)
 	if off <= FAR_FROM_HOME:
 		return false
+	# Ближайшая к базе клетка обхода — та же, пока обход тот же (бездельник у дальней шахты
+	# спрашивает это раз за разом, а проход по обходу — тысячи клеток).
 	var best = null
-	var best_off := off - 10
-	for c: Vector2i in dist:
-		var o := absi(c.x - home.x)
-		if o < best_off or (o == best_off and best != null and dist[c] < dist[best]):
-			best_off = o
-			best = c
-	if best == null:
+	var m = _home_memo
+	if m != null and is_same(m[0], dist) and int(m[1]) == dist.size() and int(m[2]) == pathing.patch_rev \
+			and m[3] == home:
+		best = m[4]
+	else:
+		var best_off := 1 << 30
+		for c: Vector2i in dist:
+			var o := absi(c.x - home.x)
+			if o < best_off or (o == best_off and best != null and dist[c] < dist[best]):
+				best_off = o
+				best = c
+		_home_memo = [dist, dist.size(), pathing.patch_rev, home, best]
+	if best == null or absi(best.x - home.x) >= off - 10:
 		return false
 	_start(u, Unit.Task.GOTO, best, best, 0, parents)
 	return true
@@ -6226,6 +6400,16 @@ func _work_spot(c: Vector2i, dist: Dictionary) -> Array:
 ## Буры, под которыми (в их столбе, ниже них) есть клетки стройки p: бур-лифт (его дело —
 ## бурить вниз) и бур, который сейчас бурит. Под стоящим обычным буром копают сами.
 func _drills_above(p: Project) -> Array[Project]:
+	if _ctx_on:
+		var m = _ctx_drills.get(p.id)
+		if m == null:
+			m = _drills_above_raw(p)
+			_ctx_drills[p.id] = m
+		return m
+	return _drills_above_raw(p)
+
+
+func _drills_above_raw(p: Project) -> Array[Project]:
 	var out: Array[Project] = []
 	for d in projects:
 		if d.kind != Project.Kind.DRILL or not (d.link_id != 0 or drilling(d)):
@@ -6920,6 +7104,13 @@ func _haul_source_raw(key: String, dist: Dictionary, u: Unit = null, parents := 
 		if s != null:
 			best = [s, null, store]
 			best_d = dist[s]
+	if _ctx_on:
+		# В поиске работы — ближайшие кучи сразу по всем ресурсам, одним проходом по кучам.
+		var near: Dictionary = _drop_sources(dist)
+		var e = near.get(key)
+		if e != null and int(e[0]) < best_d:
+			best = [e[1], e[2], e[3]]
+		return best
 	var claims := _drop_claims()
 	for c: Vector2i in drops:
 		var avail := drop_amount(c, key) - int(claims.get(c, {}).get(key, 0))
@@ -6930,6 +7121,37 @@ func _haul_source_raw(key: String, dist: Dictionary, u: Unit = null, parents := 
 			best_d = dist[stand]
 			best = [stand, c, avail]
 	return best
+
+
+## Ближайшая куча каждого ресурса: {ресурс: [путь, где встать, куча, сколько взять]} — то же,
+## что проход по кучам в _haul_source_raw, но для всех ресурсов разом. Помним на время поиска
+## работы, пока обход тот же (и не дописан путём к дальней цели).
+func _drop_sources(dist: Dictionary) -> Dictionary:
+	var m = _ctx_drops
+	if m != null and is_same(m[0], dist) and int(m[1]) == dist.size():
+		return m[2]
+	var out := {}
+	var claims := _drop_claims()
+	for c: Vector2i in drops:
+		var stand = null
+		var looked := false
+		var d: Dictionary = drops[c]
+		for key in d:
+			var avail := int(d[key]) - int(claims.get(c, {}).get(key, 0))
+			if avail <= 0:
+				continue
+			if not looked:
+				looked = true
+				if not near_home(c.x) or in_drill_lift(c):
+					break
+				stand = _drop_stand(c, dist)
+			if stand == null:
+				break
+			var e = out.get(key)
+			if e == null or dist[stand] < int(e[0]):
+				out[key] = [dist[stand], stand, c, avail]
+	_ctx_drops = [dist, dist.size(), out]
+	return out
 
 
 ## Куда отнести ресурс на хранение: ближайший склад для него, иначе кучи у базы.
