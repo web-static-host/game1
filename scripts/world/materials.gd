@@ -31,6 +31,7 @@ enum {
 	MAGMA,
 	PERIDOTITE,
 	RUBBLE,
+	XENITE,
 	COUNT,
 }
 
@@ -67,6 +68,8 @@ const _RAW := [
 	["Магма", "ff5a1f", 0.0, 2700, 0.0, "", false, Hazard.MAGMA],
 	["Перидотит (мантия)", "5f7a4a", 90.0, 3300, 300.0, "stone", false, Hazard.NONE],
 	["Обломки породы", "6f6862", 6.0, 1900, 0.0, "stone", false, Hazard.NONE],
+	# Только на Меркурии, Венере и Марсе, очень редко: нужен для ядерной ракеты.
+	["Ксенит", "a24bff", 50.0, 3200, 150.0, "xenite", true, Hazard.NONE],
 ]
 
 ## Сыпучие породы: осыпаются в пустоту под собой, пролёт не держат.
@@ -75,7 +78,7 @@ const LOOSE := [SAND, GRAVEL, AQUIFER, RUBBLE]
 const SPAN := {
 	TOPSOIL: 3, CLAY: 3, SANDSTONE: 5, SHALE: 4, LIMESTONE: 6, COAL: 3,
 	GRANITE: 10, GNEISS: 9, BASALT: 12, IRON_ORE: 6, COPPER_ORE: 6, SILVER_ORE: 6, GOLD_ORE: 6,
-	URANIUM_ORE: 6, KIMBERLITE: 5, DIAMOND: 5, ROCK_SALT: 6, GAS_POCKET: 3, OIL: 4, PERIDOTITE: 12,
+	URANIUM_ORE: 6, KIMBERLITE: 5, DIAMOND: 5, ROCK_SALT: 6, GAS_POCKET: 3, OIL: 4, PERIDOTITE: 12, XENITE: 6,
 }
 
 const RESOURCE_NAMES := {
@@ -106,6 +109,7 @@ const RESOURCE_NAMES := {
 	"brick": "Кирпич",
 	"methane": "Метан",
 	"diesel": "Дизельное топливо",
+	"xenite": "Ксенит",
 }
 
 static var _names: PackedStringArray

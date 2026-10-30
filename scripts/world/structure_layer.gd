@@ -1620,7 +1620,7 @@ const RES_COLORS := {
 	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
 	"soil": Color(0.36, 0.25, 0.16), "sand": Color(0.85, 0.75, 0.52), "gravel": Color(0.55, 0.52, 0.47),
 	"iron_ore": Color(0.52, 0.28, 0.18), "copper_ore": Color(0.2, 0.52, 0.44), "silver_ore": Color(0.63, 0.65, 0.69),
-	"gold_ore": Color(0.72, 0.6, 0.21), "uranium_ore": Color(0.4, 0.65, 0.24),
+	"gold_ore": Color(0.72, 0.6, 0.21), "uranium_ore": Color(0.4, 0.65, 0.24), "xenite": Color(0.6, 0.28, 0.95),
 }
 
 

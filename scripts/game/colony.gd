@@ -34,7 +34,7 @@ const HAZARD_TEXT := {
 	"methane_air": "Метан в выработке — тяжело дышать. Работы стоят, пока газ не уйдёт (поможет дегазация, противогазы). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
-const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil"]
+const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil", "xenite"]
 
 # Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — гаврики не
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
@@ -3870,7 +3870,7 @@ func _report_hazard(m: int, c: Vector2i) -> void:
 ## открыло обвалом или осмотром пещер) — сообщаем при загрузке. Только куски карты, где
 ## такая порода есть (проверка куска встроенная, быстрая).
 func _note_seen_finds() -> void:
-	for m in [Mat.OIL, Mat.GAS_POCKET, Mat.ROCK_SALT, Mat.KIMBERLITE, Mat.DIAMOND, Mat.IRON_ORE, Mat.COPPER_ORE,
+	for m in [Mat.XENITE, Mat.OIL, Mat.GAS_POCKET, Mat.ROCK_SALT, Mat.KIMBERLITE, Mat.DIAMOND, Mat.IRON_ORE, Mat.COPPER_ORE,
 			Mat.SILVER_ORE, Mat.GOLD_ORE, Mat.URANIUM_ORE]:
 		if discovered.has(m):
 			continue
@@ -6765,7 +6765,7 @@ func _awaited_drop(c: Vector2i, key: String) -> bool:
 ## Свободный гаврик уносит лежащее на земле на склад (если там есть место).
 ## Уборка: ценное носят раньше — эти ресурсы считаются ближе на столько клеток пути.
 const CARRY_BONUS := {"iron_ore": 40, "copper_ore": 40, "silver_ore": 60, "gold_ore": 80, "uranium_ore": 80,
-	"diamond": 100, "salt": 20, "coal": 15, "iron": 60, "copper": 60, "silver": 80, "gold": 100}
+	"diamond": 100, "xenite": 100, "salt": 20, "coal": 15, "iron": 60, "copper": 60, "silver": 80, "gold": 100}
 const CARRY_BONUS_MAX := 100
 
 

@@ -449,6 +449,11 @@ func _ore(x: int, y: int, d: int) -> int:
 		return Mat.AIR
 	var r := (_n_ore_type.get_noise_2d(x, y) + 1.0) * 0.5
 	r = clampf(r + (hash01(x, y, world_seed + 3) - 0.5) * 0.1, 0.0, 0.999)
+	# Ксенит — только на Меркурии, Венере и Марсе, очень редко: глубже 150 м, участками
+	# рудных жил (кусками 4×4 — одна из ~25).
+	var xen := float(planet.get("xenite", 0.0))
+	if xen > 0.0 and d > 150 and hash01(x >> 2, y >> 2, world_seed + 57) < xen:
+		return Mat.XENITE
 	var table: Array = planet["ores"]
 	if table.is_empty() and version >= 5:
 		return _ore_v5(x, y, d, r)
