@@ -51,6 +51,8 @@ var _pending := Rect2i()
 var _pending_kind := 0
 var _pending_workers := 1
 var _pending_material := "wood"
+## Крепь комнаты при постановке ("" — из материала стен).
+var _pending_support := ""
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
 ## Тряска камеры при землетрясении, сек.
@@ -2145,6 +2147,23 @@ func _show_pending() -> void:
 	var r := _pending
 	var kind := _pending_kind
 	var controls := [_workers_stepper(_pending_workers, func(v: int) -> void: _pending_workers = v)]
+	if kind == Project.Kind.ROOM and Colony.build_material(kind, _pending_material) == "stone":
+		# Камнем не крепят: у каменной комнаты крепь — дерево, кирпич или железо.
+		var opts := colony.support_options()
+		var tmp := Project.new()
+		tmp.kind = kind
+		tmp.material = Colony.build_material(kind, _pending_material)
+		tmp.support_choice = _pending_support
+		var cur := Colony.room_support(tmp)
+		if not opts.has(cur):
+			opts.append(cur)
+		if opts.size() > 1:
+			controls.push_front({"label": "Крепь", "value": opts.find(cur), "min": 0, "max": opts.size() - 1,
+				"options": opts.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
+				"changed": func(v: int) -> void:
+					_pending_support = opts[v]
+					_show_pending.call_deferred(),
+			})
 	if _pending_material == "drill_lift":
 		# Направление — один раз, до постановки: лифт стоит позади бура и идёт следом.
 		controls.push_front({"label": "Бурить", "value": DL_DIRS.find(_dl_dir), "min": 0, "max": DL_DIRS.size() - 1,
@@ -2194,6 +2213,8 @@ func _pending_spec() -> Dictionary:
 	tp.rect = r
 	tp.material = Colony.build_material(kind, _pending_material)
 	tp.cargo = kind == Project.Kind.LIFT and Colony.lift_cargo(_pending_material)
+	if kind == Project.Kind.ROOM:
+		tp.support_choice = _pending_support
 	var cost := tp.cost()
 	if _pending_material == "drill_lift":
 		# Бур и кабина грузового лифта над ним.
@@ -2205,7 +2226,7 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
-		var sw := _support_estimate(kind, r, tp.material)
+		var sw := _support_estimate(kind, r, tp.material, tp.support_choice)
 		var have: int = colony.inventory.get("wood", 0)
 		var fixed := Colony.support_fixed(tp)
 		if sw > 0 and not fixed.is_empty():
@@ -2295,11 +2316,12 @@ func _pending_spec() -> Dictionary:
 
 
 ## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).
-func _support_estimate(kind: int, r: Rect2i, mat := "wood") -> int:
+func _support_estimate(kind: int, r: Rect2i, mat := "wood", sup := "") -> int:
 	var tmp := Project.new()
 	tmp.kind = kind
 	tmp.rect = r
 	tmp.material = mat
+	tmp.support_choice = sup
 	tmp.support_wood = colony.support_needed(kind, r)
 	var n := 0
 	for i in tmp.slice_count():
@@ -2361,6 +2383,7 @@ func _confirm_pending() -> bool:
 		else colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()
+		p.support_choice = _pending_support
 	_clear_preview()
 	if p != null:
 		hud.log_event("Заложено: %s, рабочих: %d" % [p.title(), p.workers], "info")

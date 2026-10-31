@@ -2016,7 +2016,7 @@ func _draw_deck(p: Project, r: Rect2, alpha: float) -> void:
 
 ## Из чего выглядит крепь: у тоннеля и шахты — их материал, у комнаты — каркас.
 static func _support_look(p: Project) -> String:
-	return Project.frame_of(p.material) if p.kind == Project.Kind.ROOM else p.material
+	return Colony.room_support(p) if p.kind == Project.Kind.ROOM else p.material
 
 
 ## Крепь одного среза: стойки по краям и верхняя балка (в шахте — пролёт лестницы).

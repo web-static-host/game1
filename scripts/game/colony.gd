@@ -434,7 +434,7 @@ func materials_for(kind: int) -> Array[String]:
 		Project.Kind.ROOM:
 			return available_materials()
 		Project.Kind.TUNNEL, Project.Kind.MINE:
-			out = available_materials().filter(func(m: String) -> bool: return not Project.SUPER.has(m) or m == "gold")
+			out = available_materials().filter(func(m: String) -> bool: return Project.can_support(m) and (not Project.SUPER.has(m) or m == "gold"))
 		Project.Kind.LIFT:
 			if research.has("silver_works"):
 				out.append("silver")
@@ -1321,14 +1321,35 @@ func _return_delivered(p: Project) -> void:
 ## Из чего обязательно крепят стройку ("" — как выйдет: дерево, а нет его — железо).
 ## Комната крепится каркасом своего материала, тоннель и шахта — выбранным материалом.
 static func support_fixed(p: Project) -> String:
-	if p.material == "wood" or not Project.MATERIALS.has(p.material):
+	if p.kind == Project.Kind.ROOM:
+		var c := room_support(p)
+		return "" if c == "wood" else c
+	if p.material == "wood" or not Project.can_support(p.material):
 		return ""
-	match p.kind:
-		Project.Kind.ROOM:
-			return Project.frame_of(p.material)
-		Project.Kind.TUNNEL, Project.Kind.MINE:
-			return p.material
+	if p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE:
+		return p.material
 	return ""
+
+
+## Из чего крепь комнаты: из материала стен (кирпичная — кирпич, золотая — золото). Камнем не
+## крепят: у каменной — что выбрали при постановке (дерево, кирпич, железо), по умолчанию дерево.
+static func room_support(p: Project) -> String:
+	if p.material != "stone":
+		return p.material if Project.MATERIALS.has(p.material) else "wood"
+	return p.support_choice if p.support_choice in STONE_SUPPORTS else "wood"
+
+
+## Чем можно крепить каменную комнату.
+const STONE_SUPPORTS := ["wood", "brick", "iron"]
+
+
+## Чем можно крепить каменную комнату — из доступного: дерево, кирпич, железо.
+func support_options() -> Array[String]:
+	var out: Array[String] = []
+	for m in available_materials():
+		if m in STONE_SUPPORTS:
+			out.append(m)
+	return out
 
 
 ## Чем можно платить за крепь среза (по порядку предпочтения).

@@ -63,13 +63,18 @@ func bonus() -> float:
 	return SUPER[material]
 
 
-## Каркас (балки перекрытий, крепь, мебель, лестницы): у деревянной, каменной, кирпичной и
-## железной постройки — из того же материала (дерево не нужно), у супер-постройки — железный.
+## Каркас (балки перекрытий, крепь, мебель, лестницы) — из того же материала, что стены:
+## каменная комната целиком каменная, золотая — золотая.
 static func frame_of(mat: String) -> String:
-	return "iron" if SUPER.has(mat) else mat
+	return mat
 
 
-## Металл и алмаз прочнее: на крепь среза их вдвое меньше, чем дерева, камня или кирпича.
+## Камнем не крепят (не держит на изгиб): каменная постройка крепится деревом (нет его — железом).
+static func can_support(mat: String) -> bool:
+	return MATERIALS.has(mat) and mat != "stone"
+
+
+## Металл и алмаз прочнее: на крепь среза их вдвое меньше, чем дерева или кирпича.
 static func half_support(mat: String) -> bool:
 	return mat == "iron" or SUPER.has(mat)
 
@@ -156,6 +161,9 @@ var lift_goal := -1
 var lift_buf: Array = [{}, {}]
 ## Перестройка стен из другого материала (пусто — не перестраивают).
 var equip_material := ""
+## Крепь комнаты при копке: "" — из материала стен, "wood" — дерево (нет его — железо), иначе —
+## этот материал. У супер-комнаты крепь всегда из её супер-материала.
+var support_choice := ""
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
@@ -547,6 +555,7 @@ func to_dict() -> Dictionary:
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
 		"equip_material": equip_material,
+		"support_choice": support_choice,
 		"equip_rocket": equip_rocket,
 		"rocket": rocket,
 		"launch_draft": launch_draft,
@@ -630,6 +639,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.equip_material = str(d.get("equip_material", ""))
+	p.support_choice = str(d.get("support_choice", ""))
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
 	var ld: Dictionary = d.get("launch_draft", {})

@@ -3456,7 +3456,7 @@ func test_materials_no_wood() -> void:
 	check(not iron.has("wood") and iron.get("iron", 0) == 12, "железная комната — без дерева (%s)" % str(iron))
 	check(Project.cost_for(Project.Kind.ROOM, r, "wood") == {"wood": 12}, "деревянная — как раньше")
 	var gold := Project.cost_for(Project.Kind.ROOM, r, "gold")
-	check(gold == {"iron": 3, "gold": 9}, "золотая: стены из золота, каркас железный (%s)" % str(gold))
+	check(gold == {"gold": 12}, "золотая — целиком из золота (%s)" % str(gold))
 	# Мебель и лестница — из того же материала, что комната.
 	var room := Project.new()
 	room.kind = Project.Kind.ROOM
@@ -3468,6 +3468,27 @@ func test_materials_no_wood() -> void:
 	room.material = "gold"
 	var gold_home := RoomType.equip_cost(RoomType.HOME, room)
 	check(gold_home.has("gold") and not gold_home.has("wood") and not gold_home.has("iron"), "мебель золотой комнаты — золотая (%s)" % str(gold_home))
+	check(Colony.support_fixed(room) == "gold", "крепь золотой комнаты — золото")
+	room.support_choice = "wood"
+	check(Colony.support_fixed(room) == "gold", "у супер-комнаты крепь не выбирают — всегда её материал")
+	room.material = "stone"
+	check(Colony.support_fixed(room) == "" and Colony.support_keys(room) == ["wood", "iron"], "каменная комната с крепью «Дерево» — дерево, нет его — железо")
+	room.support_choice = "iron"
+	check(Colony.support_fixed(room) == "iron", "каменная комната с железной крепью")
+	room.support_choice = ""
+	check(Colony.support_fixed(room) == "", "каменная без выбора — крепь деревянная (камнем не крепят)")
+	room.support_choice = "stone"
+	check(Colony.support_fixed(room) == "", "крепь «камень» не бывает")
+	room.material = "brick"
+	room.support_choice = "iron"
+	check(Colony.support_fixed(room) == "brick", "у кирпичной крепь только кирпичная")
+	room.support_choice = "brick"
+	room.material = "stone"
+	check(Colony.support_fixed(room) == "brick", "каменная с кирпичной крепью")
+	room.support_choice = "brick"
+	check(Project.from_dict(room.to_dict()).support_choice == "brick", "выбор крепи сохраняется")
+	room.material = "brick"
+	room.support_choice = ""
 	room.material = "wood"
 	check(RoomType.equip_cost(RoomType.HOME, room).has("wood"), "деревянная — деревянная")
 	room.material = "diamond"
@@ -3489,8 +3510,11 @@ func test_materials_no_wood() -> void:
 	check(t.phase == Project.Phase.DONE, "железный тоннель достроен без дерева (%s)" % t.phase_name())
 	check(colony.wear_material(t) == "iron", "железный тоннель изнашивается как железо")
 	check(Colony.ext_material(t) == "wood:iron" and Colony.build_material(Project.Kind.TUNNEL, Colony.ext_material(t)) == "iron", "продолжение — тоже железное")
-	var stone_t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 3, s, 1, 6), -1, "stone")
-	check(stone_t == null or colony.support_key(stone_t) == "stone", "каменный тоннель крепят камнем")
+	check(not colony.materials_for(Project.Kind.TUNNEL).has("stone"), "камнем тоннели не крепят")
+	var brick_t := Project.new()
+	brick_t.kind = Project.Kind.TUNNEL
+	brick_t.material = "brick"
+	check(Colony.support_fixed(brick_t) == "brick", "кирпичный тоннель крепят кирпичом")
 
 
 func test_super_materials() -> void:
