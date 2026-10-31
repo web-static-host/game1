@@ -47,6 +47,9 @@ const VENT_MIN_TEMP := 50.0
 const HOT := 50.0
 ## Температура внутри корабля.
 const SHIP_TEMP := 20.0
+## Насколько корабль охлаждает воздух на жаркой планете и греет на холодной.
+const SHIP_COOLING := 20.0
+const SHIP_HEATING := 30.0
 ## Выше этой температуры огонь (сколько бы очагов ни было) не греет.
 const FIRE_MAX_TEMP := 30.0
 
@@ -746,10 +749,15 @@ func _heat_sources() -> Array:
 
 
 func _temperature(c: Vector2i) -> float:
-	# В корабле климат держит его реактор.
-	if colony.ship_at(c) != null:
-		return SHIP_TEMP
+	# В корабле климат держит его реактор, но не всесилен: жару сбивает на SHIP_COOLING, холод —
+	# на SHIP_HEATING, не дальше +20 °C (на Венере внутри +55 °C, на Марсе около 0 °C): первая
+	# партия синих на жаркой или красных на холодной там не отсидится. Вентиляция и очаги рядом
+	# охлаждают и греют и корабль.
+	var ship := colony.ship_at(c) != null
 	var t := world.gen.temperature(c.y, world.gen.surface_y(c.x), colony.season_delta())
+	if ship:
+		var outside := float(world.gen.planet.get("surf", SHIP_TEMP))
+		t = maxf(SHIP_TEMP, outside - SHIP_COOLING) if outside > SHIP_TEMP else minf(SHIP_TEMP, outside + SHIP_HEATING)
 	# Тепло — только от огня: горящий очаг или генератор греют всё вокруг. Несколько очагов
 	# рядом складываются (два — вдвое теплее), но в жару не нагреют: огонь греет не выше +30 °C.
 	var fire := 0.0

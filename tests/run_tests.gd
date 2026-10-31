@@ -2825,7 +2825,29 @@ func test_space() -> void:
 	var pair := mc.units.filter(func(u: Unit) -> bool: return u.partner_id != 0)
 	check(pair.size() == 2 and mc.unit_by_id(pair[0].partner_id) == pair[1], "пара прилетела парой")
 	var inside: Vector2i = ship[0].rect.position + Vector2i(3, 1)
-	check(mc.elements.temperature(inside) == Elements.SHIP_TEMP, "в корабле тепло (+20)")
+	var t_ship := mc.elements.temperature(inside)
+	check(absf(t_ship - (-30.0 + Elements.SHIP_HEATING)) < 0.01 and t_ship > mc.elements.temperature(inside + Vector2i(0, 30)) - 40.0,
+		"на Марсе корабль греет на %d °C: внутри %.0f °C (снаружи −30)" % [Elements.SHIP_HEATING, t_ship])
+	# Красный там мёрзнет, синий — нет, обычный — на пределе.
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 7
+	var red := {}
+	var blue := {}
+	for i in 400:
+		var g := Genetics.founder(rng2)
+		var col := Genetics.color_of(g)
+		if Genetics.has(g, "fur") or Genetics.has(g, "albino") or Genetics.has(g, "melanist") or Genetics.has(g, "hair"):
+			continue
+		if red.is_empty() and Genetics._near(col, Genetics.RED) > 0.9:
+			red = g
+		if blue.is_empty() and Genetics._near(col, Genetics.BLUE) > 0.9:
+			blue = g
+	var ur := mc._new_unit(Unit.Sex.MALE, Vector2(inside), red)
+	var ub := mc._new_unit(Unit.Sex.MALE, Vector2(inside), blue)
+	check(not mc.comfortable(ur, inside) and mc.comfortable(ub, inside),
+		"в корабле на Марсе красному холодно (до %.0f °C), синему — нет (до %.0f °C)" % [Colony.cold_limit(ur), Colony.cold_limit(ub)])
+	mc.units.erase(ur)
+	mc.units.erase(ub)
 	var outside := Vector2i(ship[0].rect.end.x + 3, mc.world.gen.surface_y(ship[0].rect.end.x + 3) - 1)
 	check(not mc.pathing.node(outside), "наружу на поверхность Марса не выйти")
 	# Живут в корабле: месяц — все живы (еда есть, тепло, воздух).
@@ -5107,6 +5129,15 @@ func test_vent_floor() -> void:
 		return
 	var ur := c._new_unit(Unit.Sex.MALE, Vector2.ZERO, red)
 	var ub := c._new_unit(Unit.Sex.MALE, Vector2.ZERO, blue)
+	# Корабль на Венере жару сбивает лишь на 20 °C: синему там не отсидеться (и с «Климат-контролем»).
+	var ship := _fake_room(c, RoomType.SHIP, 200)
+	var in_ship := Vector2i(ship.rect.position.x + 3, ship.rect.end.y - 1)
+	c.elements._temp_memo.clear()
+	var ts := c.elements._temperature(in_ship)
+	c.research.done.append("climate")
+	check(absf(ts - (75.0 - Elements.SHIP_COOLING)) < 0.01 and c.elements.heat_limit(ub) < ts and c.elements.heat_limit(ur) > ts,
+		"в корабле на Венере +%d °C: синему смертельно и с «Климат-контролем» (до +%d), красному нормально" % [roundi(ts), roundi(c.elements.heat_limit(ub))])
+	c.research.done.erase("climate")
 	check(c.elements.heat_limit(ur) > t and c.elements.heat_limit(ub) < t,
 		"в зоне вентиляции (+%d °C) красному нормально (до +%d), синему — жарко (до +%d)" % [roundi(t), roundi(c.elements.heat_limit(ur)), roundi(c.elements.heat_limit(ub))])
 	c.research.done.append("climate")
