@@ -238,12 +238,11 @@ static func super_material(p: Project) -> String:
 	return ""
 
 
-## Из чего мебель и лестницы: у деревянной комнаты — дерево, у остальных — из каркаса
-## (камень, кирпич, железо; у супер-комнаты — железо), если не выбрали дерево.
+## Из чего мебель и лестницы: из того же, что комната (каменная — каменные, золотая — золотые).
 static func furnish_material(p: Project) -> String:
-	if p.kind != Project.Kind.ROOM or p.material == "wood" or p.furnish_wood:
+	if p.kind != Project.Kind.ROOM or not Project.MATERIALS.has(p.material):
 		return "wood"
-	return Project.frame_of(p.material)
+	return p.material
 
 
 ## Дерево в стоимости заменяется материалом мебели комнаты.

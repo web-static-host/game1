@@ -3457,7 +3457,7 @@ func test_materials_no_wood() -> void:
 	check(Project.cost_for(Project.Kind.ROOM, r, "wood") == {"wood": 12}, "деревянная — как раньше")
 	var gold := Project.cost_for(Project.Kind.ROOM, r, "gold")
 	check(gold == {"iron": 3, "gold": 9}, "золотая: стены из золота, каркас железный (%s)" % str(gold))
-	# Мебель и лестница — из каркаса комнаты, по выбору — из дерева.
+	# Мебель и лестница — из того же материала, что комната.
 	var room := Project.new()
 	room.kind = Project.Kind.ROOM
 	room.rect = r
@@ -3465,14 +3465,13 @@ func test_materials_no_wood() -> void:
 	var home := RoomType.equip_cost(RoomType.HOME, room)
 	check(not home.has("wood") and home.get("brick", 0) > 0, "кирпичная спальня — кровати без дерева (%s)" % str(home))
 	check(not RoomType.ladder_cost(room).has("wood"), "лестница в кирпичной комнате — без дерева")
-	room.furnish_wood = true
-	check(RoomType.equip_cost(RoomType.HOME, room).has("wood"), "выбрали «Мебель: дерево» — из дерева")
-	room.furnish_wood = false
+	room.material = "gold"
+	var gold_home := RoomType.equip_cost(RoomType.HOME, room)
+	check(gold_home.has("gold") and not gold_home.has("wood") and not gold_home.has("iron"), "мебель золотой комнаты — золотая (%s)" % str(gold_home))
+	room.material = "wood"
+	check(RoomType.equip_cost(RoomType.HOME, room).has("wood"), "деревянная — деревянная")
 	room.material = "diamond"
-	check(RoomType.furnish_material(room) == "iron", "мебель супер-комнаты — железная")
-	var dict := room.to_dict()
-	room.furnish_wood = true
-	check(Project.from_dict(room.to_dict()).furnish_wood and Project.from_dict(dict).material == "diamond", "выбор мебели и материал сохраняются")
+	check(Project.from_dict(room.to_dict()).material == "diamond", "материал комнаты сохраняется")
 	# Железный тоннель: крепь только из железа, вдвое меньше, дерево не тратится.
 	var colony := _new_colony(31)
 	var x := _find_solid_column(colony.world)

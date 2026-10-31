@@ -156,8 +156,6 @@ var lift_goal := -1
 var lift_buf: Array = [{}, {}]
 ## Перестройка стен из другого материала (пусто — не перестраивают).
 var equip_material := ""
-## Мебель и лестницы не деревянной комнаты — всё же из дерева (по умолчанию — из её каркаса).
-var furnish_wood := false
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
@@ -549,7 +547,6 @@ func to_dict() -> Dictionary:
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
 		"equip_material": equip_material,
-		"furnish_wood": furnish_wood,
 		"equip_rocket": equip_rocket,
 		"rocket": rocket,
 		"launch_draft": launch_draft,
@@ -633,7 +630,6 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.equip_material = str(d.get("equip_material", ""))
-	p.furnish_wood = bool(d.get("furnish_wood", false))
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
 	var ld: Dictionary = d.get("launch_draft", {})

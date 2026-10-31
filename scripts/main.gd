@@ -1180,15 +1180,6 @@ func _show_project(p: Project) -> void:
 					if not err.is_empty():
 						hud.log_event(err, "warning")
 					_show_project(p), "primary"])
-		# Мебель и лестницы не деревянной комнаты — из её каркаса или из дерева.
-		if p.material != "wood":
-			var frame := Project.frame_of(p.material)
-			controls.append({"label": "Мебель", "value": 1 if p.furnish_wood else 0, "min": 0, "max": 1,
-				"options": [Project.MATERIALS[frame][0], "Дерево"],
-				"changed": func(i: int) -> void:
-					p.furnish_wood = i == 1
-					hud.refresh_panel(_project_spec(p, preview["v"])),
-			})
 		# Стены можно перестроить из другого материала (дерево → камень и т. п.).
 		var mats := colony.available_materials()
 		if mats.size() > 1:
