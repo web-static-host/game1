@@ -3846,6 +3846,18 @@ func food_value() -> float:
 	return v
 
 
+## Сколько гавриков по-настоящему голодает: обычный голод перед едой (сытость < 35 — идут
+## есть) не в счёт. Голодают — когда еды нет совсем, или сытость упала почти до нуля
+## (не могут дойти до еды).
+func starving_count() -> int:
+	var food := has_food()
+	var n := 0
+	for u in units:
+		if u.satiety < 10.0 or (u.satiety < 25.0 and not food):
+			n += 1
+	return n
+
+
 func has_food() -> bool:
 	return food_total() > 0
 

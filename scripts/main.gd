@@ -654,10 +654,7 @@ func _apply_offline(since_unix: float) -> void:
 	var born := colony.units.size() - units_before
 	if born > 0:
 		lines.append("Родилось детей: %d!" % born)
-	var hungry := 0
-	for u in colony.units:
-		if u.satiety < 25.0:
-			hungry += 1
+	var hungry := colony.starving_count()
 	if hungry > 0:
 		lines.append("Голодают гавриков: %d — нужна еда (ягоды, ферма)." % hungry)
 	var worn := 0
@@ -2400,10 +2397,7 @@ func _update_status() -> void:
 	if want > 1.0 and _real_speed < want * 0.85:
 		where += " · ×%d → ×%.0f" % [roundi(want), maxf(1.0, _real_speed)]
 	hud.set_status(where)
-	var hungry := 0
-	for u in colony.units:
-		if u.satiety < 25.0:
-			hungry += 1
+	var hungry := colony.starving_count()
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())

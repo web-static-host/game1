@@ -79,6 +79,7 @@ func _initialize() -> void:
 	test_crew_takeover()
 	test_hearth_on_demand()
 	test_forge_ores()
+	test_starving_count()
 	test_uranium()
 	test_ladder_straight()
 	test_planet_balance()
@@ -3426,7 +3427,23 @@ func test_hearth_on_demand() -> void:
 	check(not hearth.burning and hearth.farm_progress == left, "ушёл — очаг погас, недогоревшее осталось")
 
 
-## Из шахты — руда; в кузнице 1 руда — 3 металла. Что плавить — по нормам кузницы.
+## Из шахты — руда; в кузнице 1 руда — 2 металла. Что плавить — по нормам кузницы.
+func test_starving_count() -> void:
+	var res := _colony_with_room(24)
+	var colony: Colony = res[0]
+	colony.inventory = {"food": 50}
+	for o in colony.units:
+		o.satiety = 100.0
+	var u: Unit = colony.units[0]
+	u.satiety = 20.0
+	check(colony.starving_count() == 0, "сытость 20 при еде на складе — обычный голод перед едой, не «голодает»")
+	u.satiety = 5.0
+	check(colony.starving_count() == 1, "сытость почти ноль — голодает")
+	u.satiety = 20.0
+	colony.inventory = {}
+	check(colony.starving_count() == 1, "еды нет совсем — голодает уже при 20")
+
+
 func test_forge_ores() -> void:
 	check(Mat.resource(Mat.IRON_ORE) == "iron_ore" and Mat.resource_name("iron_ore") == "Железная руда", "из шахты идёт руда, а не металл")
 	var res := _colony_with_room(24)
@@ -3440,8 +3457,8 @@ func test_forge_ores() -> void:
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge) == "iron", "плавит то, чего меньше всего до нормы (железо 0/30 — как медь 0/10, первым — железо)")
 	colony._craft(forge)
-	check(colony.drop_total("iron") == 3 and int(forge.stock.get("iron_ore", 0)) == 1, "1 руда — 3 железа (в ящиках кузницы)")
-	forge.targets["iron"] = 3
+	check(colony.drop_total("iron") == 2 and int(forge.stock.get("iron_ore", 0)) == 1, "1 руда — 2 железа (в ящиках кузницы)")
+	forge.targets["iron"] = 2
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge) == "copper", "железо по норме — плавит медь")
 	forge.targets["copper"] = 0
