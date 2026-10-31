@@ -8847,23 +8847,29 @@ func sky_clear(x: int) -> bool:
 	return pathing.clear_sky.has(x)
 
 
-## Шанс выжить на планете, %: по температуре недр (там живут) и стойкости гаврика. Холод
-## закрывают очаги (по HEAT °C каждый, но не теплее Elements.FIRE_MAX_TEMP), жару — вентиляция
-## (Elements.VENT_COOLING, с энергией — вдвое). Чем больше нужно очагов или вентиляции и чем
-## дальше до них, тем ниже шанс. Супер-гаврику стихии не страшны.
+## Шанс выжить на планете, %: насколько гаврику терпимо там, где колония живёт поначалу — у
+## поверхности (5 м) и в недрах (10 и 20 м; температура как в WorldGen.temperature). Берётся
+## худшая из глубин: запас до порога жары или холода (Elements.heat_limit, cold_limit). С запасом —
+## 85…95% (чем стойче, тем выше); не хватает — ниже на 1,5% за градус (очаги и вентиляция
+## помогают, но не сразу и не везде). Супер-гаврику стихии не страшны.
+const SURVIVAL_DEPTHS := [5.0, 10.0, 20.0]
+
+
 func survival_chance(u: Unit, planet_id: String) -> int:
 	if u.invulnerable():
 		return 100
-	var under := float(Planet.data(planet_id)["under"])
-	var need_heat := cold_limit(u) - under
-	var need_cool := under - elements.heat_limit(u)
-	if need_heat > 0.0:
-		if cold_limit(u) > Elements.FIRE_MAX_TEMP:
-			return 5
-		return [80, 60, 40, 20][mini(ceili(need_heat / HEAT) - 1, 3)]
-	if need_cool > 0.0:
-		return [75, 45, 15][mini(ceili(need_cool / Elements.VENT_COOLING) - 1, 2)]
-	return 95
+	var d := Planet.data(planet_id)
+	var surf := float(d["surf"])
+	var under := float(d["under"])
+	var hot := elements.heat_limit(u)
+	var cold := cold_limit(u)
+	var worst := INF
+	for depth: float in SURVIVAL_DEPTHS:
+		var t := under + (surf - under) * exp(-depth / Planet.SKIN) + depth * Env.GEOTHERMAL_GRADIENT
+		worst = minf(worst, minf(hot - t, t - cold))
+	if worst >= 0.0:
+		return roundi(85.0 + minf(10.0, worst / 3.0))
+	return clampi(roundi(85.0 + worst * 1.5), 5, 84)
 
 
 static func cold_limit(u: Unit) -> float:

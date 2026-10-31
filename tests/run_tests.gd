@@ -2796,8 +2796,15 @@ func test_space() -> void:
 	var c_nep_blue := colony.survival_chance(su, "neptune")
 	su.stats["heat"] = 0.5
 	var c_venus_weak := colony.survival_chance(su, "venus")
+	su.stats = st0.duplicate()
+	su.stats["cold"] = 1.0
+	su.stats["heat"] = 1.4
+	var c_venus_red := colony.survival_chance(su, "venus")
+	su.stats["heat"] = 1.0
+	var c_venus := colony.survival_chance(su, "venus")
 	su.stats = st0
-	check(c_mars == 80 and c_nep == 60 and c_nep_blue > c_nep and c_venus_weak < 80,
+	check(c_venus_red > c_venus and c_venus > c_venus_weak, "Венера: красному шанс выше, чем обычному (%d / %d / %d)" % [c_venus_red, c_venus, c_venus_weak])
+	check(c_mars < 80 and c_nep < c_mars and c_nep_blue > c_nep and c_venus_weak < 80,
 		"шанс выжить: Марс %d%%, Нептун %d%% (синему %d%%), Венера нестойкому к жаре %d%%" % [c_mars, c_nep, c_nep_blue, c_venus_weak])
 	check(colony.inventory.get("food", 0) <= 20, "груз списан со склада")
 	var uni := Universe.new()
