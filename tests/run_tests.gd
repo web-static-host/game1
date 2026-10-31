@@ -111,6 +111,7 @@ func _initialize() -> void:
 	test_amethyst()
 	test_planet_looks()
 	test_venus_sky()
+	test_vent_floor()
 	test_geoprobe()
 	test_unit_tap()
 	test_room_move()
@@ -2830,7 +2831,17 @@ func test_space() -> void:
 	var f2 := {"planet": "mars", "crew": [], "cargo": {"stone": 30}, "research": [], "left": 1.0}
 	uni.send(f2)
 	uni.update(2.0)
-	check(uni.worlds.size() == 2 and mc.rooms_of(RoomType.SHIP).size() == 2, "вторая ракета села рядом с колонией")
+	var ships := mc.rooms_of(RoomType.SHIP)
+	check(uni.worlds.size() == 2 and ships.size() == 2, "вторая ракета села рядом с колонией")
+	if ships.size() == 2:
+		var a: Rect2i = ships[0].rect
+		var b: Rect2i = ships[1].rect
+		check(a.position.y == b.position.y and (a.end.x == b.position.x or b.end.x == a.position.x),
+			"второй корабль — вплотную к первому, пол на том же уровне (%s / %s)" % [a, b])
+		check(mc.beds_total() == RoomType.SHIP_BEDS * 2, "с ним ещё 10 мест (всего %d)" % mc.beds_total())
+		var in1 := Vector2i(RoomType.floor_start(ships[0]), ships[0].rect.end.y - 1)
+		var other := Vector2i(RoomType.floor_start(ships[1]), ships[1].rect.end.y - 1)
+		check(mc.pathing.explore(in1)[1].has(other), "из одного корабля можно дойти в другой")
 	# Сохранение миров и полётов.
 	var saved := uni.to_dict({})
 	var uni2 := Universe.new()
@@ -5056,6 +5067,20 @@ func test_planet_looks() -> void:
 		pals[str(Planet.data(pid)["geo"]["palette"])] = true
 	check(pals.size() == Planet.ORDER.size(), "у каждой планеты свой цвет пород")
 	check(Mat.name_of(Mat.ICE) == "Лёд" and Mat.resource(Mat.ICE) == "" and Mat.is_diggable(Mat.ICE), "лёд копается и ничего не даёт")
+
+
+## Вентиляция сбивает жару только до +20 °C: в недрах Венеры с «Климат-контролем» не мёрзнут.
+func test_vent_floor() -> void:
+	var w := WorldData.new(WorldGen.new(33, WorldGen.LATEST, "venus"))
+	var c := Colony.new(w)
+	var vent := _fake_room(c, RoomType.VENT, 40)
+	c.research.done.append("climate")
+	var deep := vent.rect.get_center() + Vector2i(0, 8)
+	c.elements._temp_memo.clear()
+	var t := c.elements._temperature(deep)
+	var hot := Vector2i(deep.x + 400, deep.y)
+	check(t >= Elements.VENT_MIN_TEMP - 0.01 and t <= 30.0 and c.elements._temperature(hot) > 30.0,
+		"вентиляция охлаждает до +20 °C, не в минус (%.1f °C; без неё %.1f °C)" % [t, c.elements._temperature(hot)])
 
 
 ## Ядовитый газ над Венерой: дегазация, достающая до поверхности, очищает воздух — туда

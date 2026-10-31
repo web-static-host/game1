@@ -3451,14 +3451,35 @@ func receive_flight(flight: Dictionary) -> void:
 		var put := _add(k, n, ship)
 		if put < n:
 			_add(k, n - put)
-	_log("Посадка на %s! Корабль — жильё на %d человек; прибыло гавриков %d. Копайте вниз прямо из корабля." % [
-		Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good")
+	var ships := rooms_of(RoomType.SHIP).size()
+	if ships > 1:
+		_log("Посадка на %s: корабль сел вплотную к прежнему — ещё %d мест; прибыло гавриков %d (кораблей %d)." % [
+			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size(), ships], "good", ship.rect.get_center())
+	else:
+		_log("Посадка на %s! Корабль — жильё на %d человек; прибыло гавриков %d. Копайте вниз прямо из корабля." % [
+			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good", ship.rect.get_center())
 
 
-## Корабль садится на ровное место у базы: комната 9×3 на поверхности.
+## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Если корабль тут уже
+## есть — вплотную к нему, на том же уровне пола (ходят из одного в другой, ещё 10 мест).
 func _land_ship() -> Project:
 	var x0 = null
-	for k in 40:
+	var floor_top = null
+	for q in rooms_of(RoomType.SHIP):
+		for x in [q.rect.end.x, q.rect.position.x - 9]:
+			var r := Rect2i(x, q.rect.position.y, 9, 3)
+			var free := true
+			for o in projects:
+				if o.rect.intersects(r):
+					free = false
+					break
+			if free:
+				x0 = x
+				floor_top = q.rect.position.y
+				break
+		if x0 != null:
+			break
+	for k in (0 if x0 != null else 40):
 		for sgn in [1, -1]:
 			var x: int = home.x - 4 + sgn * k * 10
 			var sx := world.gen.surface_y(x)
@@ -3478,17 +3499,20 @@ func _land_ship() -> Project:
 	p.id = next_project_id
 	next_project_id += 1
 	p.kind = Project.Kind.ROOM
-	p.rect = Rect2i(x0, s0 - 3, 9, 3)
+	p.rect = Rect2i(x0, floor_top if floor_top != null else s0 - 3, 9, 3)
 	p.material = "iron"
 	p.purpose = RoomType.SHIP
 	p.phase = Project.Phase.DONE
 	p.paid = true
 	projects.append(p)
-	# Под кораблём земля ровная: подсыпаем, где ниже.
+	# Под кораблём земля ровная: подсыпаем, где ниже (до твёрдого — корабль не висит).
 	for x in range(p.rect.position.x, p.rect.end.x):
 		var below := Vector2i(x, p.rect.end.y)
-		if world.is_open(below.x, below.y):
+		var n := 0
+		while world.is_open(below.x, below.y) and n < 12:
 			world.set_material(below.x, below.y, Mat.GRAVEL)
+			below.y += 1
+			n += 1
 	for c in p.cells():
 		if not world.is_open(c.x, c.y):
 			world.set_material(c.x, c.y, Mat.AIR)

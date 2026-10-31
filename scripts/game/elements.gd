@@ -40,6 +40,8 @@ const GAS_CHOKE := 0.5
 const GAS_ALARM := 0.15
 const GAS_CLEAR := 0.05
 const VENT_COOLING := 18.0
+## Ниже этой температуры вентиляция не охлаждает (тепло ферме и людям, уже не жарко).
+const VENT_MIN_TEMP := 20.0
 ## Выше — гаврикам вредно (жара).
 const HOT := 50.0
 ## Температура внутри корабля.
@@ -772,7 +774,10 @@ func _temperature(c: Vector2i) -> float:
 		var center := p.rect.get_center()
 		var vr := RoomType.effect_radius(p)
 		if absi(c.x - center.x) <= vr and absi(c.y - center.y) <= vr:
-			t -= VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("climate") else 1.0)
+			# Вентиляция сбивает жару, но не холодит ниже VENT_MIN_TEMP (раньше на Венере с
+			# «Климат-контролем» в недрах уходило в минус, и фермы мёрзли).
+			var cool := VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("climate") else 1.0)
+			t = maxf(t - cool, minf(t, VENT_MIN_TEMP))
 			break
 	return t
 
