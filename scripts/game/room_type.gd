@@ -207,12 +207,12 @@ static func farm_slots(p: Project) -> int:
 
 ## Какой супер-материал подходит назначению — только из него комната работает лучше:
 ## серебро — электрика (генераторы, лаборатория, насос, вентиляция, дегазация, нефтекачалка),
-## золото — жильё, еда и хранение, алмаз — резка и обработка.
+## золото — жильё, еда, хранение и ходы, алмаз — где важна крепость: бурение, резка, жар.
 const SUPER_MAT := {
 	GENERATOR: "silver", GAS_GEN: "silver", DIESEL_GEN: "silver", LAB: "silver", PUMP: "silver",
-	VENT: "silver", DEGAS: "silver", OIL_PUMP: "silver",
-	HOME: "gold", DINING: "gold", FARM: "gold", STORAGE: "gold", GRANARY: "gold", OIL_TANK: "gold", LAUNCHPAD: "gold",
-	FORGE: "diamond", KILN: "diamond", REFINERY: "diamond", ENRICHMENT: "diamond",
+	VENT: "silver", DEGAS: "silver",
+	HOME: "gold", DINING: "gold", FARM: "gold", STORAGE: "gold", GRANARY: "gold", OIL_TANK: "gold",
+	FORGE: "diamond", KILN: "diamond", REFINERY: "diamond", ENRICHMENT: "diamond", OIL_PUMP: "diamond", LAUNCHPAD: "diamond",
 }
 ## Что даёт супер-материал назначению (для описаний).
 const SUPER_EFFECT := {
@@ -227,7 +227,7 @@ const SUPER_EFFECT := {
 ## Супер-материал, из которого постройка работает лучше ("" — никакой).
 static func super_material(p: Project) -> String:
 	match p.kind:
-		Project.Kind.DRILL:
+		Project.Kind.DRILL, Project.Kind.PROBE:
 			return "diamond"
 		Project.Kind.TUNNEL, Project.Kind.MINE:
 			return "gold"

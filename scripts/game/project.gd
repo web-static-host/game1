@@ -46,7 +46,7 @@ const SUPER_TECH := {"silver": "silver_works", "gold": "gold_works", "diamond": 
 ## Технология, нужная постройке вида k из материала mat ("" — не нужна). Алмазный бур —
 ## после «Алмазного бура».
 static func super_tech(k: int, mat: String) -> String:
-	if k == Kind.DRILL and mat == "diamond":
+	if (k == Kind.DRILL or k == Kind.PROBE) and mat == "diamond":
 		return "diamond_bits"
 	return SUPER_TECH.get(mat, "")
 
@@ -278,7 +278,14 @@ static func drill_cost(_r: Rect2i, mat := "wood") -> Dictionary:
 
 
 ## Геоскважина: железо на вышку и штанги, медь на мотор зонда.
-static func probe_cost() -> Dictionary:
+static func probe_cost(mat := "wood") -> Dictionary:
+	var out := _probe_cost()
+	if SUPER.has(mat):
+		out[mat] = 4
+	return out
+
+
+static func _probe_cost() -> Dictionary:
 	return {"iron": 3, "copper": 1}
 
 
@@ -352,7 +359,7 @@ static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 	if k == Kind.PIER:
 		return {"wood": 4 * r.size.x, "stone": 4}
 	if k == Kind.PROBE:
-		return probe_cost()
+		return probe_cost(mat)
 	# Тоннель крепится по ходу копки — на втором этапе только отделка.
 	return {}
 

@@ -3516,7 +3516,16 @@ func test_super_materials() -> void:
 	colony.inventory = {"gold": 40, "iron": 40, "food": 200}
 	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "gold")
 	check(g != null and colony.bonus_of_id(g.id) == 2.0 and colony.support_key(g) == "gold" and Colony.support_amount(g, "gold") == ceili(g.slice_wood() / 2.0),
-		"золотой тоннель крепят золотом (вдвое меньше, чем дерева), копают ×2")
+		"золотой тоннель крепят золотом (вдвое меньше, чем дерева)")
+	if g != null:
+		var walker: Unit = colony.units[0]
+		var inside := g.rect.position + Vector2i(0, 2)
+		colony.interior[inside] = g.id
+		walker.pos = Vector2(inside)
+		walker.carry_amount = 0
+		var fast := colony._track_factor(walker, false)
+		g.material = "iron"
+		check(fast == 2.0 and colony._track_factor(walker, false) == 1.0, "по золотому тоннелю ходят вдвое быстрее (%.1f)" % fast)
 	check(Project.bonus_of("silver") == 1.5 and Project.bonus_of("gold") == 2.0 and Project.bonus_of("diamond") == 3.0 and Project.bonus_of("iron") == 1.0, "бонусы ×1,5 / ×2 / ×3")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo:silver") == "silver" and Colony.lift_cargo("cargo:silver") and not Colony.lift_cargo("wood:silver"), "лифт: «грузовой» и материал в одной строке")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo") == "wood" and Colony.build_material(Project.Kind.BRIDGE, "gold") == "wood", "у прочих построек материала нет")
@@ -3539,8 +3548,16 @@ func test_super_materials() -> void:
 	room.purpose = RoomType.LAB
 	check(room.bonus() == 1.0, "золотая лаборатория — без бонуса (ей нужно серебро)")
 	room.material = "diamond"
+	for t in [RoomType.FORGE, RoomType.OIL_PUMP, RoomType.LAUNCHPAD, RoomType.KILN]:
+		room.purpose = t
+		check(room.bonus() == 3.0, "алмаз — %s ×3" % RoomType.purpose_name(t))
 	room.purpose = RoomType.FORGE
-	check(room.bonus() == 3.0, "алмазная кузница ×3")
+	check(colony.materials_for(Project.Kind.PROBE) == ["wood", "diamond"] and Project.probe_cost("diamond").get("diamond", 0) == 4,
+		"геоскважина с алмазной коронкой — 4 алмаза")
+	var probe := Project.new()
+	probe.kind = Project.Kind.PROBE
+	probe.material = "diamond"
+	check(probe.bonus() == 3.0, "алмазный зонд ×3")
 	# Лифт ездит быстрее, склад вмещает больше, бур — дороже.
 	var lift := Project.new()
 	lift.kind = Project.Kind.LIFT

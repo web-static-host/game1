@@ -2460,7 +2460,7 @@ func _update_status() -> void:
 	hud.set_room_materials(colony.available_materials())
 	hud.set_tool_materials({Hud.Mode.TUNNEL: colony.materials_for(Project.Kind.TUNNEL), Hud.Mode.MINE: colony.materials_for(Project.Kind.MINE),
 		Hud.Mode.LIFT: colony.materials_for(Project.Kind.LIFT), Hud.Mode.CARGO_LIFT: colony.materials_for(Project.Kind.LIFT),
-		Hud.Mode.DRILL: colony.materials_for(Project.Kind.DRILL), Hud.Mode.DRILL_LIFT: colony.materials_for(Project.Kind.DRILL)})
+		Hud.Mode.DRILL: colony.materials_for(Project.Kind.DRILL), Hud.Mode.DRILL_LIFT: colony.materials_for(Project.Kind.DRILL), Hud.Mode.PROBE: colony.materials_for(Project.Kind.PROBE)})
 	var space := universe.worlds.size() > 1 or not universe.flights.is_empty()
 	for e in universe.worlds:
 		space = space or (e["colony"] as Colony).research.has("rocketry")

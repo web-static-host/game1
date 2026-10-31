@@ -438,7 +438,7 @@ func materials_for(kind: int) -> Array[String]:
 		Project.Kind.LIFT:
 			if research.has("silver_works"):
 				out.append("silver")
-		Project.Kind.DRILL:
+		Project.Kind.DRILL, Project.Kind.PROBE:
 			if research.has("diamond_bits"):
 				out.append("diamond")
 	return out
@@ -456,7 +456,7 @@ static func build_material(kind: int, material: String) -> String:
 	match kind:
 		Project.Kind.ROOM, Project.Kind.TUNNEL, Project.Kind.MINE:
 			return m if Project.MATERIALS.has(m) else "wood"
-		Project.Kind.LIFT, Project.Kind.DRILL:
+		Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE:
 			return m if Project.SUPER.has(m) else "wood"
 	return "wood"
 
@@ -2017,7 +2017,7 @@ func _probes_tick(dt: float) -> void:
 		if axis.any(func(c: Vector2i) -> bool: return c.y < world.gen.surface_y(c.x)):
 			_end_probe(p, "вышел к поверхности")
 			continue
-		# Как алмазный бур: вдвое быстрее обычного, на энергии.
+		# Вдвое быстрее обычного бура, на энергии; с алмазной коронкой — ещё втрое.
 		p.drill_t += dt * DRILL_SPEED * dig_bonus() * 2.0 * clampf(power_ratio, 0.0, 1.0) * p.bonus()
 		var need := DRILL_MOVE_TIME * DRILL_SPEED
 		for c in axis:
@@ -5281,18 +5281,19 @@ func _needs_interrupt(u: Unit) -> bool:
 
 ## «Канаты и блоки» — по лестницам быстрее; «Рельсы» — с грузом по шахтам и горизонтальным
 ## тоннелям быстрее.
+## Золотой тоннель или шахта — по ним ходят и лазают вдвое быстрее.
 func _track_factor(u: Unit, climbing: bool) -> float:
-	if climbing:
-		return 1.5 if research.has("ropes") else 1.0
-	if not research.has("rails") or u.carry_amount <= 0:
-		return 1.0
 	var pid: int = interior.get(u.cell(), 0)
-	if pid == 0:
-		return 1.0
-	var p := project_by_id(pid)
-	if p != null and (p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical())):
-		return 1.5
-	return 1.0
+	var p := project_by_id(pid) if pid != 0 else null
+	var k := 1.0
+	if p != null and (p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE):
+		k = p.bonus()
+	if climbing:
+		return k * (1.5 if research.has("ropes") else 1.0)
+	if research.has("rails") and u.carry_amount > 0 and p != null \
+			and (p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical())):
+		k *= 1.5
+	return k
 
 
 ## «Ученичество»: пока родитель работает, у ребёнка растёт навык этой работы.
@@ -5590,7 +5591,7 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.DIG:
 			var c := u.target
 			elements.spark(u.cell())
-			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus() * bonus_of_id(u.project_id)
+			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus()
 			if dig_progress[c] >= dig_time(c):
 				var p := project_by_id(u.project_id)
 				_drop(u)
@@ -5686,7 +5687,7 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
-			sp.support_progress += rate * sp.bonus()
+			sp.support_progress += rate
 			if sp.support_progress >= sp.slice_work():
 				_finish_support(sp)
 				_continue_own(u)
@@ -9057,7 +9058,7 @@ func advance_offline(dt: float) -> int:
 			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor() * u.age_factor() \
 				* work_factor(u, job[1], Vector2i.ZERO)
 			# Супер-постройка: работа в ней быстрее.
-			if job[2] is Project and job[1] in [Unit.Task.DIG, Unit.Task.SUPPORT, Unit.Task.CRAFT, Unit.Task.RESEARCH, Unit.Task.FARM]:
+			if job[2] is Project and job[1] in [Unit.Task.CRAFT, Unit.Task.RESEARCH, Unit.Task.FARM]:
 				rate *= (job[2] as Project).bonus()
 			if jobs.has(key):
 				jobs[key][1] += rate
