@@ -426,16 +426,22 @@ func super_materials() -> Array[String]:
 
 ## Материалы, из которых можно ставить постройку вида kind (первый — обычный).
 ## Тоннель и шахта — крепь из любого материала стен; лифт и бур — обычные или супер.
+## Супер-материал — только тот, что постройке подходит: тоннелю и шахте — алмаз, лифту —
+## серебро, буру — алмаз после «Алмазного бура»; комнате — любой (подходит по назначению).
 func materials_for(kind: int) -> Array[String]:
+	var out: Array[String] = ["wood"]
 	match kind:
-		Project.Kind.ROOM, Project.Kind.TUNNEL, Project.Kind.MINE:
+		Project.Kind.ROOM:
 			return available_materials()
-		Project.Kind.LIFT, Project.Kind.DRILL:
-			var out: Array[String] = ["wood"]
-			out.append_array(super_materials())
-			return out
-	var plain: Array[String] = ["wood"]
-	return plain
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			out = available_materials().filter(func(m: String) -> bool: return not Project.SUPER.has(m) or m == "diamond")
+		Project.Kind.LIFT:
+			if research.has("silver_works"):
+				out.append("silver")
+		Project.Kind.DRILL:
+			if research.has("diamond_bits"):
+				out.append("diamond")
+	return out
 
 
 ## Грузовой ли лифт по строке материала стройки.
@@ -468,8 +474,10 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 		return err
 	var bm := build_material(kind, material)
 	if bm != "wood" and not materials_for(kind).has(bm):
-		var tech: String = Project.SUPER_TECH.get(bm, "")
-		return "Сначала изучите «%s»" % Research.tech_name(tech) if not tech.is_empty() else "%s пока недоступен" % Project.MATERIALS[bm][0]
+		var tech := Project.super_tech(kind, bm)
+		if not tech.is_empty() and not research.has(tech):
+			return "Сначала изучите «%s»" % Research.tech_name(tech)
+		return "%s сюда не подходит" % Project.MATERIALS[bm][0] if Project.SUPER.has(bm) else "%s пока недоступен" % Project.MATERIALS[bm][0]
 	for y in range(r.position.y, r.end.y):
 		for x in range(r.position.x, r.end.x):
 			var c := Vector2i(x, y)
@@ -1524,7 +1532,7 @@ const DRILL_CASING_M := 4
 
 
 func drill_speed(diesel := false) -> float:
-	return DRILL_SPEED * dig_bonus() * (2.0 if research.has("diamond_bits") else 1.0) \
+	return DRILL_SPEED * dig_bonus() \
 		* (1.0 if diesel else clampf(power_ratio, 0.0, 1.0))
 
 
@@ -1645,11 +1653,11 @@ func drill_lift_error(r: Rect2i, dir := Vector2i.DOWN) -> String:
 	return validate(Project.Kind.LIFT, parts[1], "cargo_drill", false)
 
 
-func create_drill_lift(r: Rect2i, workers := -1, dir := Vector2i.DOWN) -> Project:
+func create_drill_lift(r: Rect2i, workers := -1, dir := Vector2i.DOWN, drill_mat := "wood") -> Project:
 	if not drill_lift_error(r, dir).is_empty():
 		return null
 	var parts := drill_lift_parts(r, dir)
-	var drill := create_project(Project.Kind.DRILL, parts[0], workers)
+	var drill := create_project(Project.Kind.DRILL, parts[0], workers, drill_mat if materials_for(Project.Kind.DRILL).has(drill_mat) else "wood")
 	if drill == null:
 		return null
 	var lift := create_project(Project.Kind.LIFT, parts[1], workers, "cargo_drill", false)
@@ -2082,7 +2090,7 @@ func _oil_tick(dt: float) -> void:
 		if free <= 0:
 			p.blocked = "Нефтехранилище полно или его нет — качалка стоит"
 			continue
-		p.farm_progress += dt * power_ratio
+		p.farm_progress += dt * power_ratio * p.bonus()
 		if p.farm_progress < OIL_PUMP_TIME:
 			continue
 		p.farm_progress = 0.0
@@ -3433,10 +3441,21 @@ func start_rocket(p: Project, engine: String) -> String:
 	return ""
 
 
-## Куда долетит ракета с этим двигателем.
+## Куда долетит ракета с этим двигателем. Домой, на Землю, — любая.
 static func rocket_reaches(engine: String, planet_id: String) -> bool:
+	if planet_id == "earth":
+		return true
 	var need: String = Planet.data(planet_id)["engine"]
 	return engine == "nuclear" or need == engine
+
+
+## Куда можно лететь с планеты from: все планеты, кроме неё самой (с планет — и на Землю).
+static func flight_targets(from: String) -> Array:
+	var out := [] if from == "earth" else ["earth"]
+	for id in Planet.ORDER:
+		if id != from:
+			out.append(id)
+	return out
 
 
 ## Отправить экспедицию: до 10 гавриков и до 200 груза (не топливо — его не возят).
@@ -3444,6 +3463,8 @@ static func rocket_reaches(engine: String, planet_id: String) -> bool:
 func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Dictionary:
 	if p.rocket.is_empty():
 		return {"error": "Ракеты на столе нет"}
+	if planet_id == world.gen.planet_id or not Planet.DATA.has(planet_id):
+		return {"error": "Мы и так на %s" % Planet.planet_name(planet_id)}
 	if not rocket_reaches(p.rocket, planet_id):
 		return {"error": "Для полёта на %s нужен %s двигатель" % [Planet.planet_name(planet_id), Planet.engine_name(Planet.data(planet_id)["engine"])]}
 	if crew.size() > RoomType.SHIP_BEDS:
@@ -5582,7 +5603,8 @@ func _work(u: Unit, dt: float) -> void:
 				_finish_project(p)
 		Unit.Task.EQUIP:
 			var p := project_by_id(u.project_id)
-			p.equip_done += rate
+			# Золотой космодром — ракету собирают быстрее.
+			p.equip_done += rate * (p.bonus() if not p.equip_rocket.is_empty() else 1.0)
 			if p.equip_done >= RoomType.job_work(p):
 				_finish_equip(p)
 		Unit.Task.HARVEST:
@@ -5660,7 +5682,7 @@ func _work(u: Unit, dt: float) -> void:
 				elif u.project_id == EAT_DROP:
 					_eat_from(u, func(key: String, n: int) -> int: return _take_drop(at, key, n))
 				else:
-					_eat_from(u, _take_store, DINING_BONUS if u.project_id != 0 else 1.0)
+					_eat_from(u, _take_store, DINING_BONUS * bonus_of_id(u.project_id) if u.project_id != 0 else 1.0)
 				_drop(u)
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
@@ -9430,7 +9452,7 @@ func room_cap(p: Project, key: String) -> int:
 	if key == "methane":
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
 	if key == "oil" or key == "diesel":
-		return RoomType.OIL_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.OIL_TANK else 0
+		return roundi(RoomType.OIL_PER_CELL * RoomType.usable_width(p) * p.bonus()) if p.purpose == RoomType.OIL_TANK else 0
 	if p.purpose == RoomType.SHIP:
 		return 0 if RoomType.BULK.has(key) else RoomType.SHIP_HOLD
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
@@ -9672,6 +9694,7 @@ func to_dict() -> Dictionary:
 		"store_targets": store_targets,
 		"stores_v": 1,
 		"ores_v": 1,
+		"drill_v": 1,
 		"life_v": 2,
 		"steel_v": 1,
 		"loads": loads.to_dict(),
@@ -9771,6 +9794,12 @@ func load_dict(d: Dictionary) -> void:
 		_migrate_stores()
 	if int(d.get("ores_v", 0)) < 1:
 		_migrate_ores()
+	# «Алмазный бур» раньше ускорял все буры даром; теперь это алмазная коронка у самого бура —
+	# буры, что уже были, получают её.
+	if int(d.get("drill_v", 0)) < 1 and research.has("diamond_bits"):
+		for p in projects:
+			if p.kind == Project.Kind.DRILL and p.material == "wood":
+				p.material = "diamond"
 	# Жили 3,5 года, потом 5, теперь 10 — сроки уже живущих растут так же.
 	var life_v := int(d.get("life_v", 0))
 	if life_v < 1:

@@ -2881,6 +2881,24 @@ func test_space() -> void:
 	var uni2 := Universe.new()
 	uni2.load_dict(saved)
 	check(uni2.worlds.size() == 1 and (uni2.worlds[0]["colony"] as Colony).units.size() == 3, "мир Марса сохраняется и загружается")
+	# Обратно на Землю: с планеты Земля есть в списке, сама планета — нет; долетит любая ракета.
+	check(Colony.flight_targets("mars").has("earth") and not Colony.flight_targets("mars").has("mars")
+		and not Colony.flight_targets("earth").has("earth"), "с Марса можно лететь на Землю, на Марс — нет")
+	var mpad := Project.new()
+	mpad.kind = Project.Kind.ROOM
+	mpad.purpose = RoomType.LAUNCHPAD
+	mpad.rocket = "chem"
+	check(mc.launch(mpad, "mars", [mc.units[0]], {}).has("error"), "на свою же планету не летят")
+	var earth_n := colony.units.size()
+	mc.inventory["stone"] = maxi(10, int(mc.inventory.get("stone", 0)))
+	var back := mc.launch(mpad, "earth", [mc.units[0]], {"stone": 10})
+	check(not back.has("error") and mc.units.size() == 2, "с Марса стартовали на Землю: %s" % str(back.get("error", "")))
+	if not back.has("error"):
+		var earth_ships := colony.rooms_of(RoomType.SHIP).size()
+		uni.send(back)
+		uni.update(0.0)
+		check(colony.units.size() == earth_n + 1 and colony.rooms_of(RoomType.SHIP).size() == earth_ships + 1,
+			"ракета села на Земле рядом с колонией, гаврик дома")
 
 
 func test_oil() -> void:
@@ -3482,38 +3500,77 @@ func test_super_materials() -> void:
 	_start(colony, x)
 	var s := colony.world.gen.surface_y(x)
 	var r := Rect2i(x, s, 1, 6)
-	check(not colony.materials_for(Project.Kind.TUNNEL).has("gold"), "золото недоступно без науки")
-	check(colony.validate(Project.Kind.TUNNEL, r, "gold").contains("Золотые постройки"), "без науки золотой тоннель не заложить")
+	check(not colony.materials_for(Project.Kind.TUNNEL).has("diamond"), "алмаз недоступен без науки")
+	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").contains("Алмазный инструмент"), "без науки алмазный тоннель не заложить")
 	check(Research.TECHS.has("silver_works") and Research.TECHS.has("gold_works") and Research.TECHS.has("diamond_works"), "три технологии супер-построек")
 	colony.research.done.append_array(["silver_works", "gold_works", "diamond_works"])
-	check(colony.materials_for(Project.Kind.LIFT) == ["wood", "silver", "gold", "diamond"], "лифт: обычный или супер (%s)" % str(colony.materials_for(Project.Kind.LIFT)))
-	check(colony.validate(Project.Kind.TUNNEL, r, "gold").is_empty(), "после науки — можно")
+	check(colony.materials_for(Project.Kind.LIFT) == ["wood", "silver"], "лифт: обычный или серебряный — электрика (%s)" % str(colony.materials_for(Project.Kind.LIFT)))
+	check(colony.materials_for(Project.Kind.DRILL) == ["wood"], "алмазный бур — только после «Алмазного бура»")
+	check(colony.validate(Project.Kind.DRILL, Rect2i(x, s - 3, 3, 3), "diamond").contains("Алмазный бур"), "без «Алмазного бура» — подсказка о нём")
+	colony.research.done.append("diamond_bits")
+	check(colony.materials_for(Project.Kind.DRILL) == ["wood", "diamond"], "после «Алмазного бура» — алмазная коронка")
+	var tm := colony.materials_for(Project.Kind.TUNNEL)
+	check(tm.has("diamond") and not tm.has("gold") and not tm.has("silver"), "тоннель: алмаз, но не золото и серебро (%s)" % str(tm))
+	check(colony.validate(Project.Kind.TUNNEL, r, "gold").contains("не подходит"), "золотой тоннель — не по смыслу")
+	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").is_empty(), "алмазный — можно")
 	check(Project.bonus_of("silver") == 1.5 and Project.bonus_of("gold") == 2.0 and Project.bonus_of("diamond") == 3.0 and Project.bonus_of("iron") == 1.0, "бонусы ×1,5 / ×2 / ×3")
-	check(Colony.build_material(Project.Kind.LIFT, "cargo:gold") == "gold" and Colony.lift_cargo("cargo:gold") and not Colony.lift_cargo("wood:gold"), "лифт: «грузовой» и материал в одной строке")
+	check(Colony.build_material(Project.Kind.LIFT, "cargo:silver") == "silver" and Colony.lift_cargo("cargo:silver") and not Colony.lift_cargo("wood:silver"), "лифт: «грузовой» и материал в одной строке")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo") == "wood" and Colony.build_material(Project.Kind.BRIDGE, "gold") == "wood", "у прочих построек материала нет")
+	# По смыслу: серебро — электрика, золото — жильё и хранение, алмаз — резка.
+	var room := Project.new()
+	room.kind = Project.Kind.ROOM
+	room.rect = Rect2i(0, 0, 6, 3)
+	room.phase = Project.Phase.DONE
+	room.material = "silver"
+	for t in [RoomType.GENERATOR, RoomType.LAB, RoomType.PUMP, RoomType.VENT]:
+		room.purpose = t
+		check(room.bonus() == 1.5, "серебро — %s ×1,5" % RoomType.purpose_name(t))
+	room.purpose = RoomType.HOME
+	check(room.bonus() == 1.0, "серебряная спальня бонуса не даёт")
+	room.material = "gold"
+	var beds_gold := RoomType.beds(room)
+	room.material = "stone"
+	check(beds_gold == RoomType.beds(room) * 2, "в золотой спальне кроватей вдвое больше (%d)" % beds_gold)
+	room.material = "gold"
+	room.purpose = RoomType.LAB
+	check(room.bonus() == 1.0, "золотая лаборатория — без бонуса (ей нужно серебро)")
+	room.material = "diamond"
+	room.purpose = RoomType.FORGE
+	check(room.bonus() == 3.0, "алмазная кузница ×3")
 	# Лифт ездит быстрее, склад вмещает больше, бур — дороже.
 	var lift := Project.new()
 	lift.kind = Project.Kind.LIFT
 	lift.rect = Rect2i(0, 0, 2, 10)
 	colony.power_ratio = 1.0
 	var base := colony.lift_speed(lift)
+	lift.material = "silver"
+	check(is_equal_approx(colony.lift_speed(lift), base * 1.5), "серебряный лифт — в 1,5 раза быстрее")
 	lift.material = "gold"
-	check(is_equal_approx(colony.lift_speed(lift), base * 2.0), "золотой лифт — вдвое быстрее")
-	check(lift.cost().get("gold", 0) > 0 and Project.lift_cost(lift.rect, false).get("gold", 0) == 0, "супер-лифт стоит своего материала")
+	check(is_equal_approx(colony.lift_speed(lift), base), "золотой лифт быстрее не ездит")
+	lift.material = "silver"
+	check(lift.cost().get("silver", 0) > 0 and Project.lift_cost(lift.rect, false).get("silver", 0) == 0, "супер-лифт стоит своего материала")
 	check(Project.drill_cost(Rect2i(), "diamond").get("diamond", 0) == 6, "алмазный бур — 6 алмазов")
+	var drill := Project.new()
+	drill.kind = Project.Kind.DRILL
+	drill.material = "diamond"
+	check(drill.bonus() == 3.0 and is_equal_approx(colony.drill_speed(), Colony.DRILL_SPEED * colony.dig_bonus() * colony.power_ratio),
+		"«Алмазный бур» ускоряет только бур с алмазной коронкой")
 	var store := Project.new()
 	store.kind = Project.Kind.ROOM
 	store.rect = Rect2i(0, 0, 6, 3)
 	store.purpose = RoomType.STORAGE
 	store.phase = Project.Phase.DONE
 	var cap := colony.room_cap(store, "stone")
+	store.material = "gold"
+	check(cap > 0 and colony.room_cap(store, "stone") == cap * 2, "золотой склад — вдвое больше (%d → %d)" % [cap, colony.room_cap(store, "stone")])
 	store.material = "diamond"
-	check(cap > 0 and colony.room_cap(store, "stone") == cap * 3, "алмазный склад — втрое больше (%d → %d)" % [cap, colony.room_cap(store, "stone")])
-	# Копка в золотом тоннеле — вдвое быстрее.
-	colony.inventory = {"gold": 40, "iron": 40, "food": 200}
-	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "gold")
-	check(g != null and colony.bonus_of_id(g.id) == 2.0 and colony.support_key(g) == "gold", "золотой тоннель крепят золотом, копают ×2")
-	check(BuildInfo.super_text(Project.Kind.ROOM, "silver").contains("×1,5"), "описание бонуса")
+	check(colony.room_cap(store, "stone") == cap, "алмазный склад — как обычный")
+	# Копка в алмазном тоннеле — втрое быстрее.
+	colony.inventory = {"diamond": 40, "iron": 40, "food": 200}
+	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "diamond")
+	check(g != null and colony.bonus_of_id(g.id) == 3.0 and colony.support_key(g) == "diamond", "алмазный тоннель крепят алмазом, копают ×3")
+	check(BuildInfo.super_text(Project.Kind.ROOM, "silver", RoomType.LAB).contains("×1,5") and BuildInfo.super_text(Project.Kind.ROOM, "gold", RoomType.LAB).is_empty(), "описание бонуса")
+	check(BuildInfo.super_purposes("gold").contains(RoomType.purpose_name(RoomType.HOME).to_lower()), "золото — для спален")
 
 
 func test_starving_count() -> void:

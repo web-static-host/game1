@@ -443,7 +443,7 @@ func _show_worlds() -> void:
 func _rocket_rows(p: Project, rows: Array) -> void:
 	if not p.rocket.is_empty():
 		rows.append({"type": "text", "text": "Ракета на столе: %s двигатель — летит на %s. Нажмите «Запустить»: выберите планету, экипаж (до 10) и груз (до 200)." % [
-			Planet.engine_name(p.rocket), ", ".join(Planet.ORDER.filter(func(id: String) -> bool: return Colony.rocket_reaches(p.rocket, id)).map(
+			Planet.engine_name(p.rocket), ", ".join(Colony.flight_targets(_planet).filter(func(id: String) -> bool: return Colony.rocket_reaches(p.rocket, id)).map(
 				func(id: String) -> String: return Planet.planet_name(id)))]})
 		return
 	if p.phase == Project.Phase.EQUIP and not p.equip_rocket.is_empty():
@@ -468,7 +468,7 @@ func _launch_open(pad: Project) -> void:
 		if u != null and not u.child and crew.size() < RoomType.SHIP_BEDS:
 			crew.append(u)
 	_launch = {"pad": pad, "planet": str(d.get("planet", "")), "crew": crew, "cargo": (d.get("cargo", {}) as Dictionary).duplicate()}
-	if not _launch["planet"].is_empty() and Colony.rocket_reaches(pad.rocket, _launch["planet"]):
+	if not _launch["planet"].is_empty() and _launch["planet"] != _planet and Colony.rocket_reaches(pad.rocket, _launch["planet"]):
 		_launch_crew()
 	else:
 		_launch["planet"] = ""
@@ -490,7 +490,7 @@ func _launch_pick_planet(pad: Project) -> void:
 	if _launch.is_empty() or _launch["pad"] != pad:
 		_launch = {"pad": pad, "planet": "", "crew": [], "cargo": {}}
 	var items := []
-	for id in Planet.ORDER:
+	for id in Colony.flight_targets(_planet):
 		var d := Planet.data(id)
 		var ok := Colony.rocket_reaches(pad.rocket, id)
 		var col := universe.entry(id)
@@ -581,7 +581,8 @@ func _launch_cargo_spec() -> Dictionary:
 		total += int(_launch["cargo"][k])
 	return {"title": "Груз: %d из %d" % [total, RoomType.SHIP_HOLD],
 		"subtitle": "экипаж %d · на %s" % [_launch["crew"].size(), Planet.planet_name(_launch["planet"])],
-		"rows": [{"type": "text", "text": "Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}
+		"rows": [{"type": "text", "text": "Домой: корабль сядет рядом с колонией на Земле, гаврики и груз — в нём." if _launch["planet"] == "earth" else
+			"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}
 
 
 func _do_launch() -> void:
@@ -1442,8 +1443,14 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
 	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
 		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
-	if p.bonus() > 1.0:
-		rows.append({"type": "text", "text": "%s — супер-постройка: %s" % [Project.MATERIALS[p.material][0], BuildInfo.super_text(p.kind, p.material)]})
+	if Project.SUPER.has(p.material):
+		var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
+		if not st.is_empty():
+			rows.append({"type": "text", "text": "%s — супер-постройка: %s" % [Project.MATERIALS[p.material][0], st]})
+		elif p.kind == Project.Kind.ROOM:
+			var need: String = RoomType.SUPER_MAT.get(p.purpose, "")
+			rows.append({"type": "text", "text": "%s подходит для: %s.%s" % [Project.MATERIALS[p.material][0], BuildInfo.super_purposes(p.material),
+				(" Для «%s» нужно %s." % [RoomType.purpose_name(p.purpose), Project.MATERIALS[need][0].to_lower()]) if not need.is_empty() else ""]})
 	var wall: String = _wall_choice.get(p.id, p.material)
 	if p.phase == Project.Phase.DONE and wall != p.material:
 		var wc := RoomType.material_cost(p, wall)
@@ -2199,7 +2206,7 @@ func _pending_spec() -> Dictionary:
 	var cost := tp.cost()
 	if _pending_material == "drill_lift":
 		# Бур и кабина грузового лифта над ним.
-		cost = Project.drill_cost(r).duplicate()
+		cost = Project.drill_cost(r, hud.tool_material(Hud.Mode.DRILL_LIFT)).duplicate()
 		var lc := Project.lift_cost(Rect2i(0, 0, 3, 2), true)
 		for k in lc:
 			cost[k] = int(cost.get(k, 0)) + int(lc[k])
@@ -2268,8 +2275,16 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
 	elif not colony.can_reach(r):
 		rows.append({"type": "warning", "text": "Гаврики не могут сюда дойти — стройка не начнётся."})
-	if tp.bonus() > 1.0:
-		rows.append({"type": "text", "text": "Супер-постройка: %s" % BuildInfo.super_text(tp.kind, tp.material)})
+	if kind == Project.Kind.ROOM:
+		tp.purpose = hud.room_purpose()
+	if Project.SUPER.has(tp.material):
+		var st := BuildInfo.super_text(tp.kind, tp.material, tp.purpose)
+		if not st.is_empty():
+			rows.append({"type": "text", "text": "Супер-постройка: %s" % st})
+		elif kind == Project.Kind.ROOM:
+			var need: String = RoomType.SUPER_MAT.get(tp.purpose, "")
+			rows.append({"type": "warning" if tp.purpose > 0 else "text", "text": "%s подходит для: %s.%s" % [Project.MATERIALS[tp.material][0], BuildInfo.super_purposes(tp.material),
+				(" Для «%s» — %s." % [RoomType.purpose_name(tp.purpose), Project.MATERIALS[need][0].to_lower()] if not need.is_empty() else " Этому назначению супер-материал не нужен.") if tp.purpose > 0 else ""]})
 	var title := "%s %d×%d" % [("Грузовой лифт" if tp.cargo else "Лифт") if kind == Project.Kind.LIFT
 		else Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
@@ -2351,7 +2366,7 @@ func _confirm_pending() -> bool:
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		return false
-	var p := colony.create_drill_lift(_pending, _pending_workers, _dl_dir) if drill_lift \
+	var p := colony.create_drill_lift(_pending, _pending_workers, _dl_dir, hud.tool_material(Hud.Mode.DRILL_LIFT)) if drill_lift \
 		else colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()
@@ -2445,7 +2460,7 @@ func _update_status() -> void:
 	hud.set_room_materials(colony.available_materials())
 	hud.set_tool_materials({Hud.Mode.TUNNEL: colony.materials_for(Project.Kind.TUNNEL), Hud.Mode.MINE: colony.materials_for(Project.Kind.MINE),
 		Hud.Mode.LIFT: colony.materials_for(Project.Kind.LIFT), Hud.Mode.CARGO_LIFT: colony.materials_for(Project.Kind.LIFT),
-		Hud.Mode.DRILL: colony.materials_for(Project.Kind.DRILL)})
+		Hud.Mode.DRILL: colony.materials_for(Project.Kind.DRILL), Hud.Mode.DRILL_LIFT: colony.materials_for(Project.Kind.DRILL)})
 	var space := universe.worlds.size() > 1 or not universe.flights.is_empty()
 	for e in universe.worlds:
 		space = space or (e["colony"] as Colony).research.has("rocketry")

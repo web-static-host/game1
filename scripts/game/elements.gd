@@ -422,14 +422,25 @@ func _spring(c: Vector2i) -> void:
 
 ## Насосы откачивают воду: по клетке с поверхности ближайшего затопления («Дренаж» — по две).
 func _pumps() -> void:
+	_pump_n += 1
 	for i in (2 if colony.research.has("drainage") else 1):
-		_pump_once()
+		# Серебряный насос (×1,5) качает лишний раз через раз.
+		for k in 2:
+			_pump_once(k)
 
 
-func _pump_once() -> void:
+var _pump_n := 0
+
+
+## k — проход: 0 — все насосы, 1 — ещё раз серебряные (через раз — для ×1,5).
+func _pump_once(k := 0) -> void:
 	for p in colony.rooms_of(RoomType.PUMP):
 		if p.paused:
 			continue
+		if k > 0:
+			var extra := p.bonus() - 1.0
+			if extra <= 0.0 or (extra < 1.0 and _pump_n % roundi(1.0 / extra) != 0):
+				continue
 		# Воды вокруг не было — смотрим снова не сразу: обзор зоны (до 81×81 клеток) дорогой.
 		if float(_pump_dry.get(p.id, 0.0)) > colony.game_time:
 			continue
@@ -600,13 +611,14 @@ func _gas_tick() -> void:
 			continue
 		# Бак полон — газ всё равно откачивают (выработки чистые), лишний выпускают наружу.
 		var dr := RoomType.effect_radius(p)
-		zones.append([Rect2i(p.rect.get_center() - Vector2i(dr, dr), Vector2i(dr * 2 + 1, dr * 2 + 1)), colony.room_free(p, "methane") > 0])
+		zones.append([Rect2i(p.rect.get_center() - Vector2i(dr, dr), Vector2i(dr * 2 + 1, dr * 2 + 1)), colony.room_free(p, "methane") > 0,
+			minf(0.95, DEGAS_TAKE * p.bonus())])
 	if not zones.is_empty():
 		var gain := 2.0 if colony.research.has("gas_collector") else 1.0
 		for c: Vector2i in next:
 			for z in zones:
 				if (z[0] as Rect2i).has_point(c):
-					var take: float = next[c] * DEGAS_TAKE
+					var take: float = next[c] * float(z[2])
 					next[c] -= take
 					# «Газосборник» — вдвое больше метана с того же газа.
 					if z[1]:
@@ -785,7 +797,7 @@ func _temperature(c: Vector2i) -> float:
 		if absi(c.x - center.x) <= vr and absi(c.y - center.y) <= vr:
 			# Вентиляция сбивает жару, но не ниже VENT_MIN_TEMP (раньше на Венере с «Климат-контролем»
 			# в недрах уходило в минус, и фермы мёрзли).
-			var cool := VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("climate") else 1.0)
+			var cool := VENT_COOLING * (1.0 + colony.power_ratio if colony.powered() else 1.0) * (2.0 if colony.research.has("climate") else 1.0) * p.bonus()
 			t = maxf(t - cool, minf(t, VENT_MIN_TEMP))
 			break
 	return t

@@ -689,7 +689,12 @@ func _show_room_strip(on: bool) -> void:
 	gap.custom_minimum_size = Vector2(14, 0)
 	_room_strip.add_child(gap)
 	var mats := ButtonGroup.new()
-	for m in _room_mats:
+	# Супер-материал — только тот, что подходит выбранному назначению.
+	var shown := _room_mats.filter(func(m: String) -> bool:
+		return not Project.SUPER.has(m) or _room_purpose <= 0 or RoomType.SUPER_MAT.get(_room_purpose, "") == m)
+	if not shown.has(_room_mat):
+		_room_mat = "wood"
+	for m in shown:
 		var b := IconButton.make("", Project.MATERIALS[m][0], 96, 72)
 		b.res_key = m
 		b.toggle_mode = true

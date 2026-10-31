@@ -197,11 +197,43 @@ static func purpose_hint(t: int) -> String:
 static func beds(p: Project) -> int:
 	if p.purpose == SHIP:
 		return SHIP_BEDS
-	return maxi(1, usable_width(p) / 2)
+	# Золотая спальня — просторная: кроватей вдвое больше.
+	return maxi(1, roundi(usable_width(p) / 2 * p.bonus()))
 
 
 static func farm_slots(p: Project) -> int:
 	return maxi(1, usable_width(p) / 2)
+
+
+## Какой супер-материал подходит назначению — только из него комната работает лучше:
+## серебро — электрика (генераторы, лаборатория, насос, вентиляция, дегазация, нефтекачалка),
+## золото — жильё, еда и хранение, алмаз — резка и обработка.
+const SUPER_MAT := {
+	GENERATOR: "silver", GAS_GEN: "silver", DIESEL_GEN: "silver", LAB: "silver", PUMP: "silver",
+	VENT: "silver", DEGAS: "silver", OIL_PUMP: "silver",
+	HOME: "gold", DINING: "gold", FARM: "gold", STORAGE: "gold", GRANARY: "gold", OIL_TANK: "gold", LAUNCHPAD: "gold",
+	FORGE: "diamond", KILN: "diamond", REFINERY: "diamond", ENRICHMENT: "diamond",
+}
+## Что даёт супер-материал назначению (для описаний).
+const SUPER_EFFECT := {
+	GENERATOR: "энергии ×%s", GAS_GEN: "энергии ×%s", DIESEL_GEN: "энергии ×%s", LAB: "наука ×%s",
+	PUMP: "откачка ×%s", VENT: "охлаждение ×%s", DEGAS: "сбор метана ×%s", OIL_PUMP: "добыча нефти ×%s",
+	HOME: "кроватей ×%s", DINING: "еда сытнее ×%s", FARM: "урожай ×%s", STORAGE: "вместимость ×%s",
+	GRANARY: "вместимость ×%s", OIL_TANK: "вместимость ×%s", LAUNCHPAD: "ракету собирают ×%s быстрее",
+	FORGE: "плавка ×%s", KILN: "обжиг ×%s", REFINERY: "перегонка ×%s", ENRICHMENT: "обогащение ×%s",
+}
+
+
+## Супер-материал, из которого постройка работает лучше ("" — никакой).
+static func super_material(p: Project) -> String:
+	match p.kind:
+		Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.DRILL:
+			return "diamond"
+		Project.Kind.LIFT:
+			return "silver"
+		Project.Kind.ROOM:
+			return SUPER_MAT.get(p.purpose, "")
+	return ""
 
 
 ## Из чего мебель и лестницы: у деревянной комнаты — дерево, у остальных — из каркаса

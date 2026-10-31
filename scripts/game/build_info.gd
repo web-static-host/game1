@@ -5,11 +5,11 @@ class_name BuildInfo
 const TOOLS := {
 	"tunnel": ["Тоннель",
 		"Куда: вниз от поверхности или от готовой выработки — проведите рамку. Вертикальный — с лестницей.",
-		"Как: гаврики копают по срезам и ставят крепь. Материал выбирают внизу: «Дерево» — дерево, а нет его — железо; камень, кирпич, железо — без дерева (железа на крепь вдвое меньше); серебро, золото и алмаз (после науки) — копают и крепят в 1,5/2/3 раза быстрее. Добытое падает на месте, его уносят на склад.",
+		"Как: гаврики копают по срезам и ставят крепь. Материал выбирают внизу: «Дерево» — дерево, а нет его — железо; камень, кирпич, железо — без дерева (железа на крепь вдвое меньше); алмаз (после «Алмазного инструмента») — копают и крепят втрое быстрее. Добытое падает на месте, его уносят на склад.",
 		"Рабочие: строители, без них — свободные."],
 	"mine": ["Шахта",
 		"Куда: вбок от тоннеля или другой выработки, всегда 3 м высотой.",
-		"Как: шахтёры копают вдоль, ставят крепь — из выбранного внизу материала, как у тоннеля (супер-шахта из серебра, золота, алмаза — копают в 1,5/2/3 раза быстрее). Внутри можно ставить комнаты и лифты.",
+		"Как: шахтёры копают вдоль, ставят крепь — из выбранного внизу материала, как у тоннеля (алмазная — копают втрое быстрее). Внутри можно ставить комнаты и лифты.",
 		"Рабочие: шахтёры, без них — строители и свободные."],
 	"bridge": ["Мост и пристань",
 		"Куда: над озером, от берега. Пристань — короткий настил у берега.",
@@ -102,13 +102,17 @@ const ROOMS := {
 }
 
 
-## Что даёт постройка вида kind из супер-материала mat.
-static func super_text(kind: int, mat: String) -> String:
-	var b := Project.bonus_of(mat)
-	var x := ("%.1f" % b).trim_suffix(".0").replace(".", ",")
+## Что даёт супер-материал mat постройке вида kind с назначением purpose ("" — ничего не даёт).
+static func super_text(kind: int, mat: String, purpose := 0) -> String:
+	var x := ("%.1f" % Project.bonus_of(mat)).trim_suffix(".0").replace(".", ",")
+	var tmp := Project.new()
+	tmp.kind = kind
+	tmp.purpose = purpose
+	if RoomType.super_material(tmp) != mat:
+		return ""
 	match kind:
 		Project.Kind.ROOM:
-			return "производство, наука и ферма ×%s; склад вмещает ×%s; генератор даёт ×%s энергии" % [x, x, x]
+			return str(RoomType.SUPER_EFFECT.get(purpose, "×%s")) % x
 		Project.Kind.TUNNEL, Project.Kind.MINE:
 			return "копают и крепят ×%s быстрее" % x
 		Project.Kind.LIFT:
@@ -116,6 +120,15 @@ static func super_text(kind: int, mat: String) -> String:
 		Project.Kind.DRILL:
 			return "бурит ×%s быстрее" % x
 	return "×%s" % x
+
+
+## Для каких назначений комнат подходит супер-материал mat (через запятую).
+static func super_purposes(mat: String) -> String:
+	var names: PackedStringArray = []
+	for t in RoomType.SUPER_MAT:
+		if RoomType.SUPER_MAT[t] == mat:
+			names.append(RoomType.purpose_name(t).to_lower())
+	return ", ".join(names)
 
 
 ## [заголовок, строки] карточки; пусто — описания нет.
@@ -129,5 +142,10 @@ static func card(key: String, purpose := 0) -> Array:
 		var r: Array = ROOMS.get(purpose, [])
 		if r.is_empty():
 			return [RoomType.purpose_name(purpose), [RoomType.purpose_hint(purpose)]]
-		return [RoomType.purpose_name(purpose), ["Куда: " + r[0], "Как: " + r[1], r[2]]]
+		var lines := ["Куда: " + r[0], "Как: " + r[1], r[2]]
+		var sm: String = RoomType.SUPER_MAT.get(purpose, "")
+		if not sm.is_empty():
+			lines.append("Супер-материал: %s — %s." % [Project.MATERIALS[sm][0].to_lower(),
+				str(RoomType.SUPER_EFFECT[purpose]) % ("%.1f" % Project.bonus_of(sm)).trim_suffix(".0").replace(".", ",")])
+		return [RoomType.purpose_name(purpose), lines]
 	return []
