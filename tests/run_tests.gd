@@ -5073,18 +5073,47 @@ func test_planet_looks() -> void:
 	check(Mat.name_of(Mat.ICE) == "Лёд" and Mat.resource(Mat.ICE) == "" and Mat.is_diggable(Mat.ICE), "лёд копается и ничего не даёт")
 
 
-## Вентиляция сбивает жару только до +20 °C: в недрах Венеры с «Климат-контролем» не мёрзнут.
+## Вентиляция сбивает жару только до +50 °C: красным нормально, синим (жару не переносят) —
+## смертельно, пока нет «Климат-контроля»; в минус не уходит.
 func test_vent_floor() -> void:
 	var w := WorldData.new(WorldGen.new(33, WorldGen.LATEST, "venus"))
 	var c := Colony.new(w)
 	var vent := _fake_room(c, RoomType.VENT, 40)
-	c.research.done.append("climate")
-	var deep := vent.rect.get_center() + Vector2i(0, 8)
+	var top := Vector2i(vent.rect.get_center().x, w.gen.surface_y(vent.rect.get_center().x) + 1)
+	var far := Vector2i(top.x + 400, w.gen.surface_y(top.x + 400) + 1)
 	c.elements._temp_memo.clear()
-	var t := c.elements._temperature(deep)
-	var hot := Vector2i(deep.x + 400, deep.y)
-	check(t >= Elements.VENT_MIN_TEMP - 0.01 and t <= 30.0 and c.elements._temperature(hot) > 30.0,
-		"вентиляция охлаждает до +20 °C, не в минус (%.1f °C; без неё %.1f °C)" % [t, c.elements._temperature(hot)])
+	var t := c.elements._temperature(top)
+	var t_far := c.elements._temperature(far)
+	check(t >= Elements.VENT_MIN_TEMP - 0.01 and t < t_far - 10.0,
+		"вентиляция у жаркой поверхности охлаждает, но не ниже +50 °C (%.1f °C; без неё %.1f °C)" % [t, t_far])
+	var deep := vent.rect.get_center() + Vector2i(0, 8)
+	check(c.elements._temperature(deep) >= 20.0, "в недрах вентиляция в минус не уводит (%.1f °C)" % c.elements._temperature(deep))
+	# Красный, обычный и синий: синий в зоне вентиляции перегревается, красный — нет.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var red := {}
+	var blue := {}
+	for i in 400:
+		var g := Genetics.founder(rng)
+		var col := Genetics.color_of(g)
+		if Genetics.has(g, "fur") or Genetics.has(g, "albino") or Genetics.has(g, "melanist") or Genetics.has(g, "gills"):
+			continue
+		if red.is_empty() and Genetics._near(col, Genetics.RED) > 0.9:
+			red = g
+		if blue.is_empty() and Genetics._near(col, Genetics.BLUE) > 0.9:
+			blue = g
+	if red.is_empty() or blue.is_empty():
+		check(false, "нашлись красный и синий для проверки")
+		return
+	var ur := c._new_unit(Unit.Sex.MALE, Vector2.ZERO, red)
+	var ub := c._new_unit(Unit.Sex.MALE, Vector2.ZERO, blue)
+	check(c.elements.heat_limit(ur) > t and c.elements.heat_limit(ub) < t,
+		"в зоне вентиляции (+%d °C) красному нормально (до +%d), синему — жарко (до +%d)" % [roundi(t), roundi(c.elements.heat_limit(ur)), roundi(c.elements.heat_limit(ub))])
+	c.research.done.append("climate")
+	c.elements._temp_memo.clear()
+	var tc := c.elements._temperature(top)
+	check(absf(tc - Elements.VENT_MIN_TEMP) < 0.01 and c.elements.heat_limit(ub) >= tc,
+		"с «Климат-контролем» вентиляция дожимает до +50 °C, и синие терпят (до +%d °C)" % roundi(c.elements.heat_limit(ub)))
 
 
 ## Ядовитый газ над Венерой: дегазация, достающая до поверхности, очищает воздух — туда

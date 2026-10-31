@@ -299,6 +299,8 @@ static func stats(g: Dictionary) -> Dictionary:
 		var col := color_of(g)
 		s["heat"] += 0.6 * _near(col, RED)
 		s["cold"] += 0.6 * _near(col, BLUE)
+		# Синие — «холодные»: жару переносят хуже всех (в зоне вентиляции, где красным нормально, гибнут).
+		s["heat"] -= 0.5 * _near(col, BLUE)
 		s["health"] += 0.2 * _near(col, ORANGE)
 		s["stamina"] += 0.25 * _near(col, YELLOW)
 		# Зелёные мало едят и дольше живут без еды.
