@@ -3510,8 +3510,13 @@ func test_super_materials() -> void:
 	colony.research.done.append("diamond_bits")
 	check(colony.materials_for(Project.Kind.DRILL) == ["wood", "diamond"], "после «Алмазного бура» — алмазная коронка")
 	var tm := colony.materials_for(Project.Kind.TUNNEL)
-	check(not tm.has("diamond") and not tm.has("gold") and not tm.has("silver"), "тоннель — без супер-материалов (%s)" % str(tm))
+	check(tm.has("gold") and not tm.has("diamond") and not tm.has("silver"), "тоннель: золото, но не алмаз и серебро (%s)" % str(tm))
 	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").contains("не подходит"), "алмазный тоннель — не по смыслу")
+	check(colony.validate(Project.Kind.TUNNEL, r, "gold").is_empty(), "золотой — можно")
+	colony.inventory = {"gold": 40, "iron": 40, "food": 200}
+	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "gold")
+	check(g != null and colony.bonus_of_id(g.id) == 2.0 and colony.support_key(g) == "gold" and Colony.support_amount(g, "gold") == ceili(g.slice_wood() / 2.0),
+		"золотой тоннель крепят золотом (вдвое меньше, чем дерева), копают ×2")
 	check(Project.bonus_of("silver") == 1.5 and Project.bonus_of("gold") == 2.0 and Project.bonus_of("diamond") == 3.0 and Project.bonus_of("iron") == 1.0, "бонусы ×1,5 / ×2 / ×3")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo:silver") == "silver" and Colony.lift_cargo("cargo:silver") and not Colony.lift_cargo("wood:silver"), "лифт: «грузовой» и материал в одной строке")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo") == "wood" and Colony.build_material(Project.Kind.BRIDGE, "gold") == "wood", "у прочих построек материала нет")

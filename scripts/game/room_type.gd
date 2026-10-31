@@ -229,6 +229,8 @@ static func super_material(p: Project) -> String:
 	match p.kind:
 		Project.Kind.DRILL:
 			return "diamond"
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			return "gold"
 		Project.Kind.LIFT:
 			return "silver"
 		Project.Kind.ROOM:

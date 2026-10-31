@@ -427,14 +427,14 @@ func super_materials() -> Array[String]:
 ## Материалы, из которых можно ставить постройку вида kind (первый — обычный).
 ## Тоннель и шахта — крепь из любого материала стен; лифт и бур — обычные или супер.
 ## Супер-материал — только тот, что постройке подходит: лифту — серебро, буру — алмаз после
-## «Алмазного бура»; тоннелю и шахте — никакой; комнате — любой (подходит по назначению).
+## «Алмазного бура», тоннелю и шахте — золото; комнате — любой (подходит по назначению).
 func materials_for(kind: int) -> Array[String]:
 	var out: Array[String] = ["wood"]
 	match kind:
 		Project.Kind.ROOM:
 			return available_materials()
 		Project.Kind.TUNNEL, Project.Kind.MINE:
-			out = available_materials().filter(func(m: String) -> bool: return not Project.SUPER.has(m))
+			out = available_materials().filter(func(m: String) -> bool: return not Project.SUPER.has(m) or m == "gold")
 		Project.Kind.LIFT:
 			if research.has("silver_works"):
 				out.append("silver")
