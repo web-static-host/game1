@@ -227,7 +227,7 @@ const SUPER_EFFECT := {
 ## Супер-материал, из которого постройка работает лучше ("" — никакой).
 static func super_material(p: Project) -> String:
 	match p.kind:
-		Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.DRILL:
+		Project.Kind.DRILL:
 			return "diamond"
 		Project.Kind.LIFT:
 			return "silver"

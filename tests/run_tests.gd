@@ -3500,8 +3500,8 @@ func test_super_materials() -> void:
 	_start(colony, x)
 	var s := colony.world.gen.surface_y(x)
 	var r := Rect2i(x, s, 1, 6)
-	check(not colony.materials_for(Project.Kind.TUNNEL).has("diamond"), "алмаз недоступен без науки")
-	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").contains("Алмазный инструмент"), "без науки алмазный тоннель не заложить")
+	check(not colony.available_materials().has("diamond"), "алмаз недоступен без науки")
+	check(colony.validate(Project.Kind.ROOM, Rect2i(x + 2, s + 3, 6, 3), "diamond").contains("Алмазный инструмент"), "без науки алмазную комнату не заложить")
 	check(Research.TECHS.has("silver_works") and Research.TECHS.has("gold_works") and Research.TECHS.has("diamond_works"), "три технологии супер-построек")
 	colony.research.done.append_array(["silver_works", "gold_works", "diamond_works"])
 	check(colony.materials_for(Project.Kind.LIFT) == ["wood", "silver"], "лифт: обычный или серебряный — электрика (%s)" % str(colony.materials_for(Project.Kind.LIFT)))
@@ -3510,9 +3510,8 @@ func test_super_materials() -> void:
 	colony.research.done.append("diamond_bits")
 	check(colony.materials_for(Project.Kind.DRILL) == ["wood", "diamond"], "после «Алмазного бура» — алмазная коронка")
 	var tm := colony.materials_for(Project.Kind.TUNNEL)
-	check(tm.has("diamond") and not tm.has("gold") and not tm.has("silver"), "тоннель: алмаз, но не золото и серебро (%s)" % str(tm))
-	check(colony.validate(Project.Kind.TUNNEL, r, "gold").contains("не подходит"), "золотой тоннель — не по смыслу")
-	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").is_empty(), "алмазный — можно")
+	check(not tm.has("diamond") and not tm.has("gold") and not tm.has("silver"), "тоннель — без супер-материалов (%s)" % str(tm))
+	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").contains("не подходит"), "алмазный тоннель — не по смыслу")
 	check(Project.bonus_of("silver") == 1.5 and Project.bonus_of("gold") == 2.0 and Project.bonus_of("diamond") == 3.0 and Project.bonus_of("iron") == 1.0, "бонусы ×1,5 / ×2 / ×3")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo:silver") == "silver" and Colony.lift_cargo("cargo:silver") and not Colony.lift_cargo("wood:silver"), "лифт: «грузовой» и материал в одной строке")
 	check(Colony.build_material(Project.Kind.LIFT, "cargo") == "wood" and Colony.build_material(Project.Kind.BRIDGE, "gold") == "wood", "у прочих построек материала нет")
@@ -3565,10 +3564,6 @@ func test_super_materials() -> void:
 	check(cap > 0 and colony.room_cap(store, "stone") == cap * 2, "золотой склад — вдвое больше (%d → %d)" % [cap, colony.room_cap(store, "stone")])
 	store.material = "diamond"
 	check(colony.room_cap(store, "stone") == cap, "алмазный склад — как обычный")
-	# Копка в алмазном тоннеле — втрое быстрее.
-	colony.inventory = {"diamond": 40, "iron": 40, "food": 200}
-	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "diamond")
-	check(g != null and colony.bonus_of_id(g.id) == 3.0 and colony.support_key(g) == "diamond", "алмазный тоннель крепят алмазом, копают ×3")
 	check(BuildInfo.super_text(Project.Kind.ROOM, "silver", RoomType.LAB).contains("×1,5") and BuildInfo.super_text(Project.Kind.ROOM, "gold", RoomType.LAB).is_empty(), "описание бонуса")
 	check(BuildInfo.super_purposes("gold").contains(RoomType.purpose_name(RoomType.HOME).to_lower()), "золото — для спален")
 
