@@ -5112,8 +5112,8 @@ func test_vent_floor() -> void:
 	c.research.done.append("climate")
 	c.elements._temp_memo.clear()
 	var tc := c.elements._temperature(top)
-	check(tc >= c.elements.vent_floor() - 0.01 and c.elements.heat_limit(ub) < tc and c.elements.heat_limit(ur) > tc,
-		"с «Климат-контролем» в зоне вентиляции (+%d °C) красному нормально, синему — всё равно смертельно (до +%d)" % [roundi(tc), roundi(c.elements.heat_limit(ub))])
+	check(absf(tc - Elements.VENT_MIN_TEMP) < 0.01 and c.elements.heat_limit(ub) >= tc,
+		"с «Климат-контролем» вентиляция дожимает до +50 °C, и синие терпят (до +%d °C)" % roundi(c.elements.heat_limit(ub)))
 
 
 ## Ядовитый газ над Венерой: дегазация, достающая до поверхности, очищает воздух — туда
