@@ -511,19 +511,15 @@ func _launch_crew() -> void:
 	_info_target = []
 	var crew: Array = _launch["crew"]
 	var planet: String = _launch["planet"]
-	var hot: bool = float(Planet.data(planet)["under"]) > 30.0
 	var items := []
-	var stat_key := "heat" if hot else "cold"
-	# Сначала — самые подходящие планете: супер-гаврики (стихии им не страшны), потом самые
-	# стойкие к жаре (холоду) — хоть и заняты делом (это видно в строке).
+	# Сначала — у кого больше шанс выжить на этой планете (хоть и заняты делом — это видно в строке).
 	var pool := colony.units.filter(func(u: Unit) -> bool: return not u.child)
-	pool.sort_custom(func(a: Unit, b: Unit) -> bool:
-		if a.invulnerable() != b.invulnerable():
-			return a.invulnerable()
-		return a.stat(stat_key) > b.stat(stat_key))
+	var chances := {}
+	for u: Unit in pool:
+		chances[u] = colony.survival_chance(u, planet)
+	pool.sort_custom(func(a: Unit, b: Unit) -> bool: return chances[a] > chances[b])
 	for u: Unit in pool:
 		var on := crew.has(u)
-		var stat := "жара" if hot else "холод"
 		var busy := u.workplace != 0 or u.profession != Unit.Prof.ANY \
 			or (u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL and u.task != Unit.Task.SLEEP and u.task != Unit.Task.EAT)
 		var busy_text := ""
@@ -534,11 +530,10 @@ func _launch_crew() -> void:
 			if u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL:
 				what.append(Unit.TASK_NAMES[u.task])
 			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
-		# Подходит ли планете — и шанс выжить; взять можно любого.
-		var chance := colony.survival_chance(u, planet)
-		var fit := "подходит" if chance >= 80 else ("подходит с трудом" if chance >= 50 else "НЕ ПОДХОДИТ")
+		# Шанс выжить; взять можно любого.
+		var chance: int = chances[u]
 		items.append({"looks": Genetics.looks(u.genome), "name": _name_sex(u),
-			"info": "%s, шанс выжить ~%d%% · %s · %s %d%%%s%s" % [fit, chance, _family_text(u), stat, roundi(u.stat(stat_key) * 100),
+			"info": "шанс выжить %d%% · %s%s%s" % [chance, _family_text(u),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
 				if crew.has(u):
@@ -551,7 +546,7 @@ func _launch_crew() -> void:
 				_launch_crew()})
 	hud.show_panel({"title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
 		"subtitle": Planet.data(planet)["desc"],
-		"controls": [{"type": "people", "label": "Кто летит (важно: %s):" % ("стойкость к жаре" if hot else "стойкость к холоду"),
+		"controls": [{"type": "people", "label": "Кто летит (сверху — у кого больше шанс выжить):",
 			"items": items, "empty": "Нет взрослых гавриков."}],
 		"actions": [["Дальше: груз", _launch_cargo, "primary"], ["Назад", func() -> void: _launch_pick_planet(_launch["pad"])]]})
 
