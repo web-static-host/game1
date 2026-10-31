@@ -80,6 +80,8 @@ func _initialize() -> void:
 	test_hearth_on_demand()
 	test_forge_ores()
 	test_starving_count()
+	test_materials_no_wood()
+	test_super_materials()
 	test_uranium()
 	test_ladder_straight()
 	test_planet_balance()
@@ -3428,6 +3430,92 @@ func test_hearth_on_demand() -> void:
 
 
 ## Из шахты — руда; в кузнице 1 руда — 2 металла. Что плавить — по нормам кузницы.
+func test_materials_no_wood() -> void:
+	var r := Rect2i(0, 0, 6, 3)
+	var stone := Project.cost_for(Project.Kind.ROOM, r, "stone")
+	check(not stone.has("wood") and stone.get("stone", 0) == 12, "каменная комната — без дерева: балки тоже каменные (%s)" % str(stone))
+	var iron := Project.cost_for(Project.Kind.ROOM, r, "iron")
+	check(not iron.has("wood") and iron.get("iron", 0) == 12, "железная комната — без дерева (%s)" % str(iron))
+	check(Project.cost_for(Project.Kind.ROOM, r, "wood") == {"wood": 12}, "деревянная — как раньше")
+	var gold := Project.cost_for(Project.Kind.ROOM, r, "gold")
+	check(gold == {"iron": 3, "gold": 9}, "золотая: стены из золота, каркас железный (%s)" % str(gold))
+	# Мебель и лестница — из каркаса комнаты, по выбору — из дерева.
+	var room := Project.new()
+	room.kind = Project.Kind.ROOM
+	room.rect = r
+	room.material = "brick"
+	var home := RoomType.equip_cost(RoomType.HOME, room)
+	check(not home.has("wood") and home.get("brick", 0) > 0, "кирпичная спальня — кровати без дерева (%s)" % str(home))
+	check(not RoomType.ladder_cost(room).has("wood"), "лестница в кирпичной комнате — без дерева")
+	room.furnish_wood = true
+	check(RoomType.equip_cost(RoomType.HOME, room).has("wood"), "выбрали «Мебель: дерево» — из дерева")
+	room.furnish_wood = false
+	room.material = "diamond"
+	check(RoomType.furnish_material(room) == "iron", "мебель супер-комнаты — железная")
+	var dict := room.to_dict()
+	room.furnish_wood = true
+	check(Project.from_dict(room.to_dict()).furnish_wood and Project.from_dict(dict).material == "diamond", "выбор мебели и материал сохраняются")
+	# Железный тоннель: крепь только из железа, вдвое меньше, дерево не тратится.
+	var colony := _new_colony(31)
+	var x := _find_solid_column(colony.world)
+	_start(colony, x)
+	colony.research.done.append("steel_frame")
+	colony.inventory = {"iron": 80, "food": 200}
+	var s := colony.world.gen.surface_y(x)
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 8), -1, "iron")
+	check(t != null and t.material == "iron", "тоннель можно заложить железным")
+	if t == null:
+		return
+	check(colony.support_key(t) == "iron" and Colony.support_amount(t, "iron") == ceili(t.slice_wood() / 2.0), "крепь железного тоннеля — железо, вдвое меньше")
+	check(not colony.required(t).has("wood"), "железному тоннелю дерево не нужно (%s)" % str(colony.required(t)))
+	colony.advance_offline(20000.0)
+	check(t.phase == Project.Phase.DONE, "железный тоннель достроен без дерева (%s)" % t.phase_name())
+	check(colony.wear_material(t) == "iron", "железный тоннель изнашивается как железо")
+	check(Colony.ext_material(t) == "wood:iron" and Colony.build_material(Project.Kind.TUNNEL, Colony.ext_material(t)) == "iron", "продолжение — тоже железное")
+	var stone_t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x + 3, s, 1, 6), -1, "stone")
+	check(stone_t == null or colony.support_key(stone_t) == "stone", "каменный тоннель крепят камнем")
+
+
+func test_super_materials() -> void:
+	var colony := _new_colony(32)
+	var x := _find_solid_column(colony.world)
+	_start(colony, x)
+	var s := colony.world.gen.surface_y(x)
+	var r := Rect2i(x, s, 1, 6)
+	check(not colony.materials_for(Project.Kind.TUNNEL).has("gold"), "золото недоступно без науки")
+	check(colony.validate(Project.Kind.TUNNEL, r, "gold").contains("Золотые постройки"), "без науки золотой тоннель не заложить")
+	check(Research.TECHS.has("silver_works") and Research.TECHS.has("gold_works") and Research.TECHS.has("diamond_works"), "три технологии супер-построек")
+	colony.research.done.append_array(["silver_works", "gold_works", "diamond_works"])
+	check(colony.materials_for(Project.Kind.LIFT) == ["wood", "silver", "gold", "diamond"], "лифт: обычный или супер (%s)" % str(colony.materials_for(Project.Kind.LIFT)))
+	check(colony.validate(Project.Kind.TUNNEL, r, "gold").is_empty(), "после науки — можно")
+	check(Project.bonus_of("silver") == 1.5 and Project.bonus_of("gold") == 2.0 and Project.bonus_of("diamond") == 3.0 and Project.bonus_of("iron") == 1.0, "бонусы ×1,5 / ×2 / ×3")
+	check(Colony.build_material(Project.Kind.LIFT, "cargo:gold") == "gold" and Colony.lift_cargo("cargo:gold") and not Colony.lift_cargo("wood:gold"), "лифт: «грузовой» и материал в одной строке")
+	check(Colony.build_material(Project.Kind.LIFT, "cargo") == "wood" and Colony.build_material(Project.Kind.BRIDGE, "gold") == "wood", "у прочих построек материала нет")
+	# Лифт ездит быстрее, склад вмещает больше, бур — дороже.
+	var lift := Project.new()
+	lift.kind = Project.Kind.LIFT
+	lift.rect = Rect2i(0, 0, 2, 10)
+	colony.power_ratio = 1.0
+	var base := colony.lift_speed(lift)
+	lift.material = "gold"
+	check(is_equal_approx(colony.lift_speed(lift), base * 2.0), "золотой лифт — вдвое быстрее")
+	check(lift.cost().get("gold", 0) > 0 and Project.lift_cost(lift.rect, false).get("gold", 0) == 0, "супер-лифт стоит своего материала")
+	check(Project.drill_cost(Rect2i(), "diamond").get("diamond", 0) == 6, "алмазный бур — 6 алмазов")
+	var store := Project.new()
+	store.kind = Project.Kind.ROOM
+	store.rect = Rect2i(0, 0, 6, 3)
+	store.purpose = RoomType.STORAGE
+	store.phase = Project.Phase.DONE
+	var cap := colony.room_cap(store, "stone")
+	store.material = "diamond"
+	check(cap > 0 and colony.room_cap(store, "stone") == cap * 3, "алмазный склад — втрое больше (%d → %d)" % [cap, colony.room_cap(store, "stone")])
+	# Копка в золотом тоннеле — вдвое быстрее.
+	colony.inventory = {"gold": 40, "iron": 40, "food": 200}
+	var g := colony.create_project(Project.Kind.TUNNEL, r, -1, "gold")
+	check(g != null and colony.bonus_of_id(g.id) == 2.0 and colony.support_key(g) == "gold", "золотой тоннель крепят золотом, копают ×2")
+	check(BuildInfo.super_text(Project.Kind.ROOM, "silver").contains("×1,5"), "описание бонуса")
+
+
 func test_starving_count() -> void:
 	var res := _colony_with_room(24)
 	var colony: Colony = res[0]

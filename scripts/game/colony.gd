@@ -111,9 +111,9 @@ const COLD := 0.0
 ## Зимой с пристани рыба ловится вдвое дольше, с берега и мостиков — никак (лёд).
 const WINTER_FISH_SLOWDOWN := 2.0
 ## Сколько лет служит постройка до полного износа (на поверхности).
-const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "iron": 60.0}
+const WEAR_YEARS := {"wood": 20.0, "stone": 100.0, "brick": 70.0, "iron": 60.0, "silver": 80.0, "gold": 120.0, "diamond": 200.0}
 ## Под землёй сырость: дерево и металл изнашиваются быстрее, камню всё равно.
-const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "iron": 0.6}
+const WEAR_UNDERGROUND := {"wood": 0.6, "stone": 1.0, "brick": 0.9, "iron": 0.6, "silver": 0.9, "gold": 1.0, "diamond": 1.0}
 ## Предупреждения об износе.
 const WEAR_WARN := [0.7, 0.9]
 ## Ресурсы, которые гаврики склада добывают сами: ресурс -> объект поверхности.
@@ -402,7 +402,7 @@ func unit_at(p: Vector2) -> Unit:
 	return best
 
 
-## Материалы стен, доступные колонии: дерево сразу, остальное — когда добыто.
+## Материалы стен, доступные колонии: дерево сразу, остальное — когда добыто или изучено.
 func available_materials() -> Array[String]:
 	var out: Array[String] = ["wood"]
 	if known_resources.has("stone"):
@@ -411,7 +411,48 @@ func available_materials() -> Array[String]:
 		out.append("brick")
 	if research.has("steel_frame"):
 		out.append("iron")
+	out.append_array(super_materials())
 	return out
+
+
+## Изученные супер-материалы (серебро, золото, алмаз).
+func super_materials() -> Array[String]:
+	var out: Array[String] = []
+	for m in Project.SUPER_TECH:
+		if research.has(Project.SUPER_TECH[m]):
+			out.append(m)
+	return out
+
+
+## Материалы, из которых можно ставить постройку вида kind (первый — обычный).
+## Тоннель и шахта — крепь из любого материала стен; лифт и бур — обычные или супер.
+func materials_for(kind: int) -> Array[String]:
+	match kind:
+		Project.Kind.ROOM, Project.Kind.TUNNEL, Project.Kind.MINE:
+			return available_materials()
+		Project.Kind.LIFT, Project.Kind.DRILL:
+			var out: Array[String] = ["wood"]
+			out.append_array(super_materials())
+			return out
+	var plain: Array[String] = ["wood"]
+	return plain
+
+
+## Грузовой ли лифт по строке материала стройки.
+static func lift_cargo(material: String) -> bool:
+	return material.get_slice(":", 0) in ["cargo", "cargo_drill"]
+
+
+## Материал новой стройки: у лифта material — ещё и «грузовой ли» ("cargo", "cargo_drill",
+## «cargo:gold» — грузовой золотой); у остального — ключ материала.
+static func build_material(kind: int, material: String) -> String:
+	var m := material.get_slice(":", 1) if material.contains(":") else material
+	match kind:
+		Project.Kind.ROOM, Project.Kind.TUNNEL, Project.Kind.MINE:
+			return m if Project.MATERIALS.has(m) else "wood"
+		Project.Kind.LIFT, Project.Kind.DRILL:
+			return m if Project.SUPER.has(m) else "wood"
+	return "wood"
 
 
 ## Сколько гавриков могут одновременно пройти тоннелем (по его ширине).
@@ -425,6 +466,10 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 	var err := Project.size_error(kind, r) if check_size else ""
 	if not err.is_empty():
 		return err
+	var bm := build_material(kind, material)
+	if bm != "wood" and not materials_for(kind).has(bm):
+		var tech: String = Project.SUPER_TECH.get(bm, "")
+		return "Сначала изучите «%s»" % Research.tech_name(tech) if not tech.is_empty() else "%s пока недоступен" % Project.MATERIALS[bm][0]
 	for y in range(r.position.y, r.end.y):
 		for x in range(r.position.x, r.end.x):
 			var c := Vector2i(x, y)
@@ -446,24 +491,24 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 	if kind == Project.Kind.BRIDGE or kind == Project.Kind.PIER:
 		return _water_structure_error(kind, r)
 	if kind == Project.Kind.LIFT:
-		var is_cargo := material == "cargo" or material == "cargo_drill"
+		var is_cargo := lift_cargo(material)
 		if not research.has("cargo_lifts" if is_cargo else "lifts"):
 			return "Сначала изучите «%s»" % Research.tech_name("cargo_lifts" if is_cargo else "lifts")
 		# Под бур-лифтом свой лифт не нужен: шахта его лифта сама дорастает за буром.
-		if material != "cargo_drill":
+		if material.get_slice(":", 0) != "cargo_drill":
 			for d in projects:
 				if d.kind == Project.Kind.DRILL and d.link_id != 0 and d.drill_lift_dir() == Vector2i.DOWN and d.rect.position.x < r.end.x \
 						and d.rect.end.x > r.position.x and r.end.y > d.rect.end.y and r.position.y >= d.rect.position.y:
 					return "Под бур-лифтом лифт не нужен: прикажите бур-лифту бурить вниз — шахта его лифта дорастёт сама"
 		# Лифт бур-лифта сечением всегда 3 м, вдоль — сколько надо (2×3 у бокового).
-		if material != "cargo_drill" and r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
+		if material.get_slice(":", 0) != "cargo_drill" and r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
 		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
 	if kind == Project.Kind.PROBE and not research.has("geoprobe"):
 		return "Сначала изучите «%s»" % Research.tech_name("geoprobe")
 	# Лифт бур-лифта стоит над буром — и над землёй тоже.
-	if is_passage(kind) and kind != Project.Kind.DRILL and kind != Project.Kind.PROBE and material != "cargo_drill":
+	if is_passage(kind) and kind != Project.Kind.DRILL and kind != Project.Kind.PROBE and material.get_slice(":", 0) != "cargo_drill":
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
@@ -1026,8 +1071,8 @@ func create_project(kind: int, r: Rect2i, workers := -1, material := "wood", che
 	next_project_id += 1
 	p.kind = kind
 	p.rect = r
-	p.material = material if kind == Project.Kind.ROOM else "wood"
-	p.cargo = kind == Project.Kind.LIFT and (material == "cargo" or material == "cargo_drill")
+	p.material = build_material(kind, material)
+	p.cargo = kind == Project.Kind.LIFT and lift_cargo(material)
 	p.workers = workers if workers > 0 else Project.recommended_workers(kind, r, adults())
 	p.ladder = kind == Project.Kind.ROOM and _floor_below_surface(r)
 	p.support_wood = support_needed(kind, r)
@@ -1265,9 +1310,32 @@ func _return_delivered(p: Project) -> void:
 
 # --- Доставка материалов ------------------------------------------------------------
 
+## Из чего обязательно крепят стройку ("" — как выйдет: дерево, а нет его — железо).
+## Комната крепится каркасом своего материала, тоннель и шахта — выбранным материалом.
+static func support_fixed(p: Project) -> String:
+	if p.material == "wood" or not Project.MATERIALS.has(p.material):
+		return ""
+	match p.kind:
+		Project.Kind.ROOM:
+			return Project.frame_of(p.material)
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			return p.material
+	return ""
+
+
+## Чем можно платить за крепь среза (по порядку предпочтения).
+static func support_keys(p: Project) -> Array:
+	var f := support_fixed(p)
+	return ["wood", "iron"] if f.is_empty() else [f]
+
+
 ## Крепь — из дерева, а нет его — из железа: оно прочнее, на срез его вдвое меньше.
 ## Чем крепят следующий срез: что уже принесли, иначе дерево, если его хватает, иначе железо.
+## У не деревянной комнаты, тоннеля и шахты — всегда из их материала.
 func support_key(p: Project) -> String:
+	var fixed := support_fixed(p)
+	if not fixed.is_empty():
+		return fixed
 	var wood := p.slice_wood()
 	var iron := support_amount(p, "iron")
 	if int(p.delivered.get("wood", 0)) >= wood:
@@ -1284,7 +1352,7 @@ func support_key(p: Project) -> String:
 
 ## Сколько материала key на крепь одного среза.
 static func support_amount(p: Project, key: String) -> int:
-	return ceili(p.slice_wood() / 2.0) if key == "iron" else p.slice_wood()
+	return ceili(p.slice_wood() / 2.0) if Project.half_support(key) else p.slice_wood()
 
 
 ## Сколько дерева ещё уйдёт на крепь незакреплённых срезов (в «деревянных» единицах).
@@ -1310,7 +1378,7 @@ func required(p: Project) -> Dictionary:
 			var sw := support_wood_left(p)
 			if sw > 0:
 				var key := support_key(p)
-				var n := sw if key == "wood" else ceili(sw / 2.0)
+				var n := ceili(float(sw) / p.slice_wood()) * support_amount(p, key)
 				out[key] = out.get(key, 0) + n
 			var plan := plan_cost(p)
 			for k in plan:
@@ -1767,7 +1835,7 @@ func _drills_tick(dt: float) -> void:
 			_hazard_seen[p.id] = hk
 		if on_diesel:
 			p.fuel = maxf(0.0, p.fuel - dt)
-		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed())
+		p.drill_t += dt * (drill_speed(true) if on_diesel else drill_speed()) * p.bonus()
 		var need := DRILL_MOVE_TIME * DRILL_SPEED
 		for c in solid:
 			need = maxf(need, dig_time(c))
@@ -1942,7 +2010,7 @@ func _probes_tick(dt: float) -> void:
 			_end_probe(p, "вышел к поверхности")
 			continue
 		# Как алмазный бур: вдвое быстрее обычного, на энергии.
-		p.drill_t += dt * DRILL_SPEED * dig_bonus() * 2.0 * clampf(power_ratio, 0.0, 1.0)
+		p.drill_t += dt * DRILL_SPEED * dig_bonus() * 2.0 * clampf(power_ratio, 0.0, 1.0) * p.bonus()
 		var need := DRILL_MOVE_TIME * DRILL_SPEED
 		for c in axis:
 			if Mat.is_solid(world.get_mat(c.x, c.y)):
@@ -2108,7 +2176,7 @@ func lift_powered(p: Project) -> bool:
 
 
 func lift_speed(p: Project) -> float:
-	var s := WALK_SPEED * 3.0 * (2.0 if research.has("fast_lifts") else 1.0)
+	var s := WALK_SPEED * 3.0 * (2.0 if research.has("fast_lifts") else 1.0) * p.bonus()
 	return s * clampf(power_ratio, 0.0, 1.0)
 
 
@@ -2794,6 +2862,12 @@ func extension_of(p: Project) -> Project:
 	return null
 
 
+## Строка материала продолжения: тот же вид лифта и тот же материал, что у исходной постройки.
+static func ext_material(p: Project) -> String:
+	var base := "cargo" if p.cargo else "wood"
+	return base if p.material == "wood" else base + ":" + p.material
+
+
 func extend_error(p: Project, dir: Vector2i, n: int) -> String:
 	if not extend_dirs(p).has(dir):
 		return "Эту постройку так не продлить"
@@ -2803,13 +2877,13 @@ func extend_error(p: Project, dir: Vector2i, n: int) -> String:
 		return "Продолжение уже строится"
 	if n < 1 or n > EXTEND_MAX:
 		return "Продлить можно на 1–%d м за раз" % EXTEND_MAX
-	return validate(p.kind, extend_rect(p, dir, n), "cargo" if p.cargo else "wood", false)
+	return validate(p.kind, extend_rect(p, dir, n), ext_material(p), false)
 
 
 func extend_project(p: Project, dir: Vector2i, n: int) -> Project:
 	if not extend_error(p, dir, n).is_empty():
 		return null
-	var q := create_project(p.kind, extend_rect(p, dir, n), p.workers, "cargo" if p.cargo else "wood", false)
+	var q := create_project(p.kind, extend_rect(p, dir, n), p.workers, ext_material(p), false)
 	if q == null:
 		return null
 	q.extends_id = p.id
@@ -3022,7 +3096,7 @@ func _pay_support(p: Project, i: int) -> bool:
 	if p.support_paid and p.support_slice == i:
 		return true
 	var mat := ""
-	for k in ["wood", "iron"]:
+	for k in support_keys(p):
 		if int(p.delivered.get(k, 0)) >= support_amount(p, k):
 			mat = k
 			break
@@ -5495,7 +5569,7 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.DIG:
 			var c := u.target
 			elements.spark(u.cell())
-			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus()
+			dig_progress[c] = dig_progress.get(c, 0.0) + rate * dig_bonus() * bonus_of_id(u.project_id)
 			if dig_progress[c] >= dig_time(c):
 				var p := project_by_id(u.project_id)
 				_drop(u)
@@ -5549,7 +5623,7 @@ func _work(u: Unit, dt: float) -> void:
 				return
 			if cp.purpose == RoomType.ENRICHMENT:
 				irradiate(u)
-			cp.farm_progress += rate * automation_bonus()
+			cp.farm_progress += rate * automation_bonus() * cp.bonus()
 			if cp.farm_progress >= cr[2]:
 				cp.farm_progress = 0.0
 				_craft(cp)
@@ -5557,7 +5631,7 @@ func _work(u: Unit, dt: float) -> void:
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
 		Unit.Task.RESEARCH:
-			_research(rate * automation_bonus())
+			_research(rate * automation_bonus() * bonus_of_id(u.project_id))
 			u.work_t += dt
 			if u.work_t >= FARM_SHIFT:
 				_drop(u)
@@ -5566,7 +5640,7 @@ func _work(u: Unit, dt: float) -> void:
 			if _mark_full(p):
 				_drop(u)
 				return
-			p.farm_progress += rate * farm_bonus()
+			p.farm_progress += rate * farm_bonus() * p.bonus()
 			while p.farm_progress >= RoomType.FARM_CYCLE:
 				p.farm_progress -= RoomType.FARM_CYCLE
 				_produce(p, "food", 1)
@@ -5590,7 +5664,7 @@ func _work(u: Unit, dt: float) -> void:
 				_drop(u)
 		Unit.Task.SUPPORT:
 			var sp := project_by_id(u.project_id)
-			sp.support_progress += rate
+			sp.support_progress += rate * sp.bonus()
 			if sp.support_progress >= sp.slice_work():
 				_finish_support(sp)
 				_continue_own(u)
@@ -6103,7 +6177,7 @@ func _own_project(u: Unit) -> Project:
 		return null
 	var i := slice_to_support(p)
 	if i >= 0 and not (p.support_paid and p.support_slice == i) and remaining_dig(p).is_empty():
-		for k in ["wood", "iron"]:
+		for k in support_keys(p):
 			if int(p.delivered.get(k, 0)) >= support_amount(p, k):
 				return p
 		return null
@@ -7915,8 +7989,10 @@ func gather_source_exists(key: String) -> bool:
 
 # --- Износ и ремонт ------------------------------------------------------------------------
 
+## Из чего постройка изнашивается: комната — стены, тоннель и шахта — крепь, лифт и бур — их
+## супер-материал (обычные — как дерево).
 func wear_material(p: Project) -> String:
-	return p.material if p.kind == Project.Kind.ROOM else "wood"
+	return p.material if WEAR_YEARS.has(p.material) else "wood"
 
 
 func is_underground(p: Project) -> bool:
@@ -8507,6 +8583,12 @@ func powered() -> bool:
 	return research.has("electricity") and power_made > 0
 
 
+## Во сколько раз быстрее работа в постройке с номером id (супер-материал).
+func bonus_of_id(id: int) -> float:
+	var p := project_by_id(id) if id > 0 else null
+	return p.bonus() if p != null else 1.0
+
+
 func farm_bonus() -> float:
 	var k := 1.25 if research.has("mushrooms") else 1.0
 	return k * (1.0 + 0.5 * power_ratio if research.has("hydroponics") and powered() else 1.0)
@@ -8672,7 +8754,7 @@ func _power_tick(dt: float) -> void:
 		if p.farm_progress > 0.0:
 			p.farm_progress -= dt
 			p.burning = true
-			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("mechanics") else 1.0) * (1.5 if diesel else 1.0))
+			power_made += roundi(RoomType.POWER_MAKE * (1.5 if research.has("mechanics") else 1.0) * (1.5 if diesel else 1.0) * p.bonus())
 			if p.blocked.begins_with("Нет топлива") or p.blocked.begins_with("Нет метана") or p.blocked.begins_with("Нет дизеля"):
 				p.blocked = ""
 		elif p.blocked.is_empty():
@@ -8952,6 +9034,9 @@ func advance_offline(dt: float) -> int:
 			var skill := Unit.skill_for(job[1])
 			var rate := u.speed(skill) * OFFLINE_EFFICIENCY * u.need_factor() * u.age_factor() \
 				* work_factor(u, job[1], Vector2i.ZERO)
+			# Супер-постройка: работа в ней быстрее.
+			if job[2] is Project and job[1] in [Unit.Task.DIG, Unit.Task.SUPPORT, Unit.Task.CRAFT, Unit.Task.RESEARCH, Unit.Task.FARM]:
+				rate *= (job[2] as Project).bonus()
 			if jobs.has(key):
 				jobs[key][1] += rate
 			else:
@@ -9350,7 +9435,7 @@ func room_cap(p: Project, key: String) -> int:
 		return 0 if RoomType.BULK.has(key) else RoomType.SHIP_HOLD
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
 		return 0
-	var c := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	var c := roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * p.bonus())
 	return roundi(c * 1.5) if research.has("shelving") else c
 
 

@@ -7,6 +7,8 @@ extends Control
 signal mode_changed(mode: int, room_width: int)
 ## Во время установки комнаты поменяли размер или материал.
 signal room_options_changed(width: int, material: String)
+## Выбрали материал тоннеля, шахты, лифта или бура.
+signal tool_material_changed(mode: int, material: String)
 signal home_pressed
 ## «Планеты»: Земля, колонии на планетах, ракеты в полёте.
 signal worlds_pressed
@@ -126,6 +128,9 @@ var _room_strip: HBoxContainer
 var _room_w := 6
 var _room_mat := "wood"
 var _room_mats: Array = ["wood"]
+## Материалы для остальных построек: режим -> [ключи] и выбранный ключ.
+var _tool_mats := {}
+var _tool_mat := {}
 
 var _dialog: PanelContainer
 var _dialog_title: Label
@@ -548,6 +553,8 @@ func _pick_tool(mode: int, glyph: String, caption: String) -> void:
 	_build_btn.set_caption(caption)
 	set_hint(TOOL_HINTS.get(mode, ""))
 	_show_room_strip(mode == Mode.ROOM)
+	if mode != Mode.ROOM:
+		_show_tool_strip(mode)
 	_show_build_info(BuildInfo.card(TOOL_INFO.get(mode, ""), _room_purpose))
 	mode_changed.emit(mode, _room_w if mode == Mode.ROOM else 0)
 
@@ -619,6 +626,45 @@ func set_room_materials(mats: Array) -> void:
 
 func room_material() -> String:
 	return _room_mat
+
+
+## Материалы, доступные для тоннеля, шахты, лифтов и бура: {режим: [ключи]}.
+func set_tool_materials(mats: Dictionary) -> void:
+	_tool_mats = mats
+	for m in _tool_mat.keys():
+		if not (_tool_mats.get(m, []) as Array).has(_tool_mat[m]):
+			_tool_mat.erase(m)
+
+
+## Выбранный материал постройки режима mode ("wood" — обычный).
+func tool_material(mode: int) -> String:
+	return str(_tool_mat.get(mode, "wood"))
+
+
+## Полоска выбора материала (если есть из чего выбирать): тоннель, шахта, лифт, бур.
+func _show_tool_strip(mode: int) -> void:
+	for c in _room_strip.get_children():
+		_room_strip.remove_child(c)
+		c.queue_free()
+	var mats: Array = _tool_mats.get(mode, [])
+	_room_strip.visible = mats.size() > 1
+	if mats.size() <= 1:
+		return
+	var group := ButtonGroup.new()
+	var cur := tool_material(mode)
+	for m in mats:
+		var nm: String = Project.MATERIALS[m][0] if m != "wood" or mode in [Mode.TUNNEL, Mode.MINE] else "Обычный"
+		var b := IconButton.make("", nm, 96, 72)
+		if m != "wood" or mode in [Mode.TUNNEL, Mode.MINE]:
+			b.res_key = m
+		b.toggle_mode = true
+		b.button_group = group
+		b.button_pressed = m == cur
+		b.pressed.connect(func() -> void:
+			_tool_mat[mode] = m
+			tool_material_changed.emit(mode, m))
+		_room_strip.add_child(b)
+	_place_hint.call_deferred()
 
 
 ## Полоска под подсказкой: размер комнаты и материал стен — выбираются до установки.

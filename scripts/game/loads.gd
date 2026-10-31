@@ -9,11 +9,11 @@ extends RefCounted
 ## и отключаются галочкой «Стихийные бедствия» при создании новой игры.
 
 ## Масса стен и перекрытий на клетку комнаты, т.
-const MASS := {"wood": 0.6, "stone": 2.2, "brick": 1.8, "iron": 1.2}
+const MASS := {"wood": 0.6, "stone": 2.2, "brick": 1.8, "iron": 1.2, "silver": 1.6, "gold": 2.4, "diamond": 0.9}
 ## Сколько тонн сверху держит метр ширины стен.
-const BEARING := {"wood": 2.5, "stone": 28.0, "brick": 18.0, "iron": 40.0}
+const BEARING := {"wood": 2.5, "stone": 28.0, "brick": 18.0, "iron": 40.0, "silver": 30.0, "gold": 24.0, "diamond": 80.0}
 ## Во сколько раз наземная башня может быть выше ширины основания.
-const SLENDER := {"wood": 3.0, "stone": 6.0, "brick": 5.0, "iron": 10.0}
+const SLENDER := {"wood": 3.0, "stone": 6.0, "brick": 5.0, "iron": 10.0, "silver": 8.0, "gold": 7.0, "diamond": 14.0}
 ## Интервалы в секундах игры: буря — раз в 4–10 часов, землетрясение — раз в 12–30 часов.
 const STORM_EVERY := Vector2(4.0 * 3600.0, 10.0 * 3600.0)
 const STORM_LONG := Vector2(60.0, 120.0)

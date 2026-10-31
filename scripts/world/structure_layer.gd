@@ -14,6 +14,16 @@ const ROOM_FLOOR := Color(0.55, 0.36, 0.22)
 const LAMP := Color(1.0, 0.9, 0.55)
 const BEAM := Color(0.66, 0.44, 0.25)
 const BEAM_DARK := Color(0.45, 0.29, 0.16)
+## Крепь и лестницы по материалу постройки: [цвет, тень].
+const MAT_BEAM := {
+	"wood": [BEAM, BEAM_DARK],
+	"stone": [Color(0.66, 0.68, 0.72), Color(0.4, 0.42, 0.47)],
+	"brick": [Color(0.78, 0.4, 0.3), Color(0.48, 0.22, 0.16)],
+	"iron": [Color(0.6, 0.65, 0.72), Color(0.3, 0.34, 0.4)],
+	"silver": [Color(0.88, 0.9, 0.94), Color(0.55, 0.58, 0.64)],
+	"gold": [Color(1.0, 0.8, 0.25), Color(0.62, 0.45, 0.08)],
+	"diamond": [Color(0.7, 0.95, 1.0), Color(0.3, 0.6, 0.75)],
+}
 const BAR_BG := Color(0, 0, 0, 0.6)
 const BAR := Color(0.45, 0.9, 0.4)
 
@@ -207,6 +217,9 @@ const WALLS := {
 	"stone": [Color(0.7, 0.73, 0.8), Color(0.42, 0.45, 0.55), Color(0.6, 0.63, 0.71)],
 	"brick": [Color(0.84, 0.43, 0.32), Color(0.5, 0.24, 0.18), Color(0.95, 0.84, 0.74)],
 	"iron": [Color(0.64, 0.7, 0.78), Color(0.34, 0.39, 0.47), Color(0.52, 0.58, 0.66)],
+	"silver": [Color(0.82, 0.85, 0.9), Color(0.5, 0.53, 0.6), Color(0.95, 0.97, 1.0)],
+	"gold": [Color(0.95, 0.76, 0.28), Color(0.6, 0.42, 0.1), Color(1.0, 0.9, 0.55)],
+	"diamond": [Color(0.66, 0.9, 0.98), Color(0.28, 0.55, 0.7), Color(0.92, 1.0, 1.0)],
 }
 const BED_FRAME := Color(0.56, 0.36, 0.22)
 const BLANKETS := [Color(0.31, 0.6, 0.95), Color(0.94, 0.4, 0.55), Color(0.38, 0.78, 0.45), Color(0.98, 0.72, 0.25)]
@@ -227,7 +240,7 @@ func _draw_done(p: Project) -> void:
 			var t := clampf(p.equip_done / w, 0.0, 1.0) if p.equip_paid else 0.0
 			if p.equip_ladder:
 				_draw_furniture(p, r, p.purpose, 1.0)
-				_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 0.25 + 0.6 * t)
+				_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 0.25 + 0.6 * t, RoomType.furnish_material(p))
 			else:
 				_draw_furniture(p, r, RoomType.base_type(p.equip_target), 0.25 + 0.6 * t)
 			var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)
@@ -352,7 +365,8 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 		body.position.x += TILE + 2
 		body.size.x = TILE * 2 - 4
 		face = Rect2(r.position.x, r.position.y, TILE, r.size.y)
-	_rbox(body, 6, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
+	var bodyc: Color = Color(0.88, 0.62, 0.16) if p.bonus() <= 1.0 else (MAT_BEAM[p.material] as Array)[0]
+	_rbox(body, 6, Color(bodyc, alpha), Color(bodyc.darkened(0.5), alpha), 2)
 	# Решётка мотора и лампа: горит, когда есть энергия.
 	var mc := body.get_center()
 	for k in 3:
@@ -415,10 +429,11 @@ const LIFT_CAB := Color(0.86, 0.62, 0.22)
 func _draw_lift(p: Project, r: Rect2) -> void:
 	var dark := Color(0.2, 0.21, 0.24)
 	var cab_col := Color(0.5, 0.56, 0.62) if p.cargo else LIFT_CAB
+	var rail: Color = LIFT_STEEL if p.bonus() <= 1.0 else (MAT_BEAM[p.material] as Array)[0]
 	if p.lift_vertical():
 		for x in [r.position.x + 3, r.end.x - 3]:
 			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
-			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), LIFT_STEEL, 3.0)
+			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), rail, 3.0)
 		var y := r.end.y - TILE
 		if p.lift_pos != Project.LIFT_UNSET:
 			y = view.cell_to_local(Vector2i(0, 0)).y + p.lift_pos * TILE
@@ -427,8 +442,8 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 		_c.draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, cab.position.y), Color(0.15, 0.15, 0.17), 2.0)
 		_draw_cabin(cab, cab_col, p)
 	else:
-		_c.draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), LIFT_STEEL, 4.0)
-		_c.draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), LIFT_STEEL, 3.0)
+		_c.draw_line(Vector2(r.position.x, r.end.y - 3), Vector2(r.end.x, r.end.y - 3), rail, 4.0)
+		_c.draw_line(Vector2(r.position.x, r.position.y + 4), Vector2(r.end.x, r.position.y + 4), rail, 3.0)
 		var x0 := r.position.x
 		if p.lift_pos != Project.LIFT_UNSET:
 			x0 = view.cell_to_local(Vector2i(0, 0)).x + p.lift_pos * TILE
@@ -480,9 +495,9 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 		_draw_room_walls(p, r)
 	# Лестница у стены, за которой снаружи порода или уступ: по ней выбираются наверх.
 	if colony.edge_ladder(p, -1):
-		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
 	if colony.edge_ladder(p, 1):
-		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0)
+		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
 	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет.
 	if colony.research.has("electricity") and colony.is_underground(p):
 		var n := RoomType.blocks(p)
@@ -523,6 +538,30 @@ func _draw_room_walls(p: Project, r: Rect2) -> void:
 				_c.draw_line(Vector2(r.position.x, y + h - 1), Vector2(r.end.x, y + h - 1), Color(c[1], 0.35), 1.0)
 				y += 12
 				i += 1
+		"silver", "gold":
+			# Полированные листы: панели с бликом наискосок и заклёпками.
+			var x := r.position.x + 5
+			while x < r.end.x - 5:
+				_c.draw_line(Vector2(x, r.position.y + 5), Vector2(x, r.end.y - 6), c[1], 2.0)
+				var w := minf(24.0, r.end.x - 5 - x)
+				_c.draw_colored_polygon(PackedVector2Array([Vector2(x + w * 0.35, r.position.y + 6), Vector2(x + w * 0.6, r.position.y + 6),
+					Vector2(x + w * 0.3, r.end.y - 7), Vector2(x + w * 0.05, r.end.y - 7)]), Color(c[2], 0.5))
+				_c.draw_circle(Vector2(x + 5, r.position.y + 12), 1.8, c[1])
+				_c.draw_circle(Vector2(x + 5, r.end.y - 14), 1.8, c[1])
+				x += 24
+		"diamond":
+			# Грани кристалла: ромбы с бликом.
+			var dy := r.position.y + 6
+			var row := 0
+			while dy < r.end.y - 14:
+				var dx := r.position.x + 6 + (10.0 if row % 2 else 0.0)
+				while dx < r.end.x - 20:
+					var m := Vector2(dx + 10, dy + 8)
+					_c.draw_colored_polygon(PackedVector2Array([m + Vector2(0, -8), m + Vector2(10, 0), m + Vector2(0, 8), m + Vector2(-10, 0)]), c[2] if (row + int(dx)) % 3 == 0 else c[0].lightened(0.1))
+					_c.draw_line(m + Vector2(0, -8), m + Vector2(10, 0), Color(c[1], 0.6), 1.0)
+					dx += 20
+				dy += 16
+				row += 1
 		"iron":
 			# Железные панели с заклёпками.
 			var x := r.position.x + 5
@@ -1587,7 +1626,8 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 
 ## Крепь тоннеля: рамы поперёк, в шахте — лестница.
 func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
-	var col := Color(BEAM, alpha)
+	var bc: Array = MAT_BEAM.get(p.material, MAT_BEAM["wood"])
+	var col := Color(bc[0], alpha)
 	# Готовая шахта — крепь на каждом метре, как ставили при проходке, и рельсы.
 	if p.kind == Project.Kind.MINE:
 		for i in p.slice_count():
@@ -1595,9 +1635,9 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 		_draw_rails(r, alpha)
 		return
 	if p.rect.size.y > p.rect.size.x:
-		_ladder(r.get_center().x, r.position.y, r.end.y, alpha)
+		_ladder(r.get_center().x, r.position.y, r.end.y, alpha, p.material)
 	else:
-		var dark := Color(BEAM_DARK, alpha)
+		var dark := Color(bc[1], alpha)
 		var x := r.position.x + TILE * 0.5
 		while x < r.end.x:
 			for sx in [-8.0, 8.0]:
@@ -1709,9 +1749,10 @@ func _label(font: Font, p: Vector2, text: String, col: Color) -> void:
 	_c.draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, col)
 
 
-func _ladder(cx: float, top: float, bottom: float, alpha: float) -> void:
-	var col := Color(BEAM, alpha)
-	var dark := Color(BEAM_DARK, alpha)
+func _ladder(cx: float, top: float, bottom: float, alpha: float, mat := "wood") -> void:
+	var bc: Array = MAT_BEAM.get(mat, MAT_BEAM["wood"])
+	var col := Color(bc[0], alpha)
+	var dark := Color(bc[1], alpha)
 	var y := top + 8
 	while y < bottom:
 		_c.draw_line(Vector2(cx - 7, y + 1.5), Vector2(cx + 7, y + 1.5), dark, 3.0)
@@ -1973,16 +2014,21 @@ func _draw_deck(p: Project, r: Rect2, alpha: float) -> void:
 
 
 
+## Из чего выглядит крепь: у тоннеля и шахты — их материал, у комнаты — каркас.
+static func _support_look(p: Project) -> String:
+	return Project.frame_of(p.material) if p.kind == Project.Kind.ROOM else p.material
+
+
 ## Крепь одного среза: стойки по краям и верхняя балка (в шахте — пролёт лестницы).
 func _draw_slice_support(p: Project, i: int, alpha: float) -> void:
 	var cells := p.slice_cells(i)
 	if cells.is_empty():
 		return
-	var col := Color(BEAM, alpha)
+	var col := Color((MAT_BEAM.get(_support_look(p), MAT_BEAM["wood"]) as Array)[0], alpha)
 	var a := view.cell_to_local(cells[0])
 	var b := view.cell_to_local(cells[cells.size() - 1]) + Vector2(TILE, TILE)
 	if p.vertical():
-		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha)
+		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha, _support_look(p))
 		return
 	_c.draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
 	_c.draw_line(Vector2(b.x - 4, a.y + 3), Vector2(b.x - 4, b.y), col, 4.0)

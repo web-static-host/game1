@@ -25,13 +25,42 @@ const MINE_HEIGHT := 3
 const ROOM_WIDTHS := [3, 6, 9]
 const TUNNEL_MAX_LEN := 64
 const TUNNEL_MAX_WIDTH := 3
-## Материалы стен комнат: ключ -> [название, множитель времени стройки].
+## Материалы построек: ключ -> [название, множитель времени стройки].
 const MATERIALS := {
 	"wood": ["Дерево", 1.0],
 	"stone": ["Камень", 1.5],
 	"brick": ["Кирпич", 1.3],
 	"iron": ["Железо", 1.6],
+	"silver": ["Серебро", 1.8],
+	"gold": ["Золото", 2.0],
+	"diamond": ["Алмаз", 2.5],
 }
+## Супер-материалы (открывает наука): во сколько раз быстрее работа в постройке — в комнате
+## производство, наука и ферма, в тоннеле и шахте копка и крепь, у лифта скорость, у бура проходка;
+## склады из них вмещают больше, генераторы дают больше энергии.
+const SUPER := {"silver": 1.5, "gold": 2.0, "diamond": 3.0}
+## Без какой технологии супер-материал недоступен.
+const SUPER_TECH := {"silver": "silver_works", "gold": "gold_works", "diamond": "diamond_works"}
+
+
+## Во сколько раз постройка из материала mat работает лучше обычной.
+static func bonus_of(mat: String) -> float:
+	return SUPER.get(mat, 1.0)
+
+
+func bonus() -> float:
+	return bonus_of(material)
+
+
+## Каркас (балки перекрытий, крепь, мебель, лестницы): у деревянной, каменной, кирпичной и
+## железной постройки — из того же материала (дерево не нужно), у супер-постройки — железный.
+static func frame_of(mat: String) -> String:
+	return "iron" if SUPER.has(mat) else mat
+
+
+## Металл и алмаз прочнее: на крепь среза их вдвое меньше, чем дерева, камня или кирпича.
+static func half_support(mat: String) -> bool:
+	return mat == "iron" or SUPER.has(mat)
 
 var id := 0
 var kind := Kind.TUNNEL:
@@ -116,6 +145,8 @@ var lift_goal := -1
 var lift_buf: Array = [{}, {}]
 ## Перестройка стен из другого материала (пусто — не перестраивают).
 var equip_material := ""
+## Мебель и лестницы не деревянной комнаты — всё же из дерева (по умолчанию — из её каркаса).
+var furnish_wood := false
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
@@ -227,8 +258,12 @@ func drill_lift_dir() -> Vector2i:
 
 ## Материалы на лифт: железо на каркас и рельсы, медь на провода, плюс кабина.
 ## Бур: железо на корпус и медь на мотор (обсадку хода берут при каждом приказе).
-static func drill_cost(_r: Rect2i) -> Dictionary:
-	return {"iron": 4, "copper": 2}
+## Супер-бур — ещё 6 единиц своего материала на коронку и корпус.
+static func drill_cost(_r: Rect2i, mat := "wood") -> Dictionary:
+	var out := {"iron": 4, "copper": 2}
+	if SUPER.has(mat):
+		out[mat] = 6
+	return out
 
 
 ## Геоскважина: железо на вышку и штанги, медь на мотор зонда.
@@ -237,12 +272,15 @@ static func probe_cost() -> Dictionary:
 
 
 ## base — с кабиной (у продолжения шахты лифта — только рельсы и провода).
-static func lift_cost(r: Rect2i, is_cargo: bool, base := true) -> Dictionary:
+## Супер-лифт — ещё по полединицы своего материала на метр и 4 на кабину.
+static func lift_cost(r: Rect2i, is_cargo: bool, base := true, mat := "wood") -> Dictionary:
 	var n := maxi(r.size.x, r.size.y)
 	var out := {"iron": n * (2 if is_cargo else 1), "copper": ceili(n / 2.0)}
 	if base:
 		out["iron"] += 10 if is_cargo else 6
 		out["copper"] += 4
+	if SUPER.has(mat):
+		out[mat] = ceili(n / 2.0) + (4 if base else 0)
 	return out
 
 
@@ -290,11 +328,12 @@ static func rect_cells(r: Rect2i) -> Array[Vector2i]:
 
 
 ## Стоимость второго этапа. Тоннелю нужна крепь и лестницы (дерево),
-## комнате — стены из выбранного материала и деревянные балки перекрытий.
+## комнате — стены из выбранного материала и балки перекрытий из его каркаса
+## (у деревянной — дерево, у каменной — камень, у супер-комнаты — железо).
 static func cost_for(k: int, r: Rect2i, mat := "wood") -> Dictionary:
 	var cells_n := r.size.x * r.size.y
 	if k == Kind.ROOM:
-		var out := {"wood": ceili(cells_n / 6.0)}
+		var out := {frame_of(mat): ceili(cells_n / 6.0)}
 		out[mat] = out.get(mat, 0) + r.size.x + r.size.y
 		return out
 	if k == Kind.BRIDGE:
@@ -327,9 +366,9 @@ static func work_for(k: int, r: Rect2i, mat := "wood") -> float:
 
 func cost() -> Dictionary:
 	if kind == Kind.LIFT:
-		return lift_cost(rect, cargo, extends_id == 0)
+		return lift_cost(rect, cargo, extends_id == 0, material)
 	if kind == Kind.DRILL:
-		return drill_cost(rect)
+		return drill_cost(rect, material)
 	return cost_for(kind, rect, material)
 
 
@@ -492,6 +531,7 @@ func to_dict() -> Dictionary:
 		"farm_progress": farm_progress,
 		"equip_ladder": equip_ladder,
 		"equip_material": equip_material,
+		"furnish_wood": furnish_wood,
 		"equip_rocket": equip_rocket,
 		"rocket": rocket,
 		"launch_draft": launch_draft,
@@ -575,6 +615,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.farm_progress = float(d.get("farm_progress", 0.0))
 	p.equip_ladder = bool(d.get("equip_ladder", false))
 	p.equip_material = str(d.get("equip_material", ""))
+	p.furnish_wood = bool(d.get("furnish_wood", false))
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
 	var ld: Dictionary = d.get("launch_draft", {})

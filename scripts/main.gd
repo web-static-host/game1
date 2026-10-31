@@ -205,6 +205,7 @@ func _build_scene() -> void:
 	hud.people_pressed.connect(_show_people)
 	hud.setting_changed.connect(_on_setting)
 	hud.room_options_changed.connect(_on_room_options)
+	hud.tool_material_changed.connect(_on_tool_material)
 
 
 func _process(delta: float) -> void:
@@ -1178,6 +1179,15 @@ func _show_project(p: Project) -> void:
 					if not err.is_empty():
 						hud.log_event(err, "warning")
 					_show_project(p), "primary"])
+		# Мебель и лестницы не деревянной комнаты — из её каркаса или из дерева.
+		if p.material != "wood":
+			var frame := Project.frame_of(p.material)
+			controls.append({"label": "Мебель", "value": 1 if p.furnish_wood else 0, "min": 0, "max": 1,
+				"options": [Project.MATERIALS[frame][0], "Дерево"],
+				"changed": func(i: int) -> void:
+					p.furnish_wood = i == 1
+					hud.refresh_panel(_project_spec(p, preview["v"])),
+			})
 		# Стены можно перестроить из другого материала (дерево → камень и т. п.).
 		var mats := colony.available_materials()
 		if mats.size() > 1:
@@ -1432,6 +1442,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
 	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
 		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
+	if p.bonus() > 1.0:
+		rows.append({"type": "text", "text": "%s — супер-постройка: %s" % [Project.MATERIALS[p.material][0], BuildInfo.super_text(p.kind, p.material)]})
 	var wall: String = _wall_choice.get(p.id, p.material)
 	if p.phase == Project.Phase.DONE and wall != p.material:
 		var wc := RoomType.material_cost(p, wall)
@@ -2021,7 +2033,7 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 			r = Rect2i(_drag_start.x, r.position.y, 3 if mode != Hud.Mode.LIFT else 2, r.size.y)
 		else:
 			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
-		err = colony.validate(kind, r, _lift_material())
+		err = colony.validate(kind, r, _tool_material())
 	var s := world_view.structures
 	s.preview = r
 	s.preview_ok = err.is_empty()
@@ -2034,7 +2046,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	if r.size == Vector2i.ZERO:
 		return
 	var kind := _mode_kind()
-	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else _lift_material())
+	var err := colony.validate(kind, r, hud.room_material() if kind == Project.Kind.ROOM else _tool_material())
 	if mode == Hud.Mode.DRILL_LIFT:
 		err = colony.drill_lift_error(r, _dl_dir)
 	if mode == Hud.Mode.BRIDGE:
@@ -2049,7 +2061,7 @@ func _on_paint_end(_screen_pos: Vector2) -> void:
 	_pending = r
 	_pending_kind = kind
 	_pending_workers = Project.recommended_workers(kind, r, colony.adults())
-	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else _lift_material()
+	_pending_material = hud.room_material() if kind == Project.Kind.ROOM else _tool_material()
 	if mode == Hud.Mode.DRILL_LIFT:
 		_pending_material = "drill_lift"
 	_show_pending()
@@ -2112,9 +2124,23 @@ func _mode_kind() -> int:
 	return Project.Kind.TUNNEL
 
 
-## Лифт передаёт «грузовой ли» через материал стройки.
-func _lift_material() -> String:
-	return "cargo" if mode == Hud.Mode.CARGO_LIFT else "wood"
+## Материал стройки из полоски выбора; лифт передаёт ещё и «грузовой ли» («cargo:gold»).
+func _tool_material() -> String:
+	var m := hud.tool_material(mode)
+	if mode == Hud.Mode.LIFT or mode == Hud.Mode.CARGO_LIFT:
+		var base := "cargo" if mode == Hud.Mode.CARGO_LIFT else "wood"
+		return base if m == "wood" else base + ":" + m
+	return m
+
+
+## Поменяли материал в полоске: рамка и карточка постановки — заново.
+func _on_tool_material(m: int, _material: String) -> void:
+	if m != mode or _pending.size == Vector2i.ZERO or _pending_material == "drill_lift":
+		return
+	_pending_material = _tool_material()
+	var err := colony.validate(_pending_kind, _pending, _pending_material)
+	world_view.structures.preview_ok = err.is_empty()
+	_show_pending()
 
 
 func _show_pending() -> void:
@@ -2164,8 +2190,13 @@ func _pending_spec() -> Dictionary:
 	var r := _pending
 	var kind := _pending_kind
 	var rows := []
-	var cost := Project.lift_cost(r, _pending_material == "cargo") if kind == Project.Kind.LIFT \
-		else (Project.drill_cost(r) if kind == Project.Kind.DRILL else Project.cost_for(kind, r, _pending_material))
+	var tp := Project.new()
+	tp.id = -1
+	tp.kind = kind
+	tp.rect = r
+	tp.material = Colony.build_material(kind, _pending_material)
+	tp.cargo = kind == Project.Kind.LIFT and Colony.lift_cargo(_pending_material)
+	var cost := tp.cost()
 	if _pending_material == "drill_lift":
 		# Бур и кабина грузового лифта над ним.
 		cost = Project.drill_cost(r).duplicate()
@@ -2176,9 +2207,15 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
 	var chips := []
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
-		var sw := _support_estimate(kind, r)
+		var sw := _support_estimate(kind, r, tp.material)
 		var have: int = colony.inventory.get("wood", 0)
-		if sw > 0:
+		var fixed := Colony.support_fixed(tp)
+		if sw > 0 and not fixed.is_empty():
+			# Крепь из материала постройки (металл и алмаз — вдвое меньше).
+			var fn := ceili(sw / 2.0) if Project.half_support(fixed) else sw
+			var fh: int = colony.inventory.get(fixed, 0)
+			rows.append({"type": "resources", "label": "Укрепление", "items": [[fixed, fh, fn, fh >= fn]]})
+		elif sw > 0:
 			# Нет дерева — крепь из железа (его вдвое меньше), после «Железного каркаса».
 			var iron: int = colony.inventory.get("iron", 0)
 			if have < sw and iron > 0 and colony.research.has("steel_frame"):
@@ -2231,7 +2268,9 @@ func _pending_spec() -> Dictionary:
 		rows.append({"type": "warning", "text": "К зоне нет прохода — сначала проложите к ней тоннель."})
 	elif not colony.can_reach(r):
 		rows.append({"type": "warning", "text": "Гаврики не могут сюда дойти — стройка не начнётся."})
-	var title := "%s %d×%d" % [("Грузовой лифт" if _pending_material == "cargo" else "Лифт") if kind == Project.Kind.LIFT
+	if tp.bonus() > 1.0:
+		rows.append({"type": "text", "text": "Супер-постройка: %s" % BuildInfo.super_text(tp.kind, tp.material)})
+	var title := "%s %d×%d" % [("Грузовой лифт" if tp.cargo else "Лифт") if kind == Project.Kind.LIFT
 		else Project.kind_name(kind), r.size.x, r.size.y]
 	if kind == Project.Kind.ROOM:
 		var plan := hud.room_purpose()
@@ -2240,18 +2279,21 @@ func _pending_spec() -> Dictionary:
 			var tmp2 := Project.new()
 			tmp2.kind = kind
 			tmp2.rect = r
+			tmp2.material = tp.material
 			var ec := RoomType.equip_cost(plan, tmp2)
 			if not ec.is_empty():
 				rows.insert(1 if not rows.is_empty() else 0, {"type": "resources", "label": "Обустройство (после постройки)", "items": _cost_items(ec)})
-		title += " · " + Project.MATERIALS[_pending_material][0].to_lower()
+	if kind == Project.Kind.ROOM or tp.material != "wood":
+		title += " · " + Project.MATERIALS[tp.material][0].to_lower()
 	return {"title": title, "rows": rows}
 
 
 ## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).
-func _support_estimate(kind: int, r: Rect2i) -> int:
+func _support_estimate(kind: int, r: Rect2i, mat := "wood") -> int:
 	var tmp := Project.new()
 	tmp.kind = kind
 	tmp.rect = r
+	tmp.material = mat
 	tmp.support_wood = colony.support_needed(kind, r)
 	var n := 0
 	for i in tmp.slice_count():
@@ -2401,6 +2443,9 @@ func _update_status() -> void:
 	hud.set_resources(colony.inventory, colony.units.size(), hungry, colony.power_made, colony.power_used,
 		colony.research.has("electricity"))
 	hud.set_room_materials(colony.available_materials())
+	hud.set_tool_materials({Hud.Mode.TUNNEL: colony.materials_for(Project.Kind.TUNNEL), Hud.Mode.MINE: colony.materials_for(Project.Kind.MINE),
+		Hud.Mode.LIFT: colony.materials_for(Project.Kind.LIFT), Hud.Mode.CARGO_LIFT: colony.materials_for(Project.Kind.LIFT),
+		Hud.Mode.DRILL: colony.materials_for(Project.Kind.DRILL)})
 	var space := universe.worlds.size() > 1 or not universe.flights.is_empty()
 	for e in universe.worlds:
 		space = space or (e["colony"] as Colony).research.has("rocketry")

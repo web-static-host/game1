@@ -204,7 +204,30 @@ static func farm_slots(p: Project) -> int:
 	return maxi(1, usable_width(p) / 2)
 
 
+## Из чего мебель и лестницы: у деревянной комнаты — дерево, у остальных — из каркаса
+## (камень, кирпич, железо; у супер-комнаты — железо), если не выбрали дерево.
+static func furnish_material(p: Project) -> String:
+	if p.kind != Project.Kind.ROOM or p.material == "wood" or p.furnish_wood:
+		return "wood"
+	return Project.frame_of(p.material)
+
+
+## Дерево в стоимости заменяется материалом мебели комнаты.
+static func _furnished(cost: Dictionary, p: Project) -> Dictionary:
+	var m := furnish_material(p)
+	if m == "wood" or not cost.has("wood"):
+		return cost
+	var out := cost.duplicate()
+	out[m] = int(out.get(m, 0)) + int(out["wood"])
+	out.erase("wood")
+	return out
+
+
 static func equip_cost(t: int, p: Project) -> Dictionary:
+	return _furnished(_equip_cost(t, p), p)
+
+
+static func _equip_cost(t: int, p: Project) -> Dictionary:
 	var w := usable_width(p)
 	match t:
 		HOME:
@@ -259,7 +282,7 @@ static func equip_work(t: int, p: Project) -> float:
 
 
 static func ladder_cost(p: Project) -> Dictionary:
-	return {"wood": p.rect.size.y * 2}
+	return _furnished({"wood": p.rect.size.y * 2}, p)
 
 
 static func ladder_work(p: Project) -> float:
