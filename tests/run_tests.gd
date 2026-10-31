@@ -2822,6 +2822,11 @@ func test_space() -> void:
 	var ship := mc.rooms_of(RoomType.SHIP)
 	check(ship.size() == 1 and mc.held_in(ship[0], "food") == 100 and mc.held_in(ship[0], "wood") == 50, "корабль сел, груз в трюме")
 	check(mc.beds_total() == RoomType.SHIP_BEDS, "в корабле 10 спальных мест")
+	# Нефть, дизель и метан летят ракетой — в баках корабля, и по трубам их берут генераторы.
+	check(not str(colony.launch(pad, "mars", [], {"diesel": 5}).get("error", "")).contains("не возят"), "дизель можно взять в ракету")
+	check(mc._add("diesel", 30, ship[0]) == 30 and mc.held_in(ship[0], "diesel") == 30 and mc.holders("diesel").has(ship[0]),
+		"дизель лежит в баках корабля")
+	check(mc._remove("diesel", 10) == 10 and int(mc.inventory.get("diesel", 0)) == 20, "из баков корабля дизель берут по трубам")
 	var pair := mc.units.filter(func(u: Unit) -> bool: return u.partner_id != 0)
 	check(pair.size() == 2 and mc.unit_by_id(pair[0].partner_id) == pair[1], "пара прилетела парой")
 	var inside: Vector2i = ship[0].rect.position + Vector2i(3, 1)

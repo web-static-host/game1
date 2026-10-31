@@ -300,7 +300,9 @@ static func same_kind(p: Project, key: String) -> bool:
 
 
 static func stores(p: Project, key: String) -> bool:
-	if p.store_off.has(key) or PIPED.has(key):
+	if PIPED.has(key):
+		return p.purpose == SHIP and not p.store_off.has(key)
+	if p.store_off.has(key):
 		return false
 	if p.purpose == SHIP:
 		return true

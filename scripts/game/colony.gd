@@ -3377,7 +3377,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	var total := 0
 	for k in cargo:
 		total += int(cargo[k])
-		if RoomType.PIPED.has(k) or RoomType.BULK.has(k):
+		if RoomType.BULK.has(k):
 			return {"error": "%s в ракете не возят" % Mat.resource_name(k)}
 		if int(inventory.get(k, 0)) < int(cargo[k]):
 			return {"error": "Не хватает: %s" % Mat.resource_name(k).to_lower()}
@@ -9310,10 +9310,15 @@ func _offline_harvest(taken: Dictionary) -> Array:
 
 ## Комнаты, где может лежать ресурс: метан — в дегазации, еда — в амбарах, остальное — на складах.
 func holders(key: String) -> Array[Project]:
+	# Нефть, дизель и метан — в своих баках, и в баках корабля (привезли ракетой).
 	if key == "methane":
-		return rooms_of(RoomType.DEGAS)
+		var g := rooms_of(RoomType.DEGAS)
+		g.append_array(rooms_of(RoomType.SHIP))
+		return g
 	if key == "oil" or key == "diesel":
-		return rooms_of(RoomType.OIL_TANK)
+		var o := rooms_of(RoomType.OIL_TANK)
+		o.append_array(rooms_of(RoomType.SHIP))
+		return o
 	var out: Array[Project] = []
 	for p in store_rooms():
 		if RoomType.stores(p, key):
@@ -9323,6 +9328,8 @@ func holders(key: String) -> Array[Project]:
 
 ## Сколько ресурса помещается в комнате p.
 func room_cap(p: Project, key: String) -> int:
+	if RoomType.PIPED.has(key) and p.purpose == RoomType.SHIP:
+		return RoomType.SHIP_HOLD
 	if key == "methane":
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
 	if key == "oil" or key == "diesel":

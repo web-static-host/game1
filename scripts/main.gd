@@ -560,7 +560,7 @@ func _launch_cargo() -> void:
 	keys.sort()
 	for k in keys:
 		var have: int = colony.inventory[k]
-		if have <= 0 or RoomType.PIPED.has(k) or RoomType.BULK.has(k):
+		if have <= 0 or RoomType.BULK.has(k):
 			continue
 		controls.append({"label": "%s (есть %d)" % [Mat.resource_name(k), have], "value": int(cargo.get(k, 0)), "min": 0,
 			"max": mini(have, RoomType.SHIP_HOLD), "step": 10, "changed": func(v: int) -> void:
@@ -1625,7 +1625,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					recipe = RoomType.FORGE_RECIPES["iron"]
 				if p.purpose == RoomType.REFINERY:
 					rows.append({"type": "text", "text": "Нефть берёт по трубам из нефтехранилища, дизель туда же и отдаёт — носить ничего не надо. Нужны мастер и энергия."})
-					if colony.rooms_of(RoomType.OIL_TANK).is_empty():
+					if colony.rooms_of(RoomType.OIL_TANK).is_empty() and colony.rooms_of(RoomType.SHIP).is_empty():
 						rows.append({"type": "warning", "text": "Нет нефтехранилища — нефть и дизель хранить негде."})
 				rows.append(_progress("Производство", p.farm_progress / recipe[2]))
 				var items := []
@@ -1686,7 +1686,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				elif gas:
 					chips.append(["", "метан в баках: %d" % colony.inventory.get("methane", 0)])
 					rows.append({"type": "text", "text": "Жжёт 1 метан за %d с — по трубам из баков дегазации, носить ничего не надо. Уголь и дрова не берёт. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
-					if colony.rooms_of(RoomType.DEGAS).is_empty():
+					if colony.rooms_of(RoomType.DEGAS).is_empty() and int(colony.inventory.get("methane", 0)) <= 0:
 						rows.append({"type": "warning", "text": "Нет дегазации — метана для генератора не будет."})
 				else:
 					rows.append({"type": "text", "text": "Жжёт 1 уголь или 2 дерева за %d с (сначала уголь). Метан не жжёт — для него нужен газовый генератор. Работая, греет всё вокруг (на 6 м от стен)." % int(RoomType.FUEL_TIME)})
