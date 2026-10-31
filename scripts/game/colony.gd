@@ -3453,33 +3453,18 @@ func receive_flight(flight: Dictionary) -> void:
 			_add(k, n - put)
 	var ships := rooms_of(RoomType.SHIP).size()
 	if ships > 1:
-		_log("Посадка на %s: корабль сел вплотную к прежнему — ещё %d мест; прибыло гавриков %d (кораблей %d)." % [
+		_log("Посадка на %s: корабль сел рядом с прежним — ещё %d мест; прибыло гавриков %d (кораблей %d). Чтобы ходить между ними, прокопайте ход." % [
 			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size(), ships], "good", ship.rect.get_center())
 	else:
 		_log("Посадка на %s! Корабль — жильё на %d человек; прибыло гавриков %d. Копайте вниз прямо из корабля." % [
 			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good", ship.rect.get_center())
 
 
-## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Если корабль тут уже
-## есть — вплотную к нему, на том же уровне пола (ходят из одного в другой, ещё 10 мест).
+## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
+## через десяток метров (между кораблями прокапывают ход).
 func _land_ship() -> Project:
 	var x0 = null
-	var floor_top = null
-	for q in rooms_of(RoomType.SHIP):
-		for x in [q.rect.end.x, q.rect.position.x - 9]:
-			var r := Rect2i(x, q.rect.position.y, 9, 3)
-			var free := true
-			for o in projects:
-				if o.rect.intersects(r):
-					free = false
-					break
-			if free:
-				x0 = x
-				floor_top = q.rect.position.y
-				break
-		if x0 != null:
-			break
-	for k in (0 if x0 != null else 40):
+	for k in 40:
 		for sgn in [1, -1]:
 			var x: int = home.x - 4 + sgn * k * 10
 			var sx := world.gen.surface_y(x)
@@ -3499,7 +3484,7 @@ func _land_ship() -> Project:
 	p.id = next_project_id
 	next_project_id += 1
 	p.kind = Project.Kind.ROOM
-	p.rect = Rect2i(x0, floor_top if floor_top != null else s0 - 3, 9, 3)
+	p.rect = Rect2i(x0, s0 - 3, 9, 3)
 	p.material = "iron"
 	p.purpose = RoomType.SHIP
 	p.phase = Project.Phase.DONE

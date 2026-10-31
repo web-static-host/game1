@@ -2836,12 +2836,9 @@ func test_space() -> void:
 	if ships.size() == 2:
 		var a: Rect2i = ships[0].rect
 		var b: Rect2i = ships[1].rect
-		check(a.position.y == b.position.y and (a.end.x == b.position.x or b.end.x == a.position.x),
-			"второй корабль — вплотную к первому, пол на том же уровне (%s / %s)" % [a, b])
+		check(not a.intersects(b) and absi(a.get_center().x - b.get_center().x) <= 60,
+			"второй корабль — рядом с первым, не на нём (%s / %s)" % [a, b])
 		check(mc.beds_total() == RoomType.SHIP_BEDS * 2, "с ним ещё 10 мест (всего %d)" % mc.beds_total())
-		var in1 := Vector2i(RoomType.floor_start(ships[0]), ships[0].rect.end.y - 1)
-		var other := Vector2i(RoomType.floor_start(ships[1]), ships[1].rect.end.y - 1)
-		check(mc.pathing.explore(in1)[1].has(other), "из одного корабля можно дойти в другой")
 	# Сохранение миров и полётов.
 	var saved := uni.to_dict({})
 	var uni2 := Universe.new()
