@@ -511,6 +511,9 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 		# Лифт бур-лифта сечением всегда 3 м, вдоль — сколько надо (2×3 у бокового).
 		if material.get_slice(":", 0) != "cargo_drill" and r.size.y > r.size.x and r.size.x != (3 if is_cargo else 2):
 			return "Шахта %s лифта — %d м шириной" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
+		# По горизонтали: пассажирский — ход 2 м высотой (в рост гаврика), грузовой — 3 м.
+		if check_size and material.get_slice(":", 0) != "cargo_drill" and r.size.x >= r.size.y and r.size.y != (3 if is_cargo else 2):
+			return "Ход %s лифта — %d м высотой" % ["грузового" if is_cargo else "пассажирского", 3 if is_cargo else 2]
 	if kind == Project.Kind.DRILL and not research.has("drill_rig"):
 		return "Сначала изучите «%s»" % Research.tech_name("drill_rig")
 	if kind == Project.Kind.PROBE and not research.has("geoprobe"):

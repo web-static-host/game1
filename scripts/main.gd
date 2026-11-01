@@ -1080,7 +1080,8 @@ func _show_project(p: Project) -> void:
 					"value": p.order_len, "min": 1, "max": Colony.DRILL_MAX,
 					"changed": func(v: int) -> void:
 						p.order_len = v
-						_drill_len = v})
+						_drill_len = v
+						hud.refresh_panel(_project_spec(p))})
 				# Бур-лифт — только вниз: лифт идёт следом.
 				for d: Vector2i in ([p.drill_lift_dir()] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP, Vector2i.LEFT]):
 					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.UP: "↑ Вверх", Vector2i.RIGHT: "Вправо →"}[d]
@@ -1101,7 +1102,8 @@ func _show_project(p: Project) -> void:
 				controls.append({"label": "Продлить на, м", "value": p.order_len, "min": 1, "max": Colony.EXTEND_MAX,
 					"changed": func(v: int) -> void:
 						p.order_len = v
-						_extend_len = v})
+						_extend_len = v
+						hud.refresh_panel(_project_spec(p))})
 				# push_front переворачивает порядок: идём справа налево, чтобы «← Продлить» встал слева.
 				dirs.reverse()
 				for d: Vector2i in dirs:
@@ -1436,6 +1438,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
 	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
 		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
+	_extend_rows(p, rows)
 	if Project.SUPER.has(p.material):
 		var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
 		if not st.is_empty():
@@ -2032,7 +2035,7 @@ func _on_paint(screen_pos: Vector2, first: bool) -> void:
 		if absi(c.y - _drag_start.y) > absi(c.x - _drag_start.x):
 			r = Rect2i(_drag_start.x, r.position.y, 3 if mode != Hud.Mode.LIFT else 2, r.size.y)
 		else:
-			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3)
+			r = Rect2i(r.position.x, _drag_start.y - 1, r.size.x, 3 if mode != Hud.Mode.LIFT else 2)
 		err = colony.validate(kind, r, _tool_material())
 	var s := world_view.structures
 	s.preview = r
@@ -2313,6 +2316,49 @@ func _pending_spec() -> Dictionary:
 	if kind == Project.Kind.ROOM or tp.material != "wood":
 		title += " · " + Project.MATERIALS[tp.material][0].to_lower()
 	return {"title": title, "rows": rows}
+
+
+## Готовую шахту, тоннель или лифт продлевают на выбранное число метров, бур сверлит —
+## сколько чего на это уйдёт (точно, по направлениям: в разную сторону — разная порода).
+func _extend_rows(p: Project, rows: Array) -> void:
+	if p.phase != Project.Phase.DONE or p.repairing:
+		return
+	if p.kind == Project.Kind.DRILL and not colony.drilling(p) and p.order_len > 0:
+		rows.append({"type": "resources", "label": "Сверлить %d м — железо на обсадку:" % p.order_len,
+			"items": _cost_items({"iron": Colony.drill_casing(p.order_len)})})
+		return
+	var dirs := Colony.extend_dirs(p)
+	if dirs.is_empty() or colony.extension_of(p) != null or p.order_len <= 0:
+		return
+	for d: Vector2i in dirs:
+		var cost := _extend_cost(p, d, p.order_len)
+		var label: String = {Vector2i.LEFT: "←", Vector2i.DOWN: "↓", Vector2i.RIGHT: "→", Vector2i.UP: "↑"}.get(d, "")
+		rows.append({"type": "resources", "label": "Продлить %s на %d м:" % [label, p.order_len],
+			"items": _cost_items(cost) if not cost.is_empty() else []})
+		if cost.is_empty():
+			rows[-1] = {"type": "text", "text": "Продлить %s на %d м: материалов не нужно (там пусто — копать и крепить нечего)" % [label, p.order_len]}
+
+
+## Материалы на продолжение p в сторону d на n м: сама постройка (у лифта — рельсы и провода)
+## и крепь по срезам, где есть порода.
+func _extend_cost(p: Project, d: Vector2i, n: int) -> Dictionary:
+	var tp := Project.new()
+	tp.id = -1
+	tp.kind = p.kind
+	tp.rect = Colony.extend_rect(p, d, n)
+	tp.material = p.material
+	tp.cargo = p.cargo
+	tp.extends_id = p.id
+	var cost := tp.cost().duplicate()
+	if p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE or p.kind == Project.Kind.LIFT:
+		var sw := _support_estimate(p.kind, tp.rect, p.material)
+		if sw > 0:
+			var key := Colony.support_fixed(tp)
+			if key.is_empty():
+				# Дерево, а нет его — железо (вдвое меньше), после «Железного каркаса».
+				key = "wood" if int(colony.inventory.get("wood", 0)) >= sw or not colony.research.has("steel_frame") else "iron"
+			cost[key] = int(cost.get(key, 0)) + (ceili(sw / 2.0) if Project.half_support(key) else sw)
+	return cost
 
 
 ## Сколько дерева уйдёт на крепь по срезам (оценка до закладки).

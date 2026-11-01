@@ -3865,6 +3865,10 @@ func test_lifts() -> void:
 	_power_up(colony, x)
 	check(colony.powered(), "энергия есть")
 	check(not colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "wood").is_empty(), "пассажирская шахта шириной 3 м — нельзя")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s + 10, 8, 3), "wood").contains("2 м высотой"), "пассажирский по горизонтали — 2 м высотой, не 3")
+	check(not colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s + 10, 8, 2), "wood").contains("высотой")
+		and Project.size_error(Project.Kind.LIFT, Rect2i(0, 0, 8, 2)).is_empty(), "пассажирский ход 2 м — можно")
+	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s + 10, 8, 2), "cargo").contains("3 м высотой"), "грузовой по горизонтали — 3 м")
 	check(colony.validate(Project.Kind.LIFT, Rect2i(x + 30, s, 3, 12), "cargo").is_empty() \
 		or true, "грузовая — 3 м")
 	var lift := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s, 2, 20), 900)
