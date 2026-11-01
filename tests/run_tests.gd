@@ -3724,9 +3724,11 @@ func test_planet_rocks() -> void:
 	check(Planet.absent_text("mars").contains("угля") and Planet.absent_text("mars").contains("нефти"), "перед полётом: чего на планете нет")
 	# Подсказки других планет — по их недрам, а не земные: на Венере осадочный слой тонкий —
 	# нефти нет; на Сатурне нефть неглубоко.
+	ResourceHints.planet = "mars"
+	check(ResourceHints.text("oil").contains("нет") and Planet.absent("mars").has("oil") and ResourceHints.text("diesel").contains("привез"),
+		"Марс: нефти нет — так и написано: " + ResourceHints.text("oil"))
 	ResourceHints.planet = "venus"
-	check(ResourceHints.text("oil").contains("нет") and Planet.absent("venus").has("oil") and ResourceHints.text("diesel").contains("привез"),
-		"Венера: нефти нет — так и написано: " + ResourceHints.text("oil"))
+	check(not Planet.absent("venus").has("oil") and ResourceHints.text("oil").contains("чаще"), "Венера: нефть есть, неглубоко: " + ResourceHints.text("oil"))
 	check(ResourceHints.text("iron_ore").contains("Венера") and not ResourceHints.text("iron_ore").contains("до 80 м — ¾"), "Венера: про железо — своё, не земное")
 	ResourceHints.planet = "saturn"
 	var st := ResourceHints.text("oil")
@@ -3735,7 +3737,21 @@ func test_planet_rocks() -> void:
 	var ven := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "venus"))
 	var sat := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "saturn"))
 	var jup := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "jupiter"))
-	check(not ven.has(Mat.OIL) and sat.has(Mat.OIL) and not jup.has(Mat.OIL), "обследование совпадает с генерацией: нефть — только на Сатурне")
+	var ven_oil := 0
+	var vg := WorldGen.new(17, WorldGen.LATEST, "venus")
+	for x in range(-1500, 1500, 2):
+		for d in range(30, 150, 2):
+			if vg.material_at(x, vg.surface_y(x) + d) == Mat.OIL:
+				ven_oil += 1
+	check(ven_oil > 0 and sat.has(Mat.OIL) and not jup.has(Mat.OIL), "генерация: нефть на Венере (неглубоко, %d) и Сатурне, на Юпитере нет" % ven_oil)
+	# Нептун — самый дальний и трудный: там есть всё.
+	var nep := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "neptune"))
+	for m in [Mat.COAL, Mat.OIL, Mat.CLAY, Mat.IRON_ORE, Mat.COPPER_ORE, Mat.GOLD_ORE, Mat.KIMBERLITE, Mat.GAS_POCKET]:
+		check(nep.has(m), "на Нептуне есть %s" % Mat.name_of(m))
+	check(Planet.absent("neptune").is_empty() and float(Planet.data("neptune")["surf"]) < float(Planet.data("uranus")["surf"]), "на Нептуне нет недостающего, и он холоднее всех")
+	var sv: Dictionary = PlanetSurvey.SURVEY
+	check(float(sv["uranus"]["uranium_ore"][0]) > float(sv["venus"]["uranium_ore"][0]) and float(sv["uranus"]["uranium_ore"][0]) > float(sv["earth"]["uranium_ore"][0]) * 8,
+		"на Уране урана больше всех")
 	check(int(jup.get(Mat.IRON_ORE, 0)) + int(jup.get(Mat.COPPER_ORE, 0)) + int(jup.get(Mat.URANIUM_ORE, 0)) > 20, "на Юпитере руда есть (гнёзда), а не почти ноль")
 	# Пустая порода при копке исчезает: ни кучек, ни «известных ресурсов».
 	var colony := _new_colony(12)
