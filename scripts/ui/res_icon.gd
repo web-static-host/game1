@@ -41,6 +41,22 @@ static func draw(ci: Object, key: String, c: Vector2, r: float) -> void:
 	var col := color(key)
 	var dark := col.darkened(0.4)
 	match key:
+		"radiation":
+			# Знак радиации: жёлтый круг, три чёрные лопасти (вверх-влево, вверх-вправо, вниз) и центр.
+			var blk := Color(0.08, 0.08, 0.08)
+			ci.draw_circle(c, r, blk)
+			ci.draw_circle(c, r * 0.9, Color(1.0, 0.84, 0.08))
+			for i in 3:
+				var mid := deg_to_rad(90.0 + 120.0 * i)
+				var pts := PackedVector2Array()
+				for k in 7:
+					var a := mid - PI / 6.0 + PI / 3.0 * k / 6.0
+					pts.append(c + Vector2(cos(a), sin(a)) * r * 0.78)
+				for k in 7:
+					var a := mid + PI / 6.0 - PI / 3.0 * k / 6.0
+					pts.append(c + Vector2(cos(a), sin(a)) * r * 0.3)
+				ci.draw_colored_polygon(pts, blk)
+			ci.draw_circle(c, r * 0.19, blk)
 		"wood":
 			# Бревно: торец и кора.
 			ci.draw_rect(Rect2(c + Vector2(-r * 0.95, -r * 0.45), Vector2(r * 1.5, r * 0.9)), col)

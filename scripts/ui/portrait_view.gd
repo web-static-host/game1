@@ -26,3 +26,7 @@ func _draw() -> void:
 	var at := Vector2(size.x * 0.5, size.y * 0.5 + h * 0.5 + 4.0)
 	if not ModelSprites.draw_creature(self, "idle", at, body_w, looks):
 		CreatureArt.draw(self, at, body_w, looks, 1.0)
+	# Облучён ураном — знак радиации в углу.
+	if looks.get("irradiated", false):
+		var r := maxf(8.0, size.x * 0.13)
+		ResIcon.draw(self, "radiation", Vector2(size.x - r - 2.0, r + 2.0), r)
