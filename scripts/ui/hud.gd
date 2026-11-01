@@ -838,6 +838,9 @@ func _build_panel() -> void:
 	_title.add_theme_font_override("font", Fonts.black())
 	_subtitle = _label("", 18, ACCENT)
 	_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Ширина — сразу вся строка (без кнопки закрытия): иначе при коротком заголовке («Планеты»)
+	# подпись в первый расчёт переносилась по букве, карточка вытягивалась на весь экран и пустела.
+	_subtitle.custom_minimum_size = Vector2(PANEL_WIDTH - 40 - 64, 0)
 	titles.add_child(_title)
 	titles.add_child(_subtitle)
 	var close := IconButton.make("close", "", 52, 52)

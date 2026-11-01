@@ -3384,8 +3384,9 @@ func set_purpose(p: Project, t: int) -> bool:
 	wake_idle()
 	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE or t == p.purpose:
 		return false
-	# Котлы и кирпичные печи — улучшения очага; второй раз их не ставят.
-	if t == RoomType.HEARTH_GAS and not is_hearth_upgrade(p, t):
+	# Котлы и кирпичные печи — улучшения очага; второй раз их не ставят. Газовый очаг можно
+	# поставить и сразу (кирпичные печи с котлами) — в любой комнате, не только на готовый очаг.
+	if t == RoomType.HEARTH_GAS and p.purpose == RoomType.HEARTH and not is_hearth_upgrade(p, t):
 		return false
 	if t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and not is_hearth_upgrade(p, t):
 		return false
@@ -3755,8 +3756,8 @@ func _finish_equip(p: Project) -> void:
 		_log("Готово: %s — %s (%s)" % [p.title(), "газовые котлы" if p.equip_target == RoomType.HEARTH_GAS else "печи кирпичные",
 			RoomType.purpose_hint(p.equip_target)], "good", p.rect.get_center())
 		return
-	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
-	p.gas_boiler = false
+	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK or p.equip_target == RoomType.HEARTH_GAS
+	p.gas_boiler = p.equip_target == RoomType.HEARTH_GAS
 	p.purpose = RoomType.base_type(p.equip_target)
 	p.farm_progress = 0.0
 	for u in units:

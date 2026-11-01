@@ -651,8 +651,17 @@ func test_room_purposes() -> void:
 		"котлы стоят, печи остались кирпичными")
 	check(RoomType.current_purpose(hroom) == RoomType.HEARTH_GAS and not hcol.set_purpose(hroom, RoomType.HEARTH_GAS), "котлы дважды не ставят")
 	check(Project.from_dict(hroom.to_dict()).gas_boiler, "котлы сохраняются")
-	var hroom2: Project = _colony_with_room(9, RoomType.NONE)[1]
-	check(not hcol.set_purpose(hroom2, RoomType.HEARTH_GAS), "котёл — только на готовый очаг")
+	# Газовый очаг можно поставить и сразу — в пустой комнате: кирпичные печи с котлами.
+	var gres := _colony_with_room(9, RoomType.NONE)
+	var gcol: Colony = gres[0]
+	var hroom2: Project = gres[1]
+	gcol.research.done.append_array(["pottery", "gas_heating"])
+	check(RoomType.equip_cost(RoomType.HEARTH_GAS, hroom2) == {"brick": 10 * RoomType.stoves(hroom2)}, "газовый очаг сразу — 10 кирпичей на печь (печь и котёл)")
+	gcol.inventory["brick"] = 60
+	check(gcol.set_purpose(hroom2, RoomType.HEARTH_GAS), "газовый очаг — сразу, не только на готовый")
+	gcol.advance_offline(3000.0)
+	check(hroom2.purpose == RoomType.HEARTH and hroom2.gas_boiler and hroom2.brick_stoves and hroom2.phase == Project.Phase.DONE,
+		"газовый очаг построен: кирпичные печи и котлы")
 
 	var farm_res := _colony_with_room(22, RoomType.FARM)
 	var fc: Colony = farm_res[0]

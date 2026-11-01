@@ -83,7 +83,9 @@ func _process(delta: float) -> void:
 		_live.colony = colony
 		_live.view = view
 	_static_t -= delta
-	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin]
+	var sel := colony.project_by_id(selected_project) if colony != null and selected_project != 0 else null
+	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin,
+		sel.order_len if sel != null else 0]
 	var vis := _vis_rect().grow(-VIS_MARGIN + 2)
 	if _static_t <= 0.0 or sig != _drawn_sig or not _drawn_vis.encloses(vis):
 		_static_t = STATIC_REFRESH
@@ -175,6 +177,7 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 		if p.rect.intersects(_vis):
 			_draw_supply(p, font)
 	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
+	_draw_extend(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
 		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
@@ -1658,6 +1661,25 @@ func _draw_rails(r: Rect2, alpha: float) -> void:
 		_c.draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
 		sx += 10
 	_c.draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
+
+
+## Выбранная готовая шахта, тоннель или лифт: пунктиром — докуда дойдёт продление на выбранные
+## метры в каждую сторону (зелёным — можно, красным — нельзя).
+func _draw_extend(p: Project, font: Font) -> void:
+	if p == null or p.phase != Project.Phase.DONE or p.repairing or p.order_len <= 0:
+		return
+	var dirs := Colony.extend_dirs(p)
+	if dirs.is_empty() or colony.extension_of(p) != null:
+		return
+	for d: Vector2i in dirs:
+		var er := Colony.extend_rect(p, d, p.order_len)
+		var ok := colony.extend_error(p, d, p.order_len).is_empty()
+		var col := Color(0.45, 1.0, 0.5) if ok else Color(1.0, 0.4, 0.35)
+		var r := _rect_px(er)
+		_c.draw_rect(r, Color(col, 0.1))
+		_dashed_rect(r, Color(col, 0.95), 3.0)
+		var at := r.position + Vector2(4, -8) if d != Vector2i.DOWN else Vector2(r.position.x + 4, r.end.y + 22)
+		_label(font, at, "+%d м" % p.order_len, col)
 
 
 func _draw_site(p: Project, font: Font) -> void:

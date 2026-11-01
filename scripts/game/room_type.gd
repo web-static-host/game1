@@ -306,7 +306,8 @@ static func _equip_cost(t: int, p: Project) -> Dictionary:
 		HEARTH_BRICK:
 			return {"brick": 6 * stoves(p)}
 		HEARTH_GAS:
-			return {"brick": 4 * stoves(p)}
+			# На готовый очаг — только котлы; сразу — кирпичные печи с котлами.
+			return {"brick": (4 if p.purpose == HEARTH else 10) * stoves(p)}
 	return {}
 
 

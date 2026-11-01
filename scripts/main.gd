@@ -1152,8 +1152,8 @@ func _show_project(p: Project) -> void:
 			# Очаг — с каменными или (после обжига кирпича) кирпичными печами.
 			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
 				purposes.append(RoomType.HEARTH_BRICK)
-			# Газовые котлы ставят только на готовый очаг.
-			if t == RoomType.HEARTH and p.purpose == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
+			# Газовый очаг — сразу (кирпичные печи с котлами) или котлами на готовый очаг.
+			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
 				purposes.append(RoomType.HEARTH_GAS)
 		controls.append({
 			"label": "Назначение", "value": maxi(0, purposes.find(preview["v"])), "min": 0, "max": purposes.size() - 1,
@@ -2383,7 +2383,7 @@ func _support_estimate(kind: int, r: Rect2i, mat := "wood", sup := "") -> int:
 const ROOM_PICS := {
 	RoomType.NONE: "", RoomType.HOME: "home/bed_blue", RoomType.STORAGE: "storage/crate_wood",
 	RoomType.GRANARY: "granary/basket_fish", RoomType.FARM: "farm/shoots_3", RoomType.DINING: "dining/table",
-	RoomType.HEARTH: "hearth/stone_on", RoomType.HEARTH_BRICK: "hearth/brick_on", RoomType.LAB: "lab/microscope",
+	RoomType.HEARTH: "hearth/stone_on", RoomType.HEARTH_BRICK: "hearth/brick_on", RoomType.HEARTH_GAS: "hearth/gas_on", RoomType.LAB: "lab/microscope",
 	RoomType.PUMP: "pump/pump_on", RoomType.VENT: "degas/compressor", RoomType.DEGAS: "degas/tank_2",
 	RoomType.KILN: "kiln/kiln_on", RoomType.FORGE: "storage/crate_metal", RoomType.GENERATOR: "generator/coal_on",
 	RoomType.GAS_GEN: "generator/gas_on", RoomType.OIL_PUMP: "pump/pump_on", RoomType.OIL_TANK: "degas/tank_3",
@@ -2403,7 +2403,7 @@ func _build_tool_locks() -> Dictionary:
 ## Плитки комнат для меню стройки: все виды, неизученные — неактивные с подсказкой.
 func _build_room_items() -> Array:
 	var order := [RoomType.NONE, RoomType.HOME, RoomType.STORAGE, RoomType.GRANARY, RoomType.FARM, RoomType.DINING,
-		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
+		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.HEARTH_GAS, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
 		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN,
 		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN, RoomType.ENRICHMENT, RoomType.LAUNCHPAD]
 	var out := []
@@ -2411,7 +2411,7 @@ func _build_room_items() -> Array:
 		var need: String = RoomType.REQUIRES.get(t, "")
 		var ok := colony.research.has(need)
 		var nm := "Пустая" if t == RoomType.NONE else RoomType.purpose_name(t).replace("Очаг (каменные печи)", "Очаг").replace(
-			"Очаг (кирпичные печи)", "Очаг кирпичный")
+			"Очаг (кирпичные печи)", "Очаг кирпичный").replace("Очаг (газовые котлы)", "Очаг газовый")
 		nm = {"Нефтекачалка": "Нефте-\nкачалка", "Нефтехранилище": "Нефте-\nхранилище"}.get(nm, nm)
 		var pic: String = ROOM_PICS.get(t, "")
 		out.append({"id": t, "name": nm, "tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "",
