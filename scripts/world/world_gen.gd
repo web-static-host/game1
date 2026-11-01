@@ -30,7 +30,7 @@ var planet: Dictionary = {}
 ## на дне подземных вод часто золото; 7 — нефтяные залежи разного размера;
 ## 8 — у каждой планеты свой облик (Planet.DATA[...]["geo"]): рельеф, грунт, ледяная кора,
 ## толщина пластов, глубина базальта и магмы, пещеры и то, как залегают руды; на Венере — деревья.
-const LATEST := 8
+const LATEST := 9
 var version := LATEST
 var _lake_segment := 400
 var _bush_share := 0.08
@@ -88,6 +88,8 @@ func _init(p_seed: int, p_version := LATEST, p_planet := "earth") -> void:
 		_diamond_share = 0.08
 	if version >= 8 and planet_id != "earth":
 		geo = planet.get("geo", {})
+	if version >= 9 and planet_id != "earth":
+		_rocks = planet.get("rocks", {})
 	_n_surface = _noise(1, 0.0025, 4)
 	_n_hills = _noise(2, 0.03, 2)
 	_n_soil = _noise(3, 0.05, 1)
@@ -397,12 +399,28 @@ func _flooded_cave(x: int, y: int, surf: int, water_table: int) -> bool:
 	return planet["lakes"] and y > water_table and d > 12 and d < CAVE_MAX_DEPTH and _is_cave(x, y, d)
 
 
+## Породы своей планеты (миры версии 9 и новее): земная порода -> её замена на планете
+## (замена — материал или [материал, доля земной, что остаётся]). Нет угля, нефти, глины —
+## на их месте окружающая порода.
+var _rocks := {}
+
+
 ## Материал клетки (без учёта действий игрока).
 func material_at(x: int, y: int) -> int:
 	var surf := surface_y(x)
 	if y < surf:
 		return Mat.WATER if y >= water_level(x) else Mat.AIR
-	return _cell(x, y, surf, _soil_depth(x), sed_base(x), _kimberlite_column(x), _water_table(x, surf))
+	return _planet_rock(x, y, _cell(x, y, surf, _soil_depth(x), sed_base(x), _kimberlite_column(x), _water_table(x, surf)))
+
+
+## Земная порода m в клетке (x, y) -> порода этой планеты.
+func _planet_rock(x: int, y: int, m: int) -> int:
+	if _rocks.is_empty() or not _rocks.has(m):
+		return m
+	var to = _rocks[m]
+	if to is Array:
+		return m if hash01(x, y, world_seed + 141) < float(to[1]) else int(to[0])
+	return int(to)
 
 
 func _soil_depth(x: int) -> int:
@@ -689,7 +707,7 @@ func generate_chunk(cx: int, cy: int) -> ChunkData:
 				if y >= wl:
 					mat[i] = Mat.WATER
 				continue
-			var m := _cell(x, y, surf, soil, sed, kimb, wt)
+			var m := _planet_rock(x, y, _cell(x, y, surf, soil, sed, kimb, wt))
 			mat[i] = m
 			var f := 0
 			if m == Mat.AIR or m == Mat.WATER:

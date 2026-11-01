@@ -81,6 +81,7 @@ func _initialize() -> void:
 	test_hearth_on_demand()
 	test_forge_ores()
 	test_starving_count()
+	test_planet_rocks()
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
@@ -3683,6 +3684,48 @@ func test_super_materials() -> void:
 	check(colony.room_cap(store, "stone") == cap, "алмазный склад — как обычный")
 	check(BuildInfo.super_text(Project.Kind.ROOM, "silver", RoomType.LAB).contains("×1,5") and BuildInfo.super_text(Project.Kind.ROOM, "gold", RoomType.LAB).is_empty(), "описание бонуса")
 	check(BuildInfo.super_purposes("gold").contains(RoomType.purpose_name(RoomType.HOME).to_lower()), "золото — для спален")
+
+
+func _rock_counts(g: WorldGen) -> Dictionary:
+	var out := {}
+	for x in range(-300, 300, 3):
+		var surf := g.surface_y(x)
+		for d in range(0, 420, 3):
+			var m := g.material_at(x, surf + d)
+			out[m] = int(out.get(m, 0)) + 1
+	return out
+
+
+## Свои породы планет (миры версии 9): на Марсе нет угля и нефти, известняк редок (вместо
+## него гипс), глина есть; на Меркурии — графит и сера, уголь есть, глины и нефти нет.
+func test_planet_rocks() -> void:
+	var mars := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "mars"))
+	check(not mars.has(Mat.COAL) and not mars.has(Mat.OIL), "на Марсе нет угля и нефти")
+	check(int(mars.get(Mat.GYPSUM, 0)) > int(mars.get(Mat.LIMESTONE, 0)) * 3 and mars.has(Mat.CLAY), "Марс: гипс вместо известняка (известняк редок), глина есть")
+	var merc := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "mercury"))
+	check(not merc.has(Mat.CLAY) and not merc.has(Mat.OIL) and not merc.has(Mat.LIMESTONE) and not merc.has(Mat.SANDSTONE),
+		"на Меркурии нет глины, нефти, известняка и песчаника")
+	check(merc.has(Mat.GRAPHITE) and merc.has(Mat.COAL), "Меркурий: графитовая порода и уголь (%d / %d)" % [int(merc.get(Mat.GRAPHITE, 0)), int(merc.get(Mat.COAL, 0))])
+	check(Mat.resource(Mat.GRAPHITE) == "stone" and Mat.resource(Mat.SULFUR).is_empty() and Mat.resource(Mat.GYPSUM).is_empty(),
+		"из графитовой породы — камень, сера и гипс — пустая порода")
+	var old_mars := _rock_counts(WorldGen.new(11, 8, "mars"))
+	check(old_mars.has(Mat.LIMESTONE) and not old_mars.has(Mat.GYPSUM), "старые миры Марса не меняются")
+	check(_rock_counts(WorldGen.new(11, WorldGen.LATEST, "earth")) == _rock_counts(WorldGen.new(11, 8, "earth")), "Земля прежняя")
+	# Подсказки — по планете; чего нет — так и написано, и перед полётом тоже.
+	ResourceHints.planet = "mars"
+	check(ResourceHints.text("coal").contains("нет") and ResourceHints.text("diesel").contains("привозной")
+		and ResourceHints.text("methane").contains("карманов"), "подсказки Марса: угля нет, дизель привозной, метан — из карманов")
+	ResourceHints.planet = "earth"
+	check(not ResourceHints.text("coal").contains("Марс"), "на Земле подсказки прежние")
+	check(not ResourceHints.keys().has("limestone") and not ResourceHints.keys().has("salt") and ResourceHints.keys().has("clay"),
+		"известняк и соль — порода, не ресурс: в списке ресурсов их нет")
+	check(Planet.absent_text("mars").contains("угля") and Planet.absent_text("mars").contains("нефти") and Planet.absent_text("venus").is_empty(),
+		"перед полётом: чего на планете нет")
+	# Пустая порода при копке исчезает: ни кучек, ни «известных ресурсов».
+	var colony := _new_colony(12)
+	colony.drop_item(Vector2i(0, 5), "limestone", 3)
+	colony.drop_item(Vector2i(0, 5), "salt", 2)
+	check(colony.drops.is_empty() and not colony.known_resources.has("limestone") and not colony.inventory.has("salt"), "известняк и соль при копке исчезают")
 
 
 func test_starving_count() -> void:

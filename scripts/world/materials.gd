@@ -33,6 +33,9 @@ enum {
 	RUBBLE,
 	AMETHYST,
 	ICE,
+	GRAPHITE,
+	SULFUR,
+	GYPSUM,
 	COUNT,
 }
 
@@ -73,6 +76,12 @@ const _RAW := [
 	["Аметист", "a24bff", 50.0, 3200, 150.0, "amethyst", true, Hazard.NONE],
 	# Ледяная кора газовых гигантов: копается легко, ничего не даёт.
 	["Лёд", "bfe6f2", 8.0, 917, 10.0, "", false, Hazard.NONE],
+	# Породы других планет (миры версии 9 и новее). Меркурий: тёмная графитовая порода — вместо
+	# песчаника, сланца и гнейса (из неё и камень), сера — вместо известняка и соли (пустая).
+	["Графитовая порода", "34353a", 16.0, 2300, 45.0, "stone", false, Hazard.NONE],
+	["Сера", "d7c24a", 10.0, 2000, 25.0, "", false, Hazard.NONE],
+	# Марс: гипс — вместо известняка (пустая порода).
+	["Гипс", "e9e2d2", 9.0, 2300, 20.0, "", false, Hazard.NONE],
 ]
 
 ## Сыпучие породы: осыпаются в пустоту под собой, пролёт не держат.
@@ -82,7 +91,7 @@ const SPAN := {
 	TOPSOIL: 3, CLAY: 3, SANDSTONE: 5, SHALE: 4, LIMESTONE: 6, COAL: 3,
 	GRANITE: 10, GNEISS: 9, BASALT: 12, IRON_ORE: 6, COPPER_ORE: 6, SILVER_ORE: 6, GOLD_ORE: 6,
 	URANIUM_ORE: 6, KIMBERLITE: 5, DIAMOND: 5, ROCK_SALT: 6, GAS_POCKET: 3, OIL: 4, PERIDOTITE: 12, AMETHYST: 6,
-	ICE: 4,
+	ICE: 4, GRAPHITE: 5, SULFUR: 4, GYPSUM: 4,
 }
 
 const RESOURCE_NAMES := {

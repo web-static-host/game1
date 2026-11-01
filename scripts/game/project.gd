@@ -621,7 +621,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.build_done = float(d.get("build_done", 0.0))
 	var f: Dictionary = d.get("found", {})
 	for k in f:
-		p.found[k] = int(f[k])
+		if not RoomType.BULK.has(str(k)):
+			p.found[k] = int(f[k])
 	p.blocked = str(d.get("blocked", ""))
 	p.workers = int(d.get("workers", 2))
 	p.ladder = bool(d.get("ladder", false))

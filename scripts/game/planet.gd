@@ -28,7 +28,15 @@ const DATA := {
 		"travel": 0, "engine": "", "surf": 9.0, "under": 9.0, "air": true, "plants": true, "lakes": true,
 		"ore": 1.0, "ores": [], "kimberlite": 0.62, "gas": 0.62, "oil": 0.66, "oil_depth": 200,
 		"quakes": 1.0, "sky": Color(1, 1, 1)},
-	"mercury": {"geo": {"relief": "craters", "regolith": [Mat.GRAVEL, Mat.BASALT], "sed": 0.15, "basalt": 120, "magma": 2500, "ores": "blobs", "caves": 0.5, "tubes": false, "ice": 0, "palette": Color(0.78, 0.74, 0.72), "leaf": Color(0, 0, 0, 0)}, "atm": "vacuum", "name": "Меркурий", "desc": "Горячая поверхность (+60 °C), воздуха нет. Под землёй прохладнее (+24 °C). Много железа и серебра. Редкий аметист — для ядерной ракеты. Изрыт кратерами; руда — крупными гнёздами у самой поверхности.",
+	"mercury": {"absent": ["clay", "oil"],
+		"rocks": {Mat.SANDSTONE: Mat.GRAPHITE, Mat.SHALE: Mat.GRAPHITE, Mat.GRANITE: Mat.GRAPHITE, Mat.GNEISS: Mat.BASALT,
+			Mat.LIMESTONE: Mat.SULFUR, Mat.ROCK_SALT: Mat.SULFUR, Mat.CLAY: Mat.GRAVEL, Mat.OIL: Mat.GRAPHITE},
+		"hints": {
+			"stone": "Камень на Меркурии — из тёмной графитовой породы (она сверху, копается легко) и из базальта глубже 120 м. Сера (жёлтая) — пустая порода, ничего не даёт.",
+			"coal": "Уголь — тонкими пластами в верхних 15–60 м, в графитовой породе: слой осадочных пород на Меркурии тонкий. Копайте вдоль пласта.",
+			"methane": "Метан — от открытого угля и из газовых карманов в верхних десятках метров. Пластов угля мало — и газа немного.",
+		},
+		"geo": {"relief": "craters", "regolith": [Mat.GRAVEL, Mat.BASALT], "sed": 0.15, "basalt": 120, "magma": 2500, "ores": "blobs", "caves": 0.5, "tubes": false, "ice": 0, "palette": Color(0.78, 0.74, 0.72), "leaf": Color(0, 0, 0, 0)}, "atm": "vacuum", "name": "Меркурий", "desc": "Горячая поверхность (+60 °C), воздуха нет. Под землёй прохладнее (+24 °C). Много железа и серебра. Редкий аметист — для ядерной ракеты. Изрыт кратерами; руда — крупными гнёздами у самой поверхности.",
 		"travel": 4, "engine": "chem", "surf": 60.0, "under": 24.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.8, "ores": [[0.45, Mat.IRON_ORE], [0.65, Mat.COPPER_ORE], [0.95, Mat.SILVER_ORE], [1.0, Mat.GOLD_ORE]],
 		"amethyst": 0.04, "kimberlite": 0.62, "gas": 0.75, "oil": 0.9, "oil_depth": 200, "quakes": 1.0, "sky": Color(0.75, 0.62, 0.5)},
@@ -36,7 +44,14 @@ const DATA := {
 		"travel": 3, "engine": "chem", "surf": 75.0, "under": 58.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.4, "ores": [[0.3, Mat.IRON_ORE], [0.5, Mat.COPPER_ORE], [0.8, Mat.GOLD_ORE], [1.0, Mat.URANIUM_ORE]],
 		"amethyst": 0.04, "kimberlite": 0.62, "gas": 0.62, "oil": 0.9, "oil_depth": 200, "quakes": 1.0, "sky": Color(0.95, 0.72, 0.4)},
-	"mars": {"geo": {"relief": "mesas", "regolith": [Mat.SAND, Mat.GRAVEL], "sed": 1.6, "basalt": 900, "magma": 3000, "ores": "layers", "caves": 1.5, "tubes": true, "ice": 0, "palette": Color(1.32, 0.72, 0.52), "leaf": Color(0, 0, 0, 0)}, "atm": "vacuum", "name": "Марс", "desc": "Холодно (−30 °C у поверхности, около −12 °C в недрах, в корабле около 0 °C), воздуха нет. Синим нормально; обычным нужны очаги (два рядом греют вдвое); красные выживут только второй партией, когда очаги уже горят. Много железа и меди. Редкий аметист — для ядерной ракеты. Столовые горы и толстые слои пород; руда — тонкими пластами, лавовые трубки.",
+	"mars": {"absent": ["coal", "oil"],
+		"rocks": {Mat.LIMESTONE: [Mat.GYPSUM, 0.1], Mat.COAL: Mat.SHALE, Mat.OIL: Mat.SANDSTONE, Mat.GRANITE: Mat.BASALT},
+		"hints": {
+			"stone": "Камень на Марсе — песчаник и сланец (толстый осадочный слой, до 150–650 м), ниже — базальт. Гипс (белый) — пустая порода, ничего не даёт; известняк встречается редко.",
+			"methane": "Метан — только из газовых карманов в сланце глубже 40 м (угля на Марсе нет). Его собирает дегазация — это главное топливо: газовые котлы в очагах и газовый генератор.",
+			"clay": "Глина — 2–11 м, пятнами среди песка (как на Земле): кирпич делать можно.",
+		},
+		"geo": {"relief": "mesas", "regolith": [Mat.SAND, Mat.GRAVEL], "sed": 1.6, "basalt": 900, "magma": 3000, "ores": "layers", "caves": 1.5, "tubes": true, "ice": 0, "palette": Color(1.32, 0.72, 0.52), "leaf": Color(0, 0, 0, 0)}, "atm": "vacuum", "name": "Марс", "desc": "Холодно (−30 °C у поверхности, около −12 °C в недрах, в корабле около 0 °C), воздуха нет. Синим нормально; обычным нужны очаги (два рядом греют вдвое); красные выживут только второй партией, когда очаги уже горят. Много железа и меди. Редкий аметист — для ядерной ракеты. Столовые горы и толстые слои пород; руда — тонкими пластами, лавовые трубки.",
 		"travel": 3, "engine": "chem", "surf": -30.0, "under": -12.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.4, "ores": [[0.6, Mat.IRON_ORE], [0.95, Mat.COPPER_ORE], [1.0, Mat.SILVER_ORE]],
 		"amethyst": 0.04, "kimberlite": 0.62, "gas": 0.7, "oil": 0.9, "oil_depth": 200, "quakes": 0.5, "sky": Color(0.9, 0.55, 0.4)},
@@ -57,6 +72,27 @@ const DATA := {
 		"ore": 1.0, "ores": [], "kimberlite": 0.62, "gas": 0.3, "oil": 0.9, "oil_depth": 200, "quakes": 1.0,
 		"sky": Color(0.45, 0.6, 0.98)},
 }
+## Чего на планете нет и что из этого следует (перед полётом).
+const ABSENT_NOTES := {
+	"coal": "угля — печи и генераторы топить нечем, кроме дров и метана: берите газовые котлы и газовый генератор, дрова везите с собой",
+	"oil": "нефти — дизель только привезённый: на ракету обратно его нужно доставить",
+	"clay": "глины — кирпича не сделать, стройте из камня и железа (или везите глину)",
+}
+
+
+## Что на планете отсутствует (ключи ресурсов).
+static func absent(id: String) -> Array:
+	return data(id).get("absent", [])
+
+
+## Строка для экрана полёта: «Нет: угля — …; нефти — …» (пусто — всё есть).
+static func absent_text(id: String) -> String:
+	var parts: PackedStringArray = []
+	for k in absent(id):
+		parts.append(ABSENT_NOTES.get(k, k))
+	return "Нет " + "; ".join(parts) + "." if not parts.is_empty() else ""
+
+
 ## Порядок в списке полёта.
 const ORDER := ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune"]
 ## На сколько метров вглубь холод или жар поверхности сменяется температурой недр.

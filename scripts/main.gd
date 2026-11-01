@@ -97,6 +97,7 @@ func _ready() -> void:
 	var gen_version := int(data.get("gen", 1)) if data.has("seed") else WorldGen.LATEST
 	world = WorldData.new(WorldGen.new(seed_value, gen_version))
 	colony = Colony.new(world)
+	ResourceHints.planet = "earth"
 	_home = Vector2i(0, world.gen.surface_y(0))
 	_build_scene()
 	universe.base_seed = seed_value
@@ -404,6 +405,7 @@ func _switch_world(planet: String) -> void:
 	world = e["world"]
 	colony = e["colony"]
 	_planet = planet
+	ResourceHints.planet = planet
 	_home = colony.home
 	_apply_planet_sky()
 	world_view = WorldView.new()
@@ -496,7 +498,7 @@ func _launch_pick_planet(pad: Project) -> void:
 		var d := Planet.data(id)
 		var ok := Colony.rocket_reaches(pad.rocket, id)
 		var col := universe.entry(id)
-		var info := "%s%s" % [d["desc"],
+		var info := "%s%s%s" % [d["desc"], (" " + Planet.absent_text(id)) if not Planet.absent_text(id).is_empty() else "",
 			(" · там колония: гавриков %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
 		if not ok:
 			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]

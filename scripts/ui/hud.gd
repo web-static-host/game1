@@ -2157,7 +2157,7 @@ func ask(title: String, text: String, yes_label: String, on_yes: Callable) -> vo
 func _open_resources(standalone: bool) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
-	for key: String in ResourceHints.HINTS:
+	for key: String in ResourceHints.keys():
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size = Vector2(0, 50)

@@ -34,5 +34,29 @@ const HINTS := {
 }
 
 
+## Планета, для которой показываем подсказки (её задаёт игра при переходе между мирами).
+static var planet := "earth"
+
+
 static func text(key: String) -> String:
-	return HINTS.get(key, "Где искать — неизвестно.")
+	if planet == "earth":
+		return HINTS.get(key, "Где искать — неизвестно.")
+	var name := Planet.planet_name(planet)
+	if Planet.absent(planet).has(key) or (key == "diesel" and Planet.absent(planet).has("oil")) \
+			or (key == "brick" and Planet.absent(planet).has("clay")):
+		var why := ""
+		if key == "diesel":
+			why = " — нефти нет, дизель только привозной"
+		elif key == "brick":
+			why = " — глины нет, кирпич только привозной"
+		return "%s: %s нет%s." % [name, Mat.resource_name(key).to_lower(), why]
+	var own: Dictionary = Planet.data(planet).get("hints", {})
+	if own.has(key):
+		return "%s: %s" % [name, own[key]]
+	return "%s (на планете %s глубины и породы могут отличаться)" % [HINTS.get(key, "Где искать — неизвестно."), name]
+
+
+## Ресурсы, которые показывают в списке «?» (порода — не ресурс: почвы, песка, гравия,
+## известняка и соли в нём нет).
+static func keys() -> Array:
+	return HINTS.keys().filter(func(k: String) -> bool: return not RoomType.BULK.has(k))

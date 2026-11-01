@@ -1949,20 +1949,6 @@ func _ground_y(x: float) -> float:
 ## пустая порода — в отвале справа от базы.
 func _draw_stockpile(font: Font) -> void:
 	var home := colony.home
-	var bulk := 0
-	for k in RoomType.BULK:
-		bulk += colony.inventory.get(k, 0)
-	if bulk > 0:
-		var cx := home.x + 4.0
-		var base := Vector2(view.cell_to_local(Vector2i(0, 0)).x + cx * TILE, _ground_y(cx))
-		var rad := clampf(sqrt(bulk) * 3.0, 10.0, TILE * 3.0)
-		var pts := PackedVector2Array()
-		for i in 13:
-			var a := PI + i * PI / 12.0
-			pts.append(base + Vector2(cos(a) * rad * 1.4, sin(a) * rad * 0.7))
-		_c.draw_colored_polygon(pts, res_color("sand").lerp(res_color("soil"), 0.5))
-		_c.draw_circle(base + Vector2(-rad * 0.3, -rad * 0.45), rad * 0.18, res_color("gravel"))
-		_label(font, base + Vector2(-20, -rad * 0.8 - 6), "отвал %d" % bulk, Color(0.95, 0.9, 0.8))
 	var keys: Array = colony.inventory.keys()
 	keys.sort()
 	var i := 0

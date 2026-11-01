@@ -34,7 +34,7 @@ const HAZARD_TEXT := {
 	"methane_air": "Метан в выработке — тяжело дышать. Работы стоят, пока газ не уйдёт (поможет дегазация, противогазы). Продолжить на свой риск?",
 }
 ## Ресурсы, о находке которых сообщаем сразу.
-const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "salt", "oil", "amethyst"]
+const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "uranium_ore", "diamond", "oil", "amethyst"]
 
 # Потребности (сек. реального времени): сытости хватает минут на 12. Сна нет — гаврики не
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
@@ -4174,7 +4174,7 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		drop_item(c, key, amount, p)
 		if RoomType.RADIOACTIVE.has(key):
 			irradiate(u)
-		if p != null:
+		if p != null and not RoomType.BULK.has(key):
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
 			_log("%s %s: %s ×%d (глубина %s)" % [
@@ -7080,6 +7080,9 @@ static func _in_rects(rects: Array[Rect2i], c: Vector2i) -> bool:
 func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if key.is_empty() or n <= 0:
 		return
+	# Пустая порода (почва, песок, известняк, соль…) — не ресурс: просто исчезает.
+	if RoomType.BULK.has(key):
+		return
 	produced[key] = int(produced.get(key, 0)) + n
 	# Нефть из вскрытого пласта — сразу по трубам в хранилище (нет его — разлилась).
 	if RoomType.PIPED.has(key):
@@ -9660,12 +9663,12 @@ func _remove(key: String, n: int, room: Project = null) -> int:
 func _add(key: String, amount: int, room: Project = null) -> int:
 	if key.is_empty() or amount <= 0:
 		return 0
-	known_resources[key] = true
-	_clamp_held(key)
 	if RoomType.BULK.has(key):
-		# Пустая порода не копится — исчезает.
+		# Пустая порода не копится и не числится ресурсом — исчезает.
 		inventory.erase(key)
 		return amount
+	known_resources[key] = true
+	_clamp_held(key)
 	var have: int = inventory.get(key, 0)
 	var put := 0
 	if room != null:
@@ -9777,9 +9780,10 @@ func load_dict(d: Dictionary) -> void:
 	for k in inv:
 		if not RoomType.BULK.has(k):
 			inventory[k] = int(inv[k])
-		known_resources[k] = true
+			known_resources[k] = true
 	for k in d.get("known_resources", []):
-		known_resources[str(k)] = true
+		if not RoomType.BULK.has(str(k)):
+			known_resources[str(k)] = true
 	cells_dug = int(d.get("cells_dug", 0))
 	game_time = float(d.get("game_time", 0.0))
 	for m in d.get("discovered", []):
@@ -9843,8 +9847,11 @@ func load_dict(d: Dictionary) -> void:
 		var dc := Vector2i(int(e[0]), int(e[1]))
 		var dd := {}
 		for k in e[2]:
-			dd[str(k)] = int(e[2][k])
-		drops[dc] = dd
+			# Пустая порода на полу (старые сохранения) — исчезает.
+			if not RoomType.BULK.has(str(k)):
+				dd[str(k)] = int(e[2][k])
+		if not dd.is_empty():
+			drops[dc] = dd
 	loads.load_dict(d.get("loads", {}))
 	disasters = bool(d.get("disasters", true))
 	research.load_dict(d.get("research", {}))
