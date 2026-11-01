@@ -43,11 +43,8 @@ const SUPER := {"silver": 1.5, "gold": 2.0, "diamond": 3.0}
 const SUPER_TECH := {"silver": "silver_works", "gold": "gold_works", "diamond": "diamond_works"}
 
 
-## Технология, нужная постройке вида k из материала mat ("" — не нужна). Алмазный бур —
-## после «Алмазного бура».
-static func super_tech(k: int, mat: String) -> String:
-	if (k == Kind.DRILL or k == Kind.PROBE) and mat == "diamond":
-		return "diamond_bits"
+## Технология, нужная постройке вида k из материала mat ("" — не нужна).
+static func super_tech(_k: int, mat: String) -> String:
 	return SUPER_TECH.get(mat, "")
 
 

@@ -818,7 +818,7 @@ func _pick_workplace(u: Unit) -> void:
 	_info_target = []
 	var items := []
 	for role in [[Unit.Prof.BUILDER, "в первую очередь идёт на стройки: копает, строит, обустраивает, чинит; носит только то, без чего его работа стоит прямо сейчас"],
-			[Unit.Prof.MINER, "сначала шахты: копает и крепит, дерево на крепь носит сам, если нет свободных подсобных; на других стройках только копает"],
+			[Unit.Prof.MINER, "сначала шахты: копает и укрепляет, дерево на укрепление носит сам, если нет свободных подсобных; на других стройках только копает"],
 			[Unit.Prof.HAULER, "в первую очередь носит: материалы на стройки, сырьё в мастерские, добычу и продукцию на склад"],
 			[Unit.Prof.ANY, "стройка, если есть место, иначе переноска"]]:
 		var prof: int = role[0]
@@ -1124,13 +1124,13 @@ func _show_project(p: Project) -> void:
 			if tmats.size() > 1:
 				var tunnel := p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE
 				var cur_t: String = _wall_choice.get(p.id, p.material)
-				controls.append({"label": "Крепь" if tunnel else "Материал", "value": maxi(0, tmats.find(cur_t)), "min": 0, "max": tmats.size() - 1,
+				controls.append({"label": "Укрепление" if tunnel else "Материал", "value": maxi(0, tmats.find(cur_t)), "min": 0, "max": tmats.size() - 1,
 					"options": tmats.map(func(m: String) -> String: return Project.MATERIALS[m][0] if m != "wood" or tunnel else "Обычный"),
 					"changed": func(i: int) -> void:
 						_wall_choice[p.id] = tmats[i]
 						hud.refresh_panel(_project_spec(p)),
 				})
-				actions.append(["Сменить крепь" if tunnel else "Сменить материал", func() -> void:
+				actions.append(["Сменить укрепление" if tunnel else "Сменить материал", func() -> void:
 					var m: String = _wall_choice.get(p.id, p.material)
 					var err := colony.material_error(p, m)
 					if not err.is_empty():
@@ -1579,7 +1579,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			else:
 				var done := colony.mine_meters_done(p)
 				rows.append(_progress("Готово", float(done) / maxf(1.0, p.slice_count()), "%d из %d м" % [done, p.slice_count()]))
-				rows.append({"type": "text", "text": "Шахта строится по метру: метр выкопан и закреплён — готов. «Остановить» — готовая часть остаётся шахтой. Шахтёры копают и ставят крепь; дерево на крепь носят работники складов (шахта у них в первую очередь) и подсобные, а если свободных подсобных нет — сами шахтёры. Добытое уносят склады и подсобные."})
+				rows.append({"type": "text", "text": "Шахта строится по метру: метр выкопан и закреплён — готов. «Остановить» — готовая часть остаётся шахтой. Шахтёры копают и ставят укрепление; дерево на укрепление носят работники складов (шахта у них в первую очередь) и подсобные, а если свободных подсобных нет — сами шахтёры. Добытое уносят склады и подсобные."})
 		_:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
@@ -1836,7 +1836,7 @@ func _people_spec() -> Dictionary:
 		chips.append(["", "%s: %d" % [d, counts[d]]])
 	return {"title": "Гаврики", "subtitle": "взрослых %d · детей %d" % [adults, colony.units.size() - adults],
 		"rows": [{"type": "chips", "label": "Сейчас", "items": chips},
-			{"type": "text", "text": "Шахтёры работают только в шахтах, строители — на остальных стройках (в шахтах — только если шахтёров нет); на работу идут ближайшие. Свободные помогают везде, где есть места («Рабочих» в карточке — это места для помощников): пока строитель далеко, работает ближайший свободный, а когда строитель дойдёт — уступает ему. Гаврик докапывает свою стройку, а не бежит на другую. Строитель и шахтёр сами берут дерево на крепь полной ношей, только если его не принесли; добытое и материалы носят работники складов, подсобные и свободные — на любой склад, работник склада для этого не нужен."}]}
+			{"type": "text", "text": "Шахтёры работают только в шахтах, строители — на остальных стройках (в шахтах — только если шахтёров нет); на работу идут ближайшие. Свободные помогают везде, где есть места («Рабочих» в карточке — это места для помощников): пока строитель далеко, работает ближайший свободный, а когда строитель дойдёт — уступает ему. Гаврик докапывает свою стройку, а не бежит на другую. Строитель и шахтёр сами берут дерево на укрепление полной ношей, только если его не принесли; добытое и материалы носят работники складов, подсобные и свободные — на любой склад, работник склада для этого не нужен."}]}
 
 
 func _show_people() -> void:
@@ -2187,7 +2187,7 @@ func _show_pending() -> void:
 		if not opts.has(cur):
 			opts.append(cur)
 		if opts.size() > 1:
-			controls.push_front({"label": "Крепь", "value": opts.find(cur), "min": 0, "max": opts.size() - 1,
+			controls.push_front({"label": "Укрепление", "value": opts.find(cur), "min": 0, "max": opts.size() - 1,
 				"options": opts.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
 				"changed": func(v: int) -> void:
 					_pending_support = opts[v]
@@ -2362,7 +2362,7 @@ func _extend_rows(p: Project, rows: Array) -> void:
 		rows.append({"type": "resources", "label": "Продлить %s на %d м:" % [label, p.order_len],
 			"items": _cost_items(cost) if not cost.is_empty() else []})
 		if cost.is_empty():
-			rows[-1] = {"type": "text", "text": "Продлить %s на %d м: материалов не нужно (там пусто — копать и крепить нечего)" % [label, p.order_len]}
+			rows[-1] = {"type": "text", "text": "Продлить %s на %d м: материалов не нужно (там пусто — копать и укреплять нечего)" % [label, p.order_len]}
 
 
 ## Материалы на продолжение p в сторону d на n м: сама постройка (у лифта — рельсы и провода)

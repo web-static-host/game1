@@ -427,7 +427,7 @@ func super_materials() -> Array[String]:
 ## Материалы, из которых можно ставить постройку вида kind (первый — обычный).
 ## Тоннель и шахта — крепь из любого материала стен; лифт и бур — обычные или супер.
 ## Супер-материал — только тот, что постройке подходит: лифту — серебро, буру — алмаз после
-## «Алмазного бура», тоннелю и шахте — золото; комнате — любой (подходит по назначению).
+## «Алмазного инструмента», тоннелю и шахте — золото; комнате — любой (подходит по назначению).
 func materials_for(kind: int) -> Array[String]:
 	var out: Array[String] = ["wood"]
 	match kind:
@@ -439,7 +439,7 @@ func materials_for(kind: int) -> Array[String]:
 			if research.has("silver_works"):
 				out.append("silver")
 		Project.Kind.DRILL, Project.Kind.PROBE:
-			if research.has("diamond_bits"):
+			if research.has("diamond_works"):
 				out.append("diamond")
 	return out
 
@@ -3669,7 +3669,7 @@ func material_error(p: Project, mat: String) -> String:
 static func material_job_name(p: Project) -> String:
 	match p.kind:
 		Project.Kind.TUNNEL, Project.Kind.MINE:
-			return "Замена крепи"
+			return "Замена укрепления"
 		Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE:
 			return "Замена материала"
 	return "Перестройка стен"
@@ -9845,9 +9845,9 @@ func load_dict(d: Dictionary) -> void:
 		_migrate_stores()
 	if int(d.get("ores_v", 0)) < 1:
 		_migrate_ores()
-	# «Алмазный бур» раньше ускорял все буры даром; теперь это алмазная коронка у самого бура —
-	# буры, что уже были, получают её.
-	if int(d.get("drill_v", 0)) < 1 and research.has("diamond_bits"):
+	# Наука «Алмазный бур» (её больше нет) ускоряла все буры даром; теперь это алмазная коронка
+	# у самого бура — буры, что уже были при этой науке, получают её.
+	if int(d.get("drill_v", 0)) < 1 and ((d.get("research", {}) as Dictionary).get("done", []) as Array).has("diamond_bits"):
 		for p in projects:
 			if p.kind == Project.Kind.DRILL and p.material == "wood":
 				p.material = "diamond"

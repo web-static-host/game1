@@ -3545,12 +3545,13 @@ func test_super_materials() -> void:
 	check(not colony.available_materials().has("diamond"), "алмаз недоступен без науки")
 	check(colony.validate(Project.Kind.ROOM, Rect2i(x + 2, s + 3, 6, 3), "diamond").contains("Алмазный инструмент"), "без науки алмазную комнату не заложить")
 	check(Research.TECHS.has("silver_works") and Research.TECHS.has("gold_works") and Research.TECHS.has("diamond_works"), "три технологии супер-построек")
-	colony.research.done.append_array(["silver_works", "gold_works", "diamond_works"])
+	colony.research.done.append_array(["silver_works", "gold_works"])
+	check(not Research.TECHS.has("diamond_bits"), "науки «Алмазный бур» больше нет — коронку открывает «Алмазный инструмент»")
 	check(colony.materials_for(Project.Kind.LIFT) == ["wood", "silver"], "лифт: обычный или серебряный — электрика (%s)" % str(colony.materials_for(Project.Kind.LIFT)))
-	check(colony.materials_for(Project.Kind.DRILL) == ["wood"], "алмазный бур — только после «Алмазного бура»")
-	check(colony.validate(Project.Kind.DRILL, Rect2i(x, s - 3, 3, 3), "diamond").contains("Алмазный бур"), "без «Алмазного бура» — подсказка о нём")
-	colony.research.done.append("diamond_bits")
-	check(colony.materials_for(Project.Kind.DRILL) == ["wood", "diamond"], "после «Алмазного бура» — алмазная коронка")
+	check(colony.materials_for(Project.Kind.DRILL) == ["wood"], "алмазный бур — только после «Алмазного инструмента»")
+	check(colony.validate(Project.Kind.DRILL, Rect2i(x, s - 3, 3, 3), "diamond").contains("Алмазный инструмент"), "без науки — подсказка о ней")
+	colony.research.done.append("diamond_works")
+	check(colony.materials_for(Project.Kind.DRILL) == ["wood", "diamond"], "после «Алмазного инструмента» — алмазная коронка")
 	var tm := colony.materials_for(Project.Kind.TUNNEL)
 	check(tm.has("gold") and not tm.has("diamond") and not tm.has("silver"), "тоннель: золото, но не алмаз и серебро (%s)" % str(tm))
 	check(colony.validate(Project.Kind.TUNNEL, r, "diamond").contains("не подходит"), "алмазный тоннель — не по смыслу")
@@ -3625,7 +3626,7 @@ func test_super_materials() -> void:
 	drill.kind = Project.Kind.DRILL
 	drill.material = "diamond"
 	check(drill.bonus() == 3.0 and is_equal_approx(colony.drill_speed(), Colony.DRILL_SPEED * colony.dig_bonus() * colony.power_ratio),
-		"«Алмазный бур» ускоряет только бур с алмазной коронкой")
+		"ускоряется только бур с алмазной коронкой")
 	var store := Project.new()
 	store.kind = Project.Kind.ROOM
 	store.rect = Rect2i(0, 0, 6, 3)
