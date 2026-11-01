@@ -3,12 +3,12 @@ extends RefCounted
 ## Назначения комнат. Оборудование стоит ресурсов, его ставят гаврики.
 
 enum { NONE, HOME, STORAGE, FARM, DINING, PUMP, VENT, LAB, KILN, FORGE, GENERATOR, DEGAS, GRANARY, HEARTH, GAS_GEN,
-	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD, ENRICHMENT }
+	OIL_PUMP, OIL_TANK, REFINERY, DIESEL_GEN, SHIP, LAUNCHPAD, ENRICHMENT, TELEPORT }
 
 const NAMES := ["Без назначения", "Жилая", "Склад", "Ферма", "Столовая", "Насосная", "Вентиляция",
 	"Лаборатория", "Печь", "Кузница", "Генератор", "Дегазация", "Амбар", "Очаг", "Газовый генератор",
 	"Нефтекачалка", "Нефтехранилище", "Нефтезавод", "Дизельный генератор",
-	"Корабль", "Космодром", "Обогатительная фабрика"]
+	"Корабль", "Космодром", "Обогатительная фабрика", "Телепорт"]
 ## Еда хранится в амбаре, всё остальное — на складе.
 ## Еда: грибы с фермы ("food" — ключ с тех пор, как еда была одна), рыба и ягоды.
 const FOOD_KEYS := ["food", "fish", "berries"]
@@ -35,12 +35,16 @@ const HINTS := [
 	"приземлившийся корабль: жильё на 10 человек, воздух, тепло, свет и трюм с грузом",
 	"стартовый стол на поверхности: здесь собирают ракету и отправляют экспедицию на другую планету",
 	"обогащение урана: 1 урановая руда → 2 урана; нужна энергия. Уран радиоактивен: кто с ним работает, живёт на 10% меньше, а его дети — всегда мутанты",
+	"телепорт: гаврики входят в него и тут же выходят из другого телепорта этой планеты (нужна пара)",
 ]
 ## Взрываются при обрушении (бак газа; потом — хранилище нефти).
 const EXPLOSIVE := [DEGAS, OIL_TANK]
 ## Назначения, которые нужно сначала изучить.
 const REQUIRES := {KILN: "pottery", FORGE: "smelting", GENERATOR: "electricity", GAS_GEN: "chemistry", OIL_PUMP: "oil_drilling", OIL_TANK: "oil_drilling",
-	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", ENRICHMENT: "nuclear", SHIP: "_ship", HEARTH_BRICK: "pottery", HEARTH_GAS: "gas_heating"}
+	REFINERY: "refining", DIESEL_GEN: "combustion", LAUNCHPAD: "rocketry", ENRICHMENT: "nuclear", SHIP: "_ship", HEARTH_BRICK: "pottery", HEARTH_GAS: "gas_heating",
+	TELEPORT: "_ruby"}
+## Телепорт (тайна): из рубинов, алмазов и аметистов; пара — 30 каждого.
+const TELEPORT_COST := {"ruby": 15, "diamond": 15, "amethyst": 15}
 ## Вариант обустройства «очаг с кирпичными печами» (в выборе назначения и при улучшении);
 ## готовая комната — HEARTH с brick_stoves.
 const HEARTH_BRICK := 100
@@ -300,6 +304,8 @@ static func _equip_cost(t: int, p: Project) -> Dictionary:
 			return {"wood": 8, "stone": 8}
 		GRANARY:
 			return {"wood": 2 * w}
+		TELEPORT:
+			return TELEPORT_COST.duplicate()
 		HEARTH:
 			# Каменные печи — из того, что есть с самого начала.
 			return {"stone": 8 * stoves(p)}

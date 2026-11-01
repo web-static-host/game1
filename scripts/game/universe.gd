@@ -90,7 +90,12 @@ func to_dict(cameras: Dictionary) -> Dictionary:
 func load_dict(d: Dictionary) -> void:
 	for wd in d.get("worlds", []):
 		var planet := str(wd.get("planet", "mars"))
-		var world := WorldData.new(WorldGen.new(int(wd["seed"]), int(wd.get("gen", WorldGen.LATEST)), planet))
+		var gen := int(wd.get("gen", WorldGen.LATEST))
+		# Миры планет версии 8 получают свои породы (версия 9 отличается только ими): выкопанное
+		# и построенное хранится в сохранении и остаётся, нетронутая порода — уже планетная.
+		if gen == 8:
+			gen = 9
+		var world := WorldData.new(WorldGen.new(int(wd["seed"]), gen, planet))
 		var colony := Colony.new(world)
 		SaveSystem.apply(wd, world, colony)
 		add_world(planet, world, colony)

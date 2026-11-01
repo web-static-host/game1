@@ -82,6 +82,7 @@ func _initialize() -> void:
 	test_forge_ores()
 	test_starving_count()
 	test_planet_rocks()
+	test_ruby_teleport()
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
@@ -3726,6 +3727,72 @@ func test_planet_rocks() -> void:
 	colony.drop_item(Vector2i(0, 5), "limestone", 3)
 	colony.drop_item(Vector2i(0, 5), "salt", 2)
 	check(colony.drops.is_empty() and not colony.known_resources.has("limestone") and not colony.inventory.has("salt"), "известняк и соль при копке исчезают")
+
+
+## Рубин — тайна дальних планет: очень редко и только глубже 400 м; нашли — открыт телепорт.
+func test_ruby_teleport() -> void:
+	var nep := WorldGen.new(21, WorldGen.LATEST, "neptune")
+	var found := Vector2i(-1, -1)
+	for bx in range(-400, 400):
+		for by in range(0, 400):
+			var cx := bx * 6 + 2
+			var cy := by * 6 + 2
+			if cy - nep.surface_y(cx) > WorldGen.RUBY_DEPTH + 2 and nep._ruby(cx, cy):
+				found = Vector2i(cx, cy)
+				break
+		if found.x != -1:
+			break
+	check(found.x != -1 and nep.material_at(found.x, found.y) == Mat.RUBY, "на Нептуне глубоко есть гнёзда рубина")
+	var shallow := 0
+	for x in range(-300, 300, 2):
+		for d in range(0, 400, 2):
+			if nep.material_at(x, nep.surface_y(x) + d) == Mat.RUBY:
+				shallow += 1
+	check(shallow == 0, "выше 400 м рубина нет")
+	var mars := WorldGen.new(21, WorldGen.LATEST, "mars")
+	check(not mars._ruby(found.x, found.y) and float(Planet.data("earth").get("ruby", 0.0)) == 0.0, "на Земле и ближних планетах рубина нет")
+	check(not ResourceHints.keys().has("ruby"), "рубин — тайна: в списке ресурсов его нет")
+	# Нашли рубин — сообщение и телепорт в стройке.
+	var res := _colony_with_room(26)
+	var colony: Colony = res[0]
+	check(not colony.purpose_unlocked(RoomType.TELEPORT), "до находки телепорта нет")
+	var got := []
+	colony.secret_found.connect(func(t: String, _text: String) -> void: got.append(t))
+	colony.drop_item(Vector2i(0, 5), "ruby", 2)
+	check(got.size() == 1 and got[0].contains("рубин") and colony.purpose_unlocked(RoomType.TELEPORT), "нашли рубин — плашка и открыт телепорт")
+	colony.drop_item(Vector2i(0, 5), "ruby", 1)
+	check(got.size() == 1, "плашка — только при первой находке")
+	check(RoomType.equip_cost(RoomType.TELEPORT, res[1]) == {"ruby": 15, "diamond": 15, "amethyst": 15}, "телепорт — 15 рубинов, алмазов и аметистов")
+	# Два телепорта: площадки связаны, гаврик переходит мгновенно.
+	var w := colony.world
+	var ax := _flat_x(w, colony.home.x + 40)
+	var bx2 := _flat_x(w, ax + 60)
+	var pads: Array[Vector2i] = []
+	for x0 in [ax, bx2]:
+		var tp := Project.new()
+		tp.id = colony.next_project_id
+		colony.next_project_id += 1
+		tp.kind = Project.Kind.ROOM
+		tp.rect = Rect2i(x0, w.gen.surface_y(x0) - 3, 3, 3)
+		tp.phase = Project.Phase.DONE
+		tp.purpose = RoomType.TELEPORT
+		colony.projects.append(tp)
+		pads.append(Colony.portal_cell(tp))
+	check(colony.pathing.node(pads[0]) and colony.pathing.node(pads[1]), "площадки телепортов — на полу (%s, %s)" % [pads[0], pads[1]])
+	colony._portal_check()
+	var dist: Dictionary = colony.pathing.explore(pads[0])[1]
+	check(int(dist.get(pads[1], -1)) == 1, "от телепорта до другого — один шаг (%s)" % str(dist.get(pads[1], -1)))
+	var u: Unit = colony.units[0]
+	u.pos = Vector2(pads[0])
+	u.path = [pads[1]] as Array[Vector2i]
+	u.path_i = 0
+	u.lift_id = 0
+	colony._move(u, 0.05)
+	check(u.cell() == pads[1], "гаврик перешёл через телепорт мгновенно (%s)" % u.cell())
+	# Старые миры планет (версии 8) при загрузке получают свои породы.
+	var uni := Universe.new()
+	uni.load_dict({"worlds": [{"planet": "mars", "seed": 5, "gen": 8, "colony": {}}]})
+	check((uni.worlds[0]["world"] as WorldData).gen.version == 9, "мир Марса из старого сохранения — с новыми породами")
 
 
 func test_starving_count() -> void:

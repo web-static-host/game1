@@ -1447,6 +1447,36 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 	_c.draw_texture_rect(block, Rect2(block_x - block.get_width() * k * 0.5, top, block.get_width() * k, block.get_height() * k), false, mod)
 
 
+## Телепорт: арка из рубинов и аметистов над светящейся площадкой посередине пола
+## (связан с другим — сияет ярче).
+func _draw_teleport(p: Project, r: Rect2, alpha: float) -> void:
+	var c := view.cell_to_local(Colony.portal_cell(p)) + Vector2(TILE * 0.5, TILE)
+	var linked := colony.teleports().size() >= 2 and p.phase == Project.Phase.DONE
+	var h := minf(r.size.y - 14.0, TILE * 2.6)
+	var w := TILE * 1.15
+	var glow := Color(1.0, 0.2, 0.45, (0.55 if linked else 0.2) * alpha)
+	_c.draw_colored_polygon(PackedVector2Array([c + Vector2(-w * 0.85, -4), c + Vector2(w * 0.85, -4),
+		c + Vector2(w * 0.55, -h * 0.9), c + Vector2(0, -h), c + Vector2(-w * 0.55, -h * 0.9)]), glow)
+	if linked:
+		_c.draw_colored_polygon(PackedVector2Array([c + Vector2(-w * 0.4, -4), c + Vector2(w * 0.4, -4),
+			c + Vector2(w * 0.25, -h * 0.75), c + Vector2(-w * 0.25, -h * 0.75)]), Color(1.0, 0.85, 0.95, 0.45 * alpha))
+	_c.draw_rect(Rect2(c + Vector2(-w, -7), Vector2(w * 2, 7)), Color(0.3, 0.26, 0.34, alpha))
+	_c.draw_rect(Rect2(c + Vector2(-w * 0.7, -10), Vector2(w * 1.4, 3)), Color(1.0, 0.3, 0.5, alpha))
+	var prev := Vector2.ZERO
+	for i in 9:
+		var a := PI + PI * i / 8.0
+		var at := c + Vector2(cos(a) * w, sin(a) * h - 6)
+		if i > 0:
+			_c.draw_line(prev, at, Color(0.35, 0.3, 0.4, alpha), 4.0)
+		prev = at
+	for i in 9:
+		var a := PI + PI * i / 8.0
+		var at := c + Vector2(cos(a) * w, sin(a) * h - 6)
+		var gem := Color(0.92, 0.08, 0.22, alpha) if i % 2 == 0 else Color(0.66, 0.3, 1.0, alpha)
+		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(0, -9), at + Vector2(7, 0), at + Vector2(0, 9), at + Vector2(-7, 0)]), gem)
+		_c.draw_circle(at + Vector2(-2, -3), 2.0, Color(1, 1, 1, 0.7 * alpha))
+
+
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 	var floor_y := r.end.y - 6
 	var x0 := view.cell_to_local(Vector2i(RoomType.floor_start(p), 0)).x
@@ -1455,6 +1485,9 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 		return
 	if purpose == RoomType.LAUNCHPAD:
 		_draw_launchpad(p, r, alpha)
+		return
+	if purpose == RoomType.TELEPORT:
+		_draw_teleport(p, r, alpha)
 		return
 	if purpose == RoomType.HOME and furniture("home", "bed_blue") != null:
 		_draw_home_furniture(p, r, alpha)
@@ -1790,7 +1823,7 @@ const RES_COLORS := {
 	"food": Color(0.9, 0.8, 0.62), "fish": Color(0.55, 0.72, 0.85), "berries": Color(0.85, 0.25, 0.3), "coal": Color(0.15, 0.14, 0.13), "iron": Color(0.69, 0.33, 0.18),
 	"copper": Color(0.25, 0.68, 0.57), "silver": Color(0.84, 0.87, 0.9), "gold": Color(0.95, 0.79, 0.23),
 	"uranium": Color(0.53, 0.88, 0.31), "diamond": Color(0.75, 0.95, 1.0), "salt": Color(0.91, 0.87, 0.9),
-	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69),
+	"oil": Color(0.1, 0.08, 0.06), "limestone": Color(0.81, 0.78, 0.69), "ruby": Color(0.88, 0.08, 0.2),
 	"soil": Color(0.36, 0.25, 0.16), "sand": Color(0.85, 0.75, 0.52), "gravel": Color(0.55, 0.52, 0.47),
 	"iron_ore": Color(0.52, 0.28, 0.18), "copper_ore": Color(0.2, 0.52, 0.44), "silver_ore": Color(0.63, 0.65, 0.69),
 	"gold_ore": Color(0.72, 0.6, 0.21), "uranium_ore": Color(0.4, 0.65, 0.24), "amethyst": Color(0.6, 0.28, 0.95),

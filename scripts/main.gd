@@ -374,6 +374,7 @@ func _export_save() -> void:
 func _hook(e: Dictionary) -> void:
 	var c: Colony = e["colony"]
 	var planet: String = e["planet"]
+	c.secret_found.connect(func(t: String, text: String) -> void: hud.show_message(t, text))
 	c.event_logged.connect(func(t: String, k: String) -> void:
 		if c == colony:
 			hud.log_event(t, k, c.log_at)
@@ -1169,7 +1170,7 @@ func _show_project(p: Project) -> void:
 			# Газовый генератор — в списке сразу за обычным.
 			if t == RoomType.GAS_GEN:
 				continue
-			if colony.research.has(RoomType.REQUIRES.get(t, "")):
+			if colony.purpose_unlocked(t):
 				purposes.append(t)
 			if t == RoomType.GENERATOR and colony.research.has(RoomType.REQUIRES[RoomType.GAS_GEN]):
 				purposes.append(RoomType.GAS_GEN)
@@ -2434,10 +2435,13 @@ func _build_room_items() -> Array:
 		RoomType.HEARTH, RoomType.HEARTH_BRICK, RoomType.HEARTH_GAS, RoomType.LAB, RoomType.PUMP, RoomType.VENT, RoomType.DEGAS,
 		RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN,
 		RoomType.OIL_PUMP, RoomType.OIL_TANK, RoomType.REFINERY, RoomType.DIESEL_GEN, RoomType.ENRICHMENT, RoomType.LAUNCHPAD]
+	# Телепорт — тайна: в меню он появляется, только когда найден рубин.
+	if colony.purpose_unlocked(RoomType.TELEPORT):
+		order.append(RoomType.TELEPORT)
 	var out := []
 	for t in order:
 		var need: String = RoomType.REQUIRES.get(t, "")
-		var ok := colony.research.has(need)
+		var ok := colony.purpose_unlocked(t)
 		var nm := "Пустая" if t == RoomType.NONE else RoomType.purpose_name(t).replace("Очаг (каменные печи)", "Очаг").replace(
 			"Очаг (кирпичные печи)", "Очаг кирпичный").replace("Очаг (газовые котлы)", "Очаг газовый")
 		nm = {"Нефтекачалка": "Нефте-\nкачалка", "Нефтехранилище": "Нефте-\nхранилище"}.get(nm, nm)

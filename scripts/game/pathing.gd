@@ -129,11 +129,19 @@ func _pass_m(c: Vector2i) -> bool:
 	return v
 
 
+## Связанные площадки телепортов: клетка -> куда с неё можно шагнуть мгновенно.
+var portals := {}
+
+
 func neighbors(c: Vector2i) -> Array[Vector2i]:
 	var memo = _nbr_memo.get(c)
 	if memo != null:
 		return memo
 	var out := _neighbors(c)
+	if portals.has(c):
+		for p: Vector2i in portals[c]:
+			if _node_m(p):
+				out.append(p)
 	_nbr_memo[c] = out
 	return out
 

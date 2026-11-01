@@ -3397,7 +3397,7 @@ func set_purpose(p: Project, t: int) -> bool:
 		return false
 	if t == RoomType.HEARTH_BRICK and p.purpose == RoomType.HEARTH and not is_hearth_upgrade(p, t):
 		return false
-	if not research.has(RoomType.REQUIRES.get(t, "")):
+	if not purpose_unlocked(t):
 		return false
 	if p.purpose == RoomType.SHIP:
 		return false
@@ -3426,6 +3426,13 @@ func set_purpose(p: Project, t: int) -> bool:
 	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
+
+
+## Назначение открыто: изучена его технология (телепорт — тайна: когда найден рубин).
+func purpose_unlocked(t: int) -> bool:
+	if t == RoomType.TELEPORT:
+		return known_resources.has("ruby")
+	return research.has(RoomType.REQUIRES.get(t, ""))
 
 
 ## Улучшение очага: каменные печи — до кирпичных, любые — газовыми котлами.
@@ -4970,6 +4977,7 @@ func update(dt: float) -> void:
 			if sig != _climb_sig:
 				_climb_sig = sig
 				_rebuild_climb()
+			_portal_check()
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
 		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
@@ -5415,6 +5423,59 @@ func congestion(u: Unit) -> float:
 	return minf(1.0, float(tunnel_lanes(p.rect)) / crowd)
 
 
+# --- Телепорт (тайна: открывается, когда найден рубин) ----------------------------------------
+## Площадки всех готовых телепортов планеты связаны: с площадки одного шаг — сразу на площадку
+## любого другого (в обходах и путях это обычный шаг, гаврик переносится мгновенно).
+var _portal_sig := []
+
+
+## Площадка телепорта: середина пола комнаты.
+static func portal_cell(p: Project) -> Vector2i:
+	return Vector2i(p.rect.position.x + p.rect.size.x / 2, p.rect.end.y - 1)
+
+
+func teleports() -> Array[Project]:
+	var out: Array[Project] = []
+	for p in projects:
+		if p.kind == Project.Kind.ROOM and p.purpose == RoomType.TELEPORT and p.phase == Project.Phase.DONE and not p.paused:
+			out.append(p)
+	return out
+
+
+func _portal_check() -> void:
+	var sig := []
+	for p in teleports():
+		sig.append(portal_cell(p))
+	if sig == _portal_sig:
+		return
+	_portal_sig = sig
+	var links := {}
+	if sig.size() >= 2:
+		for a: Vector2i in sig:
+			var others: Array[Vector2i] = []
+			for b: Vector2i in sig:
+				if b != a:
+					others.append(b)
+			links[a] = others
+	pathing.portals = links
+	pathing.clear_cache()
+
+
+## Первая находка рубина — тайна раскрыта: что из него можно сделать.
+signal secret_found(title: String, text: String)
+
+
+func _know(key: String) -> void:
+	if known_resources.has(key):
+		return
+	known_resources[key] = true
+	if key == "ruby":
+		secret_found.emit("Вы нашли рубин!",
+			"Редчайший камень дальних планет. Из рубинов, алмазов и аметистов можно построить телепорт: гаврики входят в один и мгновенно выходят из другого на этой же планете.\n\nТелепорт — назначение комнаты: по %d рубинов, алмазов и аметистов на каждый, нужна пара (всего по %d)."
+				% [RoomType.TELEPORT_COST["ruby"], RoomType.TELEPORT_COST["ruby"] * 2])
+		_log("Найден рубин! Открыт телепорт (назначение комнаты)", "good")
+
+
 func _move(u: Unit, dt: float) -> void:
 	var budget := dt
 	var jam := congestion(u)
@@ -5435,6 +5496,11 @@ func _move(u: Unit, dt: float) -> void:
 			u.node_ok_key = nk
 		var next := Vector2(u.path[u.path_i])
 		var delta := next - u.pos
+		# Шаг через телепорт — мгновенно.
+		if delta.length_squared() > 16.0 and pathing.portals.has(u.cell()):
+			u.pos = next
+			u.path_i += 1
+			continue
 		var climbing := absf(delta.y) > absf(delta.x)
 		var spd := (CLIMB_SPEED if climbing else WALK_SPEED) * jam * u.move_factor() * _track_factor(u, climbing)
 		if u.child:
@@ -7088,7 +7154,7 @@ func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 	if RoomType.PIPED.has(key):
 		_add(key, n)
 		return
-	known_resources[key] = true
+	_know(key)
 	if site != null:
 		var use := mini(n, int(remaining(site).get(key, 0)))
 		if use > 0:
@@ -9667,7 +9733,7 @@ func _add(key: String, amount: int, room: Project = null) -> int:
 		# Пустая порода не копится и не числится ресурсом — исчезает.
 		inventory.erase(key)
 		return amount
-	known_resources[key] = true
+	_know(key)
 	_clamp_held(key)
 	var have: int = inventory.get(key, 0)
 	var put := 0

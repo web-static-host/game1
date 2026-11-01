@@ -413,6 +413,18 @@ func material_at(x: int, y: int) -> int:
 	return _planet_rock(x, y, _cell(x, y, surf, _soil_depth(x), sed_base(x), _kimberlite_column(x), _water_table(x, surf)))
 
 
+## Рубины — только на дальних планетах, глубже 400 м: редкие гнёзда (участок 6×6, в нём
+## чуть больше половины клеток — рубин).
+const RUBY_DEPTH := 400
+
+
+func _ruby(x: int, y: int) -> bool:
+	var chance := float(planet.get("ruby", 0.0))
+	if chance <= 0.0:
+		return false
+	return hash01(floori(x / 6.0), floori(y / 6.0), world_seed + 203) < chance and hash01(x, y, world_seed + 204) < 0.55
+
+
 ## Земная порода m в клетке (x, y) -> порода этой планеты.
 func _planet_rock(x: int, y: int, m: int) -> int:
 	if _rocks.is_empty() or not _rocks.has(m):
@@ -494,6 +506,8 @@ func _rock(x: int, y: int, d: int, sed: int, kimb: bool) -> int:
 		var share := _diamond_share if float(planet["kimberlite"]) >= 0.5 else 0.3
 		return Mat.DIAMOND if hash01(x, y, world_seed + 5) < share else Mat.KIMBERLITE
 
+	if version >= 9 and d > RUBY_DEPTH and _ruby(x, y):
+		return Mat.RUBY
 	var ore := _ore(x, y, d)
 	if ore != Mat.AIR:
 		return ore

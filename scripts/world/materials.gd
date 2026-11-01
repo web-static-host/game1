@@ -36,6 +36,7 @@ enum {
 	GRAPHITE,
 	SULFUR,
 	GYPSUM,
+	RUBY,
 	COUNT,
 }
 
@@ -82,6 +83,8 @@ const _RAW := [
 	["Сера", "d7c24a", 10.0, 2000, 25.0, "", false, Hazard.NONE],
 	# Марс: гипс — вместо известняка (пустая порода).
 	["Гипс", "e9e2d2", 9.0, 2300, 20.0, "", false, Hazard.NONE],
+	# Тайна дальних планет: очень редкие гнёзда глубже 400 м (о них нигде не сказано).
+	["Рубин", "c8102e", 55.0, 4000, 150.0, "ruby", true, Hazard.NONE],
 ]
 
 ## Сыпучие породы: осыпаются в пустоту под собой, пролёт не держат.
@@ -91,7 +94,7 @@ const SPAN := {
 	TOPSOIL: 3, CLAY: 3, SANDSTONE: 5, SHALE: 4, LIMESTONE: 6, COAL: 3,
 	GRANITE: 10, GNEISS: 9, BASALT: 12, IRON_ORE: 6, COPPER_ORE: 6, SILVER_ORE: 6, GOLD_ORE: 6,
 	URANIUM_ORE: 6, KIMBERLITE: 5, DIAMOND: 5, ROCK_SALT: 6, GAS_POCKET: 3, OIL: 4, PERIDOTITE: 12, AMETHYST: 6,
-	ICE: 4, GRAPHITE: 5, SULFUR: 4, GYPSUM: 4,
+	ICE: 4, GRAPHITE: 5, SULFUR: 4, GYPSUM: 4, RUBY: 6,
 }
 
 const RESOURCE_NAMES := {
@@ -123,6 +126,7 @@ const RESOURCE_NAMES := {
 	"methane": "Метан",
 	"diesel": "Дизельное топливо",
 	"amethyst": "Аметист",
+	"ruby": "Рубин",
 }
 
 static var _names: PackedStringArray
