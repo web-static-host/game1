@@ -84,6 +84,7 @@ func _initialize() -> void:
 	test_planet_rocks()
 	test_ruby_teleport()
 	test_store_evict()
+	test_lifespans()
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
@@ -3849,6 +3850,24 @@ func test_store_evict() -> void:
 	check(c2.base_have("copper") == 0 and c2.held_in(res2[1], "copper") == 200, "запас у базы разложен по складу (%d у базы)" % c2.base_have("copper"))
 
 
+## Сроки жизни разные: первые пятеро не умирают в один день; облучённый живёт на 30% меньше.
+func test_lifespans() -> void:
+	var colony := _new_colony(29)
+	colony.start_new(_find_solid_column(colony.world))
+	var left: Array[float] = []
+	for u in colony.units:
+		left.append((u.lifespan - u.age) / Colony.YEAR)
+	left.sort()
+	var min_gap := INF
+	for i in range(1, left.size()):
+		min_gap = minf(min_gap, left[i] - left[i - 1])
+	check(left[-1] - left[0] > 1.0, "первые гаврики уходят в разные годы (от %.1f до %.1f лет)" % [left[0], left[-1]])
+	var u: Unit = colony.units[0]
+	var life := u.lifespan
+	colony.irradiate(u)
+	check(is_equal_approx(u.lifespan, life * 0.7), "облучённый живёт на 30% меньше")
+
+
 func test_starving_count() -> void:
 	var res := _colony_with_room(24)
 	var colony: Colony = res[0]
@@ -3898,7 +3917,7 @@ func test_uranium() -> void:
 	mom.lifespan = 1000.0
 	colony.irradiate(mom)
 	colony.irradiate(mom)
-	check(mom.irradiated and is_equal_approx(mom.lifespan, 900.0), "облучение — один раз: жизнь на 10%% короче (%.0f)" % mom.lifespan)
+	check(mom.irradiated and is_equal_approx(mom.lifespan, 700.0), "облучение — один раз: жизнь на 30%% короче (%.0f)" % mom.lifespan)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	var kinds := {}

@@ -883,7 +883,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if u.is_elder():
 			tags.append(["Пожилой — работает и ходит медленнее, детей не будет", Color(1.0, 0.75, 0.5)])
 		if u.irradiated:
-			tags.append(["Облучён ураном — живёт на 10% меньше, дети будут мутантами", Color(0.6, 1.0, 0.35)])
+			tags.append(["Облучён ураном — живёт на 30% меньше (около 7 лет вместо 10), дети будут мутантами", Color(0.6, 1.0, 0.35)])
 		var pers: String = g.get("personality", "")
 		if not pers.is_empty():
 			tags.append(["Характер: " + pers, Color.WHITE])
@@ -1667,7 +1667,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
 				var recipe: Array = colony.recipe(p)
 				if p.purpose == RoomType.ENRICHMENT:
-					rows.append({"type": "warning", "text": "Уран радиоактивен: мастер фабрики, носильщики урана и кто копает урановую руду облучаются — живут на 10% меньше, а их дети всегда рождаются с мутацией."})
+					rows.append({"type": "warning", "text": "Уран радиоактивен: мастер фабрики, носильщики урана и кто копает урановую руду облучаются — живут на 30% меньше (около 7 лет вместо 10), а их дети всегда рождаются с мутацией."})
 				if p.purpose == RoomType.FORGE:
 					_forge_rows(p, rows)
 				if recipe.is_empty():

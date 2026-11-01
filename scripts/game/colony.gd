@@ -242,7 +242,7 @@ func start_new(home_x: int) -> void:
 		var col := Color.from_hsv(hues[i % hues.size()], 1.0, 1.0)
 		g["color"] = [col, col]
 		var u := _new_unit(sexes[i], Vector2(x, world.gen.surface_y(x) - 1), g)
-		u.age = Unit.CHILD_TIME + rng.randf_range(0.1, 0.8) * YEAR
+		u.age = Unit.CHILD_TIME + rng.randf_range(0.1, 1.5) * YEAR
 		# Небольшие врождённые склонности.
 		for k in u.skills:
 			u.skills[k] = rng.randf_range(0.0, 200.0)
@@ -258,7 +258,8 @@ func _new_unit(sex: int, pos: Vector2, genome := {}) -> Unit:
 		genome = Genetics.founder(rng)
 		genome["female"] = sex == Unit.Sex.FEMALE
 	u.set_genome(genome)
-	u.lifespan = Unit.life_years * YEAR * u.stat("longevity") * rng.randf_range(0.85, 1.15)
+	# У каждого свой срок: ±25% (первые гаврики не умирают в один день).
+	u.lifespan = Unit.life_years * YEAR * u.stat("longevity") * rng.randf_range(0.75, 1.25)
 	u.name = _free_name(u.sex)
 	u.look = rng.randf()
 	# Разнести проверки стихий по времени — от зерна мира, чтобы прогоны повторялись.
@@ -4630,8 +4631,8 @@ func _birth(mother: Unit) -> void:
 
 
 ## Уран радиоактивен: кто его копает, носит или обогащает — облучён (один раз): живёт на
-## 10% меньше, а дети его — всегда с мутацией.
-const RADIATION_LIFE := 0.9
+## 30% меньше, а дети его — всегда с мутацией.
+const RADIATION_LIFE := 0.7
 
 
 func irradiate(u: Unit) -> void:
@@ -4640,7 +4641,7 @@ func irradiate(u: Unit) -> void:
 	u.irradiated = true
 	if u.lifespan > 0.0:
 		u.lifespan *= RADIATION_LIFE
-	_log("%s %s ураном — проживёт на 10%% меньше, дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning", u.cell())
+	_log("%s %s ураном — проживёт на 30%% меньше (около 7 лет вместо 10), дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning", u.cell())
 
 
 # --- Места работы: игрок ставит конкретных гавриков (как в Fallout Shelter) ---------------
@@ -9878,7 +9879,7 @@ func to_dict() -> Dictionary:
 		"stores_v": 1,
 		"ores_v": 1,
 		"drill_v": 1,
-		"life_v": 2,
+		"life_v": 3,
 		"steel_v": 1,
 		"loads": loads.to_dict(),
 		"disasters": disasters,
@@ -9995,6 +9996,11 @@ func load_dict(d: Dictionary) -> void:
 	if life_v < 2:
 		for u in units:
 			u.lifespan *= 2.0
+	# Облучение отнимало 10% жизни, теперь — 30%.
+	if life_v < 3:
+		for u in units:
+			if u.irradiated and u.lifespan > 0.0:
+				u.lifespan *= RADIATION_LIFE / 0.9
 	# Бур раньше был ходом во всю длину — теперь это машина 3×3: старый отменяется,
 	# материалы возвращаются на склад.
 	for p in projects.duplicate():
