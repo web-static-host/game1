@@ -43,18 +43,127 @@ static func text(key: String) -> String:
 	if planet == "earth":
 		return HINTS.get(key, "Где искать — неизвестно.")
 	var name := Planet.planet_name(planet)
-	if Planet.absent(planet).has(key) or (key == "diesel" and Planet.absent(planet).has("oil")) \
-			or (key == "brick" and Planet.absent(planet).has("clay")):
-		var why := ""
-		if key == "diesel":
-			why = " — нефти нет, дизель только привозной"
-		elif key == "brick":
-			why = " — глины нет, кирпич только привозной"
-		return "%s: %s нет%s." % [name, Mat.resource_name(key).to_lower(), why]
 	var own: Dictionary = Planet.data(planet).get("hints", {})
 	if own.has(key):
 		return "%s: %s" % [name, own[key]]
-	return "%s (на планете %s глубины и породы могут отличаться)" % [HINTS.get(key, "Где искать — неизвестно."), name]
+	return planet_text(key)
+
+
+## Что из недр — ключ в обследовании (PlanetSurvey) и где лежит.
+const DUG := {
+	"coal": ["coal", "пластами в осадочных породах — копайте вдоль пласта"],
+	"oil": ["oil", "залежами в песчанике (нефтекачалка тянет её по трубам)"],
+	"clay": ["clay", "пятнами у самой поверхности, среди песка"],
+	"iron_ore": ["iron_ore", ""], "copper_ore": ["copper_ore", ""], "silver_ore": ["silver_ore", ""],
+	"gold_ore": ["gold_ore", ""], "uranium_ore": ["uranium_ore", ""],
+	"diamond": ["diamond", "только в кимберлитовых трубках — вертикальных столбах"],
+	"amethyst": ["amethyst", "небольшими участками среди руды, в граните и базальте"],
+}
+## Как лежит руда на планете (geo.ores).
+const ORE_MODES := {
+	"veins": "жилами, как на Земле", "blobs": "крупными гнёздами, богаче у поверхности",
+	"layers": "тонкими пластами, каждый — своей руды", "deep": "у поверхности бедно, глубже 250 м — широкими жилами",
+	"pockets": "редкими, но богатыми гнёздами",
+}
+## Породы для строки «камень»: [ключ обследования, название, даёт камень].
+const ROCKS := [["sandstone", "песчаник", true], ["shale", "сланец", true], ["limestone", "известняк", false],
+	["graphite", "графитовая порода", true], ["sulfur", "сера", false], ["gypsum", "гипс", false],
+	["granite", "гранит", true], ["gneiss", "гнейс", true], ["basalt", "базальт", true], ["ice", "лёд", false]]
+
+
+## Подсказка для другой планеты — по обследованию её недр: есть ли, на какой глубине, больше
+## или меньше, чем на Земле.
+static func planet_text(key: String) -> String:
+	var name := Planet.planet_name(planet)
+	var sv: Dictionary = PlanetSurvey.SURVEY.get(planet, {})
+	var data := Planet.data(planet)
+	match key:
+		"wood":
+			if float(data.get("trees", 0.0)) > 0.0:
+				return "%s: деревья растут только там, где дегазация очистила воздух над поверхностью — выходите туда и рубите. Остальное дерево — привезённое." % name
+			return "%s: деревьев нет — дерево только привезённое ракетой (берегите его: грядки, лестницы, очаги)." % name
+		"food":
+			return "%s: еда — только с ферм (и привезённая): кустов и озёр нет. Ферме нужно тепло — очаг рядом." % name
+		"fish", "berries":
+			return "%s: %s нет — %s." % [name, GENITIVE[key], "озёр нет" if key == "fish" else "кустов нет"]
+		"stone":
+			return _stone_text(name, sv)
+		"methane":
+			var gas: Array = sv.get("gas", [])
+			var parts: PackedStringArray = []
+			if not gas.is_empty():
+				parts.append("из газовых карманов в сланце (с %d м, чаще %d–%d м)" % [gas[1], gas[2], gas[3]])
+			if sv.has("coal"):
+				parts.append("из открытого угля (каждая клетка угля в стене сочится газом)")
+			if parts.is_empty():
+				return "%s: метана в недрах нет." % name
+			return "%s: метан — %s. Собирает дегазация; это топливо газовых котлов и газового генератора." % [name, " и ".join(parts)]
+		"diesel":
+			if not sv.has("oil"):
+				return "%s: нефти нет — дизель только привезённый ракетой." % name
+		"brick":
+			if not sv.has("clay"):
+				return "%s: глины нет — кирпич только привезённый." % name
+	if not DUG.has(key):
+		return HINTS.get(key, "Где искать — неизвестно.")
+	var sk: String = DUG[key][0]
+	if not sv.has(sk):
+		return "%s: %s нет." % [name, GENITIVE.get(key, Mat.resource_name(key).to_lower())]
+	var e: Array = sv[sk]
+	var where: String = DUG[key][1]
+	if where.is_empty():
+		where = ORE_MODES.get((data.get("geo", {}) as Dictionary).get("ores", "veins"), "жилами")
+	return "%s: %s — с %d м, чаще %d–%d м; %s. %s." % [name, Mat.resource_name(key).to_lower(), e[1], e[2], e[3], where,
+		_how_much(float(e[0]), sk)]
+
+
+## «Чего нет»: родительный падеж.
+const GENITIVE := {"coal": "угля", "oil": "нефти", "clay": "глины", "iron_ore": "железной руды", "copper_ore": "медной руды",
+	"silver_ore": "серебряной руды", "gold_ore": "золотой руды", "uranium_ore": "урановой руды", "diamond": "алмазов",
+	"amethyst": "аметиста", "fish": "рыбы", "berries": "ягод"}
+
+
+## «в 3 раза», «в 5 раз», «в 22 раза».
+static func _times(n: int) -> String:
+	var m10 := n % 10
+	var m100 := n % 100
+	return "%d раза" % n if m10 >= 2 and m10 <= 4 and (m100 < 12 or m100 > 14) else "%d раз" % n
+
+
+## Больше или меньше, чем на Земле.
+static func _how_much(share: float, sk: String) -> String:
+	var earth: Array = (PlanetSurvey.SURVEY["earth"] as Dictionary).get(sk, [])
+	if earth.is_empty() or float(earth[0]) <= 0.0:
+		return "Редко" if share < 0.2 else "Встречается нередко"
+	var r := share / float(earth[0])
+	if r >= 2.0:
+		return "Много — в %s больше, чем на Земле" % _times(roundi(r))
+	if r >= 1.3:
+		return "Больше, чем на Земле"
+	if r <= 0.3:
+		return "Мало — в %s меньше, чем на Земле" % _times(maxi(2, roundi(1.0 / maxf(r, 0.01))))
+	if r <= 0.75:
+		return "Меньше, чем на Земле"
+	return "Примерно как на Земле"
+
+
+## Какие породы на планете и на какой глубине (камень дают не все).
+static func _stone_text(name: String, sv: Dictionary) -> String:
+	var gives: PackedStringArray = []
+	var empty: PackedStringArray = []
+	for r in ROCKS:
+		var e: Array = sv.get(r[0], [])
+		if e.is_empty() or float(e[0]) < 0.3:
+			continue
+		var line := "%s (%d–%d м)" % [r[1], e[2], e[3]]
+		if r[2]:
+			gives.append(line)
+		else:
+			empty.append(line)
+	var out := "%s: камень дают %s." % [name, ", ".join(gives) if not gives.is_empty() else "только привезённые камни"]
+	if not empty.is_empty():
+		out += " Пустая порода (ничего не даёт): %s." % ", ".join(empty)
+	return out
 
 
 ## Ресурсы, которые показывают в списке «?» (порода — не ресурс: почвы, песка, гравия,

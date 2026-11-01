@@ -55,7 +55,7 @@ const DATA := {
 		"travel": 3, "engine": "chem", "surf": -30.0, "under": -12.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.4, "ores": [[0.6, Mat.IRON_ORE], [0.95, Mat.COPPER_ORE], [1.0, Mat.SILVER_ORE]],
 		"amethyst": 0.04, "kimberlite": 0.62, "gas": 0.7, "oil": 0.9, "oil_depth": 200, "quakes": 0.5, "sky": Color(0.9, 0.55, 0.4)},
-	"jupiter": {"ruby": 0.0015, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 1.0, "basalt": 2500, "magma": 1200, "ores": "pockets", "caves": 0.8, "tubes": false, "ice": 45, "palette": Color(1.15, 0.92, 0.72), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Юпитер", "desc": "Ледяная корка (−40 °C) над тёплыми недрами (около +15 °C). Частые землетрясения. Богат ураном. Ледяная кора ~45 м; руда — редкими богатыми гнёздами. Ядовитый газ: наружу — где дегазация очистила воздух. В корабле около −10 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
+	"jupiter": {"ruby": 0.0015, "rocks": {Mat.OIL: Mat.SANDSTONE}, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 1.0, "basalt": 2500, "magma": 1200, "ores": "pockets", "caves": 0.8, "tubes": false, "ice": 45, "palette": Color(1.15, 0.92, 0.72), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Юпитер", "desc": "Ледяная корка (−40 °C) над тёплыми недрами (около +15 °C). Частые землетрясения. Богат ураном. Ледяная кора ~45 м; руда — редкими богатыми гнёздами. Ядовитый газ: наружу — где дегазация очистила воздух. В корабле около −10 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
 		"travel": 6, "engine": "nuclear", "surf": -40.0, "under": 15.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.5, "ores": [[0.3, Mat.IRON_ORE], [0.5, Mat.COPPER_ORE], [0.6, Mat.SILVER_ORE], [0.7, Mat.GOLD_ORE], [1.0, Mat.URANIUM_ORE]],
 		"kimberlite": 0.62, "gas": 0.6, "oil": 0.8, "oil_depth": 200, "quakes": 3.0, "sky": Color(0.85, 0.68, 0.5)},
@@ -63,11 +63,11 @@ const DATA := {
 		"travel": 8, "engine": "nuclear", "surf": -45.0, "under": 5.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.0, "ores": [], "kimberlite": 0.62, "gas": 0.55, "oil": 0.35, "oil_depth": 40, "quakes": 1.0,
 		"sky": Color(0.92, 0.85, 0.6)},
-	"uranus": {"ruby": 0.0015, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 0.6, "basalt": 3000, "magma": 2500, "ores": "pockets", "caves": 0.7, "tubes": false, "ice": 80, "palette": Color(0.76, 1.04, 1.1), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Уран", "desc": "Очень холодно (−50 °C у поверхности, около −18 °C в недрах). Алмазные дожди: алмазов в недрах во много раз больше. Толстая ледяная кора ~80 м; руда — редкими гнёздами; ядовитый газ. В корабле около −20 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
+	"uranus": {"ruby": 0.0015, "rocks": {Mat.OIL: Mat.SANDSTONE}, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 0.6, "basalt": 3000, "magma": 2500, "ores": "pockets", "caves": 0.7, "tubes": false, "ice": 80, "palette": Color(0.76, 1.04, 1.1), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Уран", "desc": "Очень холодно (−50 °C у поверхности, около −18 °C в недрах). Алмазные дожди: алмазов в недрах во много раз больше. Толстая ледяная кора ~80 м; руда — редкими гнёздами; ядовитый газ. В корабле около −20 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
 		"travel": 10, "engine": "nuclear", "surf": -50.0, "under": -18.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.0, "ores": [], "kimberlite": 0.15, "gas": 0.62, "oil": 0.9, "oil_depth": 200, "quakes": 1.0,
 		"sky": Color(0.6, 0.9, 0.95)},
-	"neptune": {"ruby": 0.0015, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 1.2, "basalt": 3500, "magma": 2500, "ores": "veins", "caves": 1.0, "tubes": false, "ice": 40, "palette": Color(0.62, 0.76, 1.22), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Нептун", "desc": "Самый холодный (−55 °C у поверхности, около −25 °C в недрах). Недра полны метана — энергии хватит, но газ опасен. Ледяная кора ~40 м, ядовитый газ над ней. В корабле около −25 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
+	"neptune": {"ruby": 0.0015, "rocks": {Mat.OIL: Mat.SANDSTONE}, "geo": {"relief": "ice", "regolith": [Mat.ICE, Mat.ICE], "sed": 1.2, "basalt": 3500, "magma": 2500, "ores": "veins", "caves": 1.0, "tubes": false, "ice": 40, "palette": Color(0.62, 0.76, 1.22), "leaf": Color(0, 0, 0, 0)}, "atm": "gas", "name": "Нептун", "desc": "Самый холодный (−55 °C у поверхности, около −25 °C в недрах). Недра полны метана — энергии хватит, но газ опасен. Ледяная кора ~40 м, ядовитый газ над ней. В корабле около −25 °C: синим терпимо, остальным — к очагам; красные выживут только второй партией.",
 		"travel": 12, "engine": "nuclear", "surf": -55.0, "under": -25.0, "air": false, "plants": false, "lakes": false,
 		"ore": 1.0, "ores": [], "kimberlite": 0.62, "gas": 0.3, "oil": 0.9, "oil_depth": 200, "quakes": 1.0,
 		"sky": Color(0.45, 0.6, 0.98)},
@@ -80,9 +80,16 @@ const ABSENT_NOTES := {
 }
 
 
-## Что на планете отсутствует (ключи ресурсов).
+## Что на планете отсутствует (ключи ресурсов): записанное и чего нет по обследованию недр.
 static func absent(id: String) -> Array:
-	return data(id).get("absent", [])
+	var out: Array = data(id).get("absent", []).duplicate()
+	if id == "earth":
+		return out
+	var sv: Dictionary = PlanetSurvey.SURVEY.get(id, {})
+	for k in ["coal", "oil", "clay"]:
+		if not sv.has(k) and not out.has(k):
+			out.append(k)
+	return out
 
 
 ## Строка для экрана полёта: «Нет: угля — …; нефти — …» (пусто — всё есть).

@@ -629,8 +629,9 @@ func _ore_planet(x: int, y: int, d: int, mode: String) -> int:
 				return Mat.AIR
 			key = Vector2i(x >> 3, y >> 3)
 		"pockets":
-			# Редкие, но очень богатые гнёзда.
-			if _n_vein.get_noise_2d(x * 0.8, y * 0.8) < 0.7:
+			# Редкие, но очень богатые гнёзда (до версии 9 порог был так высок, что руды почти не было).
+			var th := 0.7 if version < 9 else 0.56 - 0.04 * ore
+			if _n_vein.get_noise_2d(x * 0.8, y * 0.8) < th:
 				return Mat.AIR
 			key = Vector2i(x >> 4, y >> 4)
 	var xen := float(planet.get("amethyst", 0.0))

@@ -1284,6 +1284,8 @@ func demolish(p: Project) -> bool:
 	_refund(spent, 0.5)
 	_return_delivered(p)
 	_release_beds(p)
+	if RoomType.is_store(p.purpose) or p.purpose == RoomType.SHIP:
+		_evict_store(p)
 	projects.erase(p)
 	_by_id_n = -1
 	for c in p.cells():
@@ -3423,6 +3425,8 @@ func set_purpose(p: Project, t: int) -> bool:
 	if t == RoomType.NONE:
 		_finish_equip(p)
 		return true
+	if RoomType.is_store(p.purpose):
+		_evict_store(p)
 	_log("%s: обустройство под «%s»" % [p.title(), RoomType.purpose_name(t)], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
@@ -4989,6 +4993,8 @@ func update(dt: float) -> void:
 			_slow_acc = 0.0
 			_supply_n += 1
 			_supply_due = _supply_n % 5 == 0
+			if _supply_due:
+				_absorb_base()
 			for p in projects:
 				if not p.paused:
 					_try_pay(p)
@@ -9606,6 +9612,56 @@ func _incoming_room(p: Project, key: String) -> int:
 
 
 ## Сколько лежит у базы (не в комнатах).
+## Склад сносят или переделывают: что в нём лежало — в другие склады, где есть место, а что
+## не влезло — на пол этой комнаты (там и лежит, пока не унесут). Раньше оно числилось «у базы»
+## и копилось там кучами.
+func _evict_store(p: Project) -> void:
+	for key: String in p.held.keys():
+		var n := held_in(p, key)
+		p.held.erase(key)
+		if n <= 0 or RoomType.PIPED.has(key):
+			continue
+		for q in holders(key):
+			if n <= 0:
+				break
+			if q == p or q.purpose == RoomType.SHIP or not RoomType.is_store(q.purpose) or not store_staffed(q):
+				continue
+			var put := clampi(room_limit(q, key) - held_in(q, key) - _incoming_room(q, key), 0, n)
+			if put > 0:
+				q.held[key] = held_in(q, key) + put
+				n -= put
+		if n <= 0:
+			continue
+		# Не влезло — на пол комнаты (из общего запаса уходит: лежит отдельно, как добытое).
+		inventory[key] = maxi(0, int(inventory.get(key, 0)) - n)
+		var spot := _landing(Vector2i(p.rect.get_center().x, p.rect.end.y - 1))
+		if not drops.has(spot):
+			drop_born[spot] = game_time
+		var d: Dictionary = drops.get(spot, {})
+		d[key] = int(d.get(key, 0)) + n
+		drops[spot] = d
+
+
+## Запас у базы (не влезло в склады, когда добыли, или склада ещё не было) раскладывают по
+## складам и амбарам, где есть место: раньше он так и лежал кучами у базы навсегда.
+func _absorb_base() -> void:
+	for key: String in inventory.keys():
+		if RoomType.PIPED.has(key) or RoomType.BULK.has(key):
+			continue
+		var extra := base_have(key)
+		if extra <= 0:
+			continue
+		for p in holders(key):
+			if extra <= 0:
+				break
+			if p.purpose == RoomType.SHIP or not RoomType.is_store(p.purpose) or not store_staffed(p):
+				continue
+			var put := clampi(room_limit(p, key) - held_in(p, key) - _incoming_room(p, key), 0, extra)
+			if put > 0:
+				p.held[key] = held_in(p, key) + put
+				extra -= put
+
+
 func base_have(key: String) -> int:
 	var n: int = inventory.get(key, 0)
 	for p in holders(key):

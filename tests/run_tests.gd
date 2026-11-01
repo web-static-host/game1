@@ -83,6 +83,7 @@ func _initialize() -> void:
 	test_starving_count()
 	test_planet_rocks()
 	test_ruby_teleport()
+	test_store_evict()
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
@@ -3714,14 +3715,28 @@ func test_planet_rocks() -> void:
 	check(_rock_counts(WorldGen.new(11, WorldGen.LATEST, "earth")) == _rock_counts(WorldGen.new(11, 8, "earth")), "Земля прежняя")
 	# Подсказки — по планете; чего нет — так и написано, и перед полётом тоже.
 	ResourceHints.planet = "mars"
-	check(ResourceHints.text("coal").contains("нет") and ResourceHints.text("diesel").contains("привозной")
+	check(ResourceHints.text("coal").contains("нет") and ResourceHints.text("diesel").contains("привез")
 		and ResourceHints.text("methane").contains("карманов"), "подсказки Марса: угля нет, дизель привозной, метан — из карманов")
 	ResourceHints.planet = "earth"
 	check(not ResourceHints.text("coal").contains("Марс"), "на Земле подсказки прежние")
 	check(not ResourceHints.keys().has("limestone") and not ResourceHints.keys().has("salt") and ResourceHints.keys().has("clay"),
 		"известняк и соль — порода, не ресурс: в списке ресурсов их нет")
-	check(Planet.absent_text("mars").contains("угля") and Planet.absent_text("mars").contains("нефти") and Planet.absent_text("venus").is_empty(),
-		"перед полётом: чего на планете нет")
+	check(Planet.absent_text("mars").contains("угля") and Planet.absent_text("mars").contains("нефти"), "перед полётом: чего на планете нет")
+	# Подсказки других планет — по их недрам, а не земные: на Венере осадочный слой тонкий —
+	# нефти нет; на Сатурне нефть неглубоко.
+	ResourceHints.planet = "venus"
+	check(ResourceHints.text("oil").contains("нет") and Planet.absent("venus").has("oil") and ResourceHints.text("diesel").contains("привез"),
+		"Венера: нефти нет — так и написано: " + ResourceHints.text("oil"))
+	check(ResourceHints.text("iron_ore").contains("Венера") and not ResourceHints.text("iron_ore").contains("до 80 м — ¾"), "Венера: про железо — своё, не земное")
+	ResourceHints.planet = "saturn"
+	var st := ResourceHints.text("oil")
+	check(st.contains("Сатурн") and not st.contains(" нет.") and st.contains("чаще"), "Сатурн: нефть есть, с глубинами: " + st)
+	ResourceHints.planet = "earth"
+	var ven := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "venus"))
+	var sat := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "saturn"))
+	var jup := _rock_counts(WorldGen.new(11, WorldGen.LATEST, "jupiter"))
+	check(not ven.has(Mat.OIL) and sat.has(Mat.OIL) and not jup.has(Mat.OIL), "обследование совпадает с генерацией: нефть — только на Сатурне")
+	check(int(jup.get(Mat.IRON_ORE, 0)) + int(jup.get(Mat.COPPER_ORE, 0)) + int(jup.get(Mat.URANIUM_ORE, 0)) > 20, "на Юпитере руда есть (гнёзда), а не почти ноль")
 	# Пустая порода при копке исчезает: ни кучек, ни «известных ресурсов».
 	var colony := _new_colony(12)
 	colony.drop_item(Vector2i(0, 5), "limestone", 3)
@@ -3793,6 +3808,29 @@ func test_ruby_teleport() -> void:
 	var uni := Universe.new()
 	uni.load_dict({"worlds": [{"planet": "mars", "seed": 5, "gen": 8, "colony": {}}]})
 	check((uni.worlds[0]["world"] as WorldData).gen.version == 9, "мир Марса из старого сохранения — с новыми породами")
+
+
+## Снесли склад — что в нём лежало, не копится «у базы»: в другой склад, а что не влезло — на пол.
+func test_store_evict() -> void:
+	var res := _colony_with_room(27, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var store: Project = res[1]
+	check(store.purpose == RoomType.STORAGE, "склад обустроен")
+	colony.inventory["copper"] = 120
+	store.held["copper"] = 120
+	var base0 := colony.base_have("copper")
+	check(colony.demolish(store), "склад снесён: " + colony.demolish_error(store))
+	var on_floor := 0
+	for c in colony.drops:
+		on_floor += int(colony.drops[c].get("copper", 0))
+	check(colony.base_have("copper") == base0 and on_floor == 120 and int(colony.inventory.get("copper", 0)) == 0,
+		"медь со снесённого склада — на полу, а не кучей у базы (у базы %d, на полу %d)" % [colony.base_have("copper"), on_floor])
+	# Куча у базы (старые сохранения) уходит на склады, где есть место.
+	var res2 := _colony_with_room(28, RoomType.STORAGE)
+	var c2: Colony = res2[0]
+	c2.inventory["copper"] = 200
+	c2._absorb_base()
+	check(c2.base_have("copper") == 0 and c2.held_in(res2[1], "copper") == 200, "запас у базы разложен по складу (%d у базы)" % c2.base_have("copper"))
 
 
 func test_starving_count() -> void:
