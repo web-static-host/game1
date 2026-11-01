@@ -1881,12 +1881,19 @@ func _drills_tick(dt: float) -> void:
 		if p.blocked.begins_with("Нет железа"):
 			p.blocked = ""
 		p.drill_t = 0.0
+		# Ход дорастает на пройденный ряд (сам бур на поверхности в ход не входит) — до копки:
+		# иначе вскрытая клетка на миг ничем не держалась и сыпучая порода сверху осыпалась в ход.
+		if bore != null:
+			var row := drill_path(p, p.drill_dir, 1)
+			bore.rect = bore.rect.merge(row)
+			# Готовый ход (вбок он сразу готов) держит породу над собой и в новом метре.
+			if bore.phase == Project.Phase.DONE:
+				for yy in range(row.position.y, row.end.y):
+					for xx in range(row.position.x, row.end.x):
+						interior[Vector2i(xx, yy)] = bore.id
 		for c in solid:
 			_complete_dig(c, bore, null)
 		_machine_dug(solid)
-		# Ход дорастает на пройденный ряд (сам бур на поверхности в ход не входит).
-		if bore != null:
-			bore.rect = bore.rect.merge(drill_path(p, p.drill_dir, 1))
 		p.rect.position += p.drill_dir
 		p.bore_done += 1
 		_drill_lift_step(p)
@@ -3781,7 +3788,7 @@ func _finish_equip(p: Project) -> void:
 		_log("Готово: %s — %s (%s)" % [p.title(), "газовые котлы" if p.equip_target == RoomType.HEARTH_GAS else "печи кирпичные",
 			RoomType.purpose_hint(p.equip_target)], "good", p.rect.get_center())
 		return
-	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK or p.equip_target == RoomType.HEARTH_GAS
+	p.brick_stoves = p.equip_target == RoomType.HEARTH_BRICK
 	p.gas_boiler = p.equip_target == RoomType.HEARTH_GAS
 	p.purpose = RoomType.base_type(p.equip_target)
 	p.farm_progress = 0.0

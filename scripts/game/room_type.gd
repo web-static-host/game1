@@ -188,7 +188,7 @@ static func purpose_name(t: int) -> String:
 
 static func purpose_hint(t: int) -> String:
 	if t == HEARTH_GAS:
-		return "кирпичные котлы над печами жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше; без метана печи топят углём и дровами"
+		return "железные котлы над печами жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше; без метана печи топят углём и дровами"
 	if t == HEARTH_BRICK:
 		return "отопление: кирпичные печи — дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше, топятся и углём"
 	return HINTS[t]
@@ -306,8 +306,10 @@ static func _equip_cost(t: int, p: Project) -> Dictionary:
 		HEARTH_BRICK:
 			return {"brick": 6 * stoves(p)}
 		HEARTH_GAS:
-			# На готовый очаг — только котлы; сразу — кирпичные печи с котлами.
-			return {"brick": (4 if p.purpose == HEARTH else 10) * stoves(p)}
+			# Котлы железные; на готовый очаг — только они, сразу — каменные печи с котлами.
+			if p.purpose == HEARTH:
+				return {"iron": 4 * stoves(p)}
+			return {"stone": 8 * stoves(p), "iron": 4 * stoves(p)}
 	return {}
 
 

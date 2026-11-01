@@ -67,6 +67,7 @@ func _initialize() -> void:
 	test_lifts()
 	test_stop_by_meter()
 	test_drill()
+	test_drill_side_sand()
 	test_extend()
 	test_stacked_mines()
 	test_lift_merge()
@@ -656,12 +657,14 @@ func test_room_purposes() -> void:
 	var gcol: Colony = gres[0]
 	var hroom2: Project = gres[1]
 	gcol.research.done.append_array(["pottery", "gas_heating"])
-	check(RoomType.equip_cost(RoomType.HEARTH_GAS, hroom2) == {"brick": 10 * RoomType.stoves(hroom2)}, "газовый очаг сразу — 10 кирпичей на печь (печь и котёл)")
-	gcol.inventory["brick"] = 60
+	check(RoomType.equip_cost(RoomType.HEARTH_GAS, hroom2) == {"stone": 8 * RoomType.stoves(hroom2), "iron": 4 * RoomType.stoves(hroom2)},
+		"газовый очаг сразу — каменные печи и железные котлы (кирпич не нужен)")
+	gcol.inventory["stone"] = 60
+	gcol.inventory["iron"] = 60
 	check(gcol.set_purpose(hroom2, RoomType.HEARTH_GAS), "газовый очаг — сразу, не только на готовый")
 	gcol.advance_offline(3000.0)
-	check(hroom2.purpose == RoomType.HEARTH and hroom2.gas_boiler and hroom2.brick_stoves and hroom2.phase == Project.Phase.DONE,
-		"газовый очаг построен: кирпичные печи и котлы")
+	check(hroom2.purpose == RoomType.HEARTH and hroom2.gas_boiler and not hroom2.brick_stoves and hroom2.phase == Project.Phase.DONE,
+		"газовый очаг построен: каменные печи и газовые котлы")
 
 	var farm_res := _colony_with_room(22, RoomType.FARM)
 	var fc: Colony = farm_res[0]
@@ -2977,6 +2980,47 @@ func test_oil() -> void:
 		check(not colony.drilling(d) and colony.inventory.get("diesel", 0) < dz, "бур прошёл на дизеле без электричества")
 	# Нефтехранилище взрывается, если рухнет.
 	check(RoomType.EXPLOSIVE.has(RoomType.OIL_TANK), "нефтехранилище взрывоопасно")
+
+
+## Бур идёт вбок под слоем песка: ход за ним сразу держит породу — песок не осыпается.
+func test_drill_side_sand() -> void:
+	var colony := _new_colony(38)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	_power_up(colony, x)
+	colony.research.done.append_array(["tools", "drill_rig"])
+	var y0 := w.gen.surface_y(x) + 20
+	for xx in range(x - 2, x + 20):
+		for yy in range(y0 - 6, y0 + 5):
+			w.set_material(xx, yy, Mat.GRANITE if yy != y0 - 1 else Mat.SAND)
+	for xx in range(x, x + 3):
+		for yy in range(y0, y0 + 3):
+			w.set_dug(xx, yy)
+	var d := Project.new()
+	d.id = colony.next_project_id
+	colony.next_project_id += 1
+	d.kind = Project.Kind.DRILL
+	d.rect = Rect2i(x, y0, 3, 3)
+	d.phase = Project.Phase.DONE
+	colony.projects.append(d)
+	colony.inventory["iron"] = 50
+	check(colony.start_drill(d, Vector2i.RIGHT, 10).is_empty(), "бур под песком: 10 м вправо")
+	var t := 0.0
+	while t < 3000.0 and colony.drilling(d):
+		colony._power_tick(0.5)
+		colony._drills_tick(0.5)
+		t += 0.5
+	var sand := 0
+	var fallen := 0
+	for xx in range(x, x + 13):
+		if w.get_mat(xx, y0 - 1) == Mat.SAND:
+			sand += 1
+		for yy in range(y0, y0 + 3):
+			if Mat.is_solid(w.get_mat(xx, yy)):
+				fallen += 1
+	check(d.rect.position.x == x + 10 and sand == 13 and fallen == 0,
+		"песок над ходом бура вбок не осыпался (на месте %d из 13, в ходе %d клеток породы)" % [sand, fallen])
 
 
 func test_drill() -> void:

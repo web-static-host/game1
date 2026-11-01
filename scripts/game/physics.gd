@@ -26,9 +26,15 @@ func _init(p_colony: Colony) -> void:
 	world = p_colony.world
 
 
-## Клетка защищена готовой постройкой.
+## Клетка защищена готовой постройкой (или стоящей там машиной — бур, геоскважина: их
+## корпус держит породу над собой).
 func is_protected(c: Vector2i) -> bool:
-	return colony.interior.has(c) or colony.cell_supported(c)
+	if colony.interior.has(c) or colony.cell_supported(c):
+		return true
+	for p: Project in colony._projects_near(c.x):
+		if (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE) and p.has_cell(c):
+			return true
+	return false
 
 
 ## Пустота без защиты: туда может осыпаться порода.
