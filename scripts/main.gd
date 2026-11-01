@@ -1116,6 +1116,28 @@ func _show_project(p: Project) -> void:
 						var q := colony.extend_project(p, d, p.order_len)
 						if q != null:
 							_select(null, q), "primary"])
+		# Тоннелю и шахте можно сменить крепь, лифту и буру — материал (обычный или супер).
+		if p.kind != Project.Kind.ROOM and Colony.changeable_material(p) and p.phase == Project.Phase.DONE and not p.repairing:
+			var tmats := colony.materials_for(p.kind)
+			if not tmats.has(p.material):
+				tmats.push_front(p.material)
+			if tmats.size() > 1:
+				var tunnel := p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE
+				var cur_t: String = _wall_choice.get(p.id, p.material)
+				controls.append({"label": "Крепь" if tunnel else "Материал", "value": maxi(0, tmats.find(cur_t)), "min": 0, "max": tmats.size() - 1,
+					"options": tmats.map(func(m: String) -> String: return Project.MATERIALS[m][0] if m != "wood" or tunnel else "Обычный"),
+					"changed": func(i: int) -> void:
+						_wall_choice[p.id] = tmats[i]
+						hud.refresh_panel(_project_spec(p)),
+				})
+				actions.append(["Сменить крепь" if tunnel else "Сменить материал", func() -> void:
+					var m: String = _wall_choice.get(p.id, p.material)
+					var err := colony.material_error(p, m)
+					if not err.is_empty():
+						hud.log_event(err if m != p.material else "Выберите другой материал (переключатель выше)", "warning")
+					elif colony.change_material(p, m):
+						_wall_choice.erase(p.id)
+						_show_project(p)])
 		if not colony.drilling(p):
 			actions.append(["Снести", func() -> void:
 				var err := colony.demolish_error(p)
@@ -1428,7 +1450,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			rows.append(_progress("Строительство", p.build_done / p.build_work() if p.paid else 0.0))
 		Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
-			var what: String = "Сборка ракеты" if not p.equip_rocket.is_empty() else "Лестница" if p.equip_ladder else ("Перестройка стен — " + Project.MATERIALS[p.equip_material][0].to_lower()
+			var what: String = "Сборка ракеты" if not p.equip_rocket.is_empty() else "Лестница" if p.equip_ladder else (Colony.material_job_name(p) + " — " + Project.MATERIALS[p.equip_material][0].to_lower()
 				if not p.equip_material.is_empty() else "Обустройство")
 			rows.append(_progress(what, p.equip_done / w if p.equip_paid else 0.0))
 	if p.repairing:
@@ -1453,8 +1475,12 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		var witems := []
 		for k in wc:
 			witems.append([k, colony.inventory.get(k, 0), wc[k], colony.inventory.get(k, 0) >= wc[k]])
-		rows.append({"type": "resources", "label": "Перестроить стены — %s (%d с работы; на время работ комната не работает):" % [
-			Project.MATERIALS[wall][0].to_lower(), roundi(RoomType.material_work(p, wall))], "items": witems})
+		var wname: String = Project.MATERIALS[wall][0].to_lower() if wall != "wood" or p.kind == Project.Kind.ROOM or p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE else "обычный"
+		rows.append({"type": "resources", "label": "%s — %s (%d с работы; на время работ %s не работает):" % [
+			Colony.material_job_name(p), wname, roundi(RoomType.material_work(p, wall)),
+			"комната" if p.kind == Project.Kind.ROOM else "постройка"], "items": witems})
+		if wc.is_empty():
+			rows[-1] = {"type": "text", "text": "%s — %s: материалов не нужно, %d с работы." % [Colony.material_job_name(p), wname, roundi(RoomType.material_work(p, wall))]}
 		var werr := colony.material_error(p, wall)
 		if not werr.is_empty():
 			rows.append({"type": "warning", "text": werr})

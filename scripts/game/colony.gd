@@ -3638,12 +3638,20 @@ func _flat_at(x: int) -> bool:
 
 ## Почему нельзя перестроить стены комнаты из mat (пусто — можно).
 func material_error(p: Project, mat: String) -> String:
-	if p.kind != Project.Kind.ROOM or p.phase != Project.Phase.DONE:
-		return "Перестраивать можно только готовую комнату"
+	if not changeable_material(p):
+		return "Материал можно сменить только у готовой комнаты, тоннеля, шахты, лифта или бура"
+	if p.phase != Project.Phase.DONE:
+		return "Сначала достройте"
+	if p.repairing:
+		return "Сначала доремонтируйте"
 	if mat == p.material:
-		return "Стены уже из этого материала"
-	if not available_materials().has(mat):
-		return "Этот материал ещё не доступен"
+		return "Уже из этого материала"
+	if not materials_for(p.kind).has(mat):
+		return "Этот материал сюда не подходит или ещё не доступен"
+	if (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE) and (drilling(p) or probing(p)):
+		return "Сначала остановите"
+	if p.kind != Project.Kind.ROOM:
+		return ""
 	# Тяжелее стены — больше вес на нижние этажи; слабее — меньше держат верхние.
 	var old := p.material
 	p.material = mat
@@ -3655,6 +3663,23 @@ func material_error(p: Project, mat: String) -> String:
 			break
 	p.material = old
 	return err
+
+
+## Как называется смена материала у постройки.
+static func material_job_name(p: Project) -> String:
+	match p.kind:
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			return "Замена крепи"
+		Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE:
+			return "Замена материала"
+	return "Перестройка стен"
+
+
+## У чего можно сменить материал: у комнаты — стены, у тоннеля и шахты — крепь, у лифта и бура —
+## обычный или супер.
+static func changeable_material(p: Project) -> bool:
+	return p.kind in [Project.Kind.ROOM, Project.Kind.TUNNEL, Project.Kind.MINE, Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE] \
+		and p.purpose != RoomType.SHIP and p.link_id == 0
 
 
 ## Перестроить стены готовой комнаты из другого материала (дерево → камень и т. п.).
@@ -3670,7 +3695,7 @@ func change_material(p: Project, mat: String) -> bool:
 	p.equip_paid = false
 	p.equip_done = 0.0
 	p.phase = Project.Phase.EQUIP
-	_log("%s: перестраиваем стены — %s" % [p.title(), Project.MATERIALS[mat][0].to_lower()], "info", p.rect.get_center())
+	_log("%s: %s — %s" % [p.title(), material_job_name(p), Project.MATERIALS[mat][0].to_lower()], "info", p.rect.get_center())
 	_try_pay(p)
 	return true
 
@@ -3731,7 +3756,7 @@ func _finish_equip(p: Project) -> void:
 		for u in units:
 			if u.project_id == p.id:
 				_drop(u)
-		_log("%s: стены перестроены — %s" % [p.title(), Project.MATERIALS[p.material][0].to_lower()], "good", p.rect.get_center())
+		_log("%s: готово (%s) — %s" % [p.title(), material_job_name(p).to_lower(), Project.MATERIALS[p.material][0].to_lower()], "good", p.rect.get_center())
 		return
 	if p.equip_ladder:
 		p.equip_ladder = false

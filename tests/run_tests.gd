@@ -3519,6 +3519,16 @@ func test_materials_no_wood() -> void:
 	check(t.phase == Project.Phase.DONE, "железный тоннель достроен без дерева (%s)" % t.phase_name())
 	check(colony.wear_material(t) == "iron", "железный тоннель изнашивается как железо")
 	check(Colony.ext_material(t) == "wood:iron" and Colony.build_material(Project.Kind.TUNNEL, Colony.ext_material(t)) == "iron", "продолжение — тоже железное")
+	# Готовому тоннелю можно сменить крепь (железную — на кирпичную и т. п.).
+	colony.research.done.append("pottery")
+	check(colony.material_error(t, "brick").is_empty(), "крепь готового тоннеля можно сменить: " + colony.material_error(t, "brick"))
+	var need: Dictionary = RoomType.material_cost(t, "brick")
+	check(need.keys() == ["brick"] and need["brick"] >= 1, "на смену крепи — кирпич (%s)" % str(need))
+	colony.inventory["brick"] = 200
+	check(colony.change_material(t, "brick") and t.phase == Project.Phase.EQUIP, "замена крепи началась")
+	colony.advance_offline(20000.0)
+	check(t.phase == Project.Phase.DONE and t.material == "brick", "крепь заменена на кирпичную (%s, %s)" % [t.phase_name(), t.material])
+	check(not colony.material_error(t, "stone").is_empty(), "на камень — нельзя")
 	check(not colony.materials_for(Project.Kind.TUNNEL).has("stone"), "камнем тоннели не крепят")
 	var brick_t := Project.new()
 	brick_t.kind = Project.Kind.TUNNEL
@@ -3603,6 +3613,14 @@ func test_super_materials() -> void:
 	lift.material = "silver"
 	check(lift.cost().get("silver", 0) > 0 and Project.lift_cost(lift.rect, false).get("silver", 0) == 0, "супер-лифт стоит своего материала")
 	check(Project.drill_cost(Rect2i(), "diamond").get("diamond", 0) == 6, "алмазный бур — 6 алмазов")
+	var dr := Project.new()
+	dr.kind = Project.Kind.DRILL
+	dr.phase = Project.Phase.DONE
+	check(RoomType.material_cost(dr, "diamond") == {"diamond": 6} and RoomType.material_cost(dr, "wood").is_empty(), "сменить коронку бура на алмазную — 6 алмазов, обратно — даром")
+	var lf := Project.new()
+	lf.kind = Project.Kind.LIFT
+	lf.rect = Rect2i(0, 0, 2, 10)
+	check(RoomType.material_cost(lf, "silver").get("silver", 0) == 9, "серебряный лифт из обычного — 9 серебра на 10 м")
 	var drill := Project.new()
 	drill.kind = Project.Kind.DRILL
 	drill.material = "diamond"

@@ -341,11 +341,32 @@ static func job_work(p: Project) -> float:
 
 
 ## Перестройка стен готовой комнаты из материала mat: как новые стены, работы — 70%.
+## Тоннель и шахта — новая крепь на всех срезах с породой (металла и золота — вдвое меньше);
+## лифт — серебряные рельсы и провода, бур — алмазная коронка; обратно на обычный — даром.
 static func material_cost(p: Project, mat: String) -> Dictionary:
+	match p.kind:
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			# Новая крепь — на каждом срезе (готовая постройка не помнит, где была порода).
+			var slices := maxi(1, p.slice_count())
+			var per := ceili(p.slice_wood() / 2.0) if Project.half_support(mat) else p.slice_wood()
+			return {mat: slices * per}
+		Project.Kind.LIFT:
+			if not Project.SUPER.has(mat):
+				return {}
+			return {mat: ceili(maxi(p.rect.size.x, p.rect.size.y) / 2.0) + 4}
+		Project.Kind.DRILL, Project.Kind.PROBE:
+			if not Project.SUPER.has(mat):
+				return {}
+			return {mat: 6 if p.kind == Project.Kind.DRILL else 4}
 	return Project.cost_for(Project.Kind.ROOM, p.rect, mat)
 
 
 static func material_work(p: Project, mat: String) -> float:
+	match p.kind:
+		Project.Kind.TUNNEL, Project.Kind.MINE:
+			return maxi(1, p.slice_count()) * p.slice_work() * float(Project.MATERIALS.get(mat, ["", 1.0])[1])
+		Project.Kind.LIFT, Project.Kind.DRILL, Project.Kind.PROBE:
+			return 30.0
 	return Project.work_for(Project.Kind.ROOM, p.rect, mat) * 0.7
 
 
