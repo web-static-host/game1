@@ -5176,8 +5176,16 @@ func is_explored(x: int) -> bool:
 	return x >= explored_min and x <= explored_max
 
 
+## Переноска дольше этого (секунд игры) — гаврик где-то застрял: бросает её, груз остаётся
+## лежать, где он стоит, дело берёт другой. Пока застрявший числился несущим, остальные
+## считали груз «уже в пути» и стройка стояла (так ферма ждала золото, хоть его было 166).
+const HAUL_GIVE_UP := 480.0
+
+
 func _update_unit(u: Unit, dt: float) -> void:
 	u.anim += dt
+	if u.task == Unit.Task.HAUL and u.state != Unit.State.FALL and game_time - u.task_t > HAUL_GIVE_UP:
+		_drop(u)
 	_construction_recheck(u, dt)
 	if u.state != Unit.State.SWIM and _head_in_water(u):
 		_drop(u)
@@ -5645,9 +5653,14 @@ func _know(key: String) -> void:
 func _move(u: Unit, dt: float) -> void:
 	var budget := dt
 	var jam := congestion(u)
-	# В лифте: кабина везёт сама; у лифта — ждём кабину.
+	# В лифте: кабина везёт сама; у лифта — ждём кабину. Лифта больше нет или он не готов
+	# (модернизация, ремонт сменой материала, снесли) — кабину никто не водит: выходим и идём
+	# пешком (раньше такой гаврик стоял вечно, а его груз числился «в пути» — стройка ждала).
 	if u.lift_id != 0:
-		return
+		var lp := project_by_id(u.lift_id)
+		if lp != null and lp.phase == Project.Phase.DONE and lp.kind == Project.Kind.LIFT:
+			return
+		_leave_lift(u, false)
 	while budget > 0.0 and u.path_i < u.path.size():
 		if _try_board(u):
 			return
@@ -6435,6 +6448,13 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 			Project.Phase.DONE:
 				task = Unit.Task.REPAIR if p.repair_paid else Unit.Task.NONE
 		if task != Unit.Task.NONE and _try_build(u, p, task, parents, dist):
+			# Строитель пришёл сверх мест — сменяет помощника (свободного), тот, когда строитель
+			# дойдёт, уходит искать другое дело (как на копке).
+			if own_crew and workers_on(p) > p.workers:
+				for o in units:
+					if o != u and o.task == task and o.project_id == p.id and not builder_or_miner(o) and o.takeover_by == 0:
+						_mark_takeover(u, o.id)
+						break
 			return true
 	# Строители и шахтёры материалы не носят — это работа складов и подсобных.
 	# Строитель берёт сам только то, без чего его работа стоит прямо сейчас (дерево на крепь,
@@ -6686,6 +6706,7 @@ func _try_mine_logistics(u: Unit, store: Project, parents: Dictionary, dist: Dic
 func _start(u: Unit, task: int, target: Vector2i, stand: Vector2i, pid: int, parents: Dictionary) -> void:
 	_ctx_reset()
 	u.task = task
+	u.task_t = game_time
 	u.target = target
 	u.project_id = pid
 	u.path = _lift_route(u.cell(), stand, Pathing.path_to(parents, stand))
@@ -7281,12 +7302,19 @@ func _base_spots(from: int, to: int) -> Array[Vector2i]:
 	return out
 
 
-func _source_spot(key: String, dist: Dictionary) -> Variant:
+func _source_spot(key: String, dist: Dictionary, toward = null) -> Variant:
 	var best = null
 	var best_d := 1 << 30
 	for c in _source_spots(key):
-		if dist.has(c) and dist[c] < best_d:
-			best_d = dist[c]
+		if not dist.has(c):
+			continue
+		# Несут на стройку — склад выбирают по всему пути: от гаврика до склада и от склада до
+		# стройки (раньше — ближайший к гаврику, хоть бы он был по другую сторону колонии).
+		var d: int = dist[c]
+		if toward != null:
+			d += absi(c.x - toward.x) + absi(c.y - toward.y)
+		if d < best_d:
+			best_d = d
 			best = c
 	return best
 
@@ -7519,17 +7547,31 @@ func _settle_drops() -> void:
 
 
 ## Ближайший источник ресурса: [где встать, клетка кучи или null, сколько можно взять].
-func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}) -> Array:
+## Для сравнения в прогонах ботов: выбирать склад по всему пути (по умолчанию — да).
+static var route_sources := true
+
+
+## toward — куда понесут (стройка, мастерская): со складов берут с того, откуда весь путь
+## (гаврик → склад → туда) короче.
+func _haul_source(key: String, dist: Dictionary, u: Unit = null, parents := {}, toward = null) -> Array:
 	# В одном поиске работы один и тот же ресурс спрашивают для многих строек и мастерских —
 	# ответ тот же, пока никто не взял дела (каждый раз — проход по сотням куч).
+	var r: Array
 	if _ctx_on:
 		var m = _ctx_src.get(key)
 		if m != null and is_same(m[0], dist):
-			return m[1]
-		var r := _haul_source_raw(key, dist, u, parents)
-		_ctx_src[key] = [dist, r]
-		return r
-	return _haul_source_raw(key, dist, u, parents)
+			r = m[1]
+		else:
+			r = _haul_source_raw(key, dist, u, parents)
+			_ctx_src[key] = [dist, r]
+	else:
+		r = _haul_source_raw(key, dist, u, parents)
+	# Берут со склада — выбираем склад по всему пути (кучу — ближайшую к гаврику, как было).
+	if toward != null and route_sources and r[0] != null and r[1] == null:
+		var s = _source_spot(key, dist, toward)
+		if s != null:
+			return [s, null, r[2]]
+	return r
 
 
 func _haul_source_raw(key: String, dist: Dictionary, u: Unit = null, parents := {}) -> Array:
@@ -7814,6 +7856,7 @@ func _pick_up(u: Unit, c: Vector2i, key: String) -> void:
 		return
 	_drop(u)
 	u.task = Unit.Task.HAUL
+	u.task_t = game_time
 	u.project_id = to[1].id
 	u.carry_key = key
 	u.carry_amount = n
@@ -7856,9 +7899,14 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_o
 	var keys := left.keys()
 	var now := _needed_now(p)
 	keys.sort_custom(func(a: String, b: String) -> bool: return now.has(a) and not now.has(b))
+	var site := site_rect(p).get_center()
 	for k in keys:
-		var src := _haul_source(k, dist, u, parents)
+		var src := _haul_source(k, dist, u, parents, site)
 		if src[0] == null:
+			continue
+		# Несёт ближайший: если у склада заметно ближе стоит свободный — зовём его, а сами
+		# не берём (не пришёл за HAND_OFF секунд — тогда берём).
+		if not now_only and _hand_off(u, p, k, src[0], int(dist.get(src[0], 0))):
 			continue
 		# Со склада это привезёт лифт — несут только с площадки у стройки.
 		if src[1] == null and lift_feeds(p, k):
@@ -7871,6 +7919,44 @@ func _try_haul(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, now_o
 		_start(u, Unit.Task.HAUL, src[0], src[0], p.id, parents)
 		return true
 	return false
+
+
+## Переноску на стройку отдают ближайшему свободному: "стройка:ресурс" -> [id гаврика, когда позвали].
+const HAND_OFF := 6.0
+var _offers := {}
+
+
+## true — эту ходку отдали другому (он ближе к складу и свободен), этот гаврик её не берёт.
+func _hand_off(u: Unit, p: Project, key: String, at: Vector2i, d_u: int) -> bool:
+	var slot := "%d:%s" % [p.id, key]
+	var off = _offers.get(slot)
+	if off != null:
+		if int(off[0]) == u.id or game_time - float(off[1]) > HAND_OFF:
+			_offers.erase(slot)
+			return false
+		var o := _unit_by_id(int(off[0]))
+		if o != null and o.state == Unit.State.IDLE and o.task == Unit.Task.NONE:
+			return true
+		_offers.erase(slot)
+		return false
+	# Ближе — по прямой заметно (путь гаврика длиннее прямой: берём с запасом).
+	var best: Unit = null
+	var best_d := d_u * 0.6 - 6.0
+	for o in units:
+		if o == u or o.child or o.state != Unit.State.IDLE or o.task != Unit.Task.NONE or o.workplace != 0 \
+				or (o.profession != Unit.Prof.ANY and o.profession != Unit.Prof.HAULER) or o.satiety < HUNGRY:
+			continue
+		var c := o.cell()
+		var m := absi(c.x - at.x) + absi(c.y - at.y)
+		if m < best_d:
+			best_d = m
+			best = o
+	if best == null:
+		return false
+	_offers[slot] = [best.id, game_time]
+	best.retry = 0.0
+	best.idle_fails = 0
+	return true
 
 
 # --- Подсобные рабочие: переноска -------------------------------------------------------
@@ -7947,7 +8033,7 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
 		if want <= 0:
 			continue
-		var src := _haul_source(k, dist, u, parents)
+		var src := _haul_source(k, dist, u, parents, p.rect.get_center())
 		if src[0] == null:
 			continue
 		u.carry_key = k
@@ -8159,6 +8245,7 @@ func _carry_to(u: Unit, room_id: int, key: String, amount: int) -> void:
 		_add(key, amount)
 		return
 	u.task = Unit.Task.HAUL
+	u.task_t = game_time
 	u.project_id = room_id
 	u.gather_room = room_id
 	u.carry_key = key

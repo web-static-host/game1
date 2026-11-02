@@ -9,6 +9,7 @@ func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var seed_value := int(args[0]) if args.size() > 0 else 2024
 	var minutes := int(args[1]) if args.size() > 1 else 240
+	Colony.route_sources = OS.get_environment("NO_ROUTE").is_empty()
 	var world := WorldData.new(WorldGen.new(seed_value))
 	var c := Colony.new(world)
 	c.start_new(0)
@@ -60,4 +61,6 @@ func _initialize() -> void:
 				if near != null:
 					var ok := c._assign(u)
 					print("    _assign -> %s task=%d pid=%d key=%s" % [ok, u.task, u.project_id, u.carry_key])
+	print("ИТОГ: гавриков %d, построек %d, готовых %d, дерево %d, камень %d, глубина %d" % [c.units.size(), c.projects.size(),
+		c.projects.filter(func(p): return p.phase == Project.Phase.DONE).size(), int(c.inventory.get("wood", 0)), int(c.inventory.get("stone", 0)), c.deepest_y - c.home.y])
 	quit()

@@ -72,6 +72,7 @@ func _initialize() -> void:
 	test_extend()
 	test_mine_blockage()
 	test_merge_passages()
+	test_haul_give_up()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3233,6 +3234,59 @@ func test_mine_blockage() -> void:
 
 ## Шахты и тоннели встык или внахлёст (продолжения, ходы бура) — одна постройка; шахта над
 ## шахтой и разные материалы — отдельно. «Отремонтировать все» — всё, что требует ремонта.
+## Застрявший носильщик не держит стройку вечно: через HAUL_GIVE_UP бросает ношу, дело
+## берёт другой.
+func test_haul_give_up() -> void:
+	var res := _colony_with_room(39)
+	var colony: Colony = res[0]
+	var u: Unit = colony.units[0]
+	u.task = Unit.Task.HAUL
+	u.state = Unit.State.MOVE
+	u.haul_stage = 1
+	u.carry_key = "gold"
+	u.carry_amount = 8
+	u.project_id = (res[1] as Project).id
+	u.path = [u.cell() + Vector2i(1, 0)] as Array[Vector2i]
+	u.path_i = 0
+	u.task_t = colony.game_time - Colony.HAUL_GIVE_UP - 1.0
+	var drops0 := colony.drop_total("gold")
+	colony._update_unit(u, 0.1)
+	check(u.task != Unit.Task.HAUL and colony.drop_total("gold") == drops0 + 8, "застрял надолго — бросил ношу, золото лежит рядом")
+	# Ждал лифт, а лифт ушёл на модернизацию: выходит и идёт пешком (раньше стоял вечно).
+	var lift := Project.new()
+	lift.id = 777
+	lift.kind = Project.Kind.LIFT
+	lift.phase = Project.Phase.EQUIP
+	lift.rect = Rect2i(u.cell().x + 3, u.cell().y - 10, 2, 12)
+	colony.projects.append(lift)
+	u.task = Unit.Task.GOTO
+	u.state = Unit.State.MOVE
+	u.path = [u.cell(), u.cell()] as Array[Vector2i]
+	u.path_i = 0
+	u.lift_id = lift.id
+	colony._move(u, 0.1)
+	check(u.lift_id == 0, "лифт на модернизации — гаврик его не ждёт")
+	colony.projects.erase(lift)
+	# Ходку отдают ближайшему свободному: дальний не берёт, пока ближний не откажется.
+	var free := colony.units.filter(func(o: Unit) -> bool: return not o.child)
+	if free.size() >= 2:
+		var far: Unit = free[0]
+		var near: Unit = free[1]
+		for o in free:
+			o.task = Unit.Task.NONE
+			o.state = Unit.State.IDLE
+			o.workplace = 0
+			o.profession = Unit.Prof.ANY
+			o.satiety = 100.0
+			o.pos = Vector2(o.cell().x + 500, o.cell().y)
+		var at := near.cell()
+		near.pos = Vector2(at.x, at.y)
+		var site: Project = res[1]
+		far.pos = Vector2(at.x + 80, at.y)
+		check(colony._hand_off(far, site, "gold", at, 80) and colony._offers.values()[0][0] == near.id, "дальнему ходку не дают — зовут ближнего")
+		check(not colony._hand_off(near, site, "gold", at, 1), "ближний берёт ходку")
+
+
 func test_merge_passages() -> void:
 	var colony := _new_colony(38)
 	var w := colony.world
