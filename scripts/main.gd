@@ -55,6 +55,8 @@ var _pending_material := "wood"
 var _pending_support := ""
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
+## [id гаврика, Callable] — карточка открыта из списка: при закрытии вернуться в него.
+var _card_back := []
 ## Тряска камеры при землетрясении, сек.
 var _shake := 0.0
 ## Ширина комнаты для установки и кого отправляем в точку.
@@ -207,6 +209,7 @@ func _build_scene() -> void:
 	hud.exit_requested.connect(_exit_to_menu)
 	hud.science_pressed.connect(_show_science)
 	hud.people_pressed.connect(_show_people)
+	hud.info_closed.connect(_on_info_closed)
 	hud.setting_changed.connect(_on_setting)
 	hud.room_options_changed.connect(_on_room_options)
 	hud.tool_material_changed.connect(_on_tool_material)
@@ -539,7 +542,7 @@ func _launch_crew() -> void:
 			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
 		# Шанс выжить; взять можно любого.
 		var chance: int = chances[u]
-		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u),
+		items.append({"looks": _looks(u), "open": _opener(u, _launch_crew), "name": _name_sex(u),
 			"info": "шанс выжить %d%% · %s%s%s" % [chance, _family_text(u),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
@@ -788,6 +791,7 @@ func _feature_near(c: Vector2i) -> Variant:
 
 
 func _select(u: Unit, p: Project) -> void:
+	_card_back = []
 	# Бур-лифт — одна постройка: касание по его лифту открывает бур-лифт.
 	if p != null and p.kind == Project.Kind.LIFT and p.link_id != 0 and colony.project_by_id(p.link_id) != null:
 		p = colony.project_by_id(p.link_id)
@@ -859,9 +863,26 @@ static func _need_bar(label: String, v: float) -> Dictionary:
 	return {"type": "progress", "label": label, "value": v / 100.0, "color": col, "text": "%d%%" % roundi(v)}
 
 
-## Нажали на гаврика в списке — его карточка.
-func _opener(u: Unit) -> Callable:
-	return func() -> void: _show_unit(u)
+## Нажали на гаврика в списке — его карточка (сверху); закрыли её — снова этот список,
+## на том же месте прокрутки.
+func _opener(u: Unit, back := Callable()) -> Callable:
+	return func() -> void:
+		var at := hud.panel_scroll()
+		_select(u, null)
+		if back.is_valid():
+			_card_back = [u.id, func() -> void:
+				back.call()
+				hud.set_panel_scroll(at)]
+
+
+## Закрыли карточку гаврика, открытую из списка, — обратно в список.
+func _on_info_closed() -> void:
+	if _card_back.is_empty():
+		return
+	var back: Array = _card_back
+	_card_back = []
+	if _info_target == ["unit", back[0]]:
+		(back[1] as Callable).call()
 
 
 ## Внешность для портрета: облучённым — знак радиации в углу.
@@ -913,7 +934,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 			tags.append(["Работа по призванию: навык растёт быстрее, настроение лучше", Color(0.6, 0.9, 0.6)])
 		elif u.calling < 0:
 			tags.append(["Работа не по душе: навык растёт медленнее, настроение хуже", Color(1.0, 0.7, 0.45)])
-		rows.append({"type": "portrait", "looks": _looks(u), "open": _opener(u), "tags": tags})
+		rows.append({"type": "portrait", "looks": _looks(u), "tags": tags})
 	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
 		rows.append(_need_bar("Здоровье", u.health))
@@ -1317,7 +1338,7 @@ func _job_stats_text(task: int) -> String:
 func _workers_list(p: Project) -> Dictionary:
 	var items := []
 	for u in colony.assigned_to(p):
-		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u),
+		items.append({"looks": _looks(u), "open": _opener(u, func() -> void: _show_project(p)), "name": _name_sex(u),
 			"info": _family_text(u) + " · подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
@@ -1345,7 +1366,7 @@ func _pick_worker(p: Project) -> void:
 		var busy := not colony.is_free(u)
 		if busy:
 			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
-		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
+		items.append({"looks": _looks(u), "open": _opener(u, func() -> void: _pick_worker(p)), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
 				var err := colony.assign_work(u, p)
@@ -1884,7 +1905,7 @@ func _show_people() -> void:
 		var members := colony.units.filter(g[1])
 		var items := []
 		for u: Unit in members:
-			var item := {"looks": _looks(u), "open": _opener(u), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
+			var item := {"looks": _looks(u), "open": _opener(u, _show_people), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
 				"button": "Карточка", "pick": func() -> void: _select(u, null)}
 			if u.workplace != 0:
 				item["info"] = colony.role_name(u) + " · " + _doing(u)
@@ -1918,7 +1939,7 @@ func _pick_role(prof: int) -> void:
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
-		items.append({"looks": _looks(o), "open": _opener(o), "name": _name_sex(o),
+		items.append({"looks": _looks(o), "open": _opener(o, func() -> void: _pick_role(prof)), "name": _name_sex(o),
 			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:

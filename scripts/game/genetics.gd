@@ -268,8 +268,43 @@ static func is_super(g: Dictionary) -> bool:
 const COSMETIC := ["pattern"]
 
 
+## Все видимые мутации: свои (новые у этого гаврика) и унаследованные от предков —
+## по тому, что видно в геноме (рог, жабры, гигант, 4 глаза…). Цвет и форму у предков
+## не отличить от обычных — их считаем, только если мутировали у самого гаврика.
+static func visible_mutations(g: Dictionary) -> Array:
+	var out: Array = []
+	for m in g.get("mutations", []):
+		if not out.has(m):
+			out.append(m)
+	var add := func(m: String) -> void:
+		if not out.has(m):
+			out.append(m)
+	var n := eyes_of(g)
+	if n == 0:
+		add.call("blind")
+	elif n >= 3:
+		add.call("eyes")
+	if fingers_of(g) != 4:
+		add.call("fingers")
+	if size_of(g) > 0:
+		add.call("giant")
+	elif size_of(g) < 0:
+		add.call("tiny")
+	if pattern_of(g) > 0:
+		add.call("pattern")
+	for k in DOMINANT + RECESSIVE:
+		if has(g, k):
+			add.call(k)
+	# Мутация могла откатиться у потомка (глаз снова 1–2) — тогда её нет.
+	if out.has("eyes") and n <= 2 and not (g.get("mutations", []) as Array).has("eyes"):
+		out.erase("eyes")
+	if out.has("blind") and n > 0:
+		out.erase("blind")
+	return out
+
+
 static func is_mutant(g: Dictionary) -> bool:
-	for m in g["mutations"]:
+	for m in visible_mutations(g):
 		if not COSMETIC.has(m):
 			return true
 	return false
@@ -278,7 +313,7 @@ static func is_mutant(g: Dictionary) -> bool:
 ## Самая редкая мутация гаврика (0..3) или -1.
 static func rarity(g: Dictionary) -> int:
 	var r := -1
-	for m in g["mutations"]:
+	for m in visible_mutations(g):
 		if not COSMETIC.has(m):
 			r = maxi(r, MUTATIONS[m][0])
 	return r
@@ -484,11 +519,7 @@ static func ability_text(g: Dictionary) -> String:
 ## Что даёт каждая мутация гаврика — по строке (для карточки).
 static func mutation_effects(g: Dictionary) -> PackedStringArray:
 	var out: PackedStringArray = []
-	var seen := {}
-	for m in g.get("mutations", []):
-		if seen.has(m):
-			continue
-		seen[m] = true
+	for m in visible_mutations(g):
 		match m:
 			"eyes":
 				var n := eyes_of(g)
@@ -545,12 +576,10 @@ static func mutation_text(g: Dictionary) -> String:
 	if not is_mutant(g):
 		return ""
 	var parts: PackedStringArray = []
-	var seen := {}
-	for m in g["mutations"]:
+	for m in visible_mutations(g):
 		# Наложенные мутации — одной строкой со ступенью («гигант ×3», «6 глаз»); узор — не мутация.
-		if seen.has(m) or COSMETIC.has(m):
+		if COSMETIC.has(m):
 			continue
-		seen[m] = true
 		match m:
 			"giant":
 				parts.append("гигант" + (" ×%d" % size_of(g) if size_of(g) > 1 else ""))
@@ -560,7 +589,7 @@ static func mutation_text(g: Dictionary) -> String:
 				continue
 			"eyes":
 				var n := eyes_of(g)
-				parts.append("%d %s" % [n, "глаз" if n >= 5 else "глаза"])
+				parts.append("%d %s" % [n, "глаз" if n >= 5 or n == 1 else "глаза"])
 			"fingers":
 				var f := fingers_of(g)
 				parts.append("%d %s" % [f, "пальцев" if f >= 5 else "пальца"])

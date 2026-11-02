@@ -3924,6 +3924,23 @@ func test_mutation_stacking() -> void:
 		e["eyes"] = [Genetics.eyes_of(e) + 1, Genetics.eyes_of(e) + 1]
 	var se: Dictionary = Genetics.stats(e)
 	check(Genetics.eyes_of(e) == 7 and se["vision"] >= 4.0 and se["intellect"] >= 2.0, "7 глаз — зрение ×%.1f, интеллект ×%.1f" % [se["vision"], se["intellect"]])
+	# Унаследованные мутации (у родителя появились, у ребёнка — от рождения) тоже видны: гигант
+	# в этом поколении + длинные руки от предка — обе в карточке.
+	var h := Genetics.founder(rng)
+	h["eyes"] = [1, 1]
+	h["long_arms"] = [true, false]
+	Genetics.mutate(h, rng, "giant")
+	var mt := Genetics.mutation_text(h)
+	check(mt.contains("гигант") and mt.contains("длинные руки") and Genetics.mutation_effects(h).size() == 2,
+		"видны обе мутации, и унаследованная: " + mt)
+	var k := Genetics.founder(rng)
+	k["eyes"] = [1, 1]
+	k["horn"] = [false, true]
+	check(Genetics.is_mutant(k) and Genetics.rarity(k) == 2 and Genetics.mutation_text(k).contains("рог"),
+		"рог от предка — мутант: " + Genetics.mutation_text(k))
+	k["horn"] = [false, false]
+	k["fur"] = [true, false]
+	check(not Genetics.is_mutant(k), "носитель рецессивной шерсти — не мутант (её не видно)")
 
 
 func test_starving_count() -> void:

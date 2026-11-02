@@ -20,6 +20,8 @@ signal build_opened
 signal speed_selected(index: int)
 signal science_pressed
 signal people_pressed
+## Карточку закрыли крестиком.
+signal info_closed
 ## Сохранить: sid — слот для перезаписи (пусто — новый), name — название (пусто — как было).
 signal save_requested(sid: String, name: String)
 ## Нажали на строку журнала, у которой есть место (клетка): камера — туда.
@@ -844,7 +846,9 @@ func _build_panel() -> void:
 	titles.add_child(_title)
 	titles.add_child(_subtitle)
 	var close := IconButton.make("close", "", 52, 52)
-	close.pressed.connect(hide_info)
+	close.pressed.connect(func() -> void:
+		hide_info()
+		info_closed.emit())
 	head.add_child(close)
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -874,6 +878,8 @@ func show_panel(spec: Dictionary) -> void:
 	if not _placing:
 		_build_row.visible = false
 		_build_btn.set_pressed_no_signal(false)
+	# Та же карточка заново (после нажатия в ней) — прокрутка остаётся; другая — с начала.
+	var same := _info_panel.visible and _title.text == str(spec.get("title", ""))
 	_fill_header(spec)
 	_fill_body(spec.get("rows", []))
 	# Старое убираем сразу, а не в конце кадра — иначе карточка меряет себя вместе с ним.
@@ -905,6 +911,23 @@ func show_panel(spec: Dictionary) -> void:
 	_actions.visible = not spec.get("actions", []).is_empty()
 	_info_panel.visible = true
 	_fit_scroll.call_deferred()
+	# Новая карточка — с начала, а не прокрученной, как была прежняя.
+	if not same:
+		_inertia_region = ""
+		_scroll.scroll_vertical = 0
+		_panel_scroll_f = 0.0
+
+
+func panel_scroll() -> int:
+	return _scroll.scroll_vertical
+
+
+## Прокрутить карточку на место (когда она уже разложена — через кадр).
+func set_panel_scroll(v: int) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_scroll.scroll_vertical = v
+	_panel_scroll_f = float(_scroll.scroll_vertical)
 
 
 ## Обновляет заголовок и строки, не трогая кнопки и переключатели.
@@ -1120,7 +1143,7 @@ func _build_people(st: Dictionary) -> void:
 				if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 					if ev.pressed:
 						press["at"] = ev.global_position
-					elif press["at"] != Vector2.INF and ev.global_position.distance_to(press["at"]) < 14.0:
+					elif press["at"] != Vector2.INF and ev.global_position.distance_to(press["at"]) < DRAG_DEADZONE:
 						press["at"] = Vector2.INF
 						open.call())
 		var row := HBoxContainer.new()
