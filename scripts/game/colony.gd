@@ -3613,11 +3613,18 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 		_drop(u)
 		u.workplace = 0
 		u.bed_room = 0
+		# Пара остаётся здесь — улетевший помнит её (пара на всю жизнь).
+		var stay := unit_by_id(u.partner_id)
+		if stay != null and not crew.has(stay):
+			u.partner_planet = world.gen.planet_id
+			u.partner_name = stay.name
+			stay.partner_planet = planet_id
+			stay.partner_name = u.name
 		crew_data.append(u.to_dict())
 		units.erase(u)
 		_units_rev += 1
 	for o in units:
-		if not units.has(unit_by_id(o.partner_id)):
+		if o.partner_id != 0 and not units.has(unit_by_id(o.partner_id)):
 			o.partner_id = 0
 	for k in cargo:
 		_remove(k, int(cargo[k]))
@@ -3668,6 +3675,20 @@ func receive_flight(flight: Dictionary) -> void:
 		arrived.append(u)
 	for u in arrived:
 		u.partner_id = ids.get(u.partner_id, 0)
+		if u.partner_id != 0:
+			u.partner_planet = ""
+	# Прилетели к своей паре — снова вместе.
+	for u in arrived:
+		if u.pair_token.is_empty() or u.partner_id != 0:
+			continue
+		for o in units:
+			if o != u and o.pair_token == u.pair_token:
+				u.partner_id = o.id
+				o.partner_id = u.id
+				u.partner_planet = ""
+				o.partner_planet = ""
+				_log("%s и %s снова вместе!" % [u.name, o.name], "good", o.cell())
+				break
 	for k in flight.get("cargo", {}):
 		var n := int(flight["cargo"][k])
 		var put := _add(k, n, ship)
@@ -4415,6 +4436,10 @@ func _die_of_age(u: Unit) -> void:
 	_log("%s %s от старости в %s, поколение %d" % [u.name, "умерла" if u.sex == Unit.Sex.FEMALE else "умер", u.age_text(), u.generation], "info", u.cell())
 
 
+## Кто знает, на какой планете живёт пара (Universe.partner_planet); нет — пару не проверяем.
+static var pair_finder: Callable
+
+
 func _kill(u: Unit, why: String, report := true) -> void:
 	_drop(u)
 	units.erase(u)
@@ -4422,6 +4447,9 @@ func _kill(u: Unit, why: String, report := true) -> void:
 	for o in units:
 		if o.partner_id == u.id:
 			o.partner_id = 0
+			o.pair_token = ""
+			o.partner_name = ""
+			o.partner_planet = ""
 	for k in acquaint.keys():
 		var ids: PackedStringArray = k.split(",")
 		if int(ids[0]) == u.id or int(ids[1]) == u.id:
@@ -4659,22 +4687,34 @@ func _social() -> void:
 		u.calling = calling_of(u)
 	if beds_total() == 0:
 		return
+	# Разлучённые: пара на другой планете умерла — свободны (иначе новую пару не ищут).
+	for u in units:
+		if u.partner_id == 0 and not u.pair_token.is_empty() and pair_finder.is_valid():
+			var at: String = pair_finder.call(u.pair_token, u)
+			if at.is_empty():
+				if not u.partner_name.is_empty():
+					_log("%s: пара (%s) умерла на планете %s" % [u.name, u.partner_name, Planet.planet_name(u.partner_planet)], "info", u.cell())
+				u.pair_token = ""
+				u.partner_name = ""
+				u.partner_planet = ""
+			else:
+				u.partner_planet = at
 	# Пары складываются только у знакомых — кто подолгу бывал рядом, — и когда есть где жить.
+	# Пара — на всю жизнь: у кого пара есть (хоть на другой планете), новую не ищут.
 	for f in units:
-		if f.child or f.sex != Unit.Sex.FEMALE or f.partner_id != 0 or f.mood() < 45.0:
+		if f.child or f.sex != Unit.Sex.FEMALE or f.partner_id != 0 or not f.pair_token.is_empty() or f.mood() < 45.0:
 			continue
 		var best: Unit = null
 		var best_v := ACQUAINT_PAIR
 		for m in units:
-			if m.child or m.sex != Unit.Sex.MALE or m.partner_id != 0 or m.mood() < 45.0:
+			if m.child or m.sex != Unit.Sex.MALE or m.partner_id != 0 or not m.pair_token.is_empty() or m.mood() < 45.0:
 				continue
 			var v := acquaintance(f, m)
 			if v >= best_v:
 				best_v = v
 				best = m
 		if best != null and rng.randf() < 0.2:
-			f.partner_id = best.id
-			best.partner_id = f.id
+			_pair(f, best)
 			_log("%s и %s стали парой" % [f.name, best.name], "good", f.cell())
 	# Дети — только если есть свободная кровать и еда.
 	for f in units:
@@ -4690,6 +4730,26 @@ func _social() -> void:
 		if rng.randf() < 0.12 * sqrt(f.stat("fertility") * partner.stat("fertility")):
 			f.pregnancy = 0.0
 			_log("%s и %s ждут ребёнка!" % [f.name, partner.name], "good", f.cell())
+
+
+## Свести пару: общий знак — на всю жизнь (и через полёты).
+func _pair(a: Unit, b: Unit) -> void:
+	a.partner_id = b.id
+	b.partner_id = a.id
+	var token := "%d-%d-%d" % [rng.randi(), a.id, b.id]
+	a.pair_token = token
+	b.pair_token = token
+	a.partner_name = b.name
+	b.partner_name = a.name
+	a.partner_planet = ""
+	b.partner_planet = ""
+
+
+## Пара гаврика на другой планете (жива): название планеты, иначе "".
+func partner_away(u: Unit) -> String:
+	if u.partner_id != 0 or u.pair_token.is_empty():
+		return ""
+	return u.partner_planet
 
 
 func _birth(mother: Unit) -> void:
@@ -10238,6 +10298,12 @@ func load_dict(d: Dictionary) -> void:
 			g["female"] = u.sex == Unit.Sex.FEMALE
 			u.set_genome(g)
 		units.append(u)
+	# Старые сохранения: у пар ещё нет общего знака — даём.
+	for u in units:
+		if u.partner_id != 0 and u.pair_token.is_empty():
+			var o := unit_by_id(u.partner_id)
+			if o != null and o.partner_id == u.id:
+				_pair(u, o)
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	_social_t = float(d.get("social_t", 0.0))

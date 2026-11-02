@@ -599,6 +599,21 @@ func _launch_crew() -> void:
 	for u: Unit in pool:
 		chances[u] = colony.survival_chance(u, planet)
 	pool.sort_custom(func(a: Unit, b: Unit) -> bool: return chances[a] > chances[b])
+	# Взяли гаврика — его пара (если не взята) встаёт сразу под ним: взять ли и её (не обязательно).
+	var invite := {}
+	for u: Unit in crew:
+		var mate := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
+		if mate != null and not crew.has(mate) and pool.has(mate):
+			invite[mate] = u
+	var ordered := []
+	for u: Unit in pool:
+		if invite.has(u):
+			continue
+		ordered.append(u)
+		for m: Unit in invite:
+			if invite[m] == u:
+				ordered.append(m)
+	pool = ordered
 	for u: Unit in pool:
 		var on := crew.has(u)
 		var busy := u.workplace != 0 or u.profession != Unit.Prof.ANY \
@@ -613,10 +628,22 @@ func _launch_crew() -> void:
 			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
 		# Шанс выжить; взять можно любого.
 		var chance: int = chances[u]
-		items.append({"looks": _looks(u), "open": _opener(u, _launch_crew), "name": _name_sex(u),
-			"info": "шанс выжить %d%% · %s%s%s" % [chance, _family_text(u),
+		# Пара — на всю жизнь: видно, кто разлучится с парой, кто летит к своей.
+		var mate := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
+		var pair_text := ""
+		if invite.has(u):
+			pair_text = "♥ ПАРА %s — взять вместе? · " % (invite[u] as Unit).name.to_upper()
+		elif mate != null and on and not crew.has(mate):
+			pair_text = "♥ ПАРА ОСТАЁТСЯ ЗДЕСЬ: %s — разлучённые не заведут детей · " % mate.name
+		elif mate != null and on:
+			pair_text = "♥ летит с парой · "
+		elif not colony.partner_away(u).is_empty():
+			pair_text = ("♥ летит к своей паре (%s)! · " % u.partner_name) if colony.partner_away(u) == planet \
+				else "♥ пара на планете %s · " % Planet.planet_name(colony.partner_away(u))
+		items.append({"looks": _looks(u), "open": _opener(u, _launch_crew), "name": ("♥ " if invite.has(u) else "") + _name_sex(u),
+			"info": "%sшанс выжить %d%% · %s%s%s" % [pair_text, chance, _family_text(u),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
-			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
+			"button": "Убрать" if on else "Взять", "style": "danger" if on else ("primary" if invite.has(u) else ""), "pick": func() -> void:
 				if crew.has(u):
 					crew.erase(u)
 				elif crew.size() < _launch_beds():
@@ -1171,6 +1198,8 @@ func _unit_spec(u: Unit) -> Dictionary:
 		var partner := colony.unit_by_id(u.partner_id)
 		if partner != null:
 			family.append(["people", "пара: " + partner.name])
+	elif not colony.partner_away(u).is_empty():
+		family.append(["people", "пара: %s — на планете %s (вместе — только если снова встретятся)" % [u.partner_name, Planet.planet_name(colony.partner_away(u))]])
 	if not u.mother_name.is_empty() or not u.father_name.is_empty():
 		var parents: PackedStringArray = []
 		for n in [u.mother_name, u.father_name]:
@@ -1521,7 +1550,10 @@ func _family_text(u: Unit) -> String:
 	if u.child:
 		return mut + "ребёнок"
 	var partner := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
-	var out := ("пара: " + partner.name) if partner != null else ("без пары" if not u.is_elder() else "без пары (пожилой)")
+	var away := colony.partner_away(u)
+	var out := ("пара: " + partner.name) if partner != null \
+		else ("пара: %s (на планете %s)" % [u.partner_name, Planet.planet_name(away)]) if not away.is_empty() \
+		else ("без пары" if not u.is_elder() else "без пары (пожилой)")
 	if u.pregnancy >= 0.0:
 		out += ", ждёт ребёнка"
 	return mut + out
@@ -1612,7 +1644,7 @@ func _pick_filter_control(refresh: Callable) -> Dictionary:
 
 ## Проходит ли гаврик включённые фильтры (для работы task).
 func _pick_pass(u: Unit, task: int) -> bool:
-	if _pick_filters["single"] and u.partner_id != 0:
+	if _pick_filters["single"] and (u.partner_id != 0 or not u.pair_token.is_empty()):
 		return false
 	if _pick_filters["mutant"] and not Genetics.is_mutant(u.genome):
 		return false

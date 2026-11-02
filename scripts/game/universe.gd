@@ -17,7 +17,18 @@ var base_seed := 0
 func add_world(planet: String, world: WorldData, colony: Colony) -> Dictionary:
 	var e := {"planet": planet, "world": world, "colony": colony}
 	worlds.append(e)
+	# Колонии спрашивают, жива ли пара разлучённого гаврика на другой планете.
+	Colony.pair_finder = partner_planet
 	return e
+
+
+## На какой планете живёт пара (знак token) гаврика me; "" — нигде (умерла).
+func partner_planet(token: String, me: Unit) -> String:
+	for e in worlds:
+		for o: Unit in (e["colony"] as Colony).units:
+			if o != me and o.pair_token == token:
+				return str(e["planet"])
+	return ""
 
 
 func entry(planet: String) -> Dictionary:

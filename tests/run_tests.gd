@@ -73,6 +73,7 @@ func _initialize() -> void:
 	test_mine_blockage()
 	test_merge_passages()
 	test_haul_give_up()
+	test_monogamy()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3236,6 +3237,83 @@ func test_mine_blockage() -> void:
 ## шахтой и разные материалы — отдельно. «Отремонтировать все» — всё, что требует ремонта.
 ## Застрявший носильщик не держит стройку вечно: через HAUL_GIVE_UP бросает ношу, дело
 ## берёт другой.
+## Пара — на всю жизнь: разлучённые полётом новую пару не ищут, встретились снова — вместе;
+## свободны, только когда пара умерла (хоть на другой планете).
+func test_monogamy() -> void:
+	var ea := _new_colony(41)
+	_start(ea, 0)
+	var eb := _new_colony(42)
+	_start(eb, 0)
+	var uni := Universe.new()
+	uni.add_world("earth", ea.world, ea)
+	uni.add_world("mars", eb.world, eb)
+	var f: Unit = null
+	var males: Array = []
+	for u in ea.units:
+		if u.child:
+			continue
+		if u.sex == Unit.Sex.FEMALE and f == null:
+			f = u
+		elif u.sex == Unit.Sex.MALE:
+			males.append(u)
+	if f == null or males.size() < 2:
+		check(false, "в колонии нет нужных гавриков")
+		return
+	for u in ea.units:
+		u.partner_id = 0
+		u.pair_token = ""
+	var m: Unit = males[0]
+	var other: Unit = males[1]
+	ea._pair(f, m)
+	check(f.pair_token == m.pair_token and not f.pair_token.is_empty(), "пара — общий знак")
+	var pad := Project.new()
+	pad.kind = Project.Kind.ROOM
+	pad.purpose = RoomType.LAUNCHPAD
+	pad.rocket = "chem"
+	var flight := ea.launch(pad, "mars", [m], {})
+	check(not flight.has("error"), "муж улетел на Марс: " + str(flight.get("error", "")))
+	check(f.partner_id == 0 and f.pair_token == m.pair_token and f.partner_planet == "mars" and ea.partner_away(f) == "mars",
+		"жена помнит пару на Марсе")
+	# Знакомство с другим — сильное, а пары нет: пара на всю жизнь.
+	ea.acquaint[ea._acq_key(f.id, other.id)] = 10000.0
+	for i in 60:
+		ea._social()
+	check(f.partner_id == 0 and other.partner_id == 0, "разлучённая не заводит новую пару")
+	eb.receive_flight(flight)
+	var m2: Unit = null
+	for u in eb.units:
+		if u.pair_token == f.pair_token:
+			m2 = u
+	check(m2 != null and m2.partner_planet == "earth", "на Марсе он помнит пару на Земле")
+	# Жена прилетела к мужу — снова вместе.
+	var pad2 := Project.new()
+	pad2.kind = Project.Kind.ROOM
+	pad2.purpose = RoomType.LAUNCHPAD
+	pad2.rocket = "chem"
+	var fl2 := ea.launch(pad2, "mars", [f], {})
+	eb.receive_flight(fl2)
+	var f2: Unit = null
+	for u in eb.units:
+		if u.pair_token == m2.pair_token and u != m2:
+			f2 = u
+	check(f2 != null and f2.partner_id == m2.id and m2.partner_id == f2.id and m2.partner_planet.is_empty(), "встретились на Марсе — снова пара")
+	# Разлучили снова, и он умер на Марсе — на Земле она свободна.
+	var pad3 := Project.new()
+	pad3.kind = Project.Kind.ROOM
+	pad3.purpose = RoomType.LAUNCHPAD
+	pad3.rocket = "chem"
+	var back := eb.launch(pad3, "venus", [f2], {})
+	ea.receive_flight(back)
+	var f3: Unit = null
+	for u in ea.units:
+		if u.pair_token == m2.pair_token:
+			f3 = u
+	eb._kill(m2, "тест", false)
+	ea._social()
+	check(f3 != null and f3.pair_token.is_empty() and f3.partner_planet.is_empty(), "пара умерла на другой планете — свободна (%s, beds %d)" % [
+		[f3.pair_token, f3.partner_planet, f3.partner_id] if f3 != null else "нет", ea.beds_total()])
+
+
 func test_haul_give_up() -> void:
 	var res := _colony_with_room(39)
 	var colony: Colony = res[0]

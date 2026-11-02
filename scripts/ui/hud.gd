@@ -1211,6 +1211,8 @@ func _build_people(st: Dictionary) -> void:
 		b.add_theme_font_size_override("font_size", 18)
 		if item.get("style", "") == "danger":
 			b.add_theme_stylebox_override("normal", btn_box(RED))
+		elif item.get("style", "") == "primary":
+			b.add_theme_stylebox_override("normal", btn_box(ACCENT))
 		b.pressed.connect(item["pick"])
 		row.add_child(b)
 

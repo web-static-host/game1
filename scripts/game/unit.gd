@@ -66,6 +66,12 @@ var lifespan := 0.0
 ## Поколение: основатели — 1, их дети — 2…
 var generation := 1
 var partner_id := 0
+## Пара — на всю жизнь: общий знак пары у обоих (переживает полёты). Разлучённые (пара на другой
+## планете) новую пару не ищут и детей не заводят; свободны, только когда пара умерла.
+var pair_token := ""
+## Как зовут пару и где она, если не здесь ("" — здесь или нет пары).
+var partner_name := ""
+var partner_planet := ""
 ## Срок беременности в секундах (-1 — не беременна).
 var pregnancy := -1.0
 ## Кровать: id жилой комнаты и номер кровати (0 — нет).
@@ -279,7 +285,8 @@ func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": name, "sex": sex, "pos": [pos.x, pos.y], "skills": skills, "look": look,
 		"energy": energy, "satiety": satiety, "profession": profession, "child": child, "age": age,
-		"partner_id": partner_id, "pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index, "irradiated": irradiated,
+		"partner_id": partner_id, "pair_token": pair_token, "partner_name": partner_name, "partner_planet": partner_planet,
+		"pregnancy": pregnancy, "bed_room": bed_room, "bed_index": bed_index, "irradiated": irradiated,
 		"health": health, "genome": Genetics.to_save(genome) if not genome.is_empty() else {},
 		"mother_id": mother_id, "father_id": father_id, "mother_name": mother_name, "father_name": father_name,
 		"workplace": workplace, "lifespan": lifespan, "generation": generation,
@@ -308,6 +315,9 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.child = bool(d.get("child", false))
 	u.age = float(d.get("age", 0.0))
 	u.partner_id = int(d.get("partner_id", 0))
+	u.pair_token = str(d.get("pair_token", ""))
+	u.partner_name = str(d.get("partner_name", ""))
+	u.partner_planet = str(d.get("partner_planet", ""))
 	u.pregnancy = float(d.get("pregnancy", -1.0))
 	u.irradiated = bool(d.get("irradiated", false))
 	u.bed_room = int(d.get("bed_room", 0))
