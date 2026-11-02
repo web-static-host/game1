@@ -45,6 +45,27 @@ func update(dt: float) -> void:
 			_arrive(f)
 
 
+## Наука общая на все планеты: у всех колоний один и тот же объект (учёные любой планеты
+## копят очки в одну технологию, изученное действует везде). Старые сохранения: изученное
+## на всех планетах объединяется, накопленные очки — наибольшие.
+func share_research() -> void:
+	if worlds.is_empty():
+		return
+	var shared: Research = (worlds[0]["colony"] as Colony).research
+	for e in worlds:
+		var c: Colony = e["colony"]
+		if c.research == shared:
+			continue
+		for t in c.research.done:
+			shared.learn(t)
+		for t in c.research.spent:
+			if not shared.done.has(t):
+				shared.spent[t] = maxf(float(shared.spent.get(t, 0.0)), float(c.research.spent[t]))
+		if shared.current.is_empty() and not c.research.current.is_empty() and not shared.done.has(c.research.current):
+			shared.current = c.research.current
+		c.research = shared
+
+
 func _arrive(f: Dictionary) -> void:
 	var planet: String = f["planet"]
 	var e := entry(planet)
@@ -52,6 +73,8 @@ func _arrive(f: Dictionary) -> void:
 		var world := WorldData.new(WorldGen.new(seed_for(planet), WorldGen.LATEST, planet))
 		var colony := Colony.new(world)
 		colony.start_planet(0, f)
+		if not worlds.is_empty():
+			colony.research = (worlds[0]["colony"] as Colony).research
 		add_world(planet, world, colony)
 		arrived.emit(planet, colony, true)
 	else:

@@ -62,6 +62,7 @@ func _initialize() -> void:
 	test_two_generators()
 	test_store_limits()
 	test_change_material()
+	test_shared_research()
 	test_walk_floor_only()
 	test_collapse_losses()
 	test_lifts()
@@ -2644,6 +2645,38 @@ func test_clearing_regrown() -> void:
 	check(colony._task_valid(u), "рубка на месте стройки не отменяется без отметки")
 	u.task = Unit.Task.NONE
 	u.project_id = 0
+
+
+## Наука общая на все планеты: изученное на одной планете знают все, старые сохранения сливаются.
+func test_shared_research() -> void:
+	var res := _colony_with_room(41)
+	var a: Colony = res[0]
+	var forge: Project = res[1]
+	forge.purpose = RoomType.FORGE
+	var b: Colony = _new_colony(42)
+	a.research = Research.new()
+	b.research = Research.new()
+	a.research.learn("silver_works")
+	b.research.learn("diamond_works")
+	b.research.spent["rocketry"] = 5.0
+	var uni := Universe.new()
+	uni.add_world("earth", a.world, a)
+	uni.add_world("mars", b.world, b)
+	uni.share_research()
+	check(a.research == b.research, "у всех планет одна наука")
+	check(a.research.has("silver_works") and a.research.has("diamond_works"), "изученное на обеих планетах сложилось")
+	check(float(a.research.spent.get("rocketry", 0.0)) == 5.0, "начатое изучение не потерялось")
+	b.research.learn("gold_works")
+	check(a.research.has("gold_works"), "изучили на Марсе — знают и на Земле")
+	# Кузницу перестраивают только в её супер-материал — алмаз, не серебро и не золото.
+	var fc := a
+	for m in ["silver", "gold", "diamond"]:
+		fc.known_resources[m] = true
+		fc.research.learn(Project.SUPER_TECH[m])
+	var e_silver := fc.material_error(forge, "silver")
+	check(not e_silver.is_empty(), "кузницу в серебро — нельзя")
+	check(not fc.material_error(forge, "gold").is_empty(), "кузницу в золото — нельзя")
+	check(fc.material_error(forge, "diamond").is_empty(), "кузницу в алмаз — можно: " + fc.material_error(forge, "diamond"))
 
 
 func test_change_material() -> void:

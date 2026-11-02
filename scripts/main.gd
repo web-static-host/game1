@@ -116,6 +116,7 @@ func _ready() -> void:
 			start = Vector2i(int(cam[0]), int(cam[1]))
 		var n0 := universe.worlds.size()
 		universe.load_dict(data.get("universe", {}))
+		universe.share_research()
 		for i in range(n0, universe.worlds.size()):
 			_hook(universe.worlds[i])
 		for k in data.get("cameras", {}):
@@ -1228,8 +1229,10 @@ func _show_project(p: Project) -> void:
 					if not err.is_empty():
 						hud.log_event(err, "warning")
 					_show_project(p), "primary"])
-		# Стены можно перестроить из другого материала (дерево → камень и т. п.).
-		var mats := colony.available_materials()
+		# Стены можно перестроить из другого материала (дерево → камень и т. п.); супер-материал —
+		# только тот, что подходит назначению (кузнице — алмаз, спальне — золото…).
+		var mats := colony.available_materials().filter(func(m: String) -> bool:
+			return not Project.SUPER.has(m) or RoomType.SUPER_MAT.get(p.purpose, "") == m)
 		if mats.size() > 1:
 			var cur_mat: String = _wall_choice.get(p.id, p.material)
 			controls.append({"label": "Стены", "value": maxi(0, mats.find(cur_mat)), "min": 0, "max": mats.size() - 1,

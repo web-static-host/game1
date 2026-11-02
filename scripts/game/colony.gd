@@ -3667,6 +3667,11 @@ func material_error(p: Project, mat: String) -> String:
 		return "Уже из этого материала"
 	if not materials_for(p.kind).has(mat):
 		return "Этот материал сюда не подходит или ещё не доступен"
+	if p.kind == Project.Kind.ROOM and Project.SUPER.has(mat) and RoomType.super_material(p) != mat:
+		var need := RoomType.super_material(p)
+		if need.is_empty():
+			return "%s этой комнате ничего не даст — супер-материал нужен только по назначению" % Project.MATERIALS[mat][0]
+		return "Для «%s» супер-материал — %s, а не %s" % [RoomType.purpose_name(p.purpose), Project.MATERIALS[need][0].to_lower(), Project.MATERIALS[mat][0].to_lower()]
 	if (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE) and (drilling(p) or probing(p)):
 		return "Сначала остановите"
 	if p.kind != Project.Kind.ROOM:
@@ -4983,6 +4988,12 @@ func update(dt: float) -> void:
 				_climb_sig = sig
 				_rebuild_climb()
 			_portal_check()
+			# Наука общая: геологию могли изучить на другой планете — осматриваем выработки и тут.
+			var geo := geology_level()
+			if geo != _geo_seen:
+				if _geo_seen >= 0 and geo > _geo_seen:
+					_reveal_known()
+				_geo_seen = geo
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
 		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
@@ -5434,6 +5445,7 @@ func congestion(u: Unit) -> float:
 ## Площадки всех готовых телепортов планеты связаны: с площадки одного шаг — сразу на площадку
 ## любого другого (в обходах и путях это обычный шаг, гаврик переносится мгновенно).
 var _portal_sig := []
+var _geo_seen := -1
 
 
 ## Площадка телепорта: середина пола комнаты.
