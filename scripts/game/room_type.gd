@@ -260,18 +260,26 @@ static func furnish_material(p: Project) -> String:
 
 
 ## Дерево в стоимости заменяется материалом мебели комнаты.
-static func _furnished(cost: Dictionary, p: Project) -> Dictionary:
+## Металлы и супер-материалы, из которых делают и печи (горн, перегонный куб): в железной,
+## серебряной, золотой и алмазной комнате кирпичное оборудование — из её материала, вдвое меньше.
+const KILN_METALS := ["iron", "silver", "gold", "diamond"]
+
+
+static func _furnished(cost: Dictionary, p: Project, metal_kilns := true) -> Dictionary:
 	var m := furnish_material(p)
-	if m == "wood" or not cost.has("wood"):
-		return cost
 	var out := cost.duplicate()
-	out[m] = int(out.get(m, 0)) + int(out["wood"])
-	out.erase("wood")
+	if m != "wood" and out.has("wood"):
+		out[m] = int(out.get(m, 0)) + int(out["wood"])
+		out.erase("wood")
+	if metal_kilns and KILN_METALS.has(m) and out.has("brick"):
+		out[m] = int(out.get(m, 0)) + ceili(int(out["brick"]) / 2.0)
+		out.erase("brick")
 	return out
 
 
 static func equip_cost(t: int, p: Project) -> Dictionary:
-	return _furnished(_equip_cost(t, p), p)
+	# Кирпичные печи очага — это именно кирпич (так очаг и улучшают).
+	return _furnished(_equip_cost(t, p), p, t != HEARTH_BRICK and t != HEARTH_GAS)
 
 
 static func _equip_cost(t: int, p: Project) -> Dictionary:

@@ -62,6 +62,7 @@ func _initialize() -> void:
 	test_two_generators()
 	test_store_limits()
 	test_change_material()
+	test_forge_kiln_material()
 	test_shared_research()
 	test_walk_floor_only()
 	test_collapse_losses()
@@ -2681,6 +2682,22 @@ func test_shared_research() -> void:
 	check(not e_silver.is_empty(), "кузницу в серебро — нельзя")
 	check(not fc.material_error(forge, "gold").is_empty(), "кузницу в золото — нельзя")
 	check(fc.material_error(forge, "diamond").is_empty(), "кузницу в алмаз — можно: " + fc.material_error(forge, "diamond"))
+
+
+## Горн кузницы (и другое кирпичное оборудование) в железной и супер-комнате — из её материала.
+func test_forge_kiln_material() -> void:
+	var p := Project.new()
+	p.kind = Project.Kind.ROOM
+	p.rect = Rect2i(0, 0, 6, 3)
+	p.material = "stone"
+	check(RoomType.equip_cost(RoomType.FORGE, p).get("brick", 0) == 8, "в каменной кузнице горн кирпичный")
+	p.material = "iron"
+	var c := RoomType.equip_cost(RoomType.FORGE, p)
+	check(not c.has("brick") and int(c.get("iron", 0)) == 4, "в железной — горн железный, вдвое меньше: %s" % c)
+	p.material = "diamond"
+	c = RoomType.equip_cost(RoomType.FORGE, p)
+	check(not c.has("brick") and int(c.get("diamond", 0)) == 4, "в алмазной — алмазный: %s" % c)
+	check(RoomType.equip_cost(RoomType.HEARTH_BRICK, p).has("brick"), "кирпичные печи очага — всё равно кирпич")
 
 
 func test_change_material() -> void:
