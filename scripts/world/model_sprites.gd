@@ -149,6 +149,10 @@ static var detail := 1.0
 ## кадр (в левой половине), foot: Vector2 — ступни в кадре, hand: Vector2 — правая кисть от ступней,
 ## eyes: [Vector2] — глаза от ступней, eye_r: float — радиус глаза}} (всё в пикселях листа).
 var sheets := {}
+## Снятые листы живут, пока работает игра: новый мир (вход, другая планета) не снимает их заново
+## (раньше после каждой загрузки гаврики сначала были рисованными, потом становились 3D).
+static var _sheet_cache := {}
+static var _baked_once := false
 ## Готовы ли тела всех форм и обычное лицо (до этого все гаврики рисованные).
 var is_baked := false
 var material: ShaderMaterial
@@ -192,6 +196,29 @@ static func body_key(looks: Dictionary) -> String:
 		clampi(int(looks.get("fingers", 4)), 2, MAX_FINGERS), 1 if looks.get("fur", false) else 0]
 
 
+## Для экрана загрузки: какая доля листов этих гавриков готова (0..1); недостающие заказывает.
+## 1 — готово или 3D нет (выключено, нет видеокарты, не вышло).
+static func load_progress(all_looks: Array) -> float:
+	var m := shared
+	if not enabled or m == null or (not m.is_baked and status != "готовится…"):
+		return 1.0
+	if not m.is_baked:
+		return 0.0
+	var need := {}
+	for looks: Dictionary in all_looks:
+		for l in layers_of(looks):
+			need[l[0]] = true
+	if need.is_empty():
+		return 1.0
+	var have := 0
+	for key: String in need:
+		if m.sheets.has(key) or m._failed.has(key):
+			have += 1
+		else:
+			m._want(key)
+	return float(have) / need.size()
+
+
 ## Можно ли нарисовать гаврика моделью: все его листы готовы. Недостающие — заказываем
 ## (пока снимаются, гаврик рисованный).
 static func fits(looks: Dictionary) -> bool:
@@ -221,6 +248,12 @@ func _ready() -> void:
 			return
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/model_tint.gdshader")
+	sheets = _sheet_cache
+	if _baked_once:
+		status = "готово"
+		is_baked = true
+		baked.emit.call_deferred()
+		return
 	_start.call_deferred()
 
 
@@ -241,6 +274,7 @@ func _start() -> void:
 		if ok and await _selftest():
 			status = "готово"
 			is_baked = true
+			_baked_once = true
 			baked.emit()
 			_pump()
 			return

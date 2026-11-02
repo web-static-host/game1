@@ -146,6 +146,9 @@ func _ready() -> void:
 var _loader: LoadingScreen = null
 var _loader_base := 0.0
 var _loader_frames := 0
+var _loader_t := 0
+## Дольше этого (мс) экран загрузки не держим, даже если 3D-модели ещё снимаются.
+const LOADER_MAX_MS := 40000
 
 
 func _loading_begin(text: String, base: float) -> void:
@@ -157,6 +160,7 @@ func _loading_begin(text: String, base: float) -> void:
 	_loader.set_progress(base, text)
 	_loader_base = base
 	_loader_frames = 0
+	_loader_t = Time.get_ticks_msec()
 	world_view.fast_load = true
 
 
@@ -164,8 +168,16 @@ func _loading_begin(text: String, base: float) -> void:
 func _loading_tick() -> bool:
 	if _loader == null:
 		return false
-	var r := world_view.load_progress()
-	_loader.set_progress(lerpf(_loader_base, 1.0, r))
+	# Мир на экране и 3D-модели гавриков (снимаются по одной — пока не готовы, гаврики рисованные).
+	var rw := world_view.load_progress()
+	var looks := []
+	for u in colony.units:
+		looks.append(Genetics.looks(u.genome))
+	var rm := ModelSprites.load_progress(looks)
+	_loader.set_progress(lerpf(_loader_base, 1.0, rw * 0.6 + rm * 0.4))
+	var r := minf(rw, rm)
+	if Time.get_ticks_msec() - _loader_t > LOADER_MAX_MS:
+		r = 1.0
 	if r >= 1.0:
 		_loader_frames += 1
 		# Пара кадров — дорисовать края кусков, постройки и гавриков.
