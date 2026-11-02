@@ -557,7 +557,7 @@ func _launch_crew() -> void:
 					hud.log_event("В ракете — до %d гавриков" % RoomType.SHIP_BEDS, "warning")
 				_launch_save()
 				_launch_crew()})
-	hud.show_panel({"title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
+	hud.show_panel({"id": "crew", "title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
 		"subtitle": Planet.data(planet)["desc"],
 		"controls": [{"type": "people", "label": "Кто летит (сверху — у кого больше шанс выжить):",
 			"items": items, "empty": "Нет взрослых гавриков."}],
@@ -591,7 +591,7 @@ func _launch_cargo_spec() -> Dictionary:
 	var total := 0
 	for k in _launch["cargo"]:
 		total += int(_launch["cargo"][k])
-	return {"title": "Груз: %d из %d" % [total, RoomType.SHIP_HOLD],
+	return {"id": "cargo", "title": "Груз: %d из %d" % [total, RoomType.SHIP_HOLD],
 		"subtitle": "экипаж %d · на %s" % [_launch["crew"].size(), Planet.planet_name(_launch["planet"])],
 		"rows": [{"type": "text", "text": "Домой: корабль сядет рядом с колонией на Земле, гаврики и груз — в нём." if _launch["planet"] == "earth" else
 			"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}

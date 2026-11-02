@@ -123,6 +123,8 @@ var _title: Label
 var _subtitle: Label
 var _scroll: ScrollContainer
 var _objects_btn: IconButton
+## Какое окно открыто в карточке (чтобы при перестройке того же окна не сбрасывать прокрутку).
+var _panel_id := ""
 var _body: VBoxContainer
 var _controls: VBoxContainer
 var _actions: HBoxContainer
@@ -886,7 +888,11 @@ func show_panel(spec: Dictionary) -> void:
 		_build_row.visible = false
 		_build_btn.set_pressed_no_signal(false)
 	# Та же карточка заново (после нажатия в ней) — прокрутка остаётся; другая — с начала.
-	var same := _info_panel.visible and _title.text == str(spec.get("title", ""))
+	# Опознаём по "id", если он есть (заголовок со счётчиком — «Экипаж: 3 из 10» — меняется
+	# от нажатия в списке, а это то же окно), иначе по заголовку.
+	var pid := str(spec.get("id", spec.get("title", "")))
+	var same := _info_panel.visible and pid == _panel_id
+	_panel_id = pid
 	_fill_header(spec)
 	_fill_body(spec.get("rows", []))
 	# Старое убираем сразу, а не в конце кадра — иначе карточка меряет себя вместе с ним.
