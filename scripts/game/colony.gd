@@ -4292,6 +4292,9 @@ func on_cell_filled(src: Vector2i, land: Vector2i) -> void:
 		if c.x == land.x and (c == land or c + Vector2i(0, -1) == land or (c.y >= src.y and c.y <= land.y)):
 			injure(u, 45.0, "придавило породой")
 	var p := project_at(land)
+	if p != null and _passage_blocked(p) and not blockages.has(p.id):
+		blockages[p.id] = true
+		_log("%s: завал — проход перекрыт. Нажмите на выработку, чтобы разобрать" % p.title(), "danger", land)
 	if p != null and p.phase == Project.Phase.BUILD:
 		# Выработку засыпало — копать заново.
 		p.phase = Project.Phase.DIG
@@ -4994,10 +4997,8 @@ func update(dt: float) -> void:
 				if _geo_seen >= 0 and geo > _geo_seen:
 					_reveal_known()
 				_geo_seen = geo
-			_blockage_t += 0.5
-			if _blockage_t >= BLOCKAGE_STEP:
-				_blockage_t = 0.0
-				_check_blockages()
+			if not _blockage_scanned:
+				_scan_blockages()
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
 		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
@@ -5465,28 +5466,50 @@ func teleports() -> Array[Project]:
 	return out
 
 
-## Завал в готовой шахте или тоннеле (обломки обвала или взрыва, осыпь): выработку снова
-## копают — шахтёры (в тоннеле — строители) разбирают завал, укрепление остаётся. Раньше
-## засыпанная шахта так и числилась готовой: пройти по ней было нельзя, добытое за завалом
-## лежало вечно, а гаврики стояли без дела.
-const BLOCKAGE_STEP := 10.0
-var _blockage_t := BLOCKAGE_STEP
+## Завал в готовой шахте или тоннеле (обломки обвала или взрыва, осыпь; ходы бура вбок из
+## старых версий): пройти нельзя. Сами не копают — завал виден красным, а в карточке выработки
+## его предлагают разобрать. Отмечается, когда порода падает в готовую выработку, и один раз
+## после загрузки (проверку постоянно не гоняем — она не нужна).
+var blockages := {}
+var _blockage_scanned := false
 
 
-func _check_blockages() -> void:
+func _scan_blockages() -> void:
+	_blockage_scanned = true
 	for p in projects:
-		if p.phase != Project.Phase.DONE or p.paused or p.repairing \
-				or not (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL):
-			continue
-		if remaining_dig(p).is_empty():
-			continue
-		p.phase = Project.Phase.DIG
-		p.exposed_t = 0.0
-		# Готовый ход бура — уже обычная выработка: завал в нём разбирают гаврики (бур ушёл).
-		p.bored_by = 0
-		if p.workers <= 0:
-			p.workers = Project.recommended_workers(p.kind, p.rect, adults())
-		_log("%s: завал — разбирают" % p.title(), "warning", p.rect.get_center())
+		if _passage_blocked(p):
+			blockages[p.id] = true
+
+
+func _passage_blocked(p: Project) -> bool:
+	return p.phase == Project.Phase.DONE and not p.repairing \
+			and (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL) and not remaining_dig(p).is_empty()
+
+
+## Завалена ли выработка (завал ещё не разобран).
+func has_blockage(p: Project) -> bool:
+	if not blockages.has(p.id):
+		return false
+	if not projects.has(p) or not _passage_blocked(p):
+		blockages.erase(p.id)
+		return false
+	return true
+
+
+## Разобрать завал: выработку снова копают (шахтёры, в тоннеле — строители), укрепление
+## остаётся; расчистят — снова готова.
+func clear_blockage(p: Project) -> void:
+	if not has_blockage(p):
+		return
+	blockages.erase(p.id)
+	p.phase = Project.Phase.DIG
+	p.exposed_t = 0.0
+	# Готовый ход бура — уже обычная выработка: завал в нём разбирают гаврики (бур ушёл).
+	p.bored_by = 0
+	if p.workers <= 0:
+		p.workers = Project.recommended_workers(p.kind, p.rect, adults())
+	wake_idle()
+	_log("%s: разбираем завал" % p.title(), "info", p.rect.get_center())
 
 
 func _portal_check() -> void:

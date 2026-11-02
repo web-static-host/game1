@@ -260,6 +260,13 @@ func _draw_done(p: Project) -> void:
 		_draw_supports(p, r, 1.0 - p.wear * 0.5)
 	if p.wear > 0.4:
 		_draw_cracks(p, r)
+	# Завал: проход перекрыт — выработка красная, обломки ярче (нажмите — разобрать).
+	if colony.has_blockage(p):
+		_c.draw_rect(r, Color(0.9, 0.15, 0.1, 0.22))
+		for c in colony.remaining_dig(p):
+			var cr := _rect_px(Rect2i(c, Vector2i.ONE))
+			_c.draw_rect(cr, Color(0.95, 0.15, 0.1, 0.55))
+		_dashed_rect(r, Color(1.0, 0.25, 0.2, 0.95), 3.0)
 	if p.repairing:
 		var t := clampf(p.repair_done / maxf(1.0, p.repair_work), 0.0, 1.0) if p.repair_paid else 0.0
 		var bar := Rect2(r.position.x + 8, r.position.y + 10, r.size.x - 16, 6)

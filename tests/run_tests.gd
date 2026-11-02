@@ -3167,8 +3167,8 @@ func test_drill() -> void:
 
 
 ## Продлить готовую шахту, тоннель или лифт: продолжение копают и сливают с исходной.
-## Завал в готовой шахте (обломки в ходе бура из старых версий, обвал) разбирают: шахта снова
-## копается, потом снова готова. Добытого в шахтах много — свободные помогают выносить.
+## Завал в готовой шахте (обломки в ходе бура из старых версий, обвал) виден, а разбирают его
+## по приказу: шахта снова копается, потом снова готова. Добытого в шахтах много — свободные помогают выносить.
 func test_mine_blockage() -> void:
 	var colony := _new_colony(37)
 	var w := colony.world
@@ -3182,8 +3182,13 @@ func test_mine_blockage() -> void:
 	m.workers = 0
 	w.set_material(x + 4, s + 5, Mat.RUBBLE)
 	w.set_material(x + 4, s + 4, Mat.RUBBLE)
-	colony._check_blockages()
-	check(m.phase == Project.Phase.DIG and m.bored_by == 0 and m.workers > 0, "завал в готовой шахте — её снова копают")
+	colony._scan_blockages()
+	check(colony.has_blockage(m) and m.phase == Project.Phase.DONE, "завал в готовой шахте замечен, сами не копают")
+	colony.advance_offline(60.0)
+	check(m.phase == Project.Phase.DONE and colony.remaining_dig(m).size() == 2, "без приказа завал лежит")
+	colony.clear_blockage(m)
+	check(m.phase == Project.Phase.DIG and m.bored_by == 0 and m.workers > 0 and not colony.has_blockage(m),
+		"«Разобрать завал» — шахту снова копают")
 	colony.advance_offline(3000.0)
 	check(m.phase == Project.Phase.DONE and colony.remaining_dig(m).is_empty(), "завал разобран, шахта снова готова")
 	# Добытое в шахте: при подсобном свободные не носят, пока его немного; много — помогают.

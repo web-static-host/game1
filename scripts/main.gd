@@ -1069,6 +1069,10 @@ func _show_project(p: Project) -> void:
 		actions.push_front(["Снять приоритет" if p.priority else "Приоритет", func() -> void:
 			colony.set_priority(p, not p.priority)
 			_show_project(p), "" if p.priority else "primary"])
+	if colony.has_blockage(p):
+		actions.push_front(["Разобрать завал", func() -> void:
+			colony.clear_blockage(p)
+			_show_project(p), "primary"])
 	if p.phase == Project.Phase.DONE and p.paused:
 		actions.append(["Продолжить", func() -> void:
 			colony.set_paused(p, false)
@@ -1484,6 +1488,9 @@ static func _wear_color(w: float) -> Color:
 
 func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	var rows := []
+	if colony.has_blockage(p):
+		rows.append({"type": "warning", "text": "Завал: %d м³ обломков перекрыли проход — дальше гаврики не пройдут. «Разобрать завал» — его раскопают %s, укрепление останется." % [
+			colony.remaining_dig(p).size(), "шахтёры" if p.kind == Project.Kind.MINE else "строители"]})
 	var sub := "на паузе" if p.paused else p.phase_name()
 	var accent := Hud.ACCENT
 	match p.phase:
