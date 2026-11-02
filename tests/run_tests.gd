@@ -70,6 +70,7 @@ func _initialize() -> void:
 	test_drill()
 	test_drill_side_sand()
 	test_extend()
+	test_mine_blockage()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3166,6 +3167,45 @@ func test_drill() -> void:
 
 
 ## Продлить готовую шахту, тоннель или лифт: продолжение копают и сливают с исходной.
+## Завал в готовой шахте (обломки в ходе бура из старых версий, обвал) разбирают: шахта снова
+## копается, потом снова готова. Добытого в шахтах много — свободные помогают выносить.
+func test_mine_blockage() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 3)
+	var s := w.gen.surface_y(x)
+	colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	var m := _dug_project(colony, Project.Kind.MINE, Rect2i(x + 1, s + 3, 6, 3), 940)
+	m.supported.append_array([0, 1, 2, 3, 4, 5])
+	m.bored_by = 999
+	m.workers = 0
+	w.set_material(x + 4, s + 5, Mat.RUBBLE)
+	w.set_material(x + 4, s + 4, Mat.RUBBLE)
+	colony._check_blockages()
+	check(m.phase == Project.Phase.DIG and m.bored_by == 0 and m.workers > 0, "завал в готовой шахте — её снова копают")
+	colony.advance_offline(3000.0)
+	check(m.phase == Project.Phase.DONE and colony.remaining_dig(m).is_empty(), "завал разобран, шахта снова готова")
+	# Добытое в шахте: при подсобном свободные не носят, пока его немного; много — помогают.
+	var free: Unit = null
+	for u in colony.units:
+		if not u.child:
+			if free == null:
+				free = u
+			else:
+				u.profession = Unit.Prof.HAULER
+	free.profession = Unit.Prof.ANY
+	free.workplace = 0
+	colony.drops.clear()
+	colony.drops[Vector2i(x + 2, s + 5)] = {"copper_ore": 5}
+	colony._backlog_t = -100.0
+	check(not colony.may_carry_out_mine(free), "немного добытого в шахте — выносят подсобные")
+	colony.drops[Vector2i(x + 3, s + 5)] = {"copper_ore": 30}
+	colony.drops[Vector2i(x + 5, s + 5)] = {"gold_ore": 200}
+	colony._backlog_t = -100.0
+	check(colony.may_carry_out_mine(free), "в шахте скопилось много — свободные помогают выносить")
+
+
 func test_extend() -> void:
 	var colony := _new_colony(36)
 	var w := colony.world

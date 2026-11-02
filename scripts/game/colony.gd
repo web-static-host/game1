@@ -4994,6 +4994,10 @@ func update(dt: float) -> void:
 				if _geo_seen >= 0 and geo > _geo_seen:
 					_reveal_known()
 				_geo_seen = geo
+			_blockage_t += 0.5
+			if _blockage_t >= BLOCKAGE_STEP:
+				_blockage_t = 0.0
+				_check_blockages()
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
 		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
@@ -5459,6 +5463,30 @@ func teleports() -> Array[Project]:
 		if p.kind == Project.Kind.ROOM and p.purpose == RoomType.TELEPORT and p.phase == Project.Phase.DONE and not p.paused:
 			out.append(p)
 	return out
+
+
+## Завал в готовой шахте или тоннеле (обломки обвала или взрыва, осыпь): выработку снова
+## копают — шахтёры (в тоннеле — строители) разбирают завал, укрепление остаётся. Раньше
+## засыпанная шахта так и числилась готовой: пройти по ней было нельзя, добытое за завалом
+## лежало вечно, а гаврики стояли без дела.
+const BLOCKAGE_STEP := 10.0
+var _blockage_t := BLOCKAGE_STEP
+
+
+func _check_blockages() -> void:
+	for p in projects:
+		if p.phase != Project.Phase.DONE or p.paused or p.repairing \
+				or not (p.kind == Project.Kind.MINE or p.kind == Project.Kind.TUNNEL):
+			continue
+		if remaining_dig(p).is_empty():
+			continue
+		p.phase = Project.Phase.DIG
+		p.exposed_t = 0.0
+		# Готовый ход бура — уже обычная выработка: завал в нём разбирают гаврики (бур ушёл).
+		p.bored_by = 0
+		if p.workers <= 0:
+			p.workers = Project.recommended_workers(p.kind, p.rect, adults())
+		_log("%s: завал — разбирают" % p.title(), "warning", p.rect.get_center())
 
 
 func _portal_check() -> void:
@@ -6150,7 +6178,7 @@ func _free_hopeless(u: Unit) -> bool:
 	if store_open:
 		var mines := _mine_rects()
 		for c in _cleanup_cells():
-			if drops.has(c) and (may_mine or not _in_rects(mines, c)):
+			if drops.has(c) and (may_mine or may_carry_out_mine(u) or not _in_rects(mines, c)):
 				return false
 	return true
 
@@ -6483,6 +6511,40 @@ func may_haul_mine(u: Unit) -> bool:
 	if _ctx_on:
 		_ctx_mine_haulers = any
 	return not any
+
+
+## Добытое в шахте копится быстрее, чем его уносят работники складов и подсобные (больше
+## MINE_BACKLOG на каждого), — свободные помогают выносить (иначе гаврики стоят без дела,
+## а в шахтах лежат сотни руды).
+const MINE_BACKLOG := 20
+var _backlog_t := -1.0
+var _backlog_v := false
+
+
+func may_carry_out_mine(u: Unit) -> bool:
+	if may_haul_mine(u):
+		return true
+	if u.child or u.workplace != 0 or u.profession != Unit.Prof.ANY:
+		return false
+	return mine_backlog()
+
+
+func mine_backlog() -> bool:
+	if absf(game_time - _backlog_t) < 1.0:
+		return _backlog_v
+	_backlog_t = game_time
+	var haulers := 0
+	for o in units:
+		if not o.child and mine_hauler(o):
+			haulers += 1
+	var mines := _mine_rects()
+	var n := 0
+	for c: Vector2i in drops:
+		if _in_rects(mines, c):
+			for k in drops[c]:
+				n += int(drops[c][k])
+	_backlog_v = n > MINE_BACKLOG * maxi(1, haulers)
+	return _backlog_v
 
 
 ## Куча в шахте (или у её края).
@@ -7496,7 +7558,7 @@ const CARRY_BONUS_MAX := 100
 
 
 func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
-	var may_mine := may_haul_mine(u)
+	var may_mine := may_carry_out_mine(u)
 	var best = null
 	var best_c := Vector2i.ZERO
 	var best_k := ""
