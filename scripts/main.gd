@@ -1351,6 +1351,8 @@ func _show_project(p: Project) -> void:
 			_show_project(p)])
 	var current := RoomType.current_purpose(p)
 	var preview := {"v": maxi(current, 1)}
+	if p.phase == Project.Phase.DONE and p.purpose == RoomType.SHIP:
+		controls.append(_storage_control(p))
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM and p.purpose != RoomType.SHIP:
 		if RoomType.is_store(p.purpose):
 			controls.append(_storage_control(p))
@@ -1554,6 +1556,8 @@ func _pick_pass(u: Unit, task: int) -> bool:
 ## Нормы запаса склада: сколько держать каждого ресурса.
 ## Склад и амбар: что хранить (галочки), сколько держать (предел) и до скольки добывать.
 func _storage_control(p: Project) -> Dictionary:
+	# Трюм корабля — тоже склад: туда носят всё (и топливо в баки), работников у него нет.
+	var ship := p.purpose == RoomType.SHIP
 	var keys: Array = []
 	for k in Colony.GATHER_SOURCES:
 		if RoomType.same_kind(p, k):
@@ -1561,26 +1565,31 @@ func _storage_control(p: Project) -> Dictionary:
 	var known: Array = colony.known_resources.keys()
 	known.sort()
 	for k in known:
-		if not keys.has(k) and not RoomType.BULK.has(k) and not RoomType.PIPED.has(k) and RoomType.same_kind(p, k):
+		if not keys.has(k) and not RoomType.BULK.has(k) and (ship or not RoomType.PIPED.has(k)) and RoomType.same_kind(p, k):
 			keys.append(k)
+	# Что уже лежит — всегда в списке (даже если ресурс ещё не «найден» на этой планете).
+	for k in p.held:
+		if not keys.has(k) and int(p.held[k]) > 0:
+			keys.append(k)
+	var cap0 := RoomType.SHIP_HOLD if ship else RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	if not ship and colony.research.has("shelving"):
+		cap0 = roundi(cap0 * 1.5)
 	var items := []
 	for k in keys:
 		var on := RoomType.stores(p, k)
 		# Вместимость без галочки не считается — берём, какой она будет с галочкой.
-		var cap := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
-		if colony.research.has("shelving"):
-			cap = roundi(cap * 1.5)
+		var cap := cap0
 		items.append({"key": k, "on": on, "held": colony.held_in(p, k), "cap": cap,
 			"limit": mini(cap, int(p.limits.get(k, cap))),
-			"target": int(p.targets.get(k, 0)) if Colony.GATHER_SOURCES.has(k) else -1})
+			"target": int(p.targets.get(k, 0)) if Colony.GATHER_SOURCES.has(k) and not ship else -1})
 	var total := 0
 	for k in p.held:
 		total += int(p.held[k])
-	var cap0 := RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
-	if colony.research.has("shelving"):
-		cap0 = roundi(cap0 * 1.5)
-	return {"type": "store", "label": "Вместимость: по %s каждого %s. Сейчас лежит всего %s.\nГалочка — хранить ли здесь этот ресурс:" % [
-		Fmt.int_spaced(cap0), "вида еды" if p.purpose == RoomType.GRANARY else "ресурса", Fmt.int_spaced(total)],
+	var head := "Трюм: по %s каждого ресурса (нефть, дизель и метан — в баки). Сейчас лежит всего %s.\nГалочка — складывать ли сюда этот ресурс, ниже — сколько держать:" % [
+		Fmt.int_spaced(cap0), Fmt.int_spaced(total)] if ship else \
+		"Вместимость: по %s каждого %s. Сейчас лежит всего %s.\nГалочка — хранить ли здесь этот ресурс:" % [
+		Fmt.int_spaced(cap0), "вида еды" if p.purpose == RoomType.GRANARY else "ресурса", Fmt.int_spaced(total)]
+	return {"type": "store", "label": head,
 		"items": items,
 		"toggled": func(key: String, on: bool) -> void:
 			colony.set_store_on(p, key, on)
