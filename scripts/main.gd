@@ -66,7 +66,7 @@ var _send_unit := 0
 ## На сколько метров продлевать шахту, тоннель или лифт (кнопки «Продлить»).
 var _extend_len := 5
 ## Фильтры в списках выбора гавриков: только без пары, только по призванию.
-var _pick_filters := {"single": false, "calling": false}
+var _pick_filters := {"single": false, "calling": false, "mutant": false}
 ## На сколько метров сверлить буром.
 var _drill_len := 10
 ## Сдвиг комнаты: куда (0 ←, 1 →, 2 ↑, 3 ↓) и на сколько.
@@ -538,7 +538,7 @@ func _launch_crew() -> void:
 			busy_text = " · ЗАНЯТ%s: %s" % ["А" if u.sex == Unit.Sex.FEMALE else "", ", ".join(what)]
 		# Шанс выжить; взять можно любого.
 		var chance: int = chances[u]
-		items.append({"looks": _looks(u), "name": _name_sex(u),
+		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u),
 			"info": "шанс выжить %d%% · %s%s%s" % [chance, _family_text(u),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
@@ -858,11 +858,19 @@ static func _need_bar(label: String, v: float) -> Dictionary:
 	return {"type": "progress", "label": label, "value": v / 100.0, "color": col, "text": "%d%%" % roundi(v)}
 
 
+## Нажали на гаврика в списке — его карточка.
+func _opener(u: Unit) -> Callable:
+	return func() -> void: _show_unit(u)
+
+
 ## Внешность для портрета: облучённым — знак радиации в углу.
 static func _looks(u: Unit) -> Dictionary:
 	var d := Genetics.looks(u.genome)
 	if u.irradiated:
 		d["irradiated"] = true
+	# Значки в углах портрета: мутант (по редкости), пол.
+	d["mutant"] = Genetics.rarity(u.genome) if Genetics.is_mutant(u.genome) else -1
+	d["sex_badge"] = true
 	return d
 
 
@@ -893,6 +901,9 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not mt.is_empty():
 			var rarity_cols := [Color(0.6, 0.85, 0.6), Color(0.5, 0.75, 1.0), Color(0.8, 0.6, 1.0), Color(1.0, 0.8, 0.3)]
 			tags.append([mt, rarity_cols[maxi(0, Genetics.rarity(g))]])
+		# Что даёт каждая мутация (узор — «ничего не даёт»).
+		for line in Genetics.mutation_effects(g):
+			tags.append(["• " + line, Color(0.85, 0.9, 0.8)])
 		var ab := Genetics.ability_text(g)
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
@@ -901,7 +912,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 			tags.append(["Работа по призванию: навык растёт быстрее, настроение лучше", Color(0.6, 0.9, 0.6)])
 		elif u.calling < 0:
 			tags.append(["Работа не по душе: навык растёт медленнее, настроение хуже", Color(1.0, 0.7, 0.45)])
-		rows.append({"type": "portrait", "looks": _looks(u), "tags": tags})
+		rows.append({"type": "portrait", "looks": _looks(u), "open": _opener(u), "tags": tags})
 	rows.append_array([_need_bar("Сытость", u.satiety), _need_bar("Настроение", u.mood())])
 	if u.health < 99.5:
 		rows.append(_need_bar("Здоровье", u.health))
@@ -1263,13 +1274,14 @@ func _name_sex(u: Unit) -> String:
 
 ## Семейное положение: пара или без пары (дети, беременность).
 func _family_text(u: Unit) -> String:
+	var mut := "мутант · " if Genetics.is_mutant(u.genome) else ""
 	if u.child:
-		return "ребёнок"
+		return mut + "ребёнок"
 	var partner := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
 	var out := ("пара: " + partner.name) if partner != null else ("без пары" if not u.is_elder() else "без пары (пожилой)")
 	if u.pregnancy >= 0.0:
 		out += ", ждёт ребёнка"
-	return out
+	return mut + out
 
 
 ## Нужные для работы характеристики гаврика: «сила 130% + выносливость 90%».
@@ -1302,7 +1314,7 @@ func _job_stats_text(task: int) -> String:
 func _workers_list(p: Project) -> Dictionary:
 	var items := []
 	for u in colony.assigned_to(p):
-		items.append({"looks": _looks(u), "name": _name_sex(u),
+		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u),
 			"info": _family_text(u) + " · подходит на %d%%%s · %s" % [roundi(colony.suitability(u, p) * 100), _calling_text(u, colony.work_task(p)), Unit.TASK_NAMES[u.task]],
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
@@ -1330,7 +1342,7 @@ func _pick_worker(p: Project) -> void:
 		var busy := not colony.is_free(u)
 		if busy:
 			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
-		items.append({"looks": _looks(u), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
+		items.append({"looks": _looks(u), "open": _opener(u), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
 				var err := colony.assign_work(u, p)
@@ -1348,7 +1360,8 @@ func _pick_worker(p: Project) -> void:
 ## Переключатели фильтров над списком выбора гавриков (по умолчанию выключены).
 func _pick_filter_control(refresh: Callable) -> Dictionary:
 	return {"type": "checks", "label": "Показать только:", "items": [
-		["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]]],
+		["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]],
+		["mutant", "мутанты", _pick_filters["mutant"]]],
 		"toggled": func(k: String, on: bool) -> void:
 			_pick_filters[k] = on
 			refresh.call()}
@@ -1357,6 +1370,8 @@ func _pick_filter_control(refresh: Callable) -> Dictionary:
 ## Проходит ли гаврик включённые фильтры (для работы task).
 func _pick_pass(u: Unit, task: int) -> bool:
 	if _pick_filters["single"] and u.partner_id != 0:
+		return false
+	if _pick_filters["mutant"] and not Genetics.is_mutant(u.genome):
 		return false
 	if _pick_filters["calling"] and colony.calling_of(u, task) != 1:
 		return false
@@ -1866,7 +1881,7 @@ func _show_people() -> void:
 		var members := colony.units.filter(g[1])
 		var items := []
 		for u: Unit in members:
-			var item := {"looks": _looks(u), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
+			var item := {"looks": _looks(u), "open": _opener(u), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
 				"button": "Карточка", "pick": func() -> void: _select(u, null)}
 			if u.workplace != 0:
 				item["info"] = colony.role_name(u) + " · " + _doing(u)
@@ -1900,7 +1915,7 @@ func _pick_role(prof: int) -> void:
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
-		items.append({"looks": _looks(o), "name": _name_sex(o),
+		items.append({"looks": _looks(o), "open": _opener(o), "name": _name_sex(o),
 			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:

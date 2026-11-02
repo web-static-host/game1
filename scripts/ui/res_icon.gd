@@ -40,7 +40,48 @@ static func draw(ci: Object, key: String, c: Vector2, r: float) -> void:
 		return
 	var col := color(key)
 	var dark := col.darkened(0.4)
+	if key.begins_with("mutant"):
+		# Мутант: спираль ДНК на круге цвета редкости мутации.
+		var cols := [Color(0.45, 0.8, 0.45), Color(0.4, 0.65, 1.0), Color(0.75, 0.5, 1.0), Color(1.0, 0.75, 0.2)]
+		var rc: Color = cols[clampi(int(key.substr(6)), 0, 3)]
+		ci.draw_circle(c, r, Color(0.08, 0.08, 0.1))
+		ci.draw_circle(c, r * 0.9, rc)
+		var ink := Color(0.1, 0.1, 0.14)
+		var prev_a := Vector2.ZERO
+		var prev_b := Vector2.ZERO
+		for k in 9:
+			var tt := float(k) / 8.0
+			var y := c.y - r * 0.62 + r * 1.24 * tt
+			var x := sin(tt * TAU) * r * 0.36
+			var a := Vector2(c.x + x, y)
+			var b := Vector2(c.x - x, y)
+			if k > 0:
+				ci.draw_line(prev_a, a, ink, maxf(1.5, r * 0.16))
+				ci.draw_line(prev_b, b, Color.WHITE, maxf(1.5, r * 0.16))
+			if k % 2 == 1:
+				ci.draw_line(a, b, Color(ink, 0.6), maxf(1.0, r * 0.08))
+			prev_a = a
+			prev_b = b
+		return
 	match key:
+		"male", "female":
+			# Пол: ♂ — кружок со стрелкой, ♀ — кружок с крестиком.
+			var bg := Color(0.3, 0.55, 1.0) if key == "male" else Color(1.0, 0.45, 0.7)
+			ci.draw_circle(c, r, Color(0.08, 0.08, 0.1))
+			ci.draw_circle(c, r * 0.9, bg)
+			var lw := maxf(1.5, r * 0.16)
+			if key == "male":
+				var o := c + Vector2(-r * 0.12, r * 0.12)
+				ci.draw_arc(o, r * 0.34, 0, TAU, 16, Color.WHITE, lw)
+				var tip := c + Vector2(r * 0.5, -r * 0.5)
+				ci.draw_line(o + Vector2(r * 0.24, -r * 0.24), tip, Color.WHITE, lw)
+				ci.draw_line(tip, tip + Vector2(-r * 0.3, 0), Color.WHITE, lw)
+				ci.draw_line(tip, tip + Vector2(0, r * 0.3), Color.WHITE, lw)
+			else:
+				var o := c + Vector2(0, -r * 0.18)
+				ci.draw_arc(o, r * 0.32, 0, TAU, 16, Color.WHITE, lw)
+				ci.draw_line(o + Vector2(0, r * 0.32), c + Vector2(0, r * 0.68), Color.WHITE, lw)
+				ci.draw_line(c + Vector2(-r * 0.24, r * 0.42), c + Vector2(r * 0.24, r * 0.42), Color.WHITE, lw)
 		"radiation":
 			# Знак радиации: жёлтый круг, три чёрные лопасти (вверх-влево, вверх-вправо, вниз) и центр.
 			var blk := Color(0.08, 0.08, 0.08)

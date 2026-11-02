@@ -41,11 +41,7 @@ static func draw(ci, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
 		# Меланист — чёрный, с янтарными глазами.
 		col = Color(0.16, 0.15, 0.19)
 		iris = Color(0.95, 0.7, 0.15)
-	match int(g.get("size", 0)):
-		1:
-			w *= 1.25
-		-1:
-			w *= 0.72
+	w *= size_scale(int(g.get("size", 0)))
 	var leg := w * 0.2
 	var breathe := 1.0 + sin(t * 2.4) * 0.02
 	var h := w * (0.95 if shape == Shape.TRIANGLE else 0.9) * breathe
@@ -120,11 +116,13 @@ static func draw(ci, at: Vector2, w: float, g: Dictionary, t := 0.0) -> void:
 		if _drawable(p):
 			ci.draw_colored_polygon(p, Color(light.lightened(0.4), 0.3))
 
+	# Узор — цвета одного из родителей.
+	var pcol: Color = g.get("pattern_color", col)
 	match int(g.get("pattern", 0)):
 		1:
-			_stripes(ci, body, base, top, w, h, col)
+			_stripes(ci, body, base, top, w, h, pcol)
 		2:
-			_spots(ci, body, base, top, w, h, col)
+			_spots(ci, body, base, top, w, h, pcol)
 	if g.get("gills", false):
 		_gills(ci, body, base, top, w, h, col)
 	if g.get("glow", false):
@@ -166,11 +164,7 @@ static func record(w: float, g: Dictionary, t := 1.0) -> DrawRecorder:
 ## Где правая кисть (sx = 1) или левая (sx = -1) относительно ступней — для инструмента в руке.
 static func hand_pos(w: float, g: Dictionary, sx: float) -> Vector2:
 	var shape: int = g.get("shape", Shape.TRIANGLE)
-	match int(g.get("size", 0)):
-		1:
-			w *= 1.25
-		-1:
-			w *= 0.72
+	w *= size_scale(int(g.get("size", 0)))
 	var leg := w * 0.2
 	var h := w * (0.95 if shape == Shape.TRIANGLE else 0.9)
 	var top := -leg - h
@@ -186,14 +180,19 @@ static func hand_pos(w: float, g: Dictionary, sx: float) -> Vector2:
 	return p3 + Vector2(off.x * sx, off.y) * w
 
 
+## Во сколько раз крупнее (гигант ×1, ×2…) или мельче (кроха) обычного — на вид.
+static func size_scale(size: int) -> float:
+	if size > 0:
+		return 1.0 + 0.25 * size
+	if size < 0:
+		return maxf(0.45, pow(0.75, -size))
+	return 1.0
+
+
 ## Высота гаврика от ступней до макушки.
 static func height_of(w: float, g: Dictionary) -> float:
 	var shape: int = g.get("shape", Shape.TRIANGLE)
-	match int(g.get("size", 0)):
-		1:
-			w *= 1.25
-		-1:
-			w *= 0.72
+	w *= size_scale(int(g.get("size", 0)))
 	return w * (0.2 + (0.95 if shape == Shape.TRIANGLE else 0.9))
 
 

@@ -361,6 +361,11 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 	if dir == Vector2i.DOWN:
 		body.size.y = TILE * 2 - 4
 		face = Rect2(r.position.x, r.position.y + TILE * 2, r.size.x, TILE)
+	elif dir == Vector2i.UP:
+		# Вверх: корпус снизу, коронка — верхний ряд (раньше рисовался как бур влево).
+		body.position.y += TILE + 2
+		body.size.y = TILE * 2 - 4
+		face = Rect2(r.position.x, r.position.y, r.size.x, TILE)
 	elif dir == Vector2i.RIGHT:
 		body.size.x = TILE * 2 - 4
 		face = Rect2(r.position.x + TILE * 2, r.position.y, TILE, r.size.y)
@@ -374,7 +379,7 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 	var mc := body.get_center()
 	for k in 3:
 		var off := (k - 1) * 7.0
-		if dir == Vector2i.DOWN:
+		if dir == Vector2i.DOWN or dir == Vector2i.UP:
 			_c.draw_line(mc + Vector2(-12, off), mc + Vector2(12, off), Color(0.45, 0.3, 0.1, alpha), 2.0)
 		else:
 			_c.draw_line(mc + Vector2(off, -12), mc + Vector2(off, 12), Color(0.45, 0.3, 0.1, alpha), 2.0)

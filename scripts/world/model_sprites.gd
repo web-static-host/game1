@@ -60,7 +60,7 @@ const CROPS := {
 	"shell": [Rect2(-1.9, 0.15, 3.9, 3.1), 50.0],
 }
 ## Чем красить слой: цветом тела, цветом волос или никак (рог, панцирь — свои цвета).
-enum Tint { BODY, HAIR, NONE }
+enum Tint { BODY, HAIR, NONE, PATTERN }
 ## Длинные руки: суставы дальше по кости во столько раз (руки — почти до земли, как у рисованного).
 const LONG_FOREARM := 1.42
 const LONG_HAND := 1.54
@@ -171,7 +171,7 @@ static func layers_of(looks: Dictionary, sad := false) -> Array:
 	out.append([body_key(looks), Tint.BODY])
 	var pattern := int(looks.get("pattern", 0))
 	if pattern > 0:
-		out.append(["pattern/%d/%d" % [shape, pattern], Tint.BODY])
+		out.append(["pattern/%d/%d" % [shape, pattern], Tint.PATTERN])
 	if looks.get("gills", false):
 		out.append(["gills/%d" % shape, Tint.BODY])
 	var iris := 1 if looks.get("albino", false) else 2 if looks.get("melanist", false) else 0
@@ -952,7 +952,8 @@ func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, looks: Dictionary
 		var f := _frame(s, pose)
 		var k := h / HEIGHT / float(s["ppm"])
 		var region: Rect2 = f["region"]
-		var tint := col if l[1] == Tint.BODY else hair if l[1] == Tint.HAIR else Color.WHITE
+		var tint := col if l[1] == Tint.BODY else hair if l[1] == Tint.HAIR \
+			else (looks.get("pattern_color", col) as Color) if l[1] == Tint.PATTERN else Color.WHITE
 		ci.draw_texture_rect_region(s["tex"], Rect2(at - (f["foot"] as Vector2) * k, region.size * k), region, tint)
 		if key.begins_with("face/"):
 			face = f

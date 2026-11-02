@@ -1111,12 +1111,26 @@ func _build_people(st: Dictionary) -> void:
 		var p := PanelContainer.new()
 		p.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.06), 10, 6))
 		_controls.add_child(p)
+		# Нажали на гаврика (не на кнопку) — его карточка; при прокрутке не срабатывает.
+		if item.has("open"):
+			var open: Callable = item["open"]
+			var press := {"at": Vector2.INF}
+			p.mouse_filter = Control.MOUSE_FILTER_PASS
+			p.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
+					if ev.pressed:
+						press["at"] = ev.global_position
+					elif press["at"] != Vector2.INF and ev.global_position.distance_to(press["at"]) < 14.0:
+						press["at"] = Vector2.INF
+						open.call())
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		p.add_child(row)
 		if item.has("looks"):
 			row.add_child(PortraitView.make(item["looks"], 56, 28))
 		var col := VBoxContainer.new()
+		col.mouse_filter = Control.MOUSE_FILTER_PASS
 		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		col.add_theme_constant_override("separation", 0)
 		row.add_child(col)

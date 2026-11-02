@@ -37,6 +37,9 @@ const MUTATIONS := {
 	"glow": [3, 0.7], "shell": [3, 0.7], "albino": [3, 0.7], "melanist": [3, 0.7], "blind": [3, 0.7],
 }
 const RARITY_NAMES := ["обычная", "необычная", "редкая", "очень редкая"]
+## Сколько раз мутация «гигант» или «кроха» может наложиться.
+const MAX_SIZE := 5
+const MAX_TINY := 3
 const MUTATION_NAMES := {"color": "цвет", "eyes": "глаза", "fingers": "пальцы", "pattern": "узор",
 	"hair": "волосы", "fur": "шерсть", "shape": "форма", "long_arms": "длинные руки",
 	"antennae": "усики", "horn": "рог", "gills": "жабры", "giant": "гигант", "tiny": "кроха",
@@ -115,6 +118,8 @@ static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGener
 	g["size_pick"] = rng.randi() % 2
 	g["female"] = rng.randf() < 0.5
 	g["personality"] = _personality(rng)
+	# Узор (пятна, полосы) — цвета одного из родителей.
+	g["pattern_color"] = color_of(mother if rng.randf() < 0.5 else father)
 	if irradiated:
 		var kinds := MUTATIONS.keys()
 		mutate(g, rng, kinds[rng.randi() % kinds.size()])
@@ -161,10 +166,11 @@ static func mutate(g: Dictionary, rng: RandomNumberGenerator, kind := "") -> voi
 			g["pattern"] = _pair(1 + rng.randi() % 2)
 		"shape":
 			g["shape"][g["shape_pick"]] = (shape_of(g) + 1 + rng.randi() % 2) % 3
+		# Мутации накапливаются: гигант-внук гиганта — ещё крупнее (×2, ×3…), кроха — ещё мельче.
 		"giant":
-			g["size"] = _pair(1)
+			g["size"] = _pair(mini(MAX_SIZE, maxi(size_of(g), 0) + 1))
 		"tiny":
-			g["size"] = _pair(-1)
+			g["size"] = _pair(maxi(-MAX_TINY, mini(size_of(g), 0) - 1))
 		"albino":
 			g["albino"] = _pair(true)
 			g["melanist"] = _pair(false)
@@ -188,6 +194,9 @@ static func to_save(g: Dictionary) -> Dictionary:
 	for c: Color in g["color"]:
 		cols.append([c.r, c.g, c.b])
 	d["color"] = cols
+	if g.has("pattern_color"):
+		var pc: Color = g["pattern_color"]
+		d["pattern_color"] = [pc.r, pc.g, pc.b]
 	return d
 
 
@@ -198,6 +207,9 @@ static func from_save(d: Dictionary) -> Dictionary:
 	for c in d.get("color", [[1, 0, 0], [1, 0, 0]]):
 		cols.append(Color(float(c[0]), float(c[1]), float(c[2])))
 	g["color"] = cols
+	if d.has("pattern_color"):
+		var pc: Array = d["pattern_color"]
+		g["pattern_color"] = Color(float(pc[0]), float(pc[1]), float(pc[2]))
 	for k in INT_GENES:
 		var a: Array = d.get(k, [0, 0] if k != "fingers" else [4, 4])
 		g[k] = [int(a[0]), int(a[1])]
@@ -252,15 +264,23 @@ static func is_super(g: Dictionary) -> bool:
 	return not has(g, "albino") and not has(g, "melanist") and CreatureArt.super_distance(color_of(g)) < SUPER_RADIUS
 
 
+## Мутации, которые ничего не дают (только вид): гаврик с ними — не мутант.
+const COSMETIC := ["pattern"]
+
+
 static func is_mutant(g: Dictionary) -> bool:
-	return not g["mutations"].is_empty()
+	for m in g["mutations"]:
+		if not COSMETIC.has(m):
+			return true
+	return false
 
 
 ## Самая редкая мутация гаврика (0..3) или -1.
 static func rarity(g: Dictionary) -> int:
 	var r := -1
 	for m in g["mutations"]:
-		r = maxi(r, MUTATIONS[m][0])
+		if not COSMETIC.has(m):
+			r = maxi(r, MUTATIONS[m][0])
 	return r
 
 
@@ -269,7 +289,8 @@ static func looks(g: Dictionary) -> Dictionary:
 	var col := color_of(g)
 	var d := {"color": col, "shape": shape_of(g), "eyes": eyes_of(g), "fingers": fingers_of(g),
 		"size": size_of(g), "pattern": pattern_of(g), "super": is_super(g),
-		"hair_color": HAIR_COLORS[mini(g["hair_color"][0], g["hair_color"][1])], "female": g.get("female", false)}
+		"hair_color": HAIR_COLORS[mini(g["hair_color"][0], g["hair_color"][1])], "female": g.get("female", false),
+		"pattern_color": g.get("pattern_color", col.darkened(0.35))}
 	for k in DOMINANT + RECESSIVE:
 		d[k] = has(g, k)
 	return d
@@ -281,9 +302,10 @@ static func stats(g: Dictionary) -> Dictionary:
 	var s := {}
 	for k in STATS:
 		s[k] = 1.0
+	# Каждый лишний глаз — заметно зорче и умнее (глаз может быть сколько угодно).
 	var eyes := eyes_of(g)
-	s["vision"] = 0.0 if eyes == 0 else 1.0 + 0.3 * (eyes - 1)
-	s["intellect"] += 0.1 * maxi(0, eyes - 1)
+	s["vision"] = 0.0 if eyes == 0 else 1.0 + 0.5 * (eyes - 1)
+	s["intellect"] += 0.25 * maxi(0, eyes - 1)
 	match shape_of(g):
 		CreatureArt.Shape.TRIANGLE:
 			s["agility"] += 0.2
@@ -293,7 +315,8 @@ static func stats(g: Dictionary) -> Dictionary:
 		CreatureArt.Shape.ROUND:
 			s["intellect"] += 0.2
 			s["stamina"] += 0.1
-	s["agility"] += 0.12 * (fingers_of(g) - 4)
+	# Каждый лишний палец — ловчее (меньше — неуклюжее).
+	s["agility"] += 0.25 * (fingers_of(g) - 4)
 	# Цвет как характер.
 	if not has(g, "albino") and not has(g, "melanist"):
 		var col := color_of(g)
@@ -310,48 +333,60 @@ static func stats(g: Dictionary) -> Dictionary:
 		s["fasting"] += 0.8 * _near(col, GREEN)
 		s["intellect"] += 0.2 * _near(col, PURPLE)
 		s["charm"] += 0.2 * _near(col, PINK)
+	# Мутации — сильные: ради них и выводят мутантов.
 	if has(g, "fur"):
-		s["cold"] += 0.4
-		s["heat"] -= 0.2
-		s["health"] += 0.1
+		s["cold"] += 0.8
+		s["heat"] -= 0.3
+		s["health"] += 0.2
 	if has(g, "hair"):
-		s["cold"] += 0.1
-		s["charm"] += 0.1
+		s["cold"] += 0.25
+		s["charm"] += 0.25
+	if has(g, "long_arms"):
+		s["agility"] += 0.3
+	if has(g, "antennae"):
+		s["vision"] += 0.5
+		s["intellect"] += 0.2
 	if has(g, "glow"):
+		s["intellect"] += 0.3
 		s["stamina"] -= 0.15
 		s["longevity"] -= 0.2
 	if has(g, "gills"):
+		s["stamina"] += 0.4
 		s["heat"] -= 0.2
 	if has(g, "shell"):
-		s["health"] += 0.4
+		s["health"] += 0.8
 		s["speed"] -= 0.3
-		s["longevity"] += 0.3
+		s["longevity"] += 0.5
 	if has(g, "horn"):
-		s["strength"] += 0.1
+		s["strength"] += 0.4
 		s["charm"] -= 0.3
 	if has(g, "albino"):
-		s["intellect"] += 0.4
+		s["intellect"] += 0.8
 		s["heat"] -= 0.4
 		s["longevity"] -= 0.1
 	if has(g, "melanist"):
 		# Чёрный: греется на солнце и не мёрзнет, но перегревается; видит в темноте.
-		s["cold"] += 0.5
+		s["cold"] += 0.8
 		s["heat"] -= 0.3
-		s["strength"] += 0.1
-	match size_of(g):
-		1:
-			s["strength"] *= 1.5
-			s["health"] += 0.3
-			s["appetite"] *= 2.0
-			s["speed"] -= 0.2
-			s["longevity"] -= 0.1
-		-1:
-			s["strength"] *= 0.6
-			s["agility"] += 0.2
-			s["speed"] += 0.3
-			s["appetite"] *= 0.6
-			s["health"] -= 0.2
-			s["longevity"] += 0.1
+		s["strength"] += 0.3
+	# Гигант ×1, ×2, ×3… (мутация накладывается): сила и здоровье растут с каждой ступенью,
+	# ест больше, ходит медленнее. Кроха — наоборот.
+	var sz := size_of(g)
+	if sz > 0:
+		s["strength"] *= 1.0 + 0.6 * sz
+		s["health"] += 0.4 * sz
+		s["stamina"] += 0.2 * sz
+		s["appetite"] *= 1.0 + 0.7 * sz
+		s["speed"] -= 0.12 * sz
+		s["longevity"] -= 0.05 * sz
+	elif sz < 0:
+		var k := -sz
+		s["strength"] *= maxf(0.3, 1.0 - 0.25 * k)
+		s["agility"] += 0.3 * k
+		s["speed"] += 0.3 * k
+		s["appetite"] *= maxf(0.25, 1.0 - 0.3 * k)
+		s["health"] -= 0.15 * k
+		s["longevity"] += 0.15 * k
 	match g.get("personality", ""):
 		"трудоголик":
 			s["stamina"] -= 0.1
@@ -395,12 +430,12 @@ static func abilities(g: Dictionary) -> Dictionary:
 		a["work"] = 0.3
 		a["deep_mining"] = 2.0
 	if has(g, "long_arms"):
-		a["build"] = 1.3
+		a["build"] = 1.6
 		a["dig"] = 0.85
 	if has(g, "horn"):
-		a["dig"] *= 1.25
+		a["dig"] *= 1.6
 	if has(g, "melanist"):
-		a["deep_mining"] *= 1.3
+		a["deep_mining"] *= 1.6
 	a["light"] = has(g, "glow")
 	a["underwater"] = has(g, "gills")
 	a["collapse_proof"] = has(g, "shell")
@@ -438,7 +473,7 @@ static func ability_text(g: Dictionary) -> String:
 	if a["sense"]:
 		out.append("чует газ и руду")
 	if a["night_vision"]:
-		out.append("видит в темноте, руда ×1.3")
+		out.append("видит в темноте, руда в глубине ×1,6")
 	if a["build"] > 1.0:
 		out.append("строит и носит быстрее")
 	if has(g, "horn"):
@@ -446,13 +481,83 @@ static func ability_text(g: Dictionary) -> String:
 	return ", ".join(out)
 
 
+## Что даёт каждая мутация гаврика — по строке (для карточки).
+static func mutation_effects(g: Dictionary) -> PackedStringArray:
+	var out: PackedStringArray = []
+	var seen := {}
+	for m in g.get("mutations", []):
+		if seen.has(m):
+			continue
+		seen[m] = true
+		match m:
+			"eyes":
+				var n := eyes_of(g)
+				out.append("%d глаз: зрение ×%s, интеллект +%d%%" % [n, _x(1.0 + 0.5 * (n - 1)), 25 * maxi(0, n - 1)])
+			"blind":
+				out.append("без глаз: всё делает втрое медленнее, ходит медленно, но руду в глубине добывает ×2")
+			"fingers":
+				var f := fingers_of(g)
+				out.append("%d пальцев: ловкость %+d%%" % [f, 25 * (f - 4)])
+			"pattern":
+				out.append("узор: %s цвета одного из родителей (ничего не даёт)" % ("полосы" if pattern_of(g) == 1 else "пятна"))
+			"color":
+				out.append("новый цвет: свои сильные стороны (красные — жара, синие — холод, зелёные — голод, фиолетовые — ум, бирюза — супер)")
+			"shape":
+				out.append(["форма треугольник: ловкость +20%, скорость +10%", "форма квадрат: сила +30%",
+					"форма круг: интеллект +20%, выносливость +10%"][shape_of(g)])
+			"hair":
+				out.append("волосы: холод +25%, общительность +25%")
+			"fur":
+				out.append("шерсть: холод +80%, здоровье +20%; жару переносит хуже")
+			"long_arms":
+				out.append("длинные руки: строит и носит ×1,6, ловкость +30%; копает чуть медленнее")
+			"antennae":
+				out.append("усики: чует газ и руду, зрение +50%, интеллект +20%")
+			"horn":
+				out.append("рог: копает ×1,6, сила +40%; общительность −30%")
+			"gills":
+				out.append("жабры: дышит под водой, выносливость +40%")
+			"giant":
+				var n := maxi(1, size_of(g))
+				out.append("гигант%s: сила ×%s, здоровье +%d%%, выносливость +%d%%; ест ×%s, ходит на %d%% медленнее" % [
+					" ×%d" % n if n > 1 else "", _x(1.0 + 0.6 * n), 40 * n, 20 * n, _x(1.0 + 0.7 * n), 12 * n])
+			"tiny":
+				var n := maxi(1, -size_of(g))
+				out.append("кроха%s: ловкость и скорость +%d%%, ест меньше, живёт дольше; сила ×%s, здоровье −%d%%" % [
+					" ×%d" % n if n > 1 else "", 30 * n, _x(maxf(0.3, 1.0 - 0.25 * n)), 15 * n])
+			"glow":
+				out.append("светится: освещает шахту, интеллект +30%; живёт чуть меньше")
+			"shell":
+				out.append("панцирь: переживёт обвал, здоровье +80%, живёт дольше; ходит медленнее")
+			"albino":
+				out.append("альбинос: интеллект +80%; жару переносит хуже")
+			"melanist":
+				out.append("меланист: видит в темноте, руда в глубине ×1,6, холод +80%, сила +30%; жару переносит хуже")
+	return out
+
+
+static func _x(v: float) -> String:
+	return ("%.1f" % v).trim_suffix(".0").replace(".", ",")
+
+
 ## «Мутант: 4 глаза (обычная)».
 static func mutation_text(g: Dictionary) -> String:
 	if not is_mutant(g):
 		return ""
 	var parts: PackedStringArray = []
+	var seen := {}
 	for m in g["mutations"]:
+		# Наложенные мутации — одной строкой со ступенью («гигант ×3», «6 глаз»); узор — не мутация.
+		if seen.has(m) or COSMETIC.has(m):
+			continue
+		seen[m] = true
 		match m:
+			"giant":
+				parts.append("гигант" + (" ×%d" % size_of(g) if size_of(g) > 1 else ""))
+				continue
+			"tiny":
+				parts.append("кроха" + (" ×%d" % -size_of(g) if size_of(g) < -1 else ""))
+				continue
 			"eyes":
 				var n := eyes_of(g)
 				parts.append("%d %s" % [n, "глаз" if n >= 5 else "глаза"])

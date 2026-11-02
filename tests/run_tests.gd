@@ -85,6 +85,7 @@ func _initialize() -> void:
 	test_ruby_teleport()
 	test_store_evict()
 	test_lifespans()
+	test_mutation_stacking()
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
@@ -3868,6 +3869,30 @@ func test_lifespans() -> void:
 	check(is_equal_approx(u.lifespan, life * 0.7), "облучённый живёт на 30% меньше")
 
 
+## Мутации сильные и накладываются: гигант ×2, ×3…, глаз — сколько угодно.
+func test_mutation_stacking() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var g := Genetics.founder(rng)
+	g["personality"] = ""
+	var base: Dictionary = Genetics.stats(g)
+	Genetics.mutate(g, rng, "giant")
+	var s1: Dictionary = Genetics.stats(g)
+	Genetics.mutate(g, rng, "giant")
+	Genetics.mutate(g, rng, "giant")
+	var s3: Dictionary = Genetics.stats(g)
+	check(Genetics.size_of(g) == 3 and s3["strength"] > s1["strength"] * 1.5 and s1["strength"] >= base["strength"] * 1.5,
+		"гигант накладывается: ×3 сильнее ×1 (%.1f → %.1f → %.1f)" % [base["strength"], s1["strength"], s3["strength"]])
+	check(Genetics.mutation_text(g).contains("гигант ×3"), "в карточке — «гигант ×3»: " + Genetics.mutation_text(g))
+	check(CreatureArt.size_scale(3) > CreatureArt.size_scale(1) and CreatureArt.size_scale(-2) < CreatureArt.size_scale(-1), "гигант ×3 крупнее, кроха ×2 мельче")
+	var e := Genetics.founder(rng)
+	e["eyes"] = [1, 1]
+	for i in 6:
+		e["eyes"] = [Genetics.eyes_of(e) + 1, Genetics.eyes_of(e) + 1]
+	var se: Dictionary = Genetics.stats(e)
+	check(Genetics.eyes_of(e) == 7 and se["vision"] >= 4.0 and se["intellect"] >= 2.0, "7 глаз — зрение ×%.1f, интеллект ×%.1f" % [se["vision"], se["intellect"]])
+
+
 func test_starving_count() -> void:
 	var res := _colony_with_room(24)
 	var colony: Colony = res[0]
@@ -3924,9 +3949,9 @@ func test_uranium() -> void:
 	var all := true
 	for i in 400:
 		var g := Genetics.child(mom.genome, dad.genome, rng, true)
-		all = all and Genetics.is_mutant(g)
+		all = all and not (g["mutations"] as Array).is_empty()
 		kinds[g["mutations"][-1]] = int(kinds.get(g["mutations"][-1], 0)) + 1
-	check(all, "у облучённых родителей дети всегда мутанты")
+	check(all, "у облучённых родителей у детей всегда мутация (бывает и узор)")
 	check(kinds.size() == Genetics.MUTATIONS.size() and int(kinds.get("glow", 0)) > 8, "любая мутация с равной вероятностью, и самые редкие тоже (%d видов)" % kinds.size())
 	var u := Unit.from_dict(mom.to_dict())
 	check(u.irradiated, "облучение сохраняется")

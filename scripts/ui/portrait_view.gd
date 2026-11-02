@@ -26,7 +26,13 @@ func _draw() -> void:
 	var at := Vector2(size.x * 0.5, size.y * 0.5 + h * 0.5 + 4.0)
 	if not ModelSprites.draw_creature(self, "idle", at, body_w, looks):
 		CreatureArt.draw(self, at, body_w, looks, 1.0)
-	# Облучён ураном — знак радиации в углу.
+	# Значки в углах: облучён — радиация (вверху справа), мутант — спираль ДНК цвета редкости
+	# (вверху слева), пол (внизу слева).
+	var r := maxf(8.0, size.x * 0.13)
 	if looks.get("irradiated", false):
-		var r := maxf(8.0, size.x * 0.13)
 		ResIcon.draw(self, "radiation", Vector2(size.x - r - 2.0, r + 2.0), r)
+	var mut := int(looks.get("mutant", -1))
+	if mut >= 0:
+		ResIcon.draw(self, "mutant%d" % mut, Vector2(r + 2.0, r + 2.0), r)
+	if looks.get("sex_badge", false):
+		ResIcon.draw(self, "female" if looks.get("female", false) else "male", Vector2(r + 2.0, size.y - r - 2.0), r)
