@@ -1453,6 +1453,19 @@ func _show_project(p: Project) -> void:
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM and p.purpose != RoomType.SHIP:
 		if RoomType.is_store(p.purpose):
 			controls.append(_storage_control(p))
+		# Из чего мебель и лестницы: дерево, железо или супер-материал (камня и кирпича — нет).
+		# Выбирают до обустройства: обустроенную комнату не переделывают.
+		if p.purpose == RoomType.NONE:
+			var fm := colony.available_materials().filter(func(m: String) -> bool: return RoomType.FURNISH.has(m))
+			var cur_f := RoomType.furnish_material(p)
+			if not fm.has(cur_f):
+				fm.push_front(cur_f)
+			if fm.size() > 1:
+				controls.append({"label": "Мебель и лестницы", "value": maxi(0, fm.find(cur_f)), "min": 0, "max": fm.size() - 1,
+					"options": fm.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
+					"changed": func(i: int) -> void:
+						p.furnish_choice = fm[i]
+						hud.refresh_panel(_project_spec(p, preview["v"]))})
 		# Готовая комната: выбор назначения (только изученные).
 		var purposes := []
 		for t in range(1, RoomType.NAMES.size()):

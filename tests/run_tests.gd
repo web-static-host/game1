@@ -2698,6 +2698,19 @@ func test_forge_kiln_material() -> void:
 	c = RoomType.equip_cost(RoomType.FORGE, p)
 	check(not c.has("brick") and int(c.get("diamond", 0)) == 4, "в алмазной — алмазный: %s" % c)
 	check(RoomType.equip_cost(RoomType.HEARTH_BRICK, p).has("brick"), "кирпичные печи очага — всё равно кирпич")
+	# Мебель: каменной и кирпичной не бывает — в каменной по умолчанию деревянная, на выбор
+	# железная или из супер-материала (металла вдвое меньше); лестница — из того же.
+	p.material = "stone"
+	check(RoomType.furnish_material(p) == "wood" and RoomType.equip_cost(RoomType.HOME, p).has("wood"), "в каменной комнате мебель деревянная")
+	p.furnish_choice = "iron"
+	var home := RoomType.equip_cost(RoomType.HOME, p)
+	check(not home.has("wood") and not home.has("stone") and int(home.get("iron", 0)) > 0, "железная мебель: %s" % home)
+	check(RoomType.ladder_cost(p).has("iron"), "лестница — из железа, как мебель")
+	p.furnish_choice = "gold"
+	check(RoomType.equip_cost(RoomType.HOME, p).has("gold"), "можно и золотую")
+	p.material = "brick"
+	p.furnish_choice = ""
+	check(RoomType.furnish_material(p) == "wood", "в кирпичной — тоже деревянная по умолчанию")
 
 
 func test_change_material() -> void:
@@ -3795,14 +3808,16 @@ func test_materials_no_wood() -> void:
 	check(Project.cost_for(Project.Kind.ROOM, r, "wood") == {"wood": 12}, "деревянная — как раньше")
 	var gold := Project.cost_for(Project.Kind.ROOM, r, "gold")
 	check(gold == {"gold": 12}, "золотая — целиком из золота (%s)" % str(gold))
-	# Мебель и лестница — из того же материала, что комната.
+	# Мебель и лестница: кирпичной не бывает — на выбор железная (без дерева).
 	var room := Project.new()
 	room.kind = Project.Kind.ROOM
 	room.rect = r
 	room.material = "brick"
+	room.furnish_choice = "iron"
 	var home := RoomType.equip_cost(RoomType.HOME, room)
-	check(not home.has("wood") and home.get("brick", 0) > 0, "кирпичная спальня — кровати без дерева (%s)" % str(home))
-	check(not RoomType.ladder_cost(room).has("wood"), "лестница в кирпичной комнате — без дерева")
+	check(not home.has("wood") and not home.has("brick") and home.get("iron", 0) > 0, "кирпичная спальня с железной мебелью — без дерева (%s)" % str(home))
+	check(not RoomType.ladder_cost(room).has("wood"), "лестница в кирпичной комнате с железной мебелью — без дерева")
+	room.furnish_choice = ""
 	room.material = "gold"
 	var gold_home := RoomType.equip_cost(RoomType.HOME, room)
 	check(gold_home.has("gold") and not gold_home.has("wood") and not gold_home.has("iron"), "мебель золотой комнаты — золотая (%s)" % str(gold_home))

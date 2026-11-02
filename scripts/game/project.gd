@@ -161,6 +161,9 @@ var equip_material := ""
 ## Крепь комнаты при копке: "" — из материала стен, "wood" — дерево (нет его — железо), иначе —
 ## этот материал. У супер-комнаты крепь всегда из её супер-материала.
 var support_choice := ""
+## Из чего мебель и лестницы комнаты (выбор игрока): дерево, железо или супер-материал;
+## "" — по умолчанию (материал комнаты, а у каменной и кирпичной — дерево).
+var furnish_choice := ""
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
@@ -593,6 +596,7 @@ func to_dict() -> Dictionary:
 		"support_paid": support_paid,
 		"support_progress": support_progress,
 		"support_mat": support_mat,
+		"furnish_choice": furnish_choice,
 		"delivered": delivered,
 		"stock": stock,
 		"wear": wear,
@@ -703,6 +707,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_paid = bool(d.get("support_paid", false))
 	p.support_progress = float(d.get("support_progress", 0.0))
 	p.support_mat = str(d.get("support_mat", ""))
+	p.furnish_choice = str(d.get("furnish_choice", ""))
 	p.delivered = _int_dict(d.get("delivered", {}))
 	p.stock = _int_dict(d.get("stock", {}))
 	p.wear = float(d.get("wear", 0.0))

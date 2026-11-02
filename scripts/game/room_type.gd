@@ -253,13 +253,18 @@ static func super_material(p: Project) -> String:
 
 
 ## Из чего мебель и лестницы: из того же, что комната (каменная — каменные, золотая — золотые).
+## Из чего бывает мебель (и лестницы): каменной и кирпичной мебели не бывает.
+const FURNISH := ["wood", "iron", "silver", "gold", "diamond"]
+
+
 static func furnish_material(p: Project) -> String:
-	if p.kind != Project.Kind.ROOM or not Project.MATERIALS.has(p.material):
+	if p.kind != Project.Kind.ROOM:
 		return "wood"
-	return p.material
+	if FURNISH.has(p.furnish_choice):
+		return p.furnish_choice
+	return p.material if FURNISH.has(p.material) else "wood"
 
 
-## Дерево в стоимости заменяется материалом мебели комнаты.
 ## Металлы и супер-материалы, из которых делают и печи (горн, перегонный куб): в железной,
 ## серебряной, золотой и алмазной комнате кирпичное оборудование — из её материала, вдвое меньше.
 const KILN_METALS := ["iron", "silver", "gold", "diamond"]
@@ -269,10 +274,11 @@ static func _furnished(cost: Dictionary, p: Project, metal_kilns := true) -> Dic
 	var m := furnish_material(p)
 	var out := cost.duplicate()
 	if m != "wood" and out.has("wood"):
-		out[m] = int(out.get(m, 0)) + int(out["wood"])
+		# Металлическая мебель — металла вдвое меньше, чем было бы дерева (как укрепление).
+		out[m] = int(out.get(m, 0)) + ceili(int(out["wood"]) / 2.0)
 		out.erase("wood")
-	if metal_kilns and KILN_METALS.has(m) and out.has("brick"):
-		out[m] = int(out.get(m, 0)) + ceili(int(out["brick"]) / 2.0)
+	if metal_kilns and p.kind == Project.Kind.ROOM and KILN_METALS.has(p.material) and out.has("brick"):
+		out[p.material] = int(out.get(p.material, 0)) + ceili(int(out["brick"]) / 2.0)
 		out.erase("brick")
 	return out
 
