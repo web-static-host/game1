@@ -1170,6 +1170,13 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
 		tags.append(["Занятие: " + colony.role_name(u).to_lower(), Hud.MUTED])
+		# Почему не на своём месте: холодная ферма — грибы не растут, работы нет, помогает другим.
+		var wp := colony.project_by_id(u.workplace) if u.workplace != 0 else null
+		if wp != null and wp.purpose == RoomType.FARM and not colony.farm_warm(wp):
+			tags.append(["Ферма холодная (%d °C, нужно от %d °C) — грибы не растут, пока помогает другим" % [
+				roundi(colony.room_temp(wp)), roundi(Colony.FARM_MIN_TEMP)], Color(1.0, 0.7, 0.45)])
+		elif u.task == Unit.Task.WARM:
+			tags.append(["Греется: замёрз(ла) и ослаб(ла) — здоровье %d%%" % roundi(u.health), Color(0.6, 0.8, 1.0)])
 		if u.calling > 0:
 			tags.append(["Работа по призванию: навык растёт быстрее, настроение лучше", Color(0.6, 0.9, 0.6)])
 		elif u.calling < 0:

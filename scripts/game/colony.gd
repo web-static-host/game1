@@ -5514,6 +5514,19 @@ func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	return true
 
 
+## Сколько минимум греться, прежде чем уйти по делам (голод, тёплое место работы).
+const WARM_MIN := 5.0
+
+
+## Место работы гаврика — в тепле для него (там он и согреется, работая).
+func _workplace_warm(u: Unit) -> bool:
+	var w := project_by_id(u.workplace)
+	if w == null or w.kind != Project.Kind.ROOM:
+		return false
+	var c := Vector2i(RoomType.floor_start(w), w.rect.end.y - 1)
+	return comfortable(u, c)
+
+
 ## Совсем устал или голоден — бросает работу.
 func _needs_interrupt(u: Unit) -> bool:
 	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT or u.task == Unit.Task.WARM:
@@ -5991,6 +6004,10 @@ func _work(u: Unit, dt: float) -> void:
 		Unit.Task.WARM:
 			u.work_t += dt
 			if u.health >= WARM_UNTIL or u.work_t >= WARM_MAX or not comfortable(u, u.cell()):
+				_drop(u)
+			# Согрелся, но голоден (здоровье падает от голода, а не от холода — «грелся» бы
+			# до упора) или его место работы тёплое (там и согреется, работая) — идёт дальше.
+			elif u.work_t >= WARM_MIN and (u.satiety < HUNGRY or _workplace_warm(u)):
 				_drop(u)
 		Unit.Task.REPAIR:
 			var rp := project_by_id(u.project_id)
