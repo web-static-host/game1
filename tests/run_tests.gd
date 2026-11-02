@@ -71,6 +71,7 @@ func _initialize() -> void:
 	test_drill_side_sand()
 	test_extend()
 	test_mine_blockage()
+	test_merge_passages()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3209,6 +3210,39 @@ func test_mine_blockage() -> void:
 	colony.drops[Vector2i(x + 5, s + 5)] = {"gold_ore": 200}
 	colony._backlog_t = -100.0
 	check(colony.may_carry_out_mine(free), "в шахте скопилось много — свободные помогают выносить")
+
+
+## Шахты и тоннели встык или внахлёст (продолжения, ходы бура) — одна постройка; шахта над
+## шахтой и разные материалы — отдельно. «Отремонтировать все» — всё, что требует ремонта.
+func test_merge_passages() -> void:
+	var colony := _new_colony(38)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 3)
+	var s := w.gen.surface_y(x)
+	var a := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 6, 6, 3), 950)
+	var b := _dug_project(colony, Project.Kind.MINE, Rect2i(x + 6, s + 6, 5, 3), 951)
+	var c := _dug_project(colony, Project.Kind.MINE, Rect2i(x + 9, s + 6, 6, 3), 952)
+	var up := _dug_project(colony, Project.Kind.MINE, Rect2i(x, s + 3, 6, 3), 953)
+	var other := _dug_project(colony, Project.Kind.MINE, Rect2i(x - 6, s + 6, 6, 3), 954)
+	other.material = "iron"
+	a.wear = 0.2
+	b.wear = 0.4
+	b.found = {"copper_ore": 3}
+	colony._merge_passages(a)
+	check(colony.projects.has(a) and not colony.projects.has(b) and not colony.projects.has(c) and a.rect == Rect2i(x, s + 6, 15, 3),
+		"шахты встык и внахлёст — одна шахта (%s)" % a.rect)
+	check(colony.projects.has(up) and colony.projects.has(other), "шахта над шахтой и шахта из другого материала — отдельно")
+	check(a.wear > 0.2 and a.wear < 0.4 and int(a.found.get("copper_ore", 0)) == 3 and colony.interior.get(Vector2i(x + 12, s + 7)) == a.id,
+		"износ средний, найденное вместе, клетки — её")
+	var t1 := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 30, s, 3, 8), 955)
+	var t2 := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x + 30, s + 8, 3, 6), 956)
+	colony._merge_passages(t2)
+	check(colony.projects.has(t2) and not colony.projects.has(t1) and t2.rect == Rect2i(x + 30, s, 3, 14), "вертикальные тоннели встык — один")
+	a.wear = 0.8
+	up.wear = 0.75
+	check(colony.needs_repair(a) and colony.needs_repair(up) and not colony.needs_repair(other), "требуют ремонта — изношенные")
+	check(colony.repair_all() == 2 and a.repairing and up.repairing, "«Отремонтировать все» — ремонт обеих")
 
 
 func test_extend() -> void:

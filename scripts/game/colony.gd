@@ -1938,6 +1938,7 @@ func _end_bore(p: Project, arrived: bool) -> void:
 		if not bore.has_cell(c):
 			cut.append(c)
 	physics.check_area(cut)
+	_merge_passages(bore)
 
 
 ## Остановить бур: пройденная часть остаётся ходом, бур стоит, где остановился.
@@ -2962,6 +2963,7 @@ func _merge_extension(q: Project) -> bool:
 	_log("Продлено: %s" % host.title(), "good", host.rect.get_center())
 	if host.kind == Project.Kind.LIFT:
 		_merge_lifts(host)
+	_merge_passages(host)
 	return true
 
 
@@ -3351,6 +3353,85 @@ func _finish_project(p: Project) -> void:
 		_log("Построено: %s" % p.title(), "good", p.rect.get_center())
 	if p.kind == Project.Kind.LIFT:
 		_merge_lifts(p)
+	_merge_passages(p)
+
+
+## Шахты и тоннели встык (одного вида, сечения и материала, по одной оси) — одна постройка:
+## модернизируют, чинят и выбирают её целиком, а не по куску (продолжения, ходы бура, куски
+## вокруг лифта). Износ — средний по длине, найденное — вместе.
+func _merge_passages(p: Project) -> void:
+	if not _passage_mergeable(p):
+		return
+	var merged := true
+	while merged:
+		merged = false
+		for q in projects:
+			if q == p or q.kind != p.kind or not _passage_mergeable(q) or q.material != p.material \
+					or q.ladder != p.ladder or q.priority != p.priority:
+				continue
+			# Встык или внахлёст (ходы бура заходят друг на друга на ширину бура).
+			var r := p.rect.merge(q.rect)
+			var side := r.size.y == p.rect.size.y and r.position.y == p.rect.position.y \
+				and q.rect.size.y == p.rect.size.y and r.size.x <= p.rect.size.x + q.rect.size.x
+			var along := r.size.x == p.rect.size.x and r.position.x == p.rect.position.x \
+				and q.rect.size.x == p.rect.size.x and r.size.y <= p.rect.size.y + q.rect.size.y
+			if not side and not along:
+				continue
+			# Шахта — всегда вбок; тоннель — по своей оси (вертикальный — вниз, иначе вбок).
+			if p.kind == Project.Kind.MINE:
+				if not side:
+					continue
+			elif not ((side and not p.vertical() and not q.vertical()) or (along and p.vertical() and q.vertical())):
+				continue
+			var a := float(p.rect.get_area())
+			var b := float(r.get_area() - p.rect.get_area())
+			p.wear = (p.wear * a + q.wear * b) / (a + b)
+			p.workers = maxi(p.workers, q.workers)
+			for k in q.found:
+				p.found[k] = int(p.found.get(k, 0)) + int(q.found[k])
+			if blockages.has(q.id):
+				blockages[p.id] = true
+				blockages.erase(q.id)
+			for o in projects:
+				if o.extends_id == q.id:
+					o.extends_id = p.id
+			for u in units:
+				if u.project_id == q.id:
+					_drop(u)
+				if u.last_project == q.id:
+					u.last_project = p.id
+			projects.erase(q)
+			_by_id_n = -1
+			p.rect = r
+			p.dig_rev = -1
+			p.needs_support.clear()
+			p.supported.clear()
+			for i in p.slice_count():
+				p.supported.append(i)
+			for c in p.cells():
+				interior[c] = p.id
+				world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+			merged = true
+			break
+
+
+func _passage_mergeable(p: Project) -> bool:
+	if (p.kind != Project.Kind.MINE and p.kind != Project.Kind.TUNNEL) or p.phase != Project.Phase.DONE \
+			or p.repairing or p.paused or p.link_id != 0:
+		return false
+	# Ход, который бур сейчас сверлит, растёт за буром — его не трогаем.
+	if p.bored_by > 0:
+		var d := project_by_id(p.bored_by)
+		if d != null and d.bore_id == p.id and drilling(d):
+			return false
+	return true
+
+
+## Старые сохранения: куски, оставшиеся раздельными, склеиваются при загрузке.
+func _merge_all_passages() -> void:
+	for p in projects.duplicate():
+		if projects.has(p):
+			_merge_passages(p)
 
 
 ## Убрали мост или пристань — общие с другой водной постройкой клетки снова её.
@@ -3781,6 +3862,7 @@ func _finish_equip(p: Project) -> void:
 			if u.project_id == p.id:
 				_drop(u)
 		_log("%s: готово (%s) — %s" % [p.title(), material_job_name(p).to_lower(), Project.MATERIALS[p.material][0].to_lower()], "good", p.rect.get_center())
+		_merge_passages(p)
 		return
 	if p.equip_ladder:
 		p.equip_ladder = false
@@ -4998,6 +5080,7 @@ func update(dt: float) -> void:
 					_reveal_known()
 				_geo_seen = geo
 			if not _blockage_scanned:
+				_merge_all_passages()
 				_scan_blockages()
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
@@ -8322,6 +8405,20 @@ func repair_cost(p: Project) -> Dictionary:
 	for k in base:
 		out[k] = maxi(1, ceili(base[k] * p.wear * 0.6))
 	return out
+
+
+## Требует ремонта: износ дошёл до предупреждения (на карте над постройкой — знак).
+func needs_repair(p: Project) -> bool:
+	return p.phase == Project.Phase.DONE and not p.repairing and p.wear >= WEAR_WARN[0]
+
+
+## «Отремонтировать все»: ремонт всего, что требует ремонта. Сколько начато.
+func repair_all() -> int:
+	var n := 0
+	for p in projects:
+		if needs_repair(p) and start_repair(p):
+			n += 1
+	return n
 
 
 func start_repair(p: Project) -> bool:

@@ -20,6 +20,8 @@ signal build_opened
 signal speed_selected(index: int)
 signal science_pressed
 signal people_pressed
+## Кнопка «Постройки»: список всех построек.
+signal objects_pressed
 ## Карточку закрыли крестиком.
 signal info_closed
 ## Сохранить: sid — слот для перезаписи (пусто — новый), name — название (пусто — как было).
@@ -120,6 +122,7 @@ var _info_panel: PanelContainer
 var _title: Label
 var _subtitle: Label
 var _scroll: ScrollContainer
+var _objects_btn: IconButton
 var _body: VBoxContainer
 var _controls: VBoxContainer
 var _actions: HBoxContainer
@@ -467,6 +470,10 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var people := IconButton.make("people", "Гаврики")
 	people.pressed.connect(func() -> void: people_pressed.emit())
 	bar.add_child(people)
+	var objects := IconButton.make("room", "Постройки")
+	objects.pressed.connect(func() -> void: objects_pressed.emit())
+	_objects_btn = objects
+	bar.add_child(objects)
 	var science := IconButton.make("flask", "Наука")
 	science.pressed.connect(func() -> void: science_pressed.emit())
 	bar.add_child(science)
@@ -1100,8 +1107,35 @@ func _build_control(st: Dictionary) -> void:
 			_build_techs(st)
 		"people":
 			_build_people(st)
+		"select":
+			_build_select(st)
 		_:
 			_build_stepper(st)
+
+
+## Ключ на кнопке «Постройки»: что-то требует ремонта.
+func set_repair_badge(on: bool) -> void:
+	if _objects_btn != null:
+		_objects_btn.set_badge("repair" if on else "")
+
+
+## Выбор из списка: {"type": "select", "label", "text": что выбрано, "pressed": Callable} —
+## кнопка «текст ▾», по нажатию открывается окно выбора (обычный выпадающий список на касании
+## сразу выбирал пункт под пальцем).
+func _build_select(st: Dictionary) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	_controls.add_child(row)
+	row.add_child(_label(st["label"], 18, Color.WHITE))
+	var b := Button.new()
+	b.text = "%s  ▾" % st["text"]
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(0, 52)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 19)
+	b.pressed.connect(st["pressed"])
+	row.add_child(b)
 
 
 func _build_checks(st: Dictionary) -> void:

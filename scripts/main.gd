@@ -55,7 +55,8 @@ var _pending_material := "wood"
 var _pending_support := ""
 ## Что показано в информационной панели: [вид, id] — чтобы обновлять текст.
 var _info_target := []
-## [id гаврика, Callable] — карточка открыта из списка: при закрытии вернуться в него.
+## [id гаврика или ["project", id], Callable] — карточка открыта из списка: при закрытии
+## вернуться в него.
 var _card_back := []
 ## Тряска камеры при землетрясении, сек.
 var _shake := 0.0
@@ -209,6 +210,7 @@ func _build_scene() -> void:
 	hud.exit_requested.connect(_exit_to_menu)
 	hud.science_pressed.connect(_show_science)
 	hud.people_pressed.connect(_show_people)
+	hud.objects_pressed.connect(_show_objects)
 	hud.info_closed.connect(_on_info_closed)
 	hud.setting_changed.connect(_on_setting)
 	hud.room_options_changed.connect(_on_room_options)
@@ -262,6 +264,7 @@ func _process(delta: float) -> void:
 				_switch_world("earth")
 		_update_status()
 		_refresh_info()
+		_update_repair_badge()
 	# Автосохранение — раз в столько минут, сколько выбрано в настройках (0 — выключено).
 	var every := int(Settings.get_value("autosave_min")) * 60.0 if _world_id.is_empty() == false else AUTOSAVE_SEC
 	if every > 0.0 and not _away:
@@ -875,14 +878,156 @@ func _opener(u: Unit, back := Callable()) -> Callable:
 				hud.set_panel_scroll(at)]
 
 
-## Закрыли карточку гаврика, открытую из списка, — обратно в список.
+## Закрыли карточку гаврика или постройки, открытую из списка, — обратно в список.
 func _on_info_closed() -> void:
 	if _card_back.is_empty():
 		return
 	var back: Array = _card_back
 	_card_back = []
-	if _info_target == ["unit", back[0]]:
+	var who = back[0]
+	var same: bool = _info_target == ["unit", who] if who is int \
+		else (_info_target.size() >= 2 and _info_target[0] == who[0] and _info_target[1] == who[1])
+	if same:
 		(back[1] as Callable).call()
+
+
+## --- Постройки: список всех с фильтрами ----------------------------------------------
+## Тип (выпадающий список) и состояние (галочки: показываются постройки хотя бы с одним из
+## отмеченных). Из списка — в карточку постройки; закрыли карточку — снова список.
+var _obj_type := ""
+var _obj_flags := {}
+const OBJ_FLAGS := [["repair", "Требуют ремонта"], ["noworker", "Нет работников"], ["blocked", "Завал"],
+	["building", "Строятся"], ["paused", "На паузе"]]
+const KIND_PLURAL := {Project.Kind.TUNNEL: "Тоннели", Project.Kind.BRIDGE: "Мостики", Project.Kind.PIER: "Пристани",
+	Project.Kind.MINE: "Шахты", Project.Kind.LIFT: "Лифты", Project.Kind.DRILL: "Буры", Project.Kind.PROBE: "Геоскважины"}
+
+
+static func _obj_type_of(p: Project) -> String:
+	return "r%d" % p.purpose if p.kind == Project.Kind.ROOM else "k%d" % p.kind
+
+
+static func _obj_type_name(key: String) -> String:
+	var n := int(key.substr(1))
+	return RoomType.NAMES[n] if key.begins_with("r") else KIND_PLURAL.get(n, Project.kind_name(n))
+
+
+func _obj_flag(p: Project, f: String) -> bool:
+	match f:
+		"repair":
+			return colony.needs_repair(p)
+		"noworker":
+			return p.phase == Project.Phase.DONE and colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE \
+				and not p.paused and colony.assigned_to(p).is_empty()
+		"blocked":
+			return colony.has_blockage(p)
+		"building":
+			return p.phase != Project.Phase.DONE or p.repairing
+		"paused":
+			return p.paused
+	return false
+
+
+func _show_objects() -> void:
+	_select(null, null)
+	hud.close_overlays()
+	_info_target = []
+	var types := {}
+	for p in colony.projects:
+		types[_obj_type_of(p)] = true
+	var keys := types.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return _obj_type_name(a) < _obj_type_name(b))
+	if not types.has(_obj_type):
+		_obj_type = ""
+	var shown := colony.projects.filter(func(p: Project) -> bool:
+		if not _obj_type.is_empty() and _obj_type_of(p) != _obj_type:
+			return false
+		var any_on := false
+		for f in OBJ_FLAGS:
+			if _obj_flags.get(f[0], false):
+				any_on = true
+				if _obj_flag(p, f[0]):
+					return true
+		return not any_on)
+	# Сначала то, что требует внимания; потом по типу и глубине.
+	var urgent := func(p: Project) -> int:
+		return 0 if _obj_flag(p, "repair") or _obj_flag(p, "blocked") or _obj_flag(p, "noworker") else 1
+	shown.sort_custom(func(a: Project, b: Project) -> bool:
+		if urgent.call(a) != urgent.call(b):
+			return urgent.call(a) < urgent.call(b)
+		if _obj_type_of(a) != _obj_type_of(b):
+			return _obj_type_name(_obj_type_of(a)) < _obj_type_name(_obj_type_of(b))
+		return a.rect.position.y < b.rect.position.y)
+	var items := []
+	for p: Project in shown:
+		var bits: PackedStringArray = []
+		if p.phase != Project.Phase.DONE or p.repairing:
+			bits.append(p.phase_name())
+		if colony.needs_repair(p):
+			bits.append("ТРЕБУЕТ РЕМОНТА")
+		if colony.has_blockage(p):
+			bits.append("ЗАВАЛ")
+		if p.paused:
+			bits.append("на паузе")
+		if colony.is_workplace(p) and p.kind != Project.Kind.BRIDGE:
+			var n := colony.assigned_to(p).size()
+			bits.append("НЕТ РАБОТНИКОВ" if n == 0 and p.phase == Project.Phase.DONE else "работников %d/%d" % [n, colony.work_slots(p)])
+		if p.wear >= 0.05:
+			bits.append("износ %d%%" % roundi(p.wear * 100))
+		bits.append("глубина " + colony._depth_text(p.rect.get_center()))
+		var open := func() -> void:
+			var at := hud.panel_scroll()
+			_select(null, p)
+			world_view.focus_cell(p.rect.get_center())
+			_card_back = [["project", p.id], func() -> void:
+				_show_objects()
+				hud.set_panel_scroll(at)]
+		items.append({"name": p.title(), "info": " · ".join(bits), "button": "Открыть", "pick": open, "open": open})
+	var checks := []
+	for f in OBJ_FLAGS:
+		checks.append([f[0], f[1], bool(_obj_flags.get(f[0], false))])
+	var to_fix := colony.projects.filter(func(p: Project) -> bool: return colony.needs_repair(p)).size()
+	var actions := []
+	if to_fix > 0:
+		actions.append(["Отремонтировать все (%d)" % to_fix, func() -> void:
+			var n := colony.repair_all()
+			hud.log_event("Ремонт начат: %d" % n, "info")
+			_update_repair_badge()
+			_show_objects(), "primary"])
+	hud.show_panel({"title": "Постройки", "subtitle": "всего %d · показано %d · требуют ремонта %d" % [colony.projects.size(), shown.size(), to_fix],
+		"controls": [
+			{"type": "select", "label": "Тип:", "text": "Все" if _obj_type.is_empty() else _obj_type_name(_obj_type),
+				"pressed": func() -> void: _pick_obj_type(keys)},
+			{"type": "checks", "label": "Показать (любое из отмеченных):", "items": checks, "toggled": func(k: String, on: bool) -> void:
+				_obj_flags[k] = on
+				_show_objects()},
+			{"type": "people", "label": "Постройки (нажмите — карточка):", "items": items, "empty": "Ничего не подходит под фильтр."}],
+		"actions": actions})
+
+
+## Выбор типа построек: все типы, что есть в колонии (сколько каждого).
+func _pick_obj_type(keys: Array) -> void:
+	var count := {}
+	for p in colony.projects:
+		var k := _obj_type_of(p)
+		count[k] = int(count.get(k, 0)) + 1
+	var items := [["", "Все (%d)" % colony.projects.size(), _obj_type.is_empty()]]
+	for k in keys:
+		items.append([k, "%s (%d)" % [_obj_type_name(k), int(count.get(k, 0))], k == _obj_type])
+	hud.show_panel({"title": "Тип построек", "subtitle": "что показать в списке",
+		"controls": [{"type": "checks", "label": "Выберите:", "items": items, "toggled": func(k: String, _on: bool) -> void:
+			_obj_type = k
+			_show_objects()}],
+		"actions": [["Назад", _show_objects]]})
+
+
+## Ключ на кнопке «Постройки», если что-то требует ремонта.
+func _update_repair_badge() -> void:
+	var any := false
+	for p in colony.projects:
+		if colony.needs_repair(p):
+			any = true
+			break
+	hud.set_repair_badge(any)
 
 
 ## Внешность для портрета: облучённым — знак радиации в углу.

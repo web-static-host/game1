@@ -6,6 +6,8 @@ var glyph := ""
 var caption := ""
 ## Значок ресурса вместо глифа (кнопки материалов).
 var res_key := ""
+## Значок в правом верхнем углу (например, гаечный ключ: что-то требует ремонта).
+var badge := ""
 const ICON_COLOR := Color(0.92, 0.94, 0.98)
 const ICON_PRESSED := Color(1, 1, 1)
 
@@ -17,6 +19,12 @@ static func make(p_glyph: String, p_caption: String, w := 96.0, h := 80.0) -> Ic
 	b.custom_minimum_size = Vector2(w, h)
 	b.focus_mode = Control.FOCUS_NONE
 	return b
+
+
+func set_badge(name: String) -> void:
+	if badge != name:
+		badge = name
+		queue_redraw()
 
 
 func set_caption(text: String) -> void:
@@ -39,3 +47,7 @@ func _draw() -> void:
 		var fs := 15
 		var w := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(font, Vector2((size.x - w) * 0.5, size.y - 9), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+	if not badge.is_empty():
+		var bc := Vector2(size.x - 17, 17)
+		draw_circle(bc, 14, Color(0.95, 0.55, 0.15))
+		ResIcon.draw_glyph(self, badge, bc, 10, Color(0.08, 0.07, 0.06))
