@@ -164,6 +164,8 @@ var support_choice := ""
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
+## Корабль (назначение «корабль»): на каком двигателе прилетел — ядерный вмещает в 1,5 раза больше.
+var ship_engine := ""
 ## Сборы экспедиции (сохраняются, пока ракета не улетела): {"planet": куда, "crew": [id гавриков],
 ## "cargo": {ресурс: сколько}}.
 var launch_draft := {}
@@ -555,6 +557,7 @@ func to_dict() -> Dictionary:
 		"support_choice": support_choice,
 		"equip_rocket": equip_rocket,
 		"rocket": rocket,
+		"ship_engine": ship_engine,
 		"launch_draft": launch_draft,
 		"plan_purpose": plan_purpose,
 		"brick_stoves": brick_stoves,
@@ -640,6 +643,7 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_choice = str(d.get("support_choice", ""))
 	p.equip_rocket = str(d.get("equip_rocket", ""))
 	p.rocket = str(d.get("rocket", ""))
+	p.ship_engine = str(d.get("ship_engine", ""))
 	var ld: Dictionary = d.get("launch_draft", {})
 	p.launch_draft = {"planet": str(ld.get("planet", "")), "crew": (ld.get("crew", []) as Array).map(func(v) -> int: return int(v)),
 		"cargo": {}} if not ld.is_empty() else {}

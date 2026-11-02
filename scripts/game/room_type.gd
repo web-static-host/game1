@@ -198,9 +198,19 @@ static func purpose_hint(t: int) -> String:
 	return HINTS[t]
 
 
+## Ракета на ядерном двигателе (и корабль, на котором прилетели) вмещает в 1,5 раза больше
+## гавриков и груза.
+static func ship_beds(engine: String) -> int:
+	return SHIP_BEDS * 3 / 2 if engine == "nuclear" else SHIP_BEDS
+
+
+static func ship_hold(engine: String) -> int:
+	return SHIP_HOLD * 3 / 2 if engine == "nuclear" else SHIP_HOLD
+
+
 static func beds(p: Project) -> int:
 	if p.purpose == SHIP:
-		return SHIP_BEDS
+		return ship_beds(p.ship_engine)
 	# Золотая спальня — просторная: кроватей вдвое больше.
 	return maxi(1, roundi(usable_width(p) / 2 * p.bonus()))
 

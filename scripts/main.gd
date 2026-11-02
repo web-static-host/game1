@@ -446,7 +446,7 @@ func _show_worlds() -> void:
 		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
 			"info": "гавриков %d, груза %d · садится" % [f["crew"].size(), cargo]})
 	hud.show_panel({"title": "Планеты", "subtitle": "время идёт на всех планетах сразу",
-		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракета»): до 10 гавриков и 200 груза. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
+		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракета»): до 10 гавриков и 200 груза, на ядерном двигателе — 15 и 300. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
 		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
 		"actions": [["Закрыть", func() -> void: hud.hide_info()]]})
 
@@ -454,9 +454,9 @@ func _show_worlds() -> void:
 ## Космодром: что нужно на ракету и что есть.
 func _rocket_rows(p: Project, rows: Array) -> void:
 	if not p.rocket.is_empty():
-		rows.append({"type": "text", "text": "Ракета на столе: %s двигатель — летит на %s. Нажмите «Запустить»: выберите планету, экипаж (до 10) и груз (до 200)." % [
+		rows.append({"type": "text", "text": "Ракета на столе: %s двигатель — летит на %s. Нажмите «Запустить»: выберите планету, экипаж (до %d) и груз (до %d)." % [
 			Planet.engine_name(p.rocket), ", ".join(Colony.flight_targets(_planet).filter(func(id: String) -> bool: return Colony.rocket_reaches(p.rocket, id)).map(
-				func(id: String) -> String: return Planet.planet_name(id)))]})
+				func(id: String) -> String: return Planet.planet_name(id))), RoomType.ship_beds(p.rocket), RoomType.ship_hold(p.rocket)]})
 		return
 	if p.phase == Project.Phase.EQUIP and not p.equip_rocket.is_empty():
 		return
@@ -477,7 +477,7 @@ func _launch_open(pad: Project) -> void:
 	var crew := []
 	for id in d.get("crew", []):
 		var u := colony.unit_by_id(int(id))
-		if u != null and not u.child and crew.size() < RoomType.SHIP_BEDS:
+		if u != null and not u.child and crew.size() < RoomType.ship_beds(pad.rocket):
 			crew.append(u)
 	_launch = {"pad": pad, "planet": str(d.get("planet", "")), "crew": crew, "cargo": (d.get("cargo", {}) as Dictionary).duplicate()}
 	if not _launch["planet"].is_empty() and _launch["planet"] != _planet and Colony.rocket_reaches(pad.rocket, _launch["planet"]):
@@ -488,6 +488,15 @@ func _launch_open(pad: Project) -> void:
 
 
 ## Записать сборы в космодром (чтобы выйти и вернуться — и после перезапуска игры).
+## Сколько берёт ракета на столе: ядерная — в 1,5 раза больше гавриков и груза.
+func _launch_beds() -> int:
+	return RoomType.ship_beds((_launch["pad"] as Project).rocket)
+
+
+func _launch_hold() -> int:
+	return RoomType.ship_hold((_launch["pad"] as Project).rocket)
+
+
 func _launch_save() -> void:
 	if _launch.is_empty():
 		return
@@ -551,13 +560,13 @@ func _launch_crew() -> void:
 			"button": "Убрать" if on else "Взять", "style": "danger" if on else "", "pick": func() -> void:
 				if crew.has(u):
 					crew.erase(u)
-				elif crew.size() < RoomType.SHIP_BEDS:
+				elif crew.size() < _launch_beds():
 					crew.append(u)
 				else:
-					hud.log_event("В ракете — до %d гавриков" % RoomType.SHIP_BEDS, "warning")
+					hud.log_event("В ракете — до %d гавриков" % _launch_beds(), "warning")
 				_launch_save()
 				_launch_crew()})
-	hud.show_panel({"id": "crew", "title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), RoomType.SHIP_BEDS],
+	hud.show_panel({"id": "crew", "title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), _launch_beds()],
 		"subtitle": Planet.data(planet)["desc"],
 		"controls": [{"type": "people", "label": "Кто летит (сверху — у кого больше шанс выжить):",
 			"items": items, "empty": "Нет взрослых гавриков."}],
@@ -576,7 +585,7 @@ func _launch_cargo() -> void:
 		if have <= 0 or RoomType.BULK.has(k):
 			continue
 		controls.append({"label": "%s (есть %d)" % [Mat.resource_name(k), have], "value": int(cargo.get(k, 0)), "min": 0,
-			"max": mini(have, RoomType.SHIP_HOLD), "step": 10, "changed": func(v: int) -> void:
+			"max": mini(have, _launch_hold()), "step": 10, "changed": func(v: int) -> void:
 				cargo[k] = v
 				_launch_save()
 				hud.refresh_panel(_launch_cargo_spec())})
@@ -591,7 +600,7 @@ func _launch_cargo_spec() -> Dictionary:
 	var total := 0
 	for k in _launch["cargo"]:
 		total += int(_launch["cargo"][k])
-	return {"id": "cargo", "title": "Груз: %d из %d" % [total, RoomType.SHIP_HOLD],
+	return {"id": "cargo", "title": "Груз: %d из %d" % [total, _launch_hold()],
 		"subtitle": "экипаж %d · на %s" % [_launch["crew"].size(), Planet.planet_name(_launch["planet"])],
 		"rows": [{"type": "text", "text": "Домой: корабль сядет рядом с колонией на Земле, гаврики и груз — в нём." if _launch["planet"] == "earth" else
 			"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}
@@ -1571,7 +1580,7 @@ func _storage_control(p: Project) -> Dictionary:
 	for k in p.held:
 		if not keys.has(k) and int(p.held[k]) > 0:
 			keys.append(k)
-	var cap0 := RoomType.SHIP_HOLD if ship else RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
+	var cap0 := RoomType.ship_hold(p.ship_engine) if ship else RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p)
 	if not ship and colony.research.has("shelving"):
 		cap0 = roundi(cap0 * 1.5)
 	var items := []
@@ -1909,7 +1918,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			RoomType.LAUNCHPAD:
 				_rocket_rows(p, rows)
 			RoomType.SHIP:
-				chips.append(["home", "мест %d" % RoomType.SHIP_BEDS])
+				chips.append(["home", "мест %d" % RoomType.beds(p)])
 				chips.append(["power", "реактор: %d" % RoomType.SHIP_POWER])
 				rows.append({"type": "text", "text": "Корабль — жильё на 10 человек: внутри воздух, тепло (+20 °C) и свет, трюм держит груз. Наружу на поверхность без воздуха не выйти — копайте тоннель вниз прямо из корабля."})
 			RoomType.OIL_PUMP:

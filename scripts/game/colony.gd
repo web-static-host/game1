@@ -3583,7 +3583,7 @@ static func flight_targets(from: String) -> Array:
 	return out
 
 
-## Отправить экспедицию: до 10 гавриков и до 200 груза (не топливо — его не возят).
+## Отправить экспедицию: до 10 гавриков и до 200 груза, на ядерной ракете — 15 и 300.
 ## Возвращает полёт (словарь для Universe) или ошибку {"error": текст}.
 func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Dictionary:
 	if p.rocket.is_empty():
@@ -3592,8 +3592,8 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 		return {"error": "Мы и так на %s" % Planet.planet_name(planet_id)}
 	if not rocket_reaches(p.rocket, planet_id):
 		return {"error": "Для полёта на %s нужен %s двигатель" % [Planet.planet_name(planet_id), Planet.engine_name(Planet.data(planet_id)["engine"])]}
-	if crew.size() > RoomType.SHIP_BEDS:
-		return {"error": "В ракете — до %d гавриков" % RoomType.SHIP_BEDS}
+	if crew.size() > RoomType.ship_beds(p.rocket):
+		return {"error": "В ракете — до %d гавриков" % RoomType.ship_beds(p.rocket)}
 	var total := 0
 	for k in cargo:
 		total += int(cargo[k])
@@ -3601,8 +3601,8 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 			return {"error": "%s в ракете не возят" % Mat.resource_name(k)}
 		if int(inventory.get(k, 0)) < int(cargo[k]):
 			return {"error": "Не хватает: %s" % Mat.resource_name(k).to_lower()}
-	if total > RoomType.SHIP_HOLD:
-		return {"error": "Груза — до %d" % RoomType.SHIP_HOLD}
+	if total > RoomType.ship_hold(p.rocket):
+		return {"error": "Груза — до %d" % RoomType.ship_hold(p.rocket)}
 	if crew.is_empty() and total == 0:
 		return {"error": "Ракета пустая"}
 	var crew_data := []
@@ -3621,11 +3621,12 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 			o.partner_id = 0
 	for k in cargo:
 		_remove(k, int(cargo[k]))
+	var engine := p.rocket
 	p.rocket = ""
 	_log("Старт! Экспедиция на %s: гавриков %d, груза %d." % [Planet.planet_name(planet_id), crew_data.size(), total], "good")
 	# Летит мгновенно: садится при следующем шаге игры (раньше — месяцами).
 	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
-		"left": 0.0}
+		"left": 0.0, "engine": engine}
 
 
 ## Новая колония на планете: корабль садится на поверхность, экипаж и груз — в нём.
@@ -3645,6 +3646,7 @@ func start_planet(x: int, flight: Dictionary) -> void:
 ## гаврики и груз — в корабле.
 func receive_flight(flight: Dictionary) -> void:
 	var ship := _land_ship()
+	ship.ship_engine = str(flight.get("engine", ""))
 	var ids := {}
 	var arrived: Array[Unit] = []
 	for d in flight.get("crew", []):
@@ -3674,10 +3676,10 @@ func receive_flight(flight: Dictionary) -> void:
 	var ships := rooms_of(RoomType.SHIP).size()
 	if ships > 1:
 		_log("Посадка на %s: корабль сел рядом с прежним — ещё %d мест; прибыло гавриков %d (кораблей %d). Чтобы ходить между ними, прокопайте ход." % [
-			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size(), ships], "good", ship.rect.get_center())
+			Planet.planet_name(world.gen.planet_id), RoomType.beds(ship), arrived.size(), ships], "good", ship.rect.get_center())
 	else:
 		_log("Посадка на %s! Корабль — жильё на %d человек; прибыло гавриков %d. Копайте вниз прямо из корабля." % [
-			Planet.planet_name(world.gen.planet_id), RoomType.SHIP_BEDS, arrived.size()], "good", ship.rect.get_center())
+			Planet.planet_name(world.gen.planet_id), RoomType.beds(ship), arrived.size()], "good", ship.rect.get_center())
 
 
 ## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
@@ -5082,6 +5084,7 @@ func update(dt: float) -> void:
 			if not _blockage_scanned:
 				_merge_all_passages()
 				_scan_blockages()
+				_old_ships_engine()
 		# Медленное (оплата строек, облучение, буры, урожай, нужды) — ровно раз в SLOW_STEP игры,
 		# а не на каждом подшаге: на ×1 телефон считает подшаг каждый кадр (30 раз в секунду
 		# вместо 5) и эта постоянная часть одна съедала весь кадр — ускорение не включалось.
@@ -5555,6 +5558,16 @@ func teleports() -> Array[Project]:
 ## после загрузки (проверку постоянно не гоняем — она не нужна).
 var blockages := {}
 var _blockage_scanned := false
+
+
+## Корабли из старых сохранений: на дальние планеты долетает только ядерная ракета — значит,
+## корабль там ядерный (15 мест, трюм по 300).
+func _old_ships_engine() -> void:
+	if not Planet.DATA.has(world.gen.planet_id) or str(Planet.data(world.gen.planet_id).get("engine", "")) != "nuclear":
+		return
+	for p in rooms_of(RoomType.SHIP):
+		if p.ship_engine.is_empty():
+			p.ship_engine = "nuclear"
 
 
 func _scan_blockages() -> void:
@@ -9776,13 +9789,13 @@ func holders(key: String) -> Array[Project]:
 ## Сколько ресурса помещается в комнате p.
 func room_cap(p: Project, key: String) -> int:
 	if RoomType.PIPED.has(key) and p.purpose == RoomType.SHIP:
-		return RoomType.SHIP_HOLD
+		return RoomType.ship_hold(p.ship_engine)
 	if key == "methane":
 		return RoomType.GAS_PER_CELL * RoomType.usable_width(p) if p.purpose == RoomType.DEGAS else 0
 	if key == "oil" or key == "diesel":
 		return roundi(RoomType.OIL_PER_CELL * RoomType.usable_width(p) * p.bonus()) if p.purpose == RoomType.OIL_TANK else 0
 	if p.purpose == RoomType.SHIP:
-		return 0 if RoomType.BULK.has(key) else RoomType.SHIP_HOLD
+		return 0 if RoomType.BULK.has(key) else RoomType.ship_hold(p.ship_engine)
 	if not RoomType.is_store(p.purpose) or not RoomType.stores(p, key) or RoomType.BULK.has(key):
 		return 0
 	var c := roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * p.bonus())

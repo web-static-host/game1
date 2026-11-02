@@ -1548,13 +1548,13 @@ func _launch(pad: Project) -> bool:
 	adults.sort_custom(func(a: Unit, b: Unit) -> bool: return a.stat(stat) > b.stat(stat))
 	var crew: Array = []
 	for u in adults:
-		if crew.size() >= RoomType.SHIP_BEDS:
+		if crew.size() >= RoomType.ship_beds(pad.rocket):
 			break
 		if crew.has(u):
 			continue
 		crew.append(u)
 		var partner := colony.unit_by_id(u.partner_id)
-		if partner != null and not partner.child and crew.size() < RoomType.SHIP_BEDS and not crew.has(partner):
+		if partner != null and not partner.child and crew.size() < RoomType.ship_beds(pad.rocket) and not crew.has(partner):
 			crew.append(partner)
 	var cargo := {}
 	var total := 0
@@ -1566,7 +1566,7 @@ func _launch(pad: Project) -> bool:
 		var want: int = int(pair[1])
 		for k in keys:
 			var n := mini(want, int(colony.inventory.get(k, 0)))
-			n = mini(n, RoomType.SHIP_HOLD - total)
+			n = mini(n, RoomType.ship_hold(pad.rocket) - total)
 			if n > 0:
 				cargo[k] = int(cargo.get(k, 0)) + n
 				total += n

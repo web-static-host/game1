@@ -2877,6 +2877,25 @@ func test_space() -> void:
 	var ship := mc.rooms_of(RoomType.SHIP)
 	check(ship.size() == 1 and mc.held_in(ship[0], "food") == 100 and mc.held_in(ship[0], "wood") == 50, "корабль сел, груз в трюме")
 	check(mc.beds_total() == RoomType.SHIP_BEDS, "в корабле 10 спальных мест")
+	check(RoomType.ship_beds("nuclear") == 15 and RoomType.ship_hold("nuclear") == 300 and RoomType.ship_beds("chem") == 10,
+		"ядерная ракета вмещает в 1,5 раза больше: 15 гавриков и 300 груза")
+	var npad := Project.new()
+	npad.kind = Project.Kind.ROOM
+	npad.purpose = RoomType.LAUNCHPAD
+	npad.rocket = "nuclear"
+	var big := colony.units.filter(func(o: Unit) -> bool: return not o.child).slice(0, 11)
+	if big.size() == 11:
+		npad.rocket = "chem"
+		check(str(colony.launch(npad, "mars", big, {}).get("error", "")).contains("до 10"), "в химическую ракету 11 не берут")
+	var nflight := {"planet": "mars", "crew": [], "cargo": {"stone": 250}, "research": [], "left": 0.0, "engine": "nuclear"}
+	var ec := _new_colony(77)
+	_start(ec, 0)
+	ec.receive_flight(nflight)
+	var nship: Project = ec.rooms_of(RoomType.SHIP)[-1]
+	check(nship.ship_engine == "nuclear" and RoomType.beds(nship) == 15 and ec.room_cap(nship, "stone") == 300 and ec.held_in(nship, "stone") == 250,
+		"корабль ядерной ракеты: 15 мест, трюм по 300")
+	var nd := Project.from_dict(nship.to_dict())
+	check(nd.ship_engine == "nuclear", "двигатель корабля сохраняется")
 	# Нефть, дизель и метан летят ракетой — в баках корабля, и по трубам их берут генераторы.
 	check(not str(colony.launch(pad, "mars", [], {"diesel": 5}).get("error", "")).contains("не возят"), "дизель можно взять в ракету")
 	check(mc._add("diesel", 30, ship[0]) == 30 and mc.held_in(ship[0], "diesel") == 30 and mc.holders("diesel").has(ship[0]),
