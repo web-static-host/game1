@@ -10,6 +10,9 @@ const CHUNK_PX := TILE * SIZE
 const MARGIN := 1
 const SHIFT_DISTANCE := 16 * CHUNK_PX
 const GEN_BUDGET_USEC := 6000
+## Пока виден экран загрузки — куски строятся без оглядки на плавность (кадр всё равно закрыт).
+const LOAD_BUDGET_USEC := 60000
+var fast_load := false
 
 var world: WorldData
 var colony: Colony
@@ -140,7 +143,7 @@ func _update_chunks() -> void:
 		return (a - center).length_squared() < (b - center).length_squared())
 	var start := Time.get_ticks_usec()
 	for key in missing:
-		if Time.get_ticks_usec() - start > GEN_BUDGET_USEC and not _views.is_empty():
+		if Time.get_ticks_usec() - start > (LOAD_BUDGET_USEC if fast_load else GEN_BUDGET_USEC) and not _views.is_empty():
 			break
 		var c := world.get_chunk(key.x, key.y)
 		var v := ChunkView.new()
@@ -155,6 +158,22 @@ func _update_chunks() -> void:
 	# Держим в памяти чанки с запасом вокруг экрана.
 	if world.chunks.size() > 1500:
 		world.evict_outside(rect.grow(8))
+
+
+## Сколько из видимых кусков мира уже построено (0..1) — для экрана загрузки.
+func load_progress() -> float:
+	if world == null:
+		return 0.0
+	var rect := visible_chunk_rect()
+	var total := rect.size.x * rect.size.y
+	if total <= 0:
+		return 1.0
+	var have := 0
+	for cy in range(rect.position.y, rect.end.y):
+		for cx in range(rect.position.x, rect.end.x):
+			if _views.has(Vector2i(cx, cy)):
+				have += 1
+	return float(have) / total
 
 
 ## Время года: снег и листва. Куски перерисовываются, когда листва заметно сменилась

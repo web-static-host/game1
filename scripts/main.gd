@@ -137,6 +137,43 @@ func _ready() -> void:
 	# Новый мир сразу получает автосохранение — он появится в «Продолжить».
 	if data.is_empty() and not _world_id.is_empty():
 		_save()
+	_loading_begin("Создание мира" if data.is_empty() else "Загрузка: %s" % Planet.planet_name(_planet), 0.5)
+
+
+## --- Экран загрузки ----------------------------------------------------------------------
+## Мир показывается, когда достроено всё, что видно на экране (раньше куски появлялись на
+## глазах). Пока экран загрузки виден, время в игре стоит.
+var _loader: LoadingScreen = null
+var _loader_base := 0.0
+var _loader_frames := 0
+
+
+func _loading_begin(text: String, base: float) -> void:
+	if _loader == null or not is_instance_valid(_loader):
+		var pic := str(Worlds.launch.get("picture", ""))
+		Worlds.launch.erase("picture")
+		_loader = LoadingScreen.make(pic if not pic.is_empty() else LoadingScreen.pick_picture())
+		add_child(_loader)
+	_loader.set_progress(base, text)
+	_loader_base = base
+	_loader_frames = 0
+	world_view.fast_load = true
+
+
+## true — ещё грузимся (игру не считаем).
+func _loading_tick() -> bool:
+	if _loader == null:
+		return false
+	var r := world_view.load_progress()
+	_loader.set_progress(lerpf(_loader_base, 1.0, r))
+	if r >= 1.0:
+		_loader_frames += 1
+		# Пара кадров — дорисовать края кусков, постройки и гавриков.
+		if _loader_frames >= 3:
+			_loader.finish()
+			_loader = null
+			world_view.fast_load = false
+	return true
 
 
 ## Игру закрыли (любым способом) — сохраняем последнее состояние.
@@ -218,6 +255,8 @@ func _build_scene() -> void:
 
 
 func _process(delta: float) -> void:
+	if _loading_tick():
+		return
 	# Большие паузы (сворачивание) учитываются как оффлайн, а не через delta.
 	# Открыто меню — игра на паузе.
 	var dt := 0.0 if _away or hud.menu_open() else minf(delta, 0.25)
@@ -322,7 +361,14 @@ func _exit_to_menu(save: bool) -> void:
 ## Загрузить другое сохранение этого мира: сцена собирается заново.
 func _load_save(sid: String) -> void:
 	_restarting = true
-	Worlds.launch = {"world": _world_id, "save": sid, "offline": false}
+	var pic := LoadingScreen.pick_picture()
+	Worlds.launch = {"world": _world_id, "save": sid, "offline": false, "picture": pic}
+	# Экран загрузки — сразу, пока сохранение читается (кадр, чтобы он успел показаться).
+	var ls := LoadingScreen.make(pic)
+	add_child(ls)
+	ls.set_progress(0.05, "Загрузка сохранения")
+	await get_tree().process_frame
+	await get_tree().process_frame
 	get_tree().reload_current_scene()
 
 
@@ -420,6 +466,7 @@ func _switch_world(planet: String) -> void:
 	add_child(world_view)
 	world_view.setup(world, colony, camera)
 	world_view.focus_cell(_cameras.get(planet, colony.home + Vector2i(0, -3)))
+	_loading_begin("Загрузка: %s" % Planet.planet_name(planet), 0.15)
 	_sky_ground = NAN
 	_update_status()
 	hud.log_event("%s: гавриков %d" % [Planet.planet_name(planet), colony.units.size()], "info")

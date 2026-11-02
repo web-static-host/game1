@@ -255,6 +255,14 @@ func _settings() -> void:
 
 ## В игру: мир wid, сохранение sid ("" — новый мир). offline — засчитать время отсутствия.
 func _play(wid: String, sid: String, offline: bool) -> void:
-	Worlds.launch = {"world": wid, "save": sid, "offline": offline}
+	var pic := LoadingScreen.pick_picture()
+	Worlds.launch = {"world": wid, "save": sid, "offline": offline, "picture": pic}
 	Worlds.touch(wid)
+	# Экран загрузки — сразу: мир читается и строится несколько секунд (кадр, чтобы он успел
+	# показаться); в игре тот же экран держится, пока мир не догрузится.
+	var ls := LoadingScreen.make(pic)
+	add_child(ls)
+	ls.set_progress(0.05, "Создание мира" if sid.is_empty() and not offline else "Загрузка мира")
+	await get_tree().process_frame
+	await get_tree().process_frame
 	get_tree().change_scene_to_file(GAME_SCENE)
