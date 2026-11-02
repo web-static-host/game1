@@ -1704,7 +1704,7 @@ func _storage_control(p: Project) -> Dictionary:
 ## Кузница: что плавит сейчас и нормы — сколько держать каждого металла (как на складе).
 func _forge_rows(p: Project, rows: Array) -> void:
 	var key := colony.forge_pick(p)
-	rows.append({"type": "text", "text": "Из любой руды — 3 единицы металла. Плавит то, чего меньше всего до нормы и для чего есть руда. Нормы — ниже. Сейчас: %s." % (
+	rows.append({"type": "text", "text": "Из любой руды — 2 единицы металла. Плавит то, чего меньше всего до нормы и для чего есть руда. Нормы — ниже. Сейчас: %s." % (
 		Mat.resource_name(key).to_lower() if not key.is_empty() else "ничего — всё по норме или нет руды")})
 
 

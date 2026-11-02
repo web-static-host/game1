@@ -1683,6 +1683,7 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 		_draw_rails(r, alpha)
 		return
 	if p.rect.size.y > p.rect.size.x:
+		_shaft_lining(r.position.x, r.end.x, r.position.y, r.end.y, alpha, p.material)
 		_ladder(r.get_center().x, r.position.y, r.end.y, alpha, p.material)
 	else:
 		var dark := Color(bc[1], alpha)
@@ -1816,8 +1817,18 @@ func _label(font: Font, p: Vector2, text: String, col: Color) -> void:
 	_c.draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, col)
 
 
+## Кирпичный (каменный) ствол: стенки выложены кирпичом, в них — железные скобы лестницы.
+func _shaft_lining(x0: float, x1: float, top: float, bottom: float, alpha: float, mat: String) -> void:
+	if mat != "brick" and mat != "stone":
+		return
+	var bc: Array = MAT_BEAM[mat]
+	for x in [x0 + 3.0, x1 - 3.0]:
+		_c.draw_line(Vector2(x, top), Vector2(x, bottom), Color(bc[1], alpha), 6.0)
+		_c.draw_line(Vector2(x, top), Vector2(x, bottom), Color(bc[0], alpha), 4.0)
+
+
 func _ladder(cx: float, top: float, bottom: float, alpha: float, mat := "wood") -> void:
-	var bc: Array = MAT_BEAM.get(mat, MAT_BEAM["wood"])
+	var bc: Array = MAT_BEAM.get(RoomType.ladder_material(mat), MAT_BEAM["wood"])
 	var col := Color(bc[0], alpha)
 	var dark := Color(bc[1], alpha)
 	var y := top + 8
@@ -2081,6 +2092,7 @@ func _draw_slice_support(p: Project, i: int, alpha: float) -> void:
 	var a := view.cell_to_local(cells[0])
 	var b := view.cell_to_local(cells[cells.size() - 1]) + Vector2(TILE, TILE)
 	if p.vertical():
+		_shaft_lining(a.x, b.x, a.y, b.y, alpha, _support_look(p))
 		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha, _support_look(p))
 		return
 	_c.draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
