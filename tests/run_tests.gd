@@ -4338,6 +4338,25 @@ func test_forge_ores() -> void:
 	forge.targets["copper"] = 0
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge).is_empty() and colony.recipe(forge).is_empty(), "всё по норме — кузница стоит")
+	# Золота меньше всех, но золотая руда — пара кусков в куче где-то в шахте: плавим железо
+	# со склада, а не ждём золотую руду (кузница стояла при полном складе руды).
+	colony.drops.clear()
+	forge.stock = {}
+	forge.forge_key = ""
+	forge.targets = {"iron": 300, "copper": 0, "silver": 0, "gold": 300}
+	colony.inventory = {"iron": 130, "gold": 50, "iron_ore": 200}
+	colony.drop_item(forge.rect.position + Vector2i(-40, 0), "gold_ore", 3)
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge) == "iron" and colony.has_inputs(forge) == false, "руда на складе важнее кучки дальней руды: плавит железо")
+	colony.inventory.erase("iron_ore")
+	forge.forge_at = -INF
+	check(colony.forge_pick(forge) == "gold", "другой руды нет — берётся и за руду из кучи")
+	# Начатый металл держится, пока его руда лежит в кузнице.
+	colony.inventory["iron_ore"] = 200
+	forge.stock = {"gold_ore": 2}
+	forge.forge_at = -INF
+	colony.inventory["gold"] = 260
+	check(colony.forge_pick(forge) == "gold", "не прыгает между металлами, пока руда для начатого есть в кузнице")
 
 
 ## Уран: обогащают только на фабрике; облучённый живёт на 10% меньше, его дети — мутанты.

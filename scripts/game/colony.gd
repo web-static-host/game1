@@ -8150,8 +8150,10 @@ func _hand_off(u: Unit, p: Project, key: String, at: Vector2i, d_u: int) -> bool
 
 # --- Подсобные рабочие: переноска -------------------------------------------------------
 
-## Сколько циклов сырья держат в мастерской про запас.
+## Сколько циклов сырья держат в мастерской про запас: меньше — несут ещё.
 const SUPPLY_CYCLES := 2
+## Несут сразу на столько циклов (сколько унесут за раз): не по куску через всю шахту.
+const SUPPLY_FILL := 8
 ## Как часто свободный носильщик проверяет, не нужен ли он на стройке.
 const RECHECK_TIME := 3.0
 
@@ -8219,9 +8221,10 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 	for k in need:
 		if RoomType.PIPED.has(k):
 			continue
-		var want: int = need[k] * SUPPLY_CYCLES - p.stock.get(k, 0) - _incoming_to(p, k)
-		if want <= 0:
+		var have: int = p.stock.get(k, 0) + _incoming_to(p, k)
+		if need[k] * SUPPLY_CYCLES - have <= 0:
 			continue
+		var want: int = need[k] * SUPPLY_FILL - have
 		var src := _haul_source(k, dist, u, parents, p.rect.get_center())
 		if src[0] == null:
 			continue
@@ -9032,6 +9035,9 @@ func recipe(p: Project) -> Array:
 
 
 ## Что кузнице плавить: металл ниже нормы (меньше всего от нормы), сырьё для которого есть.
+## Сначала — из руды в самой кузнице и на складах; руда, что только валяется где-то кучками
+## (может, туда и не дойти), — лишь если больше плавить нечего: иначе кузница ждала бы
+## пару кусков золотой руды в дальней шахте, а железо и медь на складе лежали бы без дела.
 ## Начатый цикл доводится до конца. Пересчёт — раз в секунду.
 func forge_pick(p: Project) -> String:
 	if p.targets.is_empty():
@@ -9041,6 +9047,26 @@ func forge_pick(p: Project) -> String:
 	if game_time - p.forge_at < 1.0:
 		return p.forge_key
 	p.forge_at = game_time
+	# Пока руда для начатого металла лежит в кузнице и он ниже нормы — плавим его же,
+	# не прыгая между металлами (иначе руды то одной, то другой не хватает).
+	if not p.forge_key.is_empty() and _have_any(p.forge_key) < int(p.targets.get(p.forge_key, 0)):
+		var ok := true
+		var need: Dictionary = RoomType.FORGE_RECIPES[p.forge_key][0]
+		for i in need:
+			if int(p.stock.get(i, 0)) < int(need[i]):
+				ok = false
+		if ok:
+			return p.forge_key
+	# Сначала — что уже лежит в кузнице, потом — что на складах, и лишь потом — кучки где-то.
+	for where in 3:
+		p.forge_key = _forge_best(p, where)
+		if not p.forge_key.is_empty():
+			break
+	return p.forge_key
+
+
+## where: 0 — руда в самой кузнице, 1 — ещё и на складах, 2 — ещё и в кучах.
+func _forge_best(p: Project, where: int) -> String:
 	var best := ""
 	var best_r := INF
 	for k in RoomType.FORGE_RECIPES:
@@ -9053,12 +9079,16 @@ func forge_pick(p: Project) -> String:
 		var ok := true
 		var need: Dictionary = RoomType.FORGE_RECIPES[k][0]
 		for i in need:
-			if int(p.stock.get(i, 0)) + _have_any(i) < int(need[i]):
+			var got: int = int(p.stock.get(i, 0))
+			if where == 1:
+				got += int(inventory.get(i, 0))
+			elif where == 2:
+				got += _have_any(i)
+			if got < int(need[i]):
 				ok = false
 		if ok and float(have) / norm < best_r:
 			best_r = float(have) / norm
 			best = k
-	p.forge_key = best
 	return best
 
 
