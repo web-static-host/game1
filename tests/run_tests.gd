@@ -2037,6 +2037,20 @@ func test_genetics() -> void:
 		var r: int = Genetics.MUTATIONS[k][0]
 		counts[r] = counts.get(r, 0) + 1
 	check(counts[0] > counts[1] and counts[1] > counts[2] and counts[2] > counts[3], "мутации разной редкости: %s" % counts)
+	var bright_ok := true
+	for i in 50:
+		var dull := Genetics.founder(rng)
+		dull["color"] = [Color(0.4, 0.5, 0.45), Color(0.5, 0.4, 0.45)]
+		Genetics.mutate(dull, rng, "bright")
+		var bc: Color = dull["color"][0]
+		var basic: bool = bc == dull["color"][1] and Genetics.color_of(dull).v > 0.97
+		var any_basic := false
+		for j in Genetics.BASIC_HUES.size():
+			any_basic = any_basic or bc.is_equal_approx(Genetics.basic_color(j))
+		basic = basic and any_basic
+		bright_ok = bright_ok and basic and Genetics.is_mutant(dull) and not Genetics.is_super(dull) \
+			and Genetics.mutation_text(dull).contains("яркий цвет") and not Genetics.mutation_effects(dull).is_empty()
+	check(bright_ok, "мутация «яркий цвет»: выпадает один из основных ярких цветов, обе копии")
 	var melan := Genetics.founder(rng)
 	Genetics.mutate(melan, rng, "melanist")
 	check(Genetics.has(melan, "melanist") and Genetics.stats(melan)["cold"] > 1.3, "меланист — чёрный, не мёрзнет")

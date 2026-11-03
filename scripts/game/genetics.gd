@@ -39,7 +39,7 @@ const RECESSIVE := ["hair", "fur", "shell", "albino", "melanist"]
 
 ## Мутации: вид -> [редкость 0..3, вес].
 const MUTATIONS := {
-	"color": [0, 10.0], "eyes": [0, 10.0], "fingers": [0, 10.0], "pattern": [0, 10.0],
+	"color": [0, 10.0], "bright": [0, 5.0], "eyes": [0, 10.0], "fingers": [0, 10.0], "pattern": [0, 10.0],
 	"hair": [1, 5.0], "fur": [1, 5.0], "shape": [1, 5.0], "long_arms": [1, 5.0],
 	"antennae": [2, 2.0], "horn": [2, 2.0], "gills": [2, 2.0], "giant": [2, 2.0], "tiny": [2, 2.0],
 	"glow": [3, 0.7], "shell": [3, 0.7], "albino": [3, 0.7], "melanist": [3, 0.7], "blind": [3, 0.7],
@@ -48,7 +48,7 @@ const RARITY_NAMES := ["обычная", "необычная", "редкая", "
 ## Сколько раз мутация «гигант» или «кроха» может наложиться.
 const MAX_SIZE := 5
 const MAX_TINY := 3
-const MUTATION_NAMES := {"color": "цвет", "eyes": "глаза", "fingers": "пальцы", "pattern": "узор",
+const MUTATION_NAMES := {"color": "цвет", "bright": "яркий цвет", "eyes": "глаза", "fingers": "пальцы", "pattern": "узор",
 	"hair": "волосы", "fur": "шерсть", "shape": "форма", "long_arms": "длинные руки",
 	"antennae": "усики", "horn": "рог", "gills": "жабры", "giant": "гигант", "tiny": "кроха",
 	"glow": "светится", "shell": "панцирь", "albino": "альбинос", "melanist": "меланист", "blind": "без глаз"}
@@ -62,6 +62,15 @@ const STAT_NAMES := {"vision": "Зрение", "strength": "Сила", "agility"
 	"heat": "Жара", "cold": "Холод", "stamina": "Выносливость", "health": "Здоровье", "appetite": "Аппетит", "fasting": "Голодостойкость",
 	"speed": "Скорость", "learning": "Обучаемость", "fertility": "Плодовитость", "longevity": "Долголетие",
 	"charm": "Общительность"}
+
+## Основные яркие цвета (оттенки): с ними приходят основатели колонии, и они же «выпадают»
+## мутацией «яркий цвет»: красный, синий, зелёный, жёлтый, фиолетовый, оранжевый, голубой.
+const BASIC_HUES := [0.0, 0.62, 0.33, 0.15, 0.8, 0.08, 0.5]
+
+
+static func basic_color(i: int) -> Color:
+	return Color.from_hsv(BASIC_HUES[posmod(i, BASIC_HUES.size())], 1.0, 1.0)
+
 
 ## Цвет как характер: эталонные цвета.
 const RED := Color(1, 0, 0)
@@ -185,6 +194,11 @@ static func mutate(g: Dictionary, rng: RandomNumberGenerator, kind := "") -> voi
 		"color":
 			# Любой цвет, не только яркий: так можно попасть и в тона лого.
 			g["color"] = _pair(Color(rng.randf(), rng.randf(), rng.randf()))
+			g["color_mix"] = 0.5
+		"bright":
+			# Выпадает один из основных ярких цветов, обе копии — как у основателя:
+			# освежает окраску колонии, потускневшую от смешанных копий.
+			g["color"] = _pair(basic_color(rng.randi()))
 			g["color_mix"] = 0.5
 		"eyes":
 			# Глаз становится больше (иногда меньше): 3 → 4 → 5…
@@ -568,6 +582,8 @@ static func mutation_effects(g: Dictionary) -> PackedStringArray:
 				out.append("узор: %s цвета одного из родителей (ничего не даёт)" % ("полосы" if pattern_of(g) == 1 else "пятна"))
 			"color":
 				out.append("новый цвет: свои сильные стороны (красные — жара, синие — холод, зелёные — голод, фиолетовые — ум, бирюза — супер)")
+			"bright":
+				out.append("яркий цвет: выпал один из основных цветов в полную силу, как у основателей (красные — жара, синие — холод, зелёные — голод, фиолетовые — ум)")
 			"shape":
 				out.append(["форма треугольник: ловкость +20%, скорость +10%", "форма квадрат: сила +30%",
 					"форма круг: интеллект +20%, выносливость +10%"][shape_of(g)])

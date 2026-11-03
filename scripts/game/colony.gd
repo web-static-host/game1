@@ -234,12 +234,11 @@ func start_new(home_x: int) -> void:
 	var sexes := [Unit.Sex.MALE, Unit.Sex.FEMALE, Unit.Sex.MALE, Unit.Sex.FEMALE]
 	sexes.append(rng.randi_range(0, 1))
 	# Основатели — самые яркие и разные цвета: красный, синий, зелёный, жёлтый, фиолетовый.
-	var hues := [0.0, 0.62, 0.33, 0.15, 0.8, 0.08, 0.5]
 	for i in START_UNITS:
 		var x := home_x - 2 + i
 		var g := Genetics.founder(rng)
 		g["female"] = sexes[i] == Unit.Sex.FEMALE
-		var col := Color.from_hsv(hues[i % hues.size()], 1.0, 1.0)
+		var col := Genetics.basic_color(i)
 		g["color"] = [col, col]
 		var u := _new_unit(sexes[i], Vector2(x, world.gen.surface_y(x) - 1), g)
 		u.age = Unit.CHILD_TIME + rng.randf_range(0.1, 1.5) * YEAR
