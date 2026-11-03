@@ -520,11 +520,22 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 	if kind == Project.Kind.PROBE and not research.has("geoprobe"):
 		return "Сначала изучите «%s»" % Research.tech_name("geoprobe")
 	# Лифт бур-лифта стоит над буром — и над землёй тоже.
-	if is_passage(kind) and kind != Project.Kind.DRILL and kind != Project.Kind.PROBE and material.get_slice(":", 0) != "cargo_drill":
+	if is_passage(kind) and kind != Project.Kind.DRILL and kind != Project.Kind.PROBE and kind != Project.Kind.LIFT \
+			and material.get_slice(":", 0) != "cargo_drill":
 		for x in range(r.position.x, r.end.x):
 			if r.position.y < world.gen.surface_y(x):
 				return "%s — только под землёй. Над землёй стройте комнаты" % (
-					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Лифты"))
+					{Project.Kind.TUNNEL: "Тоннели", Project.Kind.MINE: "Шахты"}.get(kind, "Ходы"))
+	# Лифт можно и над землёй (башня, эстакада), но он должен на что-то опираться, как комната:
+	# под каждой его колонной — грунт, постройка или сам лифт уходит под землю.
+	if kind == Project.Kind.LIFT and material.get_slice(":", 0) != "cargo_drill":
+		for x in range(r.position.x, r.end.x):
+			if r.position.y >= world.gen.surface_y(x):
+				continue
+			var below := Vector2i(x, r.end.y)
+			var under := project_at(below)
+			if not (interior.has(below) or not world.is_revealed(below.x, below.y) or Mat.is_solid(world.get_mat(below.x, below.y)) or under != null):
+				return "Лифту над землёй не на что опереться — нужен грунт или постройка под ним"
 	if kind == Project.Kind.DRILL or kind == Project.Kind.PROBE:
 		# Бур и геоскважину ставят на землю, на пол хода или прямо в породу (место выкопают).
 		for x in range(r.position.x, r.end.x):

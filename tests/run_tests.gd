@@ -67,6 +67,7 @@ func _initialize() -> void:
 	test_walk_floor_only()
 	test_collapse_losses()
 	test_lifts()
+	test_lift_above_ground()
 	test_stop_by_meter()
 	test_drill()
 	test_drill_side_sand()
@@ -4445,6 +4446,50 @@ func test_stop_by_meter() -> void:
 	colony.cancel_project(b)
 	check(b.kind == Project.Kind.PIER and b.phase == Project.Phase.DONE and b.rect.size.x == 3, "остановили — 3 м стоят пристанью")
 	check(int(colony.inventory.get("wood", 0)) > wood0, "дерево за непостроенное вернули")
+
+
+## Лифт можно ставить и над землёй (башня), если он на что-то опирается.
+func test_lift_above_ground() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 20)
+	_power_up(colony, x)
+	# Место без подземной воды и без чужих построек.
+	var s := w.gen.surface_y(x)
+	var r := Rect2i(x, s - 8, 2, 16)
+	for dx in range(0, 300, 3):
+		var sx := w.gen.surface_y(x + dx)
+		if w.gen.surface_y(x + dx + 1) != sx:
+			continue
+		var rr := Rect2i(x + dx, sx - 8, 2, 16)
+		if colony.validate(Project.Kind.LIFT, rr, "wood").is_empty():
+			x += dx
+			s = sx
+			r = rr
+			break
+	var err := colony.validate(Project.Kind.LIFT, r, "wood")
+	check(err.is_empty(), "лифт из-под земли вверх, над землёй на 8 м — можно: " + err)
+	var tunnel_err := colony.validate(Project.Kind.TUNNEL, Rect2i(x + 6, s - 6, 1, 8), "wood")
+	check(not tunnel_err.is_empty(), "тоннель над землёй — по-прежнему нельзя")
+	var air := colony.validate(Project.Kind.LIFT, Rect2i(x + 12, s - 20, 2, 6), "wood")
+	check(air.contains("не на что опереться"), "лифт, висящий в воздухе, — нельзя: " + air)
+	colony.inventory["iron"] = 200
+	colony.inventory["copper"] = 200
+	colony.inventory["wood"] = 200
+	colony._sync_held()
+	# Башня целиком над землёй, стоит на грунте.
+	r = Rect2i(r.position.x, s - 10, 2, 10)
+	var tower_err := colony.validate(Project.Kind.LIFT, r, "wood")
+	check(tower_err.is_empty(), "лифт-башня на грунте — можно: " + tower_err)
+	var lift := colony.create_project(Project.Kind.LIFT, r, -1, "wood")
+	check(lift != null, "лифт заложен")
+	if lift == null:
+		return
+	colony.advance_offline(6000.0)
+	check(lift.phase == Project.Phase.DONE, "лифт-башня построена (фаза %d, %s)" % [lift.phase, lift.blocked])
+	colony._rebuild_climb()
+	check(colony.pathing.climbable(Vector2i(r.position.x, s - 6)), "по башне можно подняться (аварийная лестница)")
 
 
 func test_lifts() -> void:
