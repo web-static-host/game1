@@ -435,7 +435,9 @@ func materials_for(kind: int) -> Array[String]:
 		Project.Kind.ROOM:
 			return available_materials()
 		Project.Kind.TUNNEL, Project.Kind.MINE:
-			out = available_materials().filter(func(m: String) -> bool: return Project.can_support(m) and (not Project.SUPER.has(m) or m == "gold"))
+			# Крепь выработки — дерево, железо или золото (кирпичных шахт и тоннелей не бывает).
+			out = available_materials().filter(func(m: String) -> bool: return Project.can_support(m) and m != "brick" \
+				and (not Project.SUPER.has(m) or m == "gold"))
 		Project.Kind.LIFT:
 			if research.has("silver_works"):
 				out.append("silver")
@@ -10405,6 +10407,12 @@ func load_dict(d: Dictionary) -> void:
 			g["female"] = u.sex == Unit.Sex.FEMALE
 			u.set_genome(g)
 		units.append(u)
+	# Кирпичных шахт и тоннелей больше нет: старые — с железной крепью (бесплатно).
+	for p in projects:
+		if (p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE) and p.material == "brick":
+			p.material = "iron"
+			if p.support_mat == "brick":
+				p.support_mat = "iron"
 	# Старые сохранения: у пар ещё нет общего знака — даём.
 	for u in units:
 		if u.partner_id != 0 and u.pair_token.is_empty():

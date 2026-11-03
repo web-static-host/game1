@@ -3865,21 +3865,27 @@ func test_materials_no_wood() -> void:
 	check(t.phase == Project.Phase.DONE, "железный тоннель достроен без дерева (%s)" % t.phase_name())
 	check(colony.wear_material(t) == "iron", "железный тоннель изнашивается как железо")
 	check(Colony.ext_material(t) == "wood:iron" and Colony.build_material(Project.Kind.TUNNEL, Colony.ext_material(t)) == "iron", "продолжение — тоже железное")
-	# Готовому тоннелю можно сменить крепь (железную — на кирпичную и т. п.).
+	# Готовому тоннелю можно сменить крепь (железную — на деревянную и т. п.); кирпичной — нет.
 	colony.research.done.append("pottery")
-	check(colony.material_error(t, "brick").is_empty(), "крепь готового тоннеля можно сменить: " + colony.material_error(t, "brick"))
-	var need: Dictionary = RoomType.material_cost(t, "brick")
-	check(need.keys() == ["brick"] and need["brick"] >= 1, "на смену крепи — кирпич (%s)" % str(need))
-	colony.inventory["brick"] = 200
-	check(colony.change_material(t, "brick") and t.phase == Project.Phase.EQUIP, "замена крепи началась")
+	check(not colony.materials_for(Project.Kind.TUNNEL).has("brick") and not colony.material_error(t, "brick").is_empty(),
+		"кирпичных тоннелей и шахт не бывает")
+	check(colony.material_error(t, "wood").is_empty(), "крепь готового тоннеля можно сменить: " + colony.material_error(t, "wood"))
+	var need: Dictionary = RoomType.material_cost(t, "wood")
+	check(need.keys() == ["wood"] and need["wood"] >= 1, "на смену крепи — дерево (%s)" % str(need))
+	colony.inventory["wood"] = 200
+	check(colony.change_material(t, "wood") and t.phase == Project.Phase.EQUIP, "замена крепи началась")
 	colony.advance_offline(20000.0)
-	check(t.phase == Project.Phase.DONE and t.material == "brick", "крепь заменена на кирпичную (%s, %s)" % [t.phase_name(), t.material])
+	check(t.phase == Project.Phase.DONE and t.material == "wood", "крепь заменена на деревянную (%s, %s)" % [t.phase_name(), t.material])
 	check(not colony.material_error(t, "stone").is_empty(), "на камень — нельзя")
 	check(not colony.materials_for(Project.Kind.TUNNEL).has("stone"), "камнем тоннели не крепят")
-	var brick_t := Project.new()
-	brick_t.kind = Project.Kind.TUNNEL
-	brick_t.material = "brick"
-	check(Colony.support_fixed(brick_t) == "brick", "кирпичный тоннель крепят кирпичом")
+	# Старые кирпичные тоннели из сохранений — железные.
+	var d := colony.to_dict()
+	var c2 := Colony.new(colony.world)
+	for pd in d["projects"]:
+		if int(pd["id"]) == t.id:
+			pd["material"] = "brick"
+	c2.load_dict(d)
+	check(c2.project_by_id(t.id).material == "iron", "кирпичный тоннель из старого сохранения стал железным")
 
 
 func test_super_materials() -> void:
