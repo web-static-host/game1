@@ -78,6 +78,7 @@ func _initialize() -> void:
 	test_haul_give_up()
 	test_monogamy()
 	test_antenna_sight()
+	test_super_odds()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3273,6 +3274,29 @@ func test_mine_blockage() -> void:
 ## Пара — на всю жизнь: разлучённые полётом новую пару не ищут, встретились снова — вместе;
 ## свободны, только когда пара умерла (хоть на другой планете).
 ## Усики: гаврик видит породу вокруг себя вдвое дальше, чем даёт геологоразведка.
+## Супер-гаврик: из двух исходных ярких цветов — никогда; если у одного из родителей цвет
+## мутантный — бывает (около 5% детей).
+func test_super_odds() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var from_bright := 0
+	var from_mut := 0
+	var n := 4000
+	for i in n:
+		var a := Genetics.bright_color(rng)
+		var b := Genetics.bright_color(rng)
+		for k in 8:
+			if CreatureArt.super_distance(CreatureArt.mix(a, b, 0.15 + 0.1 * k)) < Genetics.SUPER_RADIUS:
+				from_bright += 1
+				break
+		var m := clampf(0.5 + (rng.randf() - rng.randf()) * 0.7, 0.15, 0.85)
+		if CreatureArt.super_distance(CreatureArt.mix(a, Color(rng.randf(), rng.randf(), rng.randf()), m)) < Genetics.SUPER_RADIUS:
+			from_mut += 1
+	check(from_bright == 0, "из двух исходных ярких цветов супер не выходит (%d)" % from_bright)
+	var pct := 100.0 * from_mut / n
+	check(pct > 3.0 and pct < 8.0, "исходный + мутантный цвет — супер у %.1f%% детей" % pct)
+
+
 func test_antenna_sight() -> void:
 	var colony := _new_colony(44)
 	var w := colony.world
