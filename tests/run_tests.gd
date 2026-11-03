@@ -68,6 +68,7 @@ func _initialize() -> void:
 	test_collapse_losses()
 	test_lifts()
 	test_lift_above_ground()
+	test_launchpad_foundation()
 	test_stop_by_meter()
 	test_drill()
 	test_drill_side_sand()
@@ -4490,6 +4491,56 @@ func test_lift_above_ground() -> void:
 	check(lift.phase == Project.Phase.DONE, "лифт-башня построена (фаза %d, %s)" % [lift.phase, lift.blocked])
 	colony._rebuild_climb()
 	check(colony.pathing.climbable(Vector2i(r.position.x, s - 6)), "по башне можно подняться (аварийная лестница)")
+
+
+## Космодром встаёт полом на самую высокую землю под ним; где земля ниже — фундамент.
+func test_launchpad_foundation() -> void:
+	var colony := _new_colony(43)
+	var w := colony.world
+	_start(colony, 0)
+	colony.research.done.append_array(["rocketry"])
+	colony.known_resources["stone"] = true
+	# Неровное место: перепад высоты земли под рамкой 6 м.
+	var x0 := 0
+	var found := false
+	for x in range(-200, 200):
+		var lo := 1 << 30
+		var hi := -(1 << 30)
+		for dx in 6:
+			lo = mini(lo, w.gen.surface_y(x + dx))
+			hi = maxi(hi, w.gen.surface_y(x + dx))
+		if hi - lo >= 1 and hi - lo <= 3:
+			var r0 := colony.launchpad_rect(x, 6)
+			if colony.launchpad_place_error(r0, "stone").is_empty():
+				x0 = x
+				found = true
+				break
+	check(found, "нашлось неровное место под космодром")
+	if not found:
+		return
+	var r := colony.launchpad_rect(x0, 6)
+	var top := 1 << 30
+	for dx in 6:
+		top = mini(top, w.gen.surface_y(x0 + dx))
+	check(r.end.y == top, "пол космодрома — на самой высокой земле под ним")
+	check(not colony.validate(Project.Kind.ROOM, r, "stone").is_empty(), "обычной комнате там не на что опереться")
+	var cells = colony.foundation_cells(r)
+	check(cells != null and (cells as Array).size() > 0, "под полом — пустота для фундамента")
+	colony.inventory["stone"] = 500
+	colony._sync_held()
+	var p := colony.create_launchpad(r, -1, "stone")
+	check(p != null and p.plan_purpose == RoomType.LAUNCHPAD, "космодром заложен")
+	if p == null:
+		return
+	var solid := true
+	for c in p.foundation:
+		solid = solid and Mat.is_solid(w.get_mat(c.x, c.y))
+	check(not p.foundation.is_empty() and solid, "фундамент заложен (%d клеток)" % p.foundation.size())
+	var plain := Project.cost_for(Project.Kind.ROOM, r, "stone")
+	check(int(p.cost().get("stone", 0)) == int(plain.get("stone", 0)) + p.foundation.size() * 2, "фундамент — в стоимости (2 камня на клетку)")
+	check(Project.from_dict(p.to_dict()).foundation.size() == p.foundation.size(), "фундамент сохраняется")
+	# Касание под землёй: рамка всё равно встаёт на поверхность.
+	check(colony.launchpad_rect(x0, 6) == r, "рамка не зависит от того, куда нажали")
 
 
 func test_lifts() -> void:

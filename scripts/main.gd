@@ -2450,6 +2450,10 @@ func _on_room_options(width: int, material: String) -> void:
 ## Комната выбранного размера под пальцем; сама прилипает к земле или этажу рядом.
 ## Возвращает [рамка, ошибка (пусто — можно)].
 func _room_rect(c: Vector2i) -> Array:
+	# Космодром — только на поверхности: сам встаёт полом на землю (где ниже — фундамент).
+	if hud.room_purpose() == RoomType.LAUNCHPAD:
+		var lp := colony.launchpad_rect(c.x - _room_w / 2, _room_w)
+		return [lp, colony.launchpad_place_error(lp, hud.room_material())]
 	var base := Rect2i(c.x - _room_w / 2, c.y - 1, _room_w, Project.ROOM_HEIGHT)
 	# Касание в готовой шахте: комната встаёт ровно по её высоте и в её пределах,
 	# а ошибка — настоящая причина (например, вес сверху), а не «сдвиг по высоте».
@@ -2575,6 +2579,11 @@ func _pending_spec() -> Dictionary:
 	tp.cargo = kind == Project.Kind.LIFT and Colony.lift_cargo(_pending_material)
 	if kind == Project.Kind.ROOM:
 		tp.support_choice = _pending_support
+	var launchpad := kind == Project.Kind.ROOM and hud.room_purpose() == RoomType.LAUNCHPAD
+	if launchpad:
+		var fc = colony.foundation_cells(r)
+		if fc != null:
+			tp.foundation.assign(fc)
 	var cost := tp.cost()
 	if _pending_material == "drill_lift":
 		# Бур и кабина грузового лифта над ним.
@@ -2627,9 +2636,11 @@ func _pending_spec() -> Dictionary:
 		var tower := colony.loads.tower_of(r, _pending_material)
 		var limit := int(tower[1] * Loads.SLENDER.get(tower[2], 3.0))
 		chips.append(["", "башня %d м из %d возможных" % [tower[0], limit]])
-	var verr := colony.validate(kind, r, _pending_material)
+	var verr := colony.launchpad_place_error(r, _pending_material) if launchpad else colony.validate(kind, r, _pending_material)
 	if not verr.is_empty():
 		rows.append({"type": "warning", "text": verr})
+	elif launchpad and not tp.foundation.is_empty():
+		rows.append({"type": "text", "text": "Земля неровная: под полом — фундамент, %d м³ (в «Материалах»)" % tp.foundation.size()})
 	if kind == Project.Kind.TUNNEL:
 		var lanes := Colony.tunnel_lanes(r)
 		chips.append(["people", "%d %s" % [lanes, "поток" if lanes == 1 else "потока"]])
@@ -2781,11 +2792,15 @@ func _build_room_items() -> Array:
 
 func _confirm_pending() -> bool:
 	var drill_lift := _pending_material == "drill_lift"
-	var err := colony.drill_lift_error(_pending, _dl_dir) if drill_lift else colony.validate(_pending_kind, _pending, _pending_material)
+	var launchpad := _pending_kind == Project.Kind.ROOM and hud.room_purpose() == RoomType.LAUNCHPAD
+	var err := colony.drill_lift_error(_pending, _dl_dir) if drill_lift \
+		else colony.launchpad_place_error(_pending, _pending_material) if launchpad \
+		else colony.validate(_pending_kind, _pending, _pending_material)
 	if not err.is_empty():
 		hud.log_event(err, "warning")
 		return false
 	var p := colony.create_drill_lift(_pending, _pending_workers, _dl_dir, hud.tool_material(Hud.Mode.DRILL_LIFT)) if drill_lift \
+		else colony.create_launchpad(_pending, _pending_workers, _pending_material) if launchpad \
 		else colony.create_project(_pending_kind, _pending, _pending_workers, _pending_material)
 	if p != null and _pending_kind == Project.Kind.ROOM:
 		p.plan_purpose = hud.room_purpose()

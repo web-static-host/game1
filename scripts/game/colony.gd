@@ -551,7 +551,8 @@ func validate(kind: int, r: Rect2i, material := "wood", check_size := true) -> S
 			var under := project_at(below)
 			var ok := interior.has(below) or not world.is_revealed(below.x, below.y) \
 				or Mat.is_solid(world.get_mat(below.x, below.y)) \
-				or (under != null and (under.kind == Project.Kind.TUNNEL or under.kind == Project.Kind.MINE))
+				or (under != null and (under.kind == Project.Kind.TUNNEL or under.kind == Project.Kind.MINE)) \
+				or _foundation_ok
 			if not ok:
 				return "Комнате не на что опереться — нужен грунт или постройка снизу"
 		var floors_err := _floors_error(r, material)
@@ -3542,6 +3543,80 @@ func is_hearth_upgrade(p: Project, t: int) -> bool:
 # --- Космос: космодром, ракета, экспедиции -----------------------------------------------
 
 ## Почему здесь нельзя космодром (пусто — можно): над ним должно быть открытое небо.
+## --- Космодром на поверхности -------------------------------------------------------
+## Космодром ставят только на поверхность: рамка сама встаёт полом на самую высокую землю под
+## ней, а где земля ниже — под полом закладывают фундамент из материала комнаты.
+const FOUNDATION_MAX := 8
+var _foundation_ok := false
+
+
+## Рамка космодрома шириной w от столбца x0: пол — на самой высокой земле под ней.
+func launchpad_rect(x0: int, w: int) -> Rect2i:
+	var top := 1 << 30
+	for x in range(x0, x0 + w):
+		var y := world.gen.surface_y(x) - 30
+		while y < world.gen.surface_y(x) + 30 and world.is_open(x, y) and not interior.has(Vector2i(x, y)):
+			y += 1
+		top = mini(top, y)
+	return Rect2i(x0, top - Project.ROOM_HEIGHT, w, Project.ROOM_HEIGHT)
+
+
+## Клетки фундамента под рамкой r: пустота под полом до земли (не глубже FOUNDATION_MAX);
+## null — где-то до земли дальше.
+func foundation_cells(r: Rect2i) -> Variant:
+	var out: Array[Vector2i] = []
+	for x in range(r.position.x, r.end.x):
+		var y := r.end.y
+		while world.is_open(x, y) and not interior.has(Vector2i(x, y)):
+			if y - r.end.y >= FOUNDATION_MAX or project_at(Vector2i(x, y)) != null or Mat.is_fluid(world.get_mat(x, y)):
+				return null
+			out.append(Vector2i(x, y))
+			y += 1
+	return out
+
+
+## Можно ли поставить космодром в рамку r (с фундаментом, если нужен).
+func launchpad_place_error(r: Rect2i, material: String) -> String:
+	if foundation_cells(r) == null:
+		return "До земли под космодромом больше %d м — фундамент не заложить" % FOUNDATION_MAX
+	_foundation_ok = true
+	var err := validate(Project.Kind.ROOM, r, material)
+	_foundation_ok = false
+	if not err.is_empty():
+		return err
+	for x in range(r.position.x, r.end.x):
+		for y in range(r.position.y - 14, r.position.y):
+			if not world.is_open(x, y) or project_at(Vector2i(x, y)) != null:
+				return "Над космодромом нужно открытое небо (14 м) — для ракеты"
+	return ""
+
+
+## Заложить космодром в рамку r: проверка с фундаментом, сама комната и фундамент под ней.
+func create_launchpad(r: Rect2i, workers := -1, material := "stone") -> Project:
+	if not launchpad_place_error(r, material).is_empty():
+		return null
+	_foundation_ok = true
+	var p := create_project(Project.Kind.ROOM, r, workers, material)
+	_foundation_ok = false
+	if p != null:
+		p.plan_purpose = RoomType.LAUNCHPAD
+		lay_foundation(p)
+	return p
+
+
+## Заложить фундамент под комнатой p (клетки становятся сплошными — на них она и стоит).
+func lay_foundation(p: Project) -> void:
+	var cells = foundation_cells(p.rect)
+	if cells == null:
+		return
+	p.foundation.clear()
+	for c: Vector2i in cells:
+		world.set_material(c.x, c.y, Mat.GRANITE)
+		world.reveal(c.x, c.y)
+		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+		p.foundation.append(c)
+
+
 func launchpad_error(p: Project) -> String:
 	if p.kind != Project.Kind.ROOM:
 		return "Космодром — это комната на поверхности"

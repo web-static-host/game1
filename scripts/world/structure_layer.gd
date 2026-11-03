@@ -166,6 +166,9 @@ func _draw() -> void:
 func _draw_static(shown: Array[Project], font: Font) -> void:
 	_draw_stockpile(font)
 	for p in shown:
+		if not p.foundation.is_empty():
+			_draw_foundation(p)
+	for p in shown:
 		if p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP:
 			_draw_done(p)
 	for p in shown:
@@ -230,6 +233,21 @@ const SOIL := Color(0.38, 0.25, 0.17)
 const MUSHROOM := Color(0.98, 0.95, 0.88)
 const MUSHROOM_CAPS := [Color(1.0, 0.47, 0.35), Color(1.0, 0.78, 0.3), Color(0.6, 0.45, 1.0)]
 const CRATE := Color(0.8, 0.58, 0.34)
+
+
+## Фундамент под комнатой (космодром на неровной земле) — кладка из материала комнаты.
+func _draw_foundation(p: Project) -> void:
+	var c: Array = WALLS.get(p.material, WALLS["stone"])
+	for cell in p.foundation:
+		if not Mat.is_solid(colony.world.get_mat(cell.x, cell.y)):
+			continue
+		var r := _rect_px(Rect2i(cell, Vector2i.ONE))
+		_c.draw_rect(r, c[0])
+		_c.draw_rect(r, c[1], false, 2.0)
+		var mid := r.position.y + r.size.y * 0.5
+		_c.draw_line(Vector2(r.position.x, mid), Vector2(r.end.x, mid), c[1], 1.5)
+		var off := r.size.x * (0.25 if (cell.y % 2) == 0 else 0.75)
+		_c.draw_line(Vector2(r.position.x + off, r.position.y), Vector2(r.position.x + off, mid), c[1], 1.5)
 
 
 func _draw_done(p: Project) -> void:

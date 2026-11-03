@@ -164,6 +164,8 @@ var support_choice := ""
 ## Из чего мебель и лестницы комнаты (выбор игрока): дерево, железо или супер-материал;
 ## "" — по умолчанию (материал комнаты, а у каменной и кирпичной — дерево).
 var furnish_choice := ""
+## Фундамент под комнатой (космодром на неровной земле): клетки, заложенные материалом комнаты.
+var foundation: Array[Vector2i] = []
 ## Космодром: собирают ракету с двигателем ("chem"/"nuclear"); готовая ракета на столе.
 var equip_rocket := ""
 var rocket := ""
@@ -395,7 +397,16 @@ func cost() -> Dictionary:
 		return lift_cost(rect, cargo, extends_id == 0, material)
 	if kind == Kind.DRILL:
 		return drill_cost(rect, material)
-	return cost_for(kind, rect, material)
+	var out := cost_for(kind, rect, material)
+	if not foundation.is_empty():
+		out = out.duplicate()
+		out[material] = int(out.get(material, 0)) + foundation_cost(material, foundation.size())
+	return out
+
+
+## Фундамент: на клетку — 2 единицы материала комнаты (металла — 1).
+static func foundation_cost(mat: String, cells: int) -> int:
+	return cells * (1 if half_support(mat) else 2)
 
 
 ## --- Срезы копки -------------------------------------------------------------
@@ -597,6 +608,7 @@ func to_dict() -> Dictionary:
 		"support_progress": support_progress,
 		"support_mat": support_mat,
 		"furnish_choice": furnish_choice,
+		"foundation": foundation.map(func(c: Vector2i) -> Array: return [c.x, c.y]),
 		"delivered": delivered,
 		"stock": stock,
 		"wear": wear,
@@ -708,6 +720,8 @@ static func from_dict(d: Dictionary) -> Project:
 	p.support_progress = float(d.get("support_progress", 0.0))
 	p.support_mat = str(d.get("support_mat", ""))
 	p.furnish_choice = str(d.get("furnish_choice", ""))
+	for c in d.get("foundation", []):
+		p.foundation.append(Vector2i(int(c[0]), int(c[1])))
 	p.delivered = _int_dict(d.get("delivered", {}))
 	p.stock = _int_dict(d.get("stock", {}))
 	p.wear = float(d.get("wear", 0.0))
