@@ -3620,12 +3620,16 @@ func lay_foundation(p: Project) -> void:
 func launchpad_error(p: Project) -> String:
 	if p.kind != Project.Kind.ROOM:
 		return "Космодром — это комната на поверхности"
+	# Под открытым небом: над ним до самой поверхности (и ещё на 14 м выше) ни породы, ни построек.
+	# Яма или расчищенное место ниже прежней земли — тоже можно, если сверху открыто (раньше
+	# требовалось «пол выше земли» по исходному рельефу, и на месте снесённого полувкопанного
+	# здания космодром не ставился).
 	for x in range(p.rect.position.x, p.rect.end.x):
-		if p.rect.end.y - 1 >= world.gen.surface_y(x):
-			return "Космодром — только на поверхности: пол выше земли"
-		for y in range(p.rect.position.y - 14, p.rect.position.y):
+		var top := mini(p.rect.position.y - 14, world.gen.surface_y(x) - 14)
+		for y in range(top, p.rect.position.y):
 			if not world.is_open(x, y) or project_at(Vector2i(x, y)) != null:
-				return "Над космодромом нужно открытое небо (14 м) — для ракеты"
+				return "Над космодромом нужно открытое небо (14 м над землёй) — для ракеты: сверху %s" % (
+					"постройка" if project_at(Vector2i(x, y)) != null else "порода")
 	return ""
 
 

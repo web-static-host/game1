@@ -4541,6 +4541,20 @@ func test_launchpad_foundation() -> void:
 	check(Project.from_dict(p.to_dict()).foundation.size() == p.foundation.size(), "фундамент сохраняется")
 	# Касание под землёй: рамка всё равно встаёт на поверхность.
 	check(colony.launchpad_rect(x0, 6) == r, "рамка не зависит от того, куда нажали")
+	# Космодром ниже прежней земли (на месте снесённого полувкопанного здания), но под открытым
+	# небом — можно; под породой — нельзя.
+	var pit := Project.new()
+	pit.kind = Project.Kind.ROOM
+	pit.purpose = RoomType.LAUNCHPAD
+	var px := x0 + 40
+	var ps := w.gen.surface_y(px)
+	pit.rect = Rect2i(px, ps - 2, 6, 3)
+	for x in range(px, px + 6):
+		for y in range(ps - 2, ps + 1):
+			w.set_material(x, y, Mat.AIR)
+	check(colony.launchpad_error(pit).is_empty(), "в открытой сверху выемке — можно: " + colony.launchpad_error(pit))
+	w.set_material(px + 2, ps - 4, Mat.GRANITE)
+	check(colony.launchpad_error(pit).contains("открытое небо"), "над ним порода — нельзя")
 
 
 func test_lifts() -> void:
