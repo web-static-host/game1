@@ -5307,7 +5307,28 @@ func update(dt: float) -> void:
 
 
 ## Гаврики открывают карту вокруг себя.
+## Гаврик с усиками видит породу вокруг себя вдвое дальше, чем открывает геологоразведка, —
+## где бы ни стоял (в конце шахты, в тоннеле, на земле). Клетка, откуда уже смотрел, — заново
+## не осматривается (пока не изучена новая геология).
+var _antenna_seen := {}
+
+
+func _antenna_sight() -> void:
+	var r := see_radius() * 2
+	for u in units:
+		if not Genetics.has(u.genome, "antennae"):
+			continue
+		var c := u.cell()
+		var key := Vector3i(c.x, c.y, r)
+		if _antenna_seen.get(u.id) == key:
+			continue
+		_antenna_seen[u.id] = key
+		for n in world.reveal_around(c.x, c.y, r):
+			_note_discovery(world.get_mat(n.x, n.y), n)
+
+
 func explore() -> void:
+	_antenna_sight()
 	for u in units:
 		explored_min = mini(explored_min, roundi(u.pos.x) - EXPLORE_RADIUS)
 		explored_max = maxi(explored_max, roundi(u.pos.x) + EXPLORE_RADIUS)

@@ -77,6 +77,7 @@ func _initialize() -> void:
 	test_merge_passages()
 	test_haul_give_up()
 	test_monogamy()
+	test_antenna_sight()
 	test_stacked_mines()
 	test_lift_merge()
 	test_lift_above_zero()
@@ -3271,6 +3272,26 @@ func test_mine_blockage() -> void:
 ## берёт другой.
 ## Пара — на всю жизнь: разлучённые полётом новую пару не ищут, встретились снова — вместе;
 ## свободны, только когда пара умерла (хоть на другой планете).
+## Усики: гаврик видит породу вокруг себя вдвое дальше, чем даёт геологоразведка.
+func test_antenna_sight() -> void:
+	var colony := _new_colony(44)
+	var w := colony.world
+	_start(colony, 0)
+	var u: Unit = colony.units[0]
+	var x := 40
+	var s := w.gen.surface_y(x)
+	u.pos = Vector2(x, s - 1)
+	var r := colony.see_radius()
+	var far := Vector2i(x, s - 1 + r * 2)
+	var near_out := Vector2i(x, s - 1 + r + 1)
+	check(not w.is_revealed(far.x, far.y), "глубже радиуса геологии порода не видна")
+	colony._antenna_sight()
+	check(not w.is_revealed(near_out.x, near_out.y), "без усиков дальше не видно")
+	u.genome["antennae"] = [true, false]
+	colony._antenna_sight()
+	check(w.is_revealed(near_out.x, near_out.y) and w.is_revealed(far.x, far.y), "с усиками видно вдвое дальше (%d м)" % (r * 2))
+
+
 func test_monogamy() -> void:
 	var ea := _new_colony(41)
 	_start(ea, 0)
