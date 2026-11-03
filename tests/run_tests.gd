@@ -4487,6 +4487,17 @@ func test_stacked_mines() -> void:
 	check(colony.pathing.node(Vector2i(x + 1, s + 8)), "в верхней шахте можно стоять на крепи нижней")
 	check(colony.pathing.node(Vector2i(x + 1, s + 11)), "в нижней — на её полу")
 	check(up != null and low != null, "шахты на месте")
+	# Горизонтальный ход прямо под землёй, над ним — дыра в 1 клетку (как лифт под тропой у
+	# космодрома): на крышу хода встают, а через дыру спускаются в сам ход.
+	var gx := x + 20
+	var gs := w.gen.surface_y(gx)
+	_dug_project(colony, Project.Kind.TUNNEL, Rect2i(gx, gs + 1, 8, 2), 932)
+	w.set_material(gx + 3, gs, Mat.AIR)
+	w.set_dug(gx + 3, gs)
+	colony._rebuild_climb()
+	check(colony.pathing.node(Vector2i(gx + 3, gs)), "на крыше хода в дыре можно стоять")
+	var e := colony.pathing.explore(Vector2i(gx + 1, w.gen.surface_y(gx + 1) - 1))
+	check((e[1] as Dictionary).has(Vector2i(gx + 6, gs + 2)), "через дыру спускаются в ход")
 
 
 func test_stop_by_meter() -> void:

@@ -2724,6 +2724,18 @@ func _climb_signature() -> int:
 	return hash(a)
 
 
+## Горизонтальный ход: шахта, тоннель вбок, лифт вбок.
+func _flat_passage(p: Project) -> bool:
+	match p.kind:
+		Project.Kind.MINE:
+			return true
+		Project.Kind.TUNNEL:
+			return not p.vertical()
+		Project.Kind.LIFT:
+			return not p.lift_vertical()
+	return false
+
+
 func _rebuild_climb() -> void:
 	var lad := {}
 	var site := {}
@@ -2768,6 +2780,22 @@ func _rebuild_climb() -> void:
 				var a := Vector2i(x, p.rect.position.y - 1)
 				if interior.has(a) and interior[a] != p.id:
 					fl[a] = true
+		# Крыша готового горизонтального хода (тоннель, шахта, лифт) держится на крепи: над ней
+		# пусто (поверхность, яма) — по ней ходят. Иначе ход, прокопанный под тропой, отрезал
+		# всё, что за ним (лифт под космодромом отрезал его от складов).
+		# В начале каждого такого просвета — лестница вниз, в сам ход: просвет мог быть входом.
+		if p.phase == Project.Phase.DONE and _flat_passage(p):
+			var gap := false
+			for x in range(p.rect.position.x, p.rect.end.x):
+				var a := Vector2i(x, p.rect.position.y - 1)
+				var open := world.is_open(a.x, a.y) and not interior.has(a) and not room_cells.has(a)
+				if open:
+					fl[a] = true
+					if not gap:
+						lad[a] = true
+						for y in range(p.rect.position.y, p.rect.end.y):
+							lad[Vector2i(x, y)] = true
+				gap = open
 		# Шахта и горизонтальный тоннель над пещерой: пол на крепи — из них не проваливаются.
 		var flat := p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical())
 		if flat:
