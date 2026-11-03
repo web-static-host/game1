@@ -19,6 +19,14 @@ const MUTATION_CHANCE := 0.1
 const SUPER_RADIUS := 0.12
 ## Стартовые цвета основателей держатся подальше от бирюзы (супер-гаврики только выводятся).
 const FOUNDER_GAP := 0.175
+## Шанс, что родитель передаст не одну из своих копий цвета, а свой видимый (смешанный) цвет.
+const BLEND_CHANCE := 0.1
+## Насколько «мутнеет» смешанная копия от разницы оттенков родительских копий (как краски).
+const MUD := 1.0
+## Какую долю потерянной яркости смешанная копия возвращает (колония не темнеет до бурого).
+const MUD_RECOVER := 0.3
+## Ниже этой яркости смешанная копия не темнеет.
+const MUD_FLOOR := 0.8
 
 const SHAPE_NAMES := ["треугольник", "квадрат", "круг"]
 ## Цвета волос: тёмные доминируют над светлыми (видна копия с меньшим номером).
@@ -67,7 +75,7 @@ const PINK := Color(1, 0.2, 0.6)
 
 ## Яркий стартовый цвет: полная насыщенность и яркость, любой оттенок, кроме бирюзы лого.
 ## Смесь двух исходных ярких цветов до (тёмной) бирюзы лого не дотягивает — супер-гаврик
-## выходит, только если у кого-то из предков был мутантный цвет.
+## выходит из мутантного цвета или через поколения смешанных (чуть помутневших) копий.
 static func bright_color(rng: RandomNumberGenerator) -> Color:
 	while true:
 		var c := Color.from_hsv(rng.randf(), rng.randf_range(0.85, 1.0), 1.0)
@@ -109,7 +117,8 @@ static func _personality(rng: RandomNumberGenerator) -> String:
 ## с одинаковой вероятностью (без учёта редкости).
 static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGenerator, irradiated := false) -> Dictionary:
 	var g := {"mutations": []}
-	for gene in ["color", "shape", "eyes", "fingers", "size", "pattern", "hair_color"] + DOMINANT + RECESSIVE:
+	g["color"] = [_color_copy(mother, rng), _color_copy(father, rng)]
+	for gene in ["shape", "eyes", "fingers", "size", "pattern", "hair_color"] + DOMINANT + RECESSIVE:
 		var a: Array = mother[gene]
 		var b: Array = father[gene]
 		g[gene] = [a[rng.randi() % 2], b[rng.randi() % 2]]
@@ -128,6 +137,30 @@ static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGener
 	elif rng.randf() < MUTATION_CHANCE:
 		mutate(g, rng)
 	return g
+
+
+## Копия цвета, которую родитель отдаёт ребёнку: обычно одна из его двух копий без изменений,
+## иногда — его видимый смешанный цвет, чуть темнее (тем темнее, чем дальше оттенки его копий).
+## У основателя обе копии одинаковые — его копия всегда исходная, поэтому ребёнок двух
+## «чистых» цветов супер-гавриком не бывает; бирюзу выводят через смешанных потомков.
+static func _color_copy(parent: Dictionary, rng: RandomNumberGenerator) -> Color:
+	var a: Array = parent["color"]
+	if rng.randf() >= BLEND_CHANCE:
+		return a[rng.randi() % 2]
+	return blended_copy(parent)
+
+
+static func blended_copy(parent: Dictionary) -> Color:
+	var a: Color = parent["color"][0]
+	var b: Color = parent["color"][1]
+	var c := color_of(parent)
+	var dh := absf(fposmod(b.ok_hsl_h - a.ok_hsl_h + 0.5, 1.0) - 0.5)
+	if a.ok_hsl_s < 0.08 or b.ok_hsl_s < 0.08 or dh < 0.001:
+		return c
+	# Мутнеет от разницы оттенков, но и отчасти «отмывается»: из поколения в поколение
+	# колония не темнеет до бурого.
+	var v := maxf(lerpf(c.v, 1.0, MUD_RECOVER) * (1.0 - MUD * dh), minf(c.v, MUD_FLOOR))
+	return Color.from_hsv(c.h, c.s, v)
 
 
 ## Случайный вид мутации с учётом редкости.

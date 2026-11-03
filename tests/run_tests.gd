@@ -3295,6 +3295,36 @@ func test_super_odds() -> void:
 	check(from_bright == 0, "из двух исходных ярких цветов супер не выходит (%d)" % from_bright)
 	var pct := 100.0 * from_mut / n
 	check(pct > 3.0 and pct < 8.0, "исходный + мутантный цвет — супер у %.1f%% детей" % pct)
+	# Без мутаций: дети двух исходных цветов — никогда, через поколения смешанных — изредка.
+	var direct := 0
+	for i in 3000:
+		var k := Genetics.child(Genetics.founder(rng), Genetics.founder(rng), rng)
+		if not (k["mutations"] as Array).has("color") and Genetics.is_super(k):
+			direct += 1
+	check(direct == 0, "ребёнок двух исходных цветов — не супер (%d)" % direct)
+	var supers := 0
+	var born := 0
+	var v_sum := 0.0
+	for s in 4:
+		var pop := []
+		for i in 60:
+			pop.append(Genetics.founder(rng))
+		for gen in 12:
+			var nxt := []
+			while nxt.size() < 60:
+				var k := Genetics.child(pop[rng.randi() % 60], pop[rng.randi() % 60], rng)
+				if not (k["mutations"] as Array).has("color"):
+					nxt.append(k)
+			pop = nxt
+			if gen >= 6:
+				for k in pop:
+					born += 1
+					supers += 1 if Genetics.is_super(k) else 0
+		for k in pop:
+			v_sum += Genetics.color_of(k).v / 240.0
+	var bred := 100.0 * supers / born
+	check(supers > 0 and bred < 6.0, "без мутаций супер выводится через поколения: %.1f%% (7–12-е поколение)" % bred)
+	check(v_sum > 0.85, "за 12 поколений колония не тускнеет (яркость %.2f)" % v_sum)
 
 
 func test_antenna_sight() -> void:
