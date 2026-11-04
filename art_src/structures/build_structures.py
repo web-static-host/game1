@@ -285,6 +285,30 @@ def ladder(look):
         _bar('rung', -0.23, z - 0.035, 0.23, z + 0.035, -0.035, 0.035, m, look)
 
 
+def foundation(look):
+    """Блок фундамента 1×1 м (под космодромом на неровной земле): камень и кирпич — кладка
+    вразбежку, дерево — сруб из брёвен, металлы — плита на заклёпках, алмаз — гранёный блок."""
+    import random
+    m = beam_mat(look)
+    gap = R.mat('gap', '#2a2420', 0.9)
+    R.box('back', -0.5, 0.0, 0.5, 1.0, 0.05, 0.15, gap, 0)
+    if look in ('stone', 'brick'):
+        size = (0.34, 0.5, 0.25, .02) if look == 'brick' else (0.4, 0.6, 0.33, .03)
+        for (a0, a1, b0, b1) in R.courses(-0.5, 0.5, 0.0, 1.0, size, random.Random(7)):
+            R.box('block', a0, b0, a1, b1, -0.08, 0.06, m, 0.03)
+    elif look == 'wood':
+        for k in range(3):
+            z = 0.17 + k * 0.33
+            cyl_x('log', 0.16, -0.5, 0.5, m, z=z, y=-0.05)
+    else:
+        _bar('plate', -0.48, 0.02, 0.48, 0.98, -0.08, 0.06, m, look)
+        if look != 'diamond':
+            bolt = R.mat('bolt', '#3b3940', 0.35, metal=0.5)
+            for x in (-0.38, 0.38):
+                for z in (0.12, 0.88):
+                    R.bolt(x, z, -0.09, bolt, 0.03)
+
+
 # --- Бур, геоскважина, лифт -------------------------------------------------------------------
 
 def drill(look):
@@ -367,6 +391,7 @@ for _m in BEAM_LOOK:
     STRUCTURES['slice_' + _m] = [lambda m=_m: slice_frame(m), (-0.5, 0.5, 0.0, 3.0)]
     STRUCTURES['ladder_' + _m] = [lambda m=_m: ladder(m), (-0.5, 0.5, 0.0, 1.0)]
     STRUCTURES['rail_' + _m] = [lambda m=_m: rail(m), (-0.15, 0.15, 0.0, 1.0)]
+    STRUCTURES['foundation_' + _m] = [lambda m=_m: foundation(m), (-0.5, 0.5, 0.0, 1.0)]
 
 
 def light_and_camera(frame):

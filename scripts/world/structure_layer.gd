@@ -238,10 +238,14 @@ const CRATE := Color(0.8, 0.58, 0.34)
 ## Фундамент под комнатой (космодром на неровной земле) — кладка из материала комнаты.
 func _draw_foundation(p: Project) -> void:
 	var c: Array = WALLS.get(p.material, WALLS["stone"])
+	var tex := structure_texture("foundation_" + p.material)
 	for cell in p.foundation:
 		if not Mat.is_solid(colony.world.get_mat(cell.x, cell.y)):
 			continue
 		var r := _rect_px(Rect2i(cell, Vector2i.ONE))
+		if tex != null:
+			_c.draw_texture_rect(tex, r, false)
+			continue
 		_c.draw_rect(r, c[0])
 		_c.draw_rect(r, c[1], false, 2.0)
 		var mid := r.position.y + r.size.y * 0.5
@@ -643,7 +647,7 @@ const STRUCT_FRAMES := {
 }
 ## Рамы, лестницы и направляющие — по материалу (support_wood, ladder_gold…): рамка по виду.
 const PART_FRAMES := {"support": [-0.5, 0.5, 0.0, 1.0], "slice": [-0.5, 0.5, 0.0, 3.0], "ladder": [-0.5, 0.5, 0.0, 1.0],
-	"rail": [-0.15, 0.15, 0.0, 1.0]}
+	"rail": [-0.15, 0.15, 0.0, 1.0], "foundation": [-0.5, 0.5, 0.0, 1.0]}
 static var _struct_tex := {}
 static func structure_texture(name: String) -> Texture2D:
 	if not _struct_tex.has(name):
@@ -1303,7 +1307,8 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
 	var lay := _inside(p, r, n * 3.0)
-	var gas := p.purpose == RoomType.GAS_GEN
+	# Дизельный — пока как газовый (двигатель с топливной трубой, без угля), своей картинки нет.
+	var gas := p.purpose == RoomType.GAS_GEN or p.purpose == RoomType.DIESEL_GEN
 	var on := p.burning
 	var k := TILE / FURN_PX_PER_M
 	var mod := Color(1, 1, 1, alpha)
