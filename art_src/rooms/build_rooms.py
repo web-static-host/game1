@@ -12,7 +12,7 @@ PX = int(os.environ.get('ROOMS_PX', 64))   # пикселей на метр (к�
 H = 3.0           # высота комнаты
 WIDTHS = [int(v) for v in os.environ.get('ROOMS_WIDTHS', '3,6,9').split(',')]
 # Глины нет: автор её уберёт из игры, там остаётся рисунок кодом.
-MATERIALS = os.environ.get('ROOMS_MATERIALS', 'wood,stone,brick,metal').split(',')
+MATERIALS = os.environ.get('ROOMS_MATERIALS', 'wood,stone,brick,iron,silver,gold,diamond').split(',')
 
 
 def reset():
@@ -81,7 +81,7 @@ def mat(name, col, rough=0.6, grain=0.0, kind='wave', metal=0.0):
     return m
 
 
-def box(name, x0, z0, x1, z1, y0, y1, m, bevel=0.03):
+def box(name, x0, z0, x1, z1, y0, y1, m, bevel=0.03, segments=3):
     bpy.ops.mesh.primitive_cube_add()
     o = bpy.context.object
     o.name = name
@@ -91,9 +91,10 @@ def box(name, x0, z0, x1, z1, y0, y1, m, bevel=0.03):
     if bevel > 0:
         b = o.modifiers.new('bevel', 'BEVEL')
         b.width = bevel
-        b.segments = 3
+        b.segments = segments
     o.data.materials.append(m)
-    bpy.ops.object.shade_smooth()
+    if segments > 1:
+        bpy.ops.object.shade_smooth()
     return o
 
 
@@ -185,7 +186,29 @@ STYLES = {
         ceil=['#687180', '#6f7887'], ceil_size=(1.1, 1.3, 0.5, .03), ceil_grain=0.0,
         gap='#262b34', post='#5c6574', frame='#4d5562', frame_grain=0.0, iron='#2f343c',
         braces=True, joists=True, bolts=True, rivets=True),
+    # Супер-материалы: серебро — полированные листы на заклёпках, золото — мягкие плитки,
+    # алмаз — гранёные кристаллические плитки (крупная фаска ловит блики).
+    'silver': dict(
+        wall=['#e6ebf3', '#dbe2ec', '#eef2f8', '#d2dae6'], wall_size=(0.6, 0.8, 0.4, .02), wall_rough=0.16,
+        grain=0.0, kind='noise', bevel=.045, metal=0.6,
+        ceil=['#c3cbd8', '#cdd4e0'], ceil_size=(0.6, 0.8, 0.4, .02), ceil_grain=0.0,
+        gap='#5d6b80', post='#b9c3d2', frame='#9aa6b8', frame_grain=0.0, iron='#6f7c90',
+        braces=True, joists=True, bolts=True, rivets=True),
+    'gold': dict(
+        wall=['#e8b94a', '#dcab3c', '#efc65c', '#d3a032'], wall_size=(0.5, 0.7, 0.5, .025), wall_rough=0.32,
+        grain=0.0, kind='noise', bevel=.06, metal=0.8,
+        ceil=['#c8952e', '#d29f36'], ceil_size=(0.5, 0.7, 0.5, .025), ceil_grain=0.0,
+        gap='#5a3c0c', post='#b5832a', frame='#9a6c1e', frame_grain=0.0, iron='#6b4a12',
+        braces=True, joists=True, bolts=True),
+    'diamond': dict(
+        wall=['#bdeefa', '#d6f7ff', '#a6e4f4', '#e8fbff'], wall_size=(0.5, 0.66, 0.5, .008), wall_rough=0.06,
+        grain=0.0, kind='noise', bevel=.07, metal=0.15, facets=True, tile_t=0.12,
+        ceil=['#9fd8ea', '#b2e2f0'], ceil_size=(0.5, 0.66, 0.5, .008), ceil_grain=0.0,
+        gap='#6fb2c6', post='#6fb7cc', frame='#4f93a8', frame_grain=0.0, iron='#2f6273',
+        braces=False, joists=True, bolts=True),
 }
+# Железная комната — металлическая (раньше рендерилась под именем metal, а игра ищет iron).
+STYLES['iron'] = STYLES['metal']
 
 
 def courses(a0, a1, b0, b1, size, rnd):
@@ -324,7 +347,7 @@ def room(material, w):
     frame = mat('frame', st['frame'], 0.5, st['frame_grain'], fkind, metal)
     iron = mat('iron', st['iron'], 0.35, metal=0.5)
     bev = st['bevel']
-    t = 0.06
+    t = st.get('tile_t', 0.06)    # толщина плиток кладки (у алмаза толще — фаска становится гранями)
     X0, X1, Z0, Z1 = FS, w - FS, FB, H - FT
     inner = []
     # Подложка за кладкой стен — в швах (у кирпича светлая, раствор); у потолка всегда тёмная.
@@ -337,7 +360,7 @@ def room(material, w):
         # Камни задней стены: плоскость y = D, толщина — к зрителю (y меньше).
         inner += stones('back', X0, X1, Z0, Z1, lambda u, v, d: (u, D + t - d, v), walls, rnd)
     for (a0, a1, b0, b1) in ([] if st.get('rubble') else courses(X0, X1, Z0, Z1, st['wall_size'], rnd)):
-        inner.append(box('back', a0, b0, a1, b1, D, D + t, rnd.choice(walls), bev))
+        inner.append(box('back', a0, b0, a1, b1, D, D + t, rnd.choice(walls), bev, 1 if st.get('facets') else 3))
         if st.get('rivets'):
             for (rx, rz) in ((a0 + .07, b0 + .07), (a1 - .07, b0 + .07), (a0 + .07, b1 - .07), (a1 - .07, b1 - .07)):
                 rivet_at.append((rx, rz))
@@ -347,7 +370,7 @@ def room(material, w):
     if st.get('rubble'):
         inner += stones('ceil', X0, X1, -0.05, D + 0.05, lambda u, v, d: (u, v, Z1 + t - d), ceils, rnd)
     for (a0, a1, b0, b1) in ([] if st.get('rubble') else courses(X0, X1, 0.0, D, st['ceil_size'], rnd)):
-        inner.append(box('ceil', a0, Z1, a1, Z1 + t, b0, b1, rnd.choice(ceils), bev))
+        inner.append(box('ceil', a0, Z1, a1, Z1 + t, b0, b1, rnd.choice(ceils), bev, 1 if st.get('facets') else 3))
     # Боковые стены: ряды по высоте, элементы в глубину.
     for x, sd in ((X0, -1), (X1, 1)):
         g0, g1 = sorted((x + sd * .06, x + sd * .12))
@@ -359,7 +382,7 @@ def room(material, w):
             inner += stones('side', -0.05, D + 0.05, Z0, Z1, lambda u, v, d, xs=xs, sd=sd: (xs - sd * d, u, v), walls, rnd)
             continue
         for (a0, a1, b0, b1) in courses(-0.05, D + 0.02, Z0, Z1, st['wall_size'], rnd):
-            inner.append(box('side', c0, b0, c1, b1, a0, a1, rnd.choice(walls), bev))
+            inner.append(box('side', c0, b0, c1, b1, a0, a1, rnd.choice(walls), bev, 1 if st.get('facets') else 3))
     # Стойки в задних углах, балки по рёбрам потолка и низ задней стены.
     for x in (X0, X1 - 0.2):
         inner.append(box('corner', x, Z0, x + 0.2, Z1, D - 0.2, D, post, .04))

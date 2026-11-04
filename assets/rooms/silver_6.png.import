@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cifoynsalrssu"
-path="res://.godot/imported/metal_6.png-d4096bbb04e7a83a27ada996609cd253.ctex"
+uid="uid://bvqq1133y1i5q"
+path="res://.godot/imported/silver_6.png-3c2dbb9dcf9cdf6090ed3a52e1c1077f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/rooms/metal_6.png"
-dest_files=["res://.godot/imported/metal_6.png-d4096bbb04e7a83a27ada996609cd253.ctex"]
+source_file="res://assets/rooms/silver_6.png"
+dest_files=["res://.godot/imported/silver_6.png-3c2dbb9dcf9cdf6090ed3a52e1c1077f.ctex"]
 
 [params]
 

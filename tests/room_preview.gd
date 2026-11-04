@@ -2,7 +2,8 @@ extends SceneTree
 ## Снимки комнат из разных материалов: жилые, склады, амбары, фермы — новые картинки и как было.
 ##   xvfb-run godot --path . --resolution 1280x720 -s res://tests/room_preview.gd -- <папка> [2]
 ## С «2» — второй набор: очаги (камень, кирпич, газ), столовые, лаборатории; с «3» — генераторы
-## (уголь, метан), обжиговые, насосные, дегазация; с «4» — вентиляция и кузницы.
+## (уголь, метан), обжиговые, насосные, дегазация; с «4» — вентиляция и кузницы; с «5» — нефтяные,
+## дизельный генератор, обогатительная, телепорт; с «6» — комнаты из серебра, золота и алмаза.
 
 var _main: Node
 var _frame := 0
@@ -10,6 +11,8 @@ var _out := "user://"
 var _set2 := false
 var _set3 := false
 var _set4 := false
+var _set5 := false
+var _set6 := false
 
 
 func _initialize() -> void:
@@ -19,6 +22,8 @@ func _initialize() -> void:
 	_set2 = args.size() > 1 and args[1] == "2"
 	_set3 = args.size() > 1 and args[1] == "3"
 	_set4 = args.size() > 1 and args[1] == "4"
+	_set5 = args.size() > 1 and args[1] == "5"
+	_set6 = args.size() > 1 and args[1] == "6"
 	if FileAccess.file_exists(SaveSystem.DEFAULT_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SaveSystem.DEFAULT_PATH))
 	_main = load("res://scenes/main.tscn").instantiate()
@@ -33,17 +38,18 @@ func _process(_delta: float) -> bool:
 		var x0: int = _main._home.x + 2
 		var s := world.gen.surface_y(x0)
 		colony.inventory = {"wood": 600, "stone": 300, "food": 200, "brick": 300, "iron": 300, "coal": 15, "gold": 10, "copper": 10,
-			"salt": 10, "iron": 20, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10, "methane": 60}
+			"salt": 10, "diamond": 10, "uranium": 10, "clay": 15, "limestone": 15, "silver": 10, "methane": 60}
 		colony.known_resources = {"wood": true, "stone": true}
 		# Геологоразведка II: порода видна на 3 клетки от выработок — проверить, что все открытые
 		# клетки рисуются одинаково.
-		colony.research.done.append_array(["geology", "geology2", "electricity"])
+		colony.research.done.append_array(["geology", "geology2", "electricity", "pottery", "steel_frame"])
 		var T := Project.Kind.TUNNEL
 		var R := Project.Kind.ROOM
 		colony.create_project(T, Rect2i(x0, s, 1, 15))
 		colony.create_project(R, Rect2i(x0 + 1, s + 2, 9, 3), -1, "wood")
-		colony.create_project(R, Rect2i(x0 + 1, s + 5, 6, 3), -1, "brick")
-		colony.create_project(R, Rect2i(x0 + 7, s + 5, 3, 3), -1, "iron")
+		for spec in [[Rect2i(x0 + 1, s + 5, 6, 3), "brick"], [Rect2i(x0 + 7, s + 5, 3, 3), "iron"]]:
+			if colony.create_project(R, spec[0], -1, spec[1]) == null:
+				print("не построить ", spec, ": ", colony.validate(R, spec[0], spec[1], true))
 		colony.create_project(R, Rect2i(x0 + 1, s + 8, 6, 3), -1, "stone")
 		colony.create_project(R, Rect2i(x0 + 7, s + 8, 3, 3), -1, "wood")
 		colony.create_project(R, Rect2i(x0 + 1, s + 11, 6, 3), -1, "wood")
@@ -75,6 +81,14 @@ func _process(_delta: float) -> bool:
 				if _set4:
 					pr.purpose = {2: RoomType.VENT, 5: RoomType.FORGE if left else RoomType.VENT,
 						8: RoomType.VENT if left else RoomType.FORGE, 11: RoomType.FORGE if left else RoomType.VENT}[row]
+				if _set5:
+					pr.purpose = {2: RoomType.REFINERY, 5: RoomType.OIL_TANK if left else RoomType.OIL_PUMP,
+						8: RoomType.DIESEL_GEN if left else RoomType.TELEPORT, 11: RoomType.ENRICHMENT if left else RoomType.OIL_TANK}[row]
+				if _set6:
+					pr.material = {2: "gold", 5: "silver" if left else "diamond", 8: "diamond" if left else "gold",
+						11: "silver" if left else "iron"}[row]
+					pr.purpose = {2: RoomType.HOME, 5: RoomType.LAB if left else RoomType.FORGE,
+						8: RoomType.FORGE if left else RoomType.STORAGE, 11: RoomType.GENERATOR if left else RoomType.VENT}[row]
 				# Склады одной ширины: кирпичный с лестницей, каменный без — должны выглядеть одинаково.
 				if pr.material == "stone":
 					pr.ladder = false
