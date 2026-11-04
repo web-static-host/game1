@@ -9120,6 +9120,29 @@ func _forge_best(p: Project, where: int) -> String:
 	return best
 
 
+## Почему кузница стоит: что уже по норме, чему не из чего плавить.
+func forge_idle_text(p: Project) -> String:
+	var full: PackedStringArray = []
+	var no_ore: PackedStringArray = []
+	for k in RoomType.FORGE_RECIPES:
+		var norm := int(p.targets.get(k, 0))
+		if norm <= 0:
+			continue
+		if _have_any(k) >= norm:
+			full.append("%s %d/%d" % [Mat.resource_name(k).to_lower(), _have_any(k), norm])
+		else:
+			for i in RoomType.FORGE_RECIPES[k][0]:
+				no_ore.append("%s — нет руды (%s)" % [Mat.resource_name(k).to_lower(), Mat.resource_name(i).to_lower()])
+	var parts: PackedStringArray = []
+	if not full.is_empty():
+		parts.append("по норме: " + ", ".join(full))
+	if not no_ore.is_empty():
+		parts.append("не из чего: " + ", ".join(no_ore))
+	if parts.is_empty():
+		return "Кузница стоит: все нормы — 0. Задайте нормы ниже."
+	return "Кузница стоит — %s. Поднимите нормы ниже, чтобы плавить ещё." % "; ".join(parts)
+
+
 func has_inputs(p: Project) -> bool:
 	var r := recipe(p)
 	if r.is_empty():

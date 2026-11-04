@@ -4338,6 +4338,7 @@ func test_forge_ores() -> void:
 	forge.targets["copper"] = 0
 	forge.forge_at = -INF
 	check(colony.forge_pick(forge).is_empty() and colony.recipe(forge).is_empty(), "всё по норме — кузница стоит")
+	check(colony.forge_idle_text(forge).contains("по норме: железо"), "в карточке — почему стоит: " + colony.forge_idle_text(forge))
 	# Золота меньше всех, но золотая руда — пара кусков в куче где-то в шахте: плавим железо
 	# со склада, а не ждём золотую руду (кузница стояла при полном складе руды).
 	colony.drops.clear()
