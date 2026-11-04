@@ -8,6 +8,9 @@ var _frame := 0
 var _out := "user://"
 var _x0 := 0
 var _s := 0
+var _t0 := 0
+var _pad_focus := Vector2i.ZERO
+var _shots_done := 0
 
 
 func _initialize() -> void:
@@ -112,6 +115,7 @@ func _process(_delta: float) -> bool:
 			sh.purpose = RoomType.SHIP
 		if tp != null:
 			tp.purpose = RoomType.TELEPORT
+		_pad_focus = Vector2i(xs + 6, _main.world.gen.surface_y(xs) - 9)
 		_main.world_view.focus_cell(Vector2i(xs + 6, _main.world.gen.surface_y(xs) - 7))
 		_main.camera.zoom = Vector2(1.0, 1.0)
 	if _frame == 60:
@@ -123,6 +127,20 @@ func _process(_delta: float) -> bool:
 		_main.camera.zoom = Vector2(1.4, 1.4)
 	if _frame == 70:
 		_shot("ship")
+		# Старт: ракета пропадает со стола — слой показывает зажигание и подъём.
+		for pr in _main.colony.projects:
+			if pr.purpose == RoomType.LAUNCHPAD:
+				pr.rocket = ""
+		_main.world_view.focus_cell(_pad_focus)
+		_main.camera.zoom = Vector2(0.9, 0.9)
+		_t0 = Time.get_ticks_msec()
+	if _frame > 70 and _shots_done < 3:
+		var t := (Time.get_ticks_msec() - _t0) / 1000.0
+		var at: float = [0.7, 2.2, 3.6][_shots_done]
+		if t >= at:
+			_shot("launch_%d" % _shots_done)
+			_shots_done += 1
+	if _shots_done >= 3:
 		return true
 	return false
 

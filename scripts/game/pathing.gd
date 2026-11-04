@@ -28,6 +28,8 @@ var ladders := {}
 var sites := {}
 ## Крепь шахты под ногами: шахта над шахтой — ходят по балкам нижней.
 var floors := {}
+## Крыши, по которым не ходят: над космодромом и кораблём.
+var no_roof := {}
 ## Меняется, когда меняются лестницы или леса: старые пути не годятся.
 var climb_rev := 0
 var _cache := {}
@@ -87,6 +89,8 @@ func standable(c: Vector2i) -> bool:
 	# Одна выборка клетки на всё (раньше — по три-четыре): это самое частое в поиске пути.
 	var m := world.get_mat(c.x, c.y)
 	if (m != Mat.AIR and m != Mat.WATER) or not world.is_revealed(c.x, c.y):
+		return false
+	if no_roof.has(c):
 		return false
 	if deck.has(c) or floors.has(c):
 		return true

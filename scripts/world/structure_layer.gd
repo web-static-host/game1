@@ -48,6 +48,12 @@ var _signs: Node2D
 ## комнаты, трещины копки, падающая порода и лампы, — каждый кадр, но их немного.
 var live := false
 var _live: StructureLayer
+## Запуски ракет: [опорная точка ракеты (клетки, x/y дробные), картинка, когда стартовала (мс)].
+## Ракета улетает мгновенно (в игре), а здесь — зажигание, дым и подъём с пламенем.
+static var launches: Array = []
+var _pad_rockets := {}
+const LAUNCH_IGNITE := 1.3
+const LAUNCH_TIME := 7.0
 ## Куда рисуем: сам узел (живой слой) или сборщик сеток (неподвижный слой).
 var _c: Variant = self
 var _batch := MeshBatch.new()
@@ -82,6 +88,7 @@ func _process(delta: float) -> void:
 	if _live != null:
 		_live.colony = colony
 		_live.view = view
+	_watch_launches()
 	_static_t -= delta
 	var sel := colony.project_by_id(selected_project) if colony != null and selected_project != 0 else null
 	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin,
@@ -93,6 +100,63 @@ func _process(delta: float) -> void:
 		queue_redraw()
 	if _signs != null:
 		_signs.queue_redraw()
+
+
+## Ракета на космодроме была и пропала — значит, улетела: запускаем анимацию старта.
+func _watch_launches() -> void:
+	if colony == null:
+		return
+	var seen := {}
+	for p in colony.projects:
+		if p.kind != Project.Kind.ROOM or p.purpose != RoomType.LAUNCHPAD:
+			continue
+		seen[p.id] = true
+		var was: String = _pad_rockets.get(p.id, "")
+		if not was.is_empty() and p.rocket.is_empty() and p.equip_rocket.is_empty():
+			var r := p.rect
+			var stand := Vector2(r.get_center().x - 0.6 + 0.0, float(r.end.y) - 16.0 / TILE)
+			launches.append([stand, "rocket_nuclear" if was == "nuclear" else "rocket_chem", Time.get_ticks_msec()])
+		_pad_rockets[p.id] = p.rocket
+	for id in _pad_rockets.keys():
+		if not seen.has(id):
+			_pad_rockets.erase(id)
+	var now := Time.get_ticks_msec()
+	launches = launches.filter(func(l: Array) -> bool: return now - int(l[2]) < LAUNCH_TIME * 1000.0)
+
+
+## Старт ракеты: зажигание (дрожит, клубы дыма у стола), потом подъём с ускорением —
+## пламя из сопла и шлейф дыма, который остаётся висеть и расплывается.
+func _draw_launches() -> void:
+	var now := Time.get_ticks_msec()
+	for l in launches:
+		var t := (now - int(l[2])) / 1000.0
+		var base := view.cell_to_local(Vector2i.ZERO) + (l[0] as Vector2) * TILE
+		var lift := 0.0 if t < LAUNCH_IGNITE else 0.5 * 30.0 * TILE * pow(t - LAUNCH_IGNITE, 2.0)
+		var shake := Vector2(sin(t * 70.0), 0) * (2.0 if t < LAUNCH_IGNITE + 0.6 else 0.6)
+		var at := base + Vector2(0, -lift) + shake
+		# Дым: клубы у стола (растут с зажигания) и шлейф по пути — каждые 0,07 с новый клуб.
+		var puffs := int(t / 0.07)
+		for k in puffs:
+			var te := k * 0.07
+			var age := t - te
+			var h := 0.0 if te < LAUNCH_IGNITE else 0.5 * 30.0 * TILE * pow(te - LAUNCH_IGNITE, 2.0)
+			var side := WorldGen.hash01(k, 3, 11) * 2.0 - 1.0
+			var spread := (1.0 + age * 1.6) * (TILE * 0.5 if te < LAUNCH_IGNITE + 0.4 else TILE * 0.35)
+			var c := base + Vector2(side * spread * (2.2 if te < LAUNCH_IGNITE + 0.4 else 0.8), -h + age * TILE * 0.3)
+			var a := clampf(0.55 - age * 0.09, 0.0, 0.55)
+			if a > 0.0:
+				_c.draw_circle(c, spread, Color(0.86, 0.86, 0.88, a))
+		if lift > TILE * 60.0:
+			continue
+		# Пламя: длиннее после отрыва, мерцает.
+		var flick := 0.85 + 0.15 * sin(t * 50.0)
+		var len := (TILE * (0.8 + t * 1.4) if t < LAUNCH_IGNITE else TILE * 4.0) * flick
+		var w := TILE * 0.9
+		_glow(at + Vector2(0, len * 0.4), len * 0.9, Color(1.0, 0.6, 0.2, 0.35))
+		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w, -4), at + Vector2(w, -4), at + Vector2(0, len)]), Color(1.0, 0.55, 0.15, 0.95))
+		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w * 0.55, -4), at + Vector2(w * 0.55, -4), at + Vector2(0, len * 0.65)]), Color(1.0, 0.92, 0.5))
+		if not _sprite(l[1], at, 1.0):
+			_rbox(Rect2(at.x - TILE * 1.2, at.y - TILE * 12, TILE * 2.4, TILE * 12), 6, HULL, HULL_DARK, 2)
 
 
 ## Постройка, у которой что-то движется, — рисуется живым слоем каждый кадр.
@@ -191,6 +255,7 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 
 ## Живой слой: движущиеся постройки, трещины копки, падающая порода, лампы на стройках.
 func _draw_live(shown: Array[Project]) -> void:
+	_draw_launches()
 	for p in shown:
 		if p.kind == Project.Kind.DRILL:
 			_draw_drill(p, _rect_px(p.rect), 1.0)

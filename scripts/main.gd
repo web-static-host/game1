@@ -704,9 +704,13 @@ func _do_launch() -> void:
 	universe.send(flight)
 	# Ракета летит мгновенно — садится сразу, даже на паузе.
 	universe.update(0.0)
-	(_launch["pad"] as Project).launch_draft = {}
+	var pad: Project = _launch["pad"]
+	pad.launch_draft = {}
 	_launch = {}
-	_show_worlds()
+	# Старт видно: камера — к космодрому, окно планет — когда ракета ушла в небо.
+	hud.hide_info()
+	world_view.focus_cell(pad.rect.get_center() + Vector2i(0, -5))
+	get_tree().create_timer(StructureLayer.LAUNCH_IGNITE + 3.0).timeout.connect(_show_worlds)
 
 
 ## Небо планеты: свой оттенок; на других планетах нет лесов, холмов с травой и облаков.

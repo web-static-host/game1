@@ -125,12 +125,21 @@ const POSES := {
 	# Учёный разглядывает колбу у лица.
 	"study0": {"bones": [[["UpperArm.R", "to", Vector3(0.95, 1.55, 0.6)], ["Forearm.R", "to", Vector3(0.62, 2.05, 0.9)]]]},
 	"study1": {"bones": [[["UpperArm.R", "to", Vector3(0.95, 1.55, 0.6)], ["Forearm.R", "to", Vector3(0.7, 2.12, 0.85)]]]},
+	# Печь: подкидывает уголь лопатой — зачерпнул внизу, закинул вверх.
+	"shovel0": {"bones": [[["UpperArm.R", "to", Vector3(1.3, 1.6, 0.45)], ["Forearm.R", "to", Vector3(1.85, 1.15, 0.6)]]]},
+	"shovel1": {"bones": [[["UpperArm.R", "to", Vector3(1.35, 2.25, 0.4)], ["Forearm.R", "to", Vector3(1.85, 2.55, 0.5)]]]},
+	# Нефтезавод: крутит вентиль гаечным ключом на уровне груди.
+	"turn0": {"bones": [[["UpperArm.R", "to", Vector3(1.3, 1.95, 0.5)], ["Forearm.R", "to", Vector3(1.85, 2.05, 0.6)]]]},
+	"turn1": {"bones": [[["UpperArm.R", "to", Vector3(1.3, 1.85, 0.5)], ["Forearm.R", "to", Vector3(1.82, 1.7, 0.62)]]]},
+	# Обогатительная: водит дозиметром перед собой.
+	"scan0": {"bones": [[["UpperArm.R", "to", Vector3(1.3, 1.75, 0.5)], ["Forearm.R", "to", Vector3(1.85, 1.55, 0.6)]]]},
+	"scan1": {"bones": [[["UpperArm.R", "to", Vector3(1.28, 1.7, 0.55)], ["Forearm.R", "to", Vector3(1.8, 1.32, 0.7)]]]},
 }
 ## Инструменты в правой руке (держатся за кость кисти) и позы, в которых их видно.
 const TOOL_POSES := {
 	"pickaxe": ["work0", "work1", "work2", "work3"], "hammer": ["work0", "work1", "work2", "work3"],
 	"axe": ["work0", "work1", "work2", "work3"], "can": ["water0", "water1"], "flask": ["study0", "study1"],
-	"rod": ["fish"],
+	"rod": ["fish"], "shovel": ["shovel0", "shovel1"], "wrench": ["turn0", "turn1"], "geiger": ["scan0", "scan1"],
 }
 
 
@@ -774,7 +783,8 @@ func _shell_mesh() -> ArrayMesh:
 ## так боёк всегда виден сбоку, а замах читается — над головой, вверх, вперёд-вниз.
 ## TOOL_ANGLE — угол рукояти по позе (градусы, 0 — вперёд, 90 — вверх). -> [[сетка, положение, материал]].
 const TOOL_ANGLE := {"work0": 160.0, "work1": 80.0, "work2": -40.0, "work3": 80.0, "water0": -35.0, "water1": -45.0,
-	"study0": 0.0, "study1": 0.0, "fish": 40.0}
+	"study0": 0.0, "study1": 0.0, "fish": 40.0, "shovel0": -25.0, "shovel1": 35.0, "turn0": 95.0, "turn1": 25.0,
+	"scan0": 0.0, "scan1": -10.0}
 ## Ладонь — на столько по кисти от запястья; кончик удочки (в осях инструмента).
 const GRIP := Vector3(0.0, 0.13, 0.0)
 const ROD_TIP := Vector3(2.2, 0.0, 0.0)
@@ -856,6 +866,41 @@ func _tool_parts(name: String) -> Array:
 		"rod":
 			var pts := PackedVector3Array([Vector3(-0.2, 0, 0), Vector3(0.4, 0, 0), ROD_TIP])
 			out.append([_tube_mesh(pts, PackedFloat32Array([0.06, 0.045, 0.014])), Transform3D(), wood])
+		"shovel":
+			handle.call(1.05, 0.055)
+			# Совок — пластина на конце черенка, чуть загнута (лицом к зрителю, видно сбоку).
+			var blade := BoxMesh.new()
+			blade.size = Vector3(0.5, 0.42, 0.05)
+			out.append([blade, Transform3D(Basis(), Vector3(1.25, 0.0, 0)), steel])
+			# Уголь на совке.
+			var coal := SphereMesh.new()
+			coal.radius = 0.12
+			coal.height = 0.2
+			out.append([coal, Transform3D(Basis(), Vector3(1.28, 0.05, 0.06)), _tool_mat("coal", Color(0.12, 0.11, 0.12), 0.8, 0.0)])
+		"wrench":
+			var pts := PackedVector3Array([Vector3(-0.12, 0, 0), Vector3(0.62, 0, 0)])
+			out.append([_tube_mesh(pts, PackedFloat32Array([0.05, 0.045])), Transform3D(), steel])
+			for jy in [-0.12, 0.12]:
+				var jaw := BoxMesh.new()
+				jaw.size = Vector3(0.2, 0.07, 0.08)
+				out.append([jaw, Transform3D(Basis(), Vector3(0.72, jy, 0)), steel])
+			var back := BoxMesh.new()
+			back.size = Vector3(0.07, 0.3, 0.08)
+			out.append([back, Transform3D(Basis(), Vector3(0.6, 0, 0)), steel])
+		"geiger":
+			# Жёлтый прибор со стрелочной шкалой и щупом на проводе.
+			var yellow := _tool_mat("geiger", Color(0.95, 0.78, 0.2), 0.45, 0.1)
+			var dark := _tool_mat("dark", Color(0.18, 0.19, 0.22), 0.5, 0.3)
+			var box := BoxMesh.new()
+			box.size = Vector3(0.6, 0.42, 0.28)
+			out.append([box, Transform3D(Basis(), Vector3(0.15, 0.25, 0)), yellow])
+			var dial := CylinderMesh.new()
+			dial.top_radius = 0.13
+			dial.bottom_radius = 0.13
+			dial.height = 0.03
+			out.append([dial, Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0.08, 0.28, 0.15)), _tool_mat("dial", Color(0.95, 0.95, 0.9), 0.4, 0.0)])
+			var wand := PackedVector3Array([Vector3(0.45, 0.25, 0), Vector3(0.85, 0.05, 0)])
+			out.append([_tube_mesh(wand, PackedFloat32Array([0.035, 0.035])), Transform3D(), dark])
 	return out
 
 

@@ -2721,6 +2721,7 @@ func _climb_signature() -> int:
 		a.append(p.ladder)
 		a.append(p.equip_ladder)
 		a.append(p.supported.size())
+		a.append(p.purpose)
 	return hash(a)
 
 
@@ -2807,12 +2808,18 @@ func _rebuild_climb() -> void:
 						fl[c] = true
 	# У построенной комнаты свой пол: под ней выкопали тоннель или осыпалась земля — по
 	# комнате всё равно ходят (раньше пол печи над тоннелем «пропадал» и отрезал склад).
+	var nr := {}
 	for p in projects:
 		if p.kind == Project.Kind.ROOM and (p.phase == Project.Phase.DONE or p.phase == Project.Phase.EQUIP):
 			var y := p.rect.end.y - 1
 			for x in range(p.rect.position.x, p.rect.end.x):
 				if not Mat.is_solid(world.get_mat(x, y + 1)):
 					fl[Vector2i(x, y)] = true
+			# Космодром (там ракета и башня) и корабль — не дорога: по их крыше не ходят.
+			if p.purpose == RoomType.LAUNCHPAD or p.purpose == RoomType.SHIP:
+				for x in range(p.rect.position.x, p.rect.end.x):
+					nr[Vector2i(x, p.rect.position.y - 1)] = true
+				continue
 			# И крыша над стенами: стена держит, по ней ходят. Иначе комната в склоне
 			# оставляла над стеной щель-обрыв, и жители по ту сторону оказывались отрезаны.
 			for x in [p.rect.position.x, p.rect.end.x - 1]:
@@ -2825,9 +2832,9 @@ func _rebuild_climb() -> void:
 		if p.kind == Project.Kind.LIFT and p.phase == Project.Phase.DONE:
 			for c in p.cells():
 				_lift_cells[c] = p
-	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors:
+	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors or nr != pathing.no_roof:
 		var diff := []
-		for pair in [[lad, pathing.ladders], [site, pathing.sites], [fl, pathing.floors]]:
+		for pair in [[lad, pathing.ladders], [site, pathing.sites], [fl, pathing.floors], [nr, pathing.no_roof]]:
 			for c in pair[0]:
 				if not pair[1].has(c):
 					diff.append(c)
@@ -2841,6 +2848,8 @@ func _rebuild_climb() -> void:
 		pathing.sites.merge(site)
 		pathing.floors.clear()
 		pathing.floors.merge(fl)
+		pathing.no_roof.clear()
+		pathing.no_roof.merge(nr)
 		pathing.climb_rev += 1
 
 
@@ -5122,6 +5131,10 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 		return false
 	if p.is_water_structure():
 		return _fish_at(u, p, parents, dist)
+	# Склад урожая или изделий полон — к станку не встают (раньше вставали и тут же бросали:
+	# фермеры дёргались «стоит — идёт — поливает» по кругу на месте).
+	if (p.purpose == RoomType.FARM or RoomType.RECIPES.has(p.purpose)) and _mark_full(p):
+		return false
 	match p.purpose:
 		RoomType.FARM:
 			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)

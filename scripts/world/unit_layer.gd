@@ -38,6 +38,16 @@ const POSES := {
 	"water1": {"arms": [Vector2.ZERO, Vector2(0.32, 0.08)]},
 	"study0": {"arms": [Vector2.ZERO, Vector2(-0.3, -0.55)]},
 	"study1": {"arms": [Vector2.ZERO, Vector2(-0.27, -0.6)]},
+	"shovel0": {"arms": [Vector2.ZERO, Vector2(0.3, 0.05)]},
+	"shovel1": {"arms": [Vector2.ZERO, Vector2(0.25, -0.55)]},
+	"turn0": {"arms": [Vector2.ZERO, Vector2(0.3, -0.3)]},
+	"turn1": {"arms": [Vector2.ZERO, Vector2(0.3, -0.18)]},
+	"scan0": {"arms": [Vector2.ZERO, Vector2(0.3, -0.15)]},
+	"scan1": {"arms": [Vector2.ZERO, Vector2(0.32, -0.05)]},
+}
+## Мастерская -> [инструмент, позы]: у каждой своё движение (кузница — молот, как у строителя).
+const CRAFT_LOOK := {
+	RoomType.KILN: ["shovel", "shovel"], RoomType.REFINERY: ["wrench", "turn"], RoomType.ENRICHMENT: ["geiger", "scan"],
 }
 ## Инструмент в руке по делу: кирка, молоток, топор, лейка, колба, удочка.
 const TOOLS := {
@@ -59,6 +69,13 @@ var _spread := {}
 var _spread_to := {}
 var _spread_face := {}
 const SPREAD_SPEED := TILE * 1.6
+## Ждущие лифт — очередью от шахты (а не толпой в одной точке), едущие — рядом в кабине:
+## id -> сдвиг (пиксели) и куда смотрит.
+var _lift_off := {}
+var _lift_face := {}
+## Остановки, где ждут кабину: [клетка шахты, сторона (-1 — шахта слева от ждущих), вверх?].
+var _lift_calls: Array = []
+const QUEUE_STEP := 0.45
 
 
 ## Узел одного гаврика. Модель рисуется куском атласа (дёшево). Рисованный гаврик — много
@@ -135,6 +152,7 @@ func _process(delta: float) -> void:
 	if colony == null:
 		return
 	_update_spread(delta)
+	_update_lift_queue()
 	var alive := {}
 	for u in colony.units:
 		alive[u.id] = true
@@ -156,20 +174,28 @@ func _process(delta: float) -> void:
 	_overlay.queue_redraw()
 
 
-## Кто стоит на месте (работает, ест, греется, ждёт) — его можно отвести на своё место в комнате.
+## Кто стоит на месте (работает, ест, греется, ждёт) — его можно отодвинуть от соседа.
 func _stationary(u: Unit) -> bool:
-	return u.state in [Unit.State.WORK, Unit.State.IDLE] and u.task != Unit.Task.SLEEP and u.task != Unit.Task.FISH
+	return u.state in [Unit.State.WORK, Unit.State.IDLE] and u.task != Unit.Task.SLEEP and u.task != Unit.Task.FISH \
+		and u.lift_id == 0
 
 
-## Места стоящих по ширине комнат: в комнате двое и больше — расставляем ровно (по порядку,
-## как стоят, чтобы не ходили друг сквозь друга); сдвиг дорастает до цели шагом.
+## Стоящие на полу одной комнаты не стоят друг в друге: наложившихся раздвигаем на SPREAD_GAP
+## (кто стоит отдельно — на месте; на лестнице у стены — не трогаем). Сдвиг дорастает шагом.
+const SPREAD_GAP := 0.85
+
+
 func _update_spread(delta: float) -> void:
 	var rooms := {}
 	for u in colony.units:
 		if not _stationary(u):
 			continue
-		var room := colony.project_at(u.cell())
+		var c := u.cell()
+		var room := colony.project_at(c)
 		if room == null or room.kind != Project.Kind.ROOM or room.phase != Project.Phase.DONE:
+			continue
+		# Только на полу комнаты (не на лестнице посреди стены).
+		if c.y != room.rect.end.y - 1 or absf(u.pos.y - c.y) > 0.05:
 			continue
 		if not rooms.has(room.id):
 			rooms[room.id] = [room]
@@ -181,25 +207,85 @@ func _update_spread(delta: float) -> void:
 		if us.size() < 2:
 			continue
 		us.sort_custom(func(a: Unit, b: Unit) -> bool: return a.pos.x < b.pos.x or (a.pos.x == b.pos.x and a.id < b.id))
-		var x0 := float(RoomType.floor_start(room)) + 0.35
-		var step := (float(room.rect.end.x) - 0.35 - x0) / us.size()
+		var lo := float(RoomType.floor_start(room)) + 0.1
+		var hi := float(room.rect.end.x) - 1.1
+		# Раздвигаем слева направо, потом прижимаем к стенам обратно справа налево.
+		var xs: Array[float] = []
+		for u in us:
+			xs.append(clampf(u.pos.x, lo, hi))
+		for i in range(1, xs.size()):
+			xs[i] = maxf(xs[i], xs[i - 1] + SPREAD_GAP)
+		if xs[xs.size() - 1] > hi:
+			xs[xs.size() - 1] = hi
+			for i in range(xs.size() - 2, -1, -1):
+				xs[i] = minf(xs[i], xs[i + 1] - SPREAD_GAP)
 		for i in us.size():
 			var u: Unit = us[i]
-			_spread_to[u.id] = (x0 + step * (i + 0.5) - (u.pos.x + 0.5)) * TILE
+			var off := (xs[i] - u.pos.x) * TILE
+			if absf(off) > 0.5:
+				_spread_to[u.id] = off
 	for u in colony.units:
 		var cur: float = _spread.get(u.id, 0.0)
 		var to: float = _spread_to.get(u.id, 0.0)
-		if not _stationary(u):
-			# Пошёл по делу — рисуем там, где он на самом деле (сдвиг убираем сразу, он и так идёт).
-			to = 0.0
-			cur = move_toward(cur, 0.0, SPREAD_SPEED * 3.0 * delta)
-		else:
-			cur = move_toward(cur, to, SPREAD_SPEED * delta)
-		_spread_face[u.id] = signf(to - cur) if absf(to - cur) > 0.5 and _stationary(u) else 0.0
+		cur = move_toward(cur, to, SPREAD_SPEED * delta * (1.0 if _stationary(u) else 3.0))
+		_spread_face[u.id] = signf(to - cur) if absf(to - cur) > 2.0 and _stationary(u) else 0.0
 		if absf(cur) < 0.01 and to == 0.0:
 			_spread.erase(u.id)
 		else:
 			_spread[u.id] = cur
+
+
+## Очереди у лифтов и места в кабине.
+func _update_lift_queue() -> void:
+	_lift_off.clear()
+	_lift_face.clear()
+	_lift_calls.clear()
+	var queues := {}
+	var cabins := {}
+	for u in colony.units:
+		if u.lift_id == 0 or u.lift_board >= u.path.size():
+			continue
+		if u.riding:
+			if not cabins.has(u.lift_id):
+				cabins[u.lift_id] = []
+			cabins[u.lift_id].append(u)
+			continue
+		var board: Vector2i = u.path[u.lift_board]
+		var key := "%d:%d,%d" % [u.lift_id, board.x, board.y]
+		if not queues.has(key):
+			queues[key] = []
+		queues[key].append(u)
+	for key in queues:
+		var q: Array = queues[key]
+		q.sort_custom(func(a: Unit, b: Unit) -> bool: return a.lift_wait > b.lift_wait or (a.lift_wait == b.lift_wait and a.id < b.id))
+		var first: Unit = q[0]
+		var board: Vector2i = first.path[first.lift_board]
+		var exit: Vector2i = first.path[mini(first.lift_exit, first.path.size() - 1)]
+		var lift := colony.project_by_id(first.lift_id)
+		# Шахта — с той стороны, где клетка посадки; очередь тянется от неё назад.
+		var side := signf(float(board.x) - first.pos.x)
+		if side == 0.0:
+			side = 1.0
+		var up := (exit.y < board.y) if lift != null and lift.lift_vertical() else (exit.x > board.x)
+		_lift_calls.append([board, side, up, lift != null and lift.lift_vertical()])
+		for i in q.size():
+			var u: Unit = q[i]
+			# Первый — у самой шахты, остальные — по шагу назад; стоят лицом к лифту.
+			var want := float(board.x) - side * (0.62 + QUEUE_STEP * i)
+			_lift_off[u.id] = Vector2((want - u.pos.x) * TILE, 0.0)
+			_lift_face[u.id] = side
+	for id in cabins:
+		var cab: Array = cabins[id]
+		var lift := colony.project_by_id(id)
+		if lift == null or not lift.lift_vertical():
+			continue
+		cab.sort_custom(func(a: Unit, b: Unit) -> bool: return a.id < b.id)
+		var w := float(lift.rect.size.x) - 0.5
+		for i in cab.size():
+			var u: Unit = cab[i]
+			var want := float(lift.rect.position.x) + 0.25 + w * (i + 0.5) / cab.size() - 0.5
+			_lift_off[u.id] = Vector2((want - u.pos.x) * TILE, 0.0)
+			_lift_face[u.id] = 1.0 if i % 2 == 0 else -1.0
 
 
 ## Перерисовать всех (модель готова или переключили 3D / рисованных).
@@ -224,6 +310,7 @@ func foot_of(u: Unit) -> Vector2:
 			and not colony.interior.has(Vector2i(cx, below - 1)):
 		foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
 	foot.x += _spread.get(u.id, 0.0)
+	foot += _lift_off.get(u.id, Vector2.ZERO)
 	return foot
 
 
@@ -253,8 +340,14 @@ func _place(u: Unit, node: CreatureSprite) -> void:
 	if to_spot:
 		# Идёт к своему месту в комнате.
 		pose = "walk%d" % (int(u.anim * 8.0) % 4)
+	if u.lift_id != 0:
+		# Ждёт кабину или едет — стоит, а не шагает на месте.
+		pose = "blink" if fmod(u.anim + u.id * 0.37, 4.0) < 0.15 else "idle"
 	var sad := u.satiety < 25.0 or u.energy < 15.0 or u.health < 40.0
 	var tool: String = TOOLS.get(u.task, "") if u.state == Unit.State.WORK and not to_spot else ""
+	var craft := _craft_look(u)
+	if not craft.is_empty() and not tool.is_empty():
+		tool = craft[0]
 	node.set_pose(pose + ("@" + tool if not tool.is_empty() else "") + ("|sad" if sad else ""))
 	node.rotation = 0.0
 	node.position = foot
@@ -278,8 +371,20 @@ func _place(u: Unit, node: CreatureSprite) -> void:
 	node.scale = Vector2(sc * face, sc)
 
 
+## Инструмент и движение мастера по его мастерской ([] — как у строителя).
+func _craft_look(u: Unit) -> Array:
+	if u.task != Unit.Task.CRAFT:
+		return []
+	var room := colony.project_by_id(u.project_id)
+	if room == null:
+		room = colony.project_by_id(u.workplace)
+	return CRAFT_LOOK.get(room.purpose, []) if room != null else []
+
+
 ## Куда смотрит на рисунке: идёт к своему месту в комнате — туда, иначе как в игре.
 func _facing(u: Unit) -> float:
+	if _lift_face.has(u.id):
+		return _lift_face[u.id]
 	var f: float = _spread_face.get(u.id, 0.0)
 	return f if f != 0.0 else float(u.facing)
 
@@ -318,6 +423,10 @@ func _pose(u: Unit) -> String:
 					return "water%d" % (int(u.anim * 2.0) % 2)
 				Unit.Task.RESEARCH:
 					return "study%d" % (int(u.anim * 1.5) % 2)
+				Unit.Task.CRAFT:
+					var look := _craft_look(u)
+					if not look.is_empty():
+						return "%s%d" % [look[1], int(u.anim * 2.0) % 2]
 			return "work%d" % frame
 	return "blink" if fmod(u.anim + u.id * 0.37, 4.0) < 0.15 else "idle"
 
@@ -326,6 +435,7 @@ func _draw_overlay() -> void:
 	if colony == null:
 		return
 	var font := ThemeDB.fallback_font
+	_draw_lift_calls()
 	for u in colony.units:
 		var node: CreatureSprite = _nodes.get(u.id)
 		if node == null:
@@ -380,6 +490,26 @@ func _draw_overlay() -> void:
 			var p := foot + Vector2(-w * 0.5, -h - 26)
 			_overlay.draw_string_outline(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 5, Color(0, 0, 0, 0.85))
 			_overlay.draw_string(font, p, u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
+
+
+## Кнопка вызова у шахты, где ждут кабину: стрелка куда ехать, мигает.
+func _draw_lift_calls() -> void:
+	var lit := int(Time.get_ticks_msec() / 500) % 2 == 0
+	for c in _lift_calls:
+		var board: Vector2i = c[0]
+		var side: float = c[1]
+		var up: bool = c[2]
+		var cell := view.cell_to_local(board)
+		# Панель — на стене у шахты, на уровне груди (вертикальный лифт), иначе — над проходом.
+		var at := Vector2(cell.x + (TILE * 0.5 - side * TILE * 0.62), cell.y + TILE * 0.05) if c[3] \
+			else Vector2(cell.x + TILE * 0.5, cell.y - TILE * 0.15)
+		_overlay.draw_rect(Rect2(at - Vector2(5, 8), Vector2(10, 16)), Color(0.2, 0.21, 0.25))
+		_overlay.draw_rect(Rect2(at - Vector2(5, 8), Vector2(10, 16)), Color(0.08, 0.08, 0.1), false, 1.0)
+		var col := Color(1.0, 0.78, 0.25) if lit else Color(0.85, 0.55, 0.15)
+		var d := -1.0 if up else 1.0
+		_overlay.draw_colored_polygon(PackedVector2Array([at + Vector2(0, d * 5), at + Vector2(-4, -d * 2), at + Vector2(4, -d * 2)]), col)
+		if lit:
+			_overlay.draw_circle(at, 9, Color(1.0, 0.8, 0.3, 0.18))
 
 
 func draw_string_on(font: Font, p: Vector2, text: String, size: int, col: Color) -> void:
