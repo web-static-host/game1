@@ -255,6 +255,9 @@ func _draw_done(p: Project) -> void:
 	if p.is_water_structure():
 		_draw_deck(p, r, 1.0)
 	elif p.kind == Project.Kind.ROOM:
+		if p.purpose == RoomType.SHIP:
+			# Корпус снаружи — под отсеком: нос, стабилизаторы и обшивка видны вокруг комнаты.
+			_sprite("ship_hull", r.position + Vector2(0, r.size.y), 1.0)
 		_draw_room_shell(p, r)
 		if p.phase == Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
@@ -302,6 +305,13 @@ const HULL_DARK := Color(0.45, 0.48, 0.55)
 
 
 func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
+	if structure_texture("ship_hull") == null:
+		_draw_ship_hull(r, alpha)
+	_draw_ship_inside(r, alpha)
+
+
+## Нос, стабилизаторы, опоры и иллюминаторы — кодом (если нет рендера корпуса).
+func _draw_ship_hull(r: Rect2, alpha: float) -> void:
 	# Нос справа, стабилизаторы слева, опоры снизу — вокруг комнаты.
 	var mid := r.get_center().y
 	_c.draw_colored_polygon(PackedVector2Array([Vector2(r.end.x, r.position.y + 4), Vector2(r.end.x + TILE * 2.2, mid),
@@ -320,6 +330,10 @@ func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
 		var wc := Vector2(r.position.x + r.size.x * (0.15 + 0.23 * k), r.position.y + 14)
 		_c.draw_circle(wc, 7, Color(HULL_DARK, alpha))
 		_c.draw_circle(wc, 5, Color(0.55, 0.8, 1.0, alpha))
+
+
+## Внутри корабля: койки в два яруса и пульт.
+func _draw_ship_inside(r: Rect2, alpha: float) -> void:
 	# Койки в два яруса вдоль стены.
 	var n := 5
 	for i in n:
@@ -342,11 +356,9 @@ func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 	_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
 	var tx := r.end.x - TILE * 0.8
-	for y in range(int(r.position.y - TILE * 12), int(r.end.y - 16), 18):
-		_c.draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
-		_c.draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
-	_c.draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
-	_c.draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	var stand := r.end.y - 16
+	if not _sprite("launch_tower", Vector2(tx, stand), alpha):
+		_draw_tower_code(r, tx, alpha)
 	var t := 0.0
 	if not p.rocket.is_empty():
 		t = 1.0
@@ -355,6 +367,26 @@ func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 	else:
 		return
 	var nuclear := p.rocket == "nuclear" or p.equip_rocket == "nuclear"
+	var at := Vector2(r.get_center().x - TILE * 0.6, stand)
+	var name := "rocket_nuclear" if nuclear else "rocket_chem"
+	if structure_texture(name) != null:
+		# Во время сборки — силуэт ракеты и собранная снизу часть.
+		if t < 1.0:
+			_sprite(name, at, alpha * 0.18)
+		_sprite(name, at, alpha * (0.35 + 0.65 * t), maxf(t, 0.05))
+		return
+	_draw_rocket_code(r, t, nuclear, alpha)
+
+
+func _draw_tower_code(r: Rect2, tx: float, alpha: float) -> void:
+	for y in range(int(r.position.y - TILE * 12), int(r.end.y - 16), 18):
+		_c.draw_line(Vector2(tx - 8, y), Vector2(tx + 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+		_c.draw_line(Vector2(tx + 8, y), Vector2(tx - 8, y + 18), Color(0.75, 0.3, 0.25, alpha), 2.0)
+	_c.draw_line(Vector2(tx - 8, r.position.y - TILE * 12), Vector2(tx - 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+	_c.draw_line(Vector2(tx + 8, r.position.y - TILE * 12), Vector2(tx + 8, r.end.y - 16), Color(0.6, 0.25, 0.2, alpha), 3.0)
+
+
+func _draw_rocket_code(r: Rect2, t: float, nuclear: bool, alpha: float) -> void:
 	var cx := r.get_center().x - TILE * 0.6
 	var w := TILE * 2.4
 	var top := r.end.y - 16 - TILE * 14
@@ -399,6 +431,35 @@ func _draw_drill(p: Project, r: Rect2, alpha: float) -> void:
 		body.size.x = TILE * 2 - 4
 		face = Rect2(r.position.x, r.position.y, TILE, r.size.y)
 	var bodyc: Color = Color(0.88, 0.62, 0.16) if p.bonus() <= 1.0 else (MAT_BEAM[p.material] as Array)[0]
+	var tex := structure_texture("drill_diamond" if p.bonus() > 1.0 and p.material == "diamond" else "drill")
+	if tex != null:
+		# Рендер смотрит вправо: поворачиваем углы (влево — зеркально, свет остаётся сверху).
+		var c := r.get_center()
+		var hx := Vector2(r.size.x * 0.5, 0)
+		var hy := Vector2(0, r.size.y * 0.5)
+		var q: PackedVector2Array
+		match dir:
+			Vector2i.RIGHT:
+				q = [c - hx - hy, c + hx - hy, c + hx + hy, c - hx + hy]
+			Vector2i.LEFT:
+				q = [c + hx - hy, c - hx - hy, c - hx + hy, c + hx + hy]
+			Vector2i.DOWN:
+				q = [c + hx - hy, c + hx + hy, c - hx + hy, c - hx - hy]
+			_:
+				q = [c - hx + hy, c - hx - hy, c + hx - hy, c + hx + hy]
+		_sprite_quad(tex, q, alpha)
+		var on := colony.powered() or p.fuel > 0.0
+		_c.draw_circle(body.position + Vector2(9, 9), 4, Color(LAMP, alpha) if on else Color(0.35, 0.35, 0.38, alpha))
+		var spin0 := Time.get_ticks_msec() * 0.01 if colony._drill_active(p) and on else 0.0
+		var d0 := Vector2(dir)
+		var base0 := face.get_center() - d0 * TILE * 0.5
+		var tip0 := face.get_center() + d0 * TILE * 0.45
+		var half0 := Vector2(-d0.y, d0.x) * TILE * 1.3
+		for k in 3:
+			var tt := fmod(spin0 + k / 3.0, 1.0)
+			var m := base0.lerp(tip0, tt)
+			_c.draw_line(m - half0 * (1.0 - tt), m + half0 * (1.0 - tt), Color(0.25, 0.26, 0.3, alpha * 0.8), 2.0)
+		return
 	_rbox(body, 6, Color(bodyc, alpha), Color(bodyc.darkened(0.5), alpha), 2)
 	# Решётка мотора и лампа: горит, когда есть энергия.
 	var mc := body.get_center()
@@ -431,6 +492,9 @@ func _draw_probe(p: Project, r: Rect2, alpha: float) -> void:
 	var dark := Color(0.32, 0.34, 0.4, alpha)
 	var c := r.get_center()
 	var top := Vector2(c.x, r.position.y + 4)
+	if _sprite("probe", Vector2(c.x, r.end.y), alpha):
+		_draw_probe_rod(p, r, alpha)
+		return
 	# Ноги вышки и перекладины.
 	for sx in [-1.0, 1.0]:
 		_c.draw_line(Vector2(c.x + sx * (r.size.x * 0.5 - 4), r.end.y - 2), top, dark, 5.0)
@@ -442,6 +506,12 @@ func _draw_probe(p: Project, r: Rect2, alpha: float) -> void:
 	# Мотор и лампа (горит, когда есть энергия).
 	_rbox(Rect2(c.x - 9, r.end.y - 16, 18, 13), 4, Color(0.88, 0.62, 0.16, alpha), Color(0.45, 0.3, 0.1, alpha), 2)
 	_c.draw_circle(top + Vector2(0, 2), 3.5, Color(LAMP, alpha) if colony.powered() else Color(0.35, 0.35, 0.38, alpha))
+	_draw_probe_rod(p, r, alpha)
+
+
+## Штанга зонда: тянется на пройденные метры, кончик крутится.
+func _draw_probe_rod(p: Project, r: Rect2, alpha: float) -> void:
+	var c := r.get_center()
 	if not colony.probing(p) or alpha < 1.0:
 		return
 	var d := Vector2(p.drill_dir)
@@ -464,7 +534,10 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 	var cab_col := Color(0.5, 0.56, 0.62) if p.cargo else LIFT_CAB
 	var rail: Color = LIFT_STEEL if p.bonus() <= 1.0 else (MAT_BEAM[p.material] as Array)[0]
 	if p.lift_vertical():
+		var look := p.material if p.bonus() > 1.0 else "iron"
 		for x in [r.position.x + 3, r.end.x - 3]:
+			if _sprite_column("rail_" + look, x, r.position.y, r.end.y, 1.0):
+				continue
 			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), dark, 5.0)
 			_c.draw_line(Vector2(x, r.position.y), Vector2(x, r.end.y), rail, 3.0)
 		var y := r.end.y - TILE
@@ -485,7 +558,12 @@ func _draw_lift(p: Project, r: Rect2) -> void:
 
 
 func _draw_cabin(cab: Rect2, col: Color, p: Project) -> void:
-	_rbox(cab, 5, Color(col, 0.35), col.darkened(0.3), 3)
+	var tex := structure_texture("cab_cargo" if p.cargo else "cab_passenger")
+	if tex != null:
+		# Клетка-рендер на всю кабину (её рамка чуть выше — крюк троса).
+		_c.draw_texture_rect(tex, Rect2(cab.position.x, cab.end.y - cab.size.y * 2.15 / 2.0, cab.size.x, cab.size.y * 2.15 / 2.0), false)
+	else:
+		_rbox(cab, 5, Color(col, 0.35), col.darkened(0.3), 3)
 	if p.cargo and not p.lift_load.is_empty():
 		var n := mini(4, 1 + int(colony._load_total(p.lift_load)) / 10)
 		for i in n:
@@ -521,7 +599,7 @@ func _draw_zone(p: Project) -> void:
 
 
 func _draw_room_shell(p: Project, r: Rect2) -> void:
-	var tex := room_texture(p.material, p.rect.size.x)
+	var tex := room_texture("ship" if p.purpose == RoomType.SHIP else p.material, p.rect.size.x)
 	if tex != null:
 		_c.draw_texture_rect(tex, r, false)
 	else:
@@ -553,6 +631,67 @@ static func room_texture(material: String, w: int) -> Texture2D:
 		var path := "res://assets/rooms/%s.png" % key
 		_room_tex[key] = load(path) if ResourceLoader.exists(path) else null
 	return _room_tex[key]
+
+
+## Постройки-рендеры из Blender (art_src/structures/build_structures.py → assets/structures/):
+## имя → рамка спрайта (x0, x1, z0, z1) в метрах вокруг опорной точки (x — вправо, z — вверх).
+const STRUCT_FRAMES := {
+	"rocket_chem": [-2.5, 2.5, -0.1, 14.3], "rocket_nuclear": [-2.6, 2.6, -0.1, 14.6],
+	"launch_tower": [-2.0, 0.8, -0.1, 15.1], "ship_hull": [-2.6, 11.7, -0.3, 4.4],
+	"teleport": [-1.5, 1.5, -0.05, 2.95], "drill": [0.0, 3.0, 0.0, 3.0], "drill_diamond": [0.0, 3.0, 0.0, 3.0],
+	"probe": [-1.0, 1.0, 0.0, 2.0], "cab_passenger": [-1.0, 1.0, 0.0, 2.15], "cab_cargo": [-1.5, 1.5, 0.0, 2.15],
+}
+## Рамы, лестницы и направляющие — по материалу (support_wood, ladder_gold…): рамка по виду.
+const PART_FRAMES := {"support": [-0.5, 0.5, 0.0, 1.0], "slice": [-0.5, 0.5, 0.0, 3.0], "ladder": [-0.5, 0.5, 0.0, 1.0],
+	"rail": [-0.15, 0.15, 0.0, 1.0]}
+static var _struct_tex := {}
+static func structure_texture(name: String) -> Texture2D:
+	if not _struct_tex.has(name):
+		var path := "res://assets/structures/%s.png" % name
+		_struct_tex[name] = load(path) if ResourceLoader.exists(path) else null
+	return _struct_tex[name]
+
+
+## Нарисовать постройку-рендер с опорной точкой at (пиксели слоя). built — какая доля снизу
+## видна (сборка ракеты); false — картинки нет, рисуйте кодом.
+func _sprite(name: String, at: Vector2, alpha: float, built := 1.0) -> bool:
+	var tex := structure_texture(name)
+	if tex == null:
+		return false
+	var f: Array = STRUCT_FRAMES[name] if STRUCT_FRAMES.has(name) else PART_FRAMES[name.get_slice("_", 0)]
+	var size := Vector2(float(f[1]) - float(f[0]), float(f[3]) - float(f[2])) * TILE
+	var rect := Rect2(at + Vector2(float(f[0]), -float(f[3])) * TILE, size)
+	if built >= 1.0:
+		_c.draw_texture_rect(tex, rect, false, Color(1, 1, 1, alpha))
+		return true
+	var ts := tex.get_size()
+	var k := clampf(built, 0.0, 1.0)
+	_c.draw_texture_rect_region(tex, Rect2(rect.position + Vector2(0, size.y * (1.0 - k)), Vector2(size.x, size.y * k)),
+		Rect2(0, ts.y * (1.0 - k), ts.x, ts.y * k), Color(1, 1, 1, alpha))
+	return true
+
+
+## Звенья (лестница, направляющая) картинки name по вертикали от top до bottom с центром cx.
+func _sprite_column(name: String, cx: float, top: float, bottom: float, alpha: float) -> bool:
+	var tex := structure_texture(name)
+	if tex == null:
+		return false
+	var f: Array = PART_FRAMES[name.get_slice("_", 0)]
+	var w := (float(f[1]) - float(f[0])) * TILE
+	var ts := tex.get_size()
+	var y := top
+	while y < bottom - 0.5:
+		var h := minf(TILE, bottom - y)
+		_c.draw_texture_rect_region(tex, Rect2(cx - w * 0.5, y, w, h), Rect2(0, ts.y * (1.0 - h / TILE), ts.x, ts.y * h / TILE),
+			Color(1, 1, 1, alpha))
+		y += TILE
+	return true
+
+
+## Картинка в повёрнутом прямоугольнике: углы по часовой с левого верхнего картинки.
+func _sprite_quad(tex: Texture2D, corners: PackedVector2Array, alpha: float) -> void:
+	_c.draw_colored_polygon(corners, Color(1, 1, 1, alpha),
+		PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]), tex)
 
 
 ## Стены, пол и рама, нарисованные кодом (для материалов без готовой картинки).
@@ -1490,6 +1629,9 @@ func _draw_teleport(p: Project, r: Rect2, alpha: float) -> void:
 	if linked:
 		_c.draw_colored_polygon(PackedVector2Array([c + Vector2(-w * 0.4, -4), c + Vector2(w * 0.4, -4),
 			c + Vector2(w * 0.25, -h * 0.75), c + Vector2(-w * 0.25, -h * 0.75)]), Color(1.0, 0.85, 0.95, 0.45 * alpha))
+	# Арка с камнями — рендер (свечение портала — под ней, кодом).
+	if _sprite("teleport", c, alpha):
+		return
 	_c.draw_rect(Rect2(c + Vector2(-w, -7), Vector2(w * 2, 7)), Color(0.3, 0.26, 0.34, alpha))
 	_c.draw_rect(Rect2(c + Vector2(-w * 0.7, -10), Vector2(w * 1.4, 3)), Color(1.0, 0.3, 0.5, alpha))
 	var prev := Vector2.ZERO
@@ -1706,7 +1848,12 @@ func _draw_supports(p: Project, r: Rect2, alpha: float) -> void:
 	else:
 		var dark := Color(bc[1], alpha)
 		var x := r.position.x + TILE * 0.5
+		var tex := structure_texture("support_" + p.material)
 		while x < r.end.x:
+			if tex != null:
+				_c.draw_texture_rect(tex, Rect2(x - TILE * 0.5, r.position.y, TILE, r.size.y), false, Color(1, 1, 1, alpha))
+				x += TILE * 3.0
+				continue
 			for sx in [-8.0, 8.0]:
 				_c.draw_line(Vector2(x + sx + 1.5, r.end.y), Vector2(x + sx + 1.5, r.position.y + 3), dark, 4.5)
 				_c.draw_line(Vector2(x + sx, r.end.y), Vector2(x + sx, r.position.y + 3), col, 4.5)
@@ -1846,6 +1993,8 @@ func _shaft_lining(x0: float, x1: float, top: float, bottom: float, alpha: float
 
 
 func _ladder(cx: float, top: float, bottom: float, alpha: float, mat := "wood") -> void:
+	if _sprite_column("ladder_" + RoomType.ladder_material(mat), cx, top, bottom, alpha):
+		return
 	var bc: Array = MAT_BEAM.get(RoomType.ladder_material(mat), MAT_BEAM["wood"])
 	var col := Color(bc[0], alpha)
 	var dark := Color(bc[1], alpha)
@@ -2112,6 +2261,10 @@ func _draw_slice_support(p: Project, i: int, alpha: float) -> void:
 	if p.vertical():
 		_shaft_lining(a.x, b.x, a.y, b.y, alpha, _support_look(p))
 		_ladder((a.x + b.x) * 0.5, a.y, b.y, alpha, _support_look(p))
+		return
+	var tex := structure_texture("slice_" + _support_look(p))
+	if tex != null:
+		_c.draw_texture_rect(tex, Rect2(a, b - a), false, Color(1, 1, 1, alpha))
 		return
 	_c.draw_line(Vector2(a.x + 4, a.y + 3), Vector2(a.x + 4, b.y), col, 4.0)
 	_c.draw_line(Vector2(b.x - 4, a.y + 3), Vector2(b.x - 4, b.y), col, 4.0)

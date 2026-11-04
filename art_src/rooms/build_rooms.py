@@ -207,6 +207,13 @@ STYLES = {
         gap='#6fb2c6', post='#6fb7cc', frame='#4f93a8', frame_grain=0.0, iron='#2f6273',
         braces=False, joists=True, bolts=True),
 }
+# Отсек корабля: светлые панели обшивки на заклёпках, иллюминаторы на задней стене.
+STYLES['ship'] = dict(
+    wall=['#dfe3e9', '#d6dbe2', '#e6e9ee'], wall_size=(1.4, 1.6, 0.66, .02), wall_rough=0.4,
+    grain=0.0, kind='noise', bevel=.03, metal=0.2,
+    ceil=['#c6ccd5', '#ced3db'], ceil_size=(1.1, 1.3, 0.5, .02), ceil_grain=0.0,
+    gap='#55606e', post='#9aa3b0', frame='#8a93a1', frame_grain=0.0, iron='#5a636f',
+    braces=False, joists=True, bolts=True, rivets=True, portholes=True)
 # Железная комната — металлическая (раньше рендерилась под именем metal, а игра ищет iron).
 STYLES['iron'] = STYLES['metal']
 
@@ -366,6 +373,20 @@ def room(material, w):
                 rivet_at.append((rx, rz))
     for (rx, rz) in rivet_at:
         inner.append(bolt(rx, rz, D - 0.005, iron, 0.03))
+    if st.get('portholes'):
+        # Иллюминаторы под потолком задней стены: кольцо и голубое стекло со звёздным небом.
+        glass = mat('glass', '#1d2b4f', 0.08)
+        ring = mat('port_ring', '#6c7684', 0.35, metal=0.6)
+        x = 1.5    # по середине каждого 3-метрового пролёта (через 3 м — стойки)
+        while x < w - 0.6:
+            for (r_, d_, m_) in ((0.36, 0.1, ring), (0.28, 0.12, glass)):
+                bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=r_, depth=d_, location=(x, D - 0.02, Z1 - 0.62),
+                                                    rotation=(math.radians(90), 0, 0))
+                o = bpy.context.object
+                o.data.materials.append(m_)
+                bpy.ops.object.shade_smooth()
+                inner.append(o)
+            x += 3.0
     # Потолок: ряды в глубину (по y), элементы по x.
     if st.get('rubble'):
         inner += stones('ceil', X0, X1, -0.05, D + 0.05, lambda u, v, d: (u, v, Z1 + t - d), ceils, rnd)
