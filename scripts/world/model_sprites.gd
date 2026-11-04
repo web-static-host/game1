@@ -58,6 +58,7 @@ const CROPS := {
 	"horn": [Rect2(-0.6, 2.05, 1.3, 1.1), 80.0],
 	"antennae": [Rect2(-1.1, 2.05, 2.4, 1.25), 80.0],
 	"shell": [Rect2(-1.9, 0.15, 3.9, 3.1), 50.0],
+	"tool": [Rect2(-SPAN * 0.5, -FOOT, 6.6, SPAN), BODY_PPM],
 }
 ## Чем красить слой: цветом тела, цветом волос или никак (рог, панцирь — свои цвета).
 enum Tint { BODY, HAIR, NONE, PATTERN }
@@ -118,6 +119,18 @@ const POSES := {
 		["UpperArm.L", "to", Vector3(-1.35, 2.65, 0.0)], ["Forearm.L", "to", Vector3(-1.55, 3.18, 0.0)],
 		["Thigh.R", "to", Vector3(0.4, 0.46, 0.0)], ["Thigh.L", "to", Vector3(-0.4, 0.46, 0.0)]]]},
 	"sleep": {"closed": true},
+	# Полив (ферма): правая рука вперёд-вниз с лейкой, чуть качается.
+	"water0": {"bones": [[["UpperArm.R", "to", Vector3(1.35, 1.55, 0.45)], ["Forearm.R", "to", Vector3(1.9, 1.25, 0.6)]]]},
+	"water1": {"bones": [[["UpperArm.R", "to", Vector3(1.35, 1.5, 0.45)], ["Forearm.R", "to", Vector3(1.88, 1.1, 0.62)]]]},
+	# Учёный разглядывает колбу у лица.
+	"study0": {"bones": [[["UpperArm.R", "to", Vector3(0.95, 1.55, 0.6)], ["Forearm.R", "to", Vector3(0.62, 2.05, 0.9)]]]},
+	"study1": {"bones": [[["UpperArm.R", "to", Vector3(0.95, 1.55, 0.6)], ["Forearm.R", "to", Vector3(0.7, 2.12, 0.85)]]]},
+}
+## Инструменты в правой руке (держатся за кость кисти) и позы, в которых их видно.
+const TOOL_POSES := {
+	"pickaxe": ["work0", "work1", "work2", "work3"], "hammer": ["work0", "work1", "work2", "work3"],
+	"axe": ["work0", "work1", "work2", "work3"], "can": ["water0", "water1"], "flask": ["study0", "study1"],
+	"rod": ["fish"],
 }
 
 
@@ -317,11 +330,12 @@ func _bake(key: String, attempt: int):
 	var kind := p[0]
 	var crop: Rect2 = CROPS[kind][0]
 	var ppm: float = CROPS[kind][1] * detail
-	var shape := int(p[1]) if kind in ["body", "pattern", "gills"] else CreatureArt.Shape.TRIANGLE
+	var shape := int(p[1]) if kind in ["body", "pattern", "gills"] else int(p[2]) if kind == "tool" else CreatureArt.Shape.TRIANGLE
 	var cell := Vector2i(roundi(crop.size.x * ppm), roundi(crop.size.y * ppm))
 	# Кадры — в 2 раза крупнее и потом уменьшаются: так края гладкие без MSAA.
 	var ss := 2
-	var names: Array = POSES.keys()
+	# Инструмент — только в своих позах (лист маленький).
+	var names: Array = TOOL_POSES[p[1]] if kind == "tool" else POSES.keys()
 	var rows := ceili(names.size() / float(COLS))
 	var scene: PackedScene = load(MODELS[shape])
 	var stages := []
@@ -329,6 +343,7 @@ func _bake(key: String, attempt: int):
 	var frames := {}
 	for i in names.size():
 		var pose: Dictionary = POSES[names[i]]
+		var tip_local = null
 		var vp := SubViewport.new()
 		vp.size = cell * ss
 		vp.transparent_bg = false
@@ -368,9 +383,9 @@ func _bake(key: String, attempt: int):
 		var body: MeshInstance3D = meshes["Buddy_FinalBody"]
 		body.mesh = _uv_mesh(MODELS[shape], body.mesh)
 		pose_skeleton(skel, pose.get("bones", []))
-		if kind == "body":
+		if kind == "body" or kind == "tool":
 			# Длинные руки — после позы: суставы повёрнуты как у обычных, руки просто длиннее.
-			_rig_arms(skel, p[2] == "1")
+			_rig_arms(skel, p[2 if kind == "body" else 3] == "1")
 		var closed: bool = pose.get("closed", false)
 		var eye_pts := []
 		var eye_r := 0.0
@@ -428,6 +443,14 @@ func _bake(key: String, attempt: int):
 					parts.append([_copy(model, ball, Transform3D(Basis(), tip)), _white(), _flat(Color(1, 0.55, 0))])
 			"shell":
 				parts.append([_copy(model, _shell_mesh(), Transform3D()), _fx(6, false, Color(0.55, 0.42, 0.25)), kept])
+			"tool":
+				# В ладонь правой кисти (в позе), рукоять — под углом позы в плоскости гаврика.
+				var palm := skel.get_bone_global_pose(skel.find_bone("Hand.R")) * GRIP
+				var place := Transform3D(Basis(Vector3.BACK, deg_to_rad(TOOL_ANGLE.get(names[i], 0.0))), palm)
+				for t in _tool_parts(p[1]):
+					parts.append([_copy(model, t[0], place * (t[1] as Transform3D)), t[2], kept])
+				if p[1] == "rod":
+					tip_local = place * ROD_TIP
 		var foot := cam.unproject_position(model.global_position) / ss
 		var hand := cam.unproject_position(skel.to_global(skel.get_bone_global_pose(skel.find_bone("Hand.R")).origin)) / ss
 		var eyes: Array[Vector2] = []
@@ -435,6 +458,9 @@ func _bake(key: String, attempt: int):
 			eyes.append(cam.unproject_position(model.to_global(e)) / ss - foot)
 		var at := Vector2((i % COLS) * cell.x, (i / COLS) * cell.y)
 		frames[names[i]] = {"region": Rect2(at, cell), "foot": foot, "hand": hand - foot, "eyes": eyes, "eye_r": eye_r * ppm}
+		if tip_local != null:
+			# Кончик удочки (от него игра тянет леску).
+			frames[names[i]]["tip"] = cam.unproject_position(model.to_global(tip_local as Vector3)) / ss - foot
 		stages.append([vp, env, [key_light, rim]])
 
 	for pt in parts:
@@ -463,7 +489,7 @@ func _bake(key: String, attempt: int):
 			src.resize(cell.x, cell.y, Image.INTERPOLATE_BILINEAR)
 			img.blit_rect(src, Rect2i(Vector2i.ZERO, cell), Vector2i(half * COLS * cell.x + (i % COLS) * cell.x, (i / COLS) * cell.y))
 	# Проверка: в середине тела позы покоя — тело (R и G), в глазу — не тело (только R).
-	var idle: Dictionary = frames["idle"]
+	var idle: Dictionary = frames.get("idle", frames[names[0]])
 	var at0: Vector2 = (idle["region"] as Rect2).position + (idle["foot"] as Vector2) + Vector2(COLS * cell.x, 0)
 	if kind == "body":
 		var px := img.get_pixelv(Vector2i(at0 + Vector2(0, -1.0 * ppm)))
@@ -743,6 +769,107 @@ func _shell_mesh() -> ArrayMesh:
 	return out
 
 
+## Инструменты строятся в своих осях (хват — в нуле, рукоять — вдоль +x, боёк — поперёк, по y)
+## и ставятся в ладонь правой кисти под углом позы в плоскости гаврика (x — вперёд, y — вверх):
+## так боёк всегда виден сбоку, а замах читается — над головой, вверх, вперёд-вниз.
+## TOOL_ANGLE — угол рукояти по позе (градусы, 0 — вперёд, 90 — вверх). -> [[сетка, положение, материал]].
+const TOOL_ANGLE := {"work0": 160.0, "work1": 80.0, "work2": -40.0, "work3": 80.0, "water0": -35.0, "water1": -45.0,
+	"study0": 0.0, "study1": 0.0, "fish": 40.0}
+## Ладонь — на столько по кисти от запястья; кончик удочки (в осях инструмента).
+const GRIP := Vector3(0.0, 0.13, 0.0)
+const ROD_TIP := Vector3(2.2, 0.0, 0.0)
+
+
+func _tool_parts(name: String) -> Array:
+	var wood := _tool_mat("wood", Color(0.6, 0.38, 0.2), 0.6, 0.0)
+	var steel := _tool_mat("steel", Color(0.62, 0.66, 0.72), 0.3, 0.7)
+	var out := []
+	var handle := func(len: float, r: float) -> void:
+		var pts := PackedVector3Array([Vector3(-0.18, 0, 0), Vector3(len, 0, 0)])
+		out.append([_tube_mesh(pts, PackedFloat32Array([r, r * 0.9])), Transform3D(), wood])
+	match name:
+		"hammer":
+			handle.call(1.05, 0.06)
+			var head := BoxMesh.new()
+			head.size = Vector3(0.24, 0.5, 0.24)
+			out.append([head, Transform3D(Basis(), Vector3(1.0, 0.04, 0)), steel])
+		"pickaxe":
+			handle.call(1.15, 0.06)
+			var pts := PackedVector3Array()
+			var rs := PackedFloat32Array()
+			for j in 13:
+				var k := j / 12.0 * 2.0 - 1.0
+				pts.append(Vector3(1.12 - 0.28 * k * k, k * 0.6, 0))
+				rs.append(0.09 * (1.0 - absf(k)) + 0.015)
+			out.append([_tube_mesh(pts, rs), Transform3D(), steel])
+		"axe":
+			handle.call(1.05, 0.06)
+			var st := SurfaceTool.new()
+			st.begin(Mesh.PRIMITIVE_TRIANGLES)
+			# Лезвие — плоский клин у конца рукояти, остриём вниз (в сторону удара).
+			var poly := [Vector2(0.8, 0.0), Vector2(1.08, 0.0), Vector2(1.16, -0.38), Vector2(0.98, -0.5), Vector2(0.72, -0.4)]
+			for z in [-0.04, 0.04]:
+				for j in range(1, poly.size() - 1):
+					for v in [poly[0], poly[j], poly[j + 1]]:
+						st.set_normal(Vector3(0, 0, signf(z)))
+						st.add_vertex(Vector3(v.x, v.y, z))
+			out.append([st.commit(), Transform3D(), steel])
+		"can":
+			# Лейка висит под рукой за ручку, носик — вперёд-вверх (в позе наклонена — льёт).
+			var green := _tool_mat("can", Color(0.3, 0.62, 0.42), 0.4, 0.3)
+			var body := CylinderMesh.new()
+			body.top_radius = 0.24
+			body.bottom_radius = 0.27
+			body.height = 0.42
+			out.append([body, Transform3D(Basis(), Vector3(0.05, -0.42, 0)), green])
+			var spout := PackedVector3Array([Vector3(0.25, -0.45, 0), Vector3(0.75, -0.22, 0)])
+			out.append([_tube_mesh(spout, PackedFloat32Array([0.05, 0.035])), Transform3D(), green])
+			var rose := CylinderMesh.new()
+			rose.top_radius = 0.08
+			rose.bottom_radius = 0.04
+			rose.height = 0.08
+			out.append([rose, Transform3D(Basis(Vector3.BACK, deg_to_rad(-65)), Vector3(0.78, -0.2, 0)), green])
+			var arc := PackedVector3Array()
+			var rs := PackedFloat32Array()
+			for j in 9:
+				var a := PI * j / 8.0
+				arc.append(Vector3(0.05 - cos(a) * 0.17, -0.2 + sin(a) * 0.17, 0))
+				rs.append(0.035)
+			out.append([_tube_mesh(arc, rs), Transform3D(), green])
+		"flask":
+			# Круглая колба с зелёным раствором над пальцами, горлышко — в руке.
+			var glass := _tool_mat("glass", Color(0.85, 0.96, 1.0), 0.05, 0.0)
+			var liquid := _tool_mat("liquid", Color(0.3, 0.85, 0.4), 0.15, 0.0)
+			var bulb := SphereMesh.new()
+			bulb.radius = 0.22
+			bulb.height = 0.44
+			out.append([bulb, Transform3D(Basis(), Vector3(0, 0.3, 0.05)), liquid])
+			var shine := SphereMesh.new()
+			shine.radius = 0.06
+			shine.height = 0.12
+			out.append([shine, Transform3D(Basis(), Vector3(-0.08, 0.38, 0.25)), glass])
+			var neck := CylinderMesh.new()
+			neck.top_radius = 0.065
+			neck.bottom_radius = 0.07
+			neck.height = 0.2
+			out.append([neck, Transform3D(Basis(), Vector3(0, 0.02, 0.05)), glass])
+		"rod":
+			var pts := PackedVector3Array([Vector3(-0.2, 0, 0), Vector3(0.4, 0, 0), ROD_TIP])
+			out.append([_tube_mesh(pts, PackedFloat32Array([0.06, 0.045, 0.014])), Transform3D(), wood])
+	return out
+
+
+func _tool_mat(key: String, c: Color, rough: float, metal: float) -> StandardMaterial3D:
+	if not _flats.has("tool_" + key):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = rough
+		m.metallic = metal
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_flats["tool_" + key] = m
+	return _flats["tool_" + key]
+
+
 ## Рог: изогнутый конус на макушке (кольца рисует шейдер).
 func _horn_mesh() -> ArrayMesh:
 	var pts := PackedVector3Array()
@@ -967,11 +1094,48 @@ static func body_color(looks: Dictionary) -> Color:
 	return col
 
 
-## Нарисовать гаврика-модель: ступни в at, h — его высота в пикселях. Слои — по порядку.
-## Грустное лицо («|sad» в позе) снимается отдельно; пока его нет — обычное.
+## Поза строкой: «work0», с «@hammer» — с инструментом в руке, с «|sad» в конце — грустный.
+static func base_pose(pose: String) -> String:
+	return pose.get_slice("|", 0).get_slice("@", 0)
+
+
+static func tool_of(pose: String) -> String:
+	var i := pose.find("@")
+	return "" if i < 0 else pose.substr(i + 1).get_slice("|", 0)
+
+
+## Лист инструмента: свой у каждой формы (тело закрывает его по-разному) и у длинных рук.
+static func tool_key(looks: Dictionary, tool: String) -> String:
+	return "tool/%s/%d/%d" % [tool, int(looks.get("shape", 0)), 1 if looks.get("long_arms", false) else 0]
+
+
+## Инструмент модели в этой позе готов (иначе — заказать; пока рисуйте его по-старому).
+func tool_ready(looks: Dictionary, tool: String, pose: String) -> bool:
+	if tool.is_empty() or not TOOL_POSES.has(tool) or not base_pose(pose) in TOOL_POSES[tool]:
+		return false
+	var key := tool_key(looks, tool)
+	if sheets.has(key):
+		return true
+	if not _failed.has(key):
+		_want(key)
+	return false
+
+
+## Кончик удочки относительно ступней (пиксели экрана) или null.
+func tool_tip(pose: String, h: float, looks: Dictionary, tool: String):
+	if not tool_ready(looks, tool, pose):
+		return null
+	var s: Dictionary = sheets[tool_key(looks, tool)]
+	var f := _frame(s, base_pose(pose))
+	return (f["tip"] as Vector2) * (h / HEIGHT / float(s["ppm"])) if f.has("tip") else null
+
+
+## Нарисовать гаврика-модель: ступни в at, h — его высота в пикселях. Слои — по порядку,
+## инструмент («@…» в позе) — поверх. Грустное лицо («|sad») снимается отдельно; пока его нет — обычное.
 func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, looks: Dictionary) -> void:
 	var sad := pose.ends_with("|sad")
-	pose = pose.split("|")[0]
+	var tool := tool_of(pose)
+	pose = base_pose(pose)
 	var col := body_color(looks)
 	var hair: Color = looks.get("hair_color", col.darkened(0.4))
 	var face := {}
@@ -997,15 +1161,23 @@ func draw(ci: CanvasItem, pose: String, at: Vector2, h: float, looks: Dictionary
 		var r := float(face["eye_r"]) * face_k
 		for e: Vector2 in face["eyes"]:
 			ci.draw_arc(at + e * face_k + Vector2(0, -r * 0.35), r * 0.85, 0.35, PI - 0.35, 12, CreatureArt.PUPIL, maxf(1.0, r * 0.22), true)
+	if tool_ready(looks, tool, pose):
+		var s: Dictionary = sheets[tool_key(looks, tool)]
+		var f := _frame(s, pose)
+		var k := h / HEIGHT / float(s["ppm"])
+		var region: Rect2 = f["region"]
+		ci.draw_texture_rect_region(s["tex"], Rect2(at - (f["foot"] as Vector2) * k, region.size * k), region, Color.WHITE)
 
 
 ## Где правая кисть относительно ступней (пиксели экрана) — для инструмента в руке.
 func hand_pos(pose: String, h: float, looks: Dictionary) -> Vector2:
-	pose = pose.split("|")[0]
+	pose = base_pose(pose)
 	var s: Dictionary = sheets.get(body_key(looks), sheets["body/%d/0/4/0" % CreatureArt.Shape.TRIANGLE])
 	return (_frame(s, pose)["hand"] as Vector2) * (h / HEIGHT / float(s["ppm"]))
 
 
 static func _frame(sheet: Dictionary, pose: String) -> Dictionary:
 	var frames: Dictionary = sheet["frames"]
-	return frames.get(pose, frames["idle"])
+	if frames.has(pose):
+		return frames[pose]
+	return frames["idle"] if frames.has("idle") else frames.values()[0]

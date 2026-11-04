@@ -34,6 +34,16 @@ const POSES := {
 	"swim": {"arms": [Vector2(0.2, -0.45), Vector2(0.2, -0.45)]},
 	"fall": {"arms": [Vector2(0.1, -0.9), Vector2(0.1, -0.9)]},
 	"sleep": {"closed": true},
+	"water0": {"arms": [Vector2.ZERO, Vector2(0.3, 0.02)]},
+	"water1": {"arms": [Vector2.ZERO, Vector2(0.32, 0.08)]},
+	"study0": {"arms": [Vector2.ZERO, Vector2(-0.3, -0.55)]},
+	"study1": {"arms": [Vector2.ZERO, Vector2(-0.27, -0.6)]},
+}
+## Инструмент в руке по делу: кирка, молоток, топор, лейка, колба, удочка.
+const TOOLS := {
+	Unit.Task.DIG: "pickaxe", Unit.Task.BUILD: "hammer", Unit.Task.EQUIP: "hammer", Unit.Task.REPAIR: "hammer",
+	Unit.Task.SUPPORT: "hammer", Unit.Task.CRAFT: "hammer", Unit.Task.HARVEST: "axe", Unit.Task.FARM: "can",
+	Unit.Task.RESEARCH: "flask", Unit.Task.FISH: "rod",
 }
 
 var view: WorldView
@@ -42,6 +52,13 @@ var selected_unit := 0
 var _nodes := {}
 var _overlay: Node2D
 var _models: ModelSprites
+## Стоящие в одной комнате не стоят в одной точке: каждому — своё место по ширине комнаты
+## (только на рисунке, игра о нём не знает). id -> сдвиг по x (пиксели), куда сдвиг стремится,
+## и id -> куда смотрит, пока идёт к месту (0 — уже стоит).
+var _spread := {}
+var _spread_to := {}
+var _spread_face := {}
+const SPREAD_SPEED := TILE * 1.6
 
 
 ## Узел одного гаврика. Модель рисуется куском атласа (дёшево). Рисованный гаврик — много
@@ -97,7 +114,7 @@ class CreatureSprite:
 	func _draw_pose(n: Node2D, p: String) -> void:
 		if not cache.has(p):
 			var g := looks.duplicate()
-			var key := p.split("|")[0]
+			var key := ModelSprites.base_pose(p)
 			g["pose"] = POSES.get(key, {})
 			g["mood"] = -0.6 if p.ends_with("|sad") else 1.0
 			cache[p] = CreatureArt.record(BODY_W, g)
@@ -114,9 +131,10 @@ func _ready() -> void:
 	_overlay.draw.connect(_draw_overlay)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if colony == null:
 		return
+	_update_spread(delta)
 	var alive := {}
 	for u in colony.units:
 		alive[u.id] = true
@@ -136,6 +154,52 @@ func _process(_delta: float) -> void:
 			_nodes[id].queue_free()
 			_nodes.erase(id)
 	_overlay.queue_redraw()
+
+
+## Кто стоит на месте (работает, ест, греется, ждёт) — его можно отвести на своё место в комнате.
+func _stationary(u: Unit) -> bool:
+	return u.state in [Unit.State.WORK, Unit.State.IDLE] and u.task != Unit.Task.SLEEP and u.task != Unit.Task.FISH
+
+
+## Места стоящих по ширине комнат: в комнате двое и больше — расставляем ровно (по порядку,
+## как стоят, чтобы не ходили друг сквозь друга); сдвиг дорастает до цели шагом.
+func _update_spread(delta: float) -> void:
+	var rooms := {}
+	for u in colony.units:
+		if not _stationary(u):
+			continue
+		var room := colony.project_at(u.cell())
+		if room == null or room.kind != Project.Kind.ROOM or room.phase != Project.Phase.DONE:
+			continue
+		if not rooms.has(room.id):
+			rooms[room.id] = [room]
+		rooms[room.id].append(u)
+	_spread_to.clear()
+	for id in rooms:
+		var room: Project = rooms[id][0]
+		var us: Array = rooms[id].slice(1)
+		if us.size() < 2:
+			continue
+		us.sort_custom(func(a: Unit, b: Unit) -> bool: return a.pos.x < b.pos.x or (a.pos.x == b.pos.x and a.id < b.id))
+		var x0 := float(RoomType.floor_start(room)) + 0.35
+		var step := (float(room.rect.end.x) - 0.35 - x0) / us.size()
+		for i in us.size():
+			var u: Unit = us[i]
+			_spread_to[u.id] = (x0 + step * (i + 0.5) - (u.pos.x + 0.5)) * TILE
+	for u in colony.units:
+		var cur: float = _spread.get(u.id, 0.0)
+		var to: float = _spread_to.get(u.id, 0.0)
+		if not _stationary(u):
+			# Пошёл по делу — рисуем там, где он на самом деле (сдвиг убираем сразу, он и так идёт).
+			to = 0.0
+			cur = move_toward(cur, 0.0, SPREAD_SPEED * 3.0 * delta)
+		else:
+			cur = move_toward(cur, to, SPREAD_SPEED * delta)
+		_spread_face[u.id] = signf(to - cur) if absf(to - cur) > 0.5 and _stationary(u) else 0.0
+		if absf(cur) < 0.01 and to == 0.0:
+			_spread.erase(u.id)
+		else:
+			_spread[u.id] = cur
 
 
 ## Перерисовать всех (модель готова или переключили 3D / рисованных).
@@ -159,6 +223,7 @@ func foot_of(u: Unit) -> Vector2:
 	if u.state != Unit.State.FALL and below == gen.surface_y(cx) and not colony.world.is_dug(cx, below) \
 			and not colony.interior.has(Vector2i(cx, below - 1)):
 		foot.y = view.cell_to_local(Vector2i.ZERO).y + gen.surface_smooth(u.pos.x + 0.5) * TILE
+	foot.x += _spread.get(u.id, 0.0)
 	return foot
 
 
@@ -183,13 +248,21 @@ func _place(u: Unit, node: CreatureSprite) -> void:
 	var foot := foot_of(u)
 	var sc := _scale(u)
 	var pose := _pose(u)
+	var face := _facing(u)
+	var to_spot := float(_spread_face.get(u.id, 0.0)) != 0.0
+	if to_spot:
+		# Идёт к своему месту в комнате.
+		pose = "walk%d" % (int(u.anim * 8.0) % 4)
 	var sad := u.satiety < 25.0 or u.energy < 15.0 or u.health < 40.0
-	node.set_pose(pose + ("|sad" if sad else ""))
+	var tool: String = TOOLS.get(u.task, "") if u.state == Unit.State.WORK and not to_spot else ""
+	node.set_pose(pose + ("@" + tool if not tool.is_empty() else "") + ("|sad" if sad else ""))
 	node.rotation = 0.0
 	node.position = foot
 	var bob := 0.0
 	if pose.begins_with("walk") or pose.begins_with("carry"):
 		bob = -absf(sin(u.anim * 9.0)) * 2.0
+	if to_spot:
+		bob = -absf(sin(Time.get_ticks_msec() * 0.009)) * 2.0
 	if pose == "sleep":
 		var bed := bed_rect(u)
 		if bed.size.x > 0.0:
@@ -202,7 +275,13 @@ func _place(u: Unit, node: CreatureSprite) -> void:
 		node.rotation = -PI * 0.5 * u.facing
 		node.position = foot + Vector2(u.facing * h * 0.5, -BODY_W * 0.3 * sc)
 	node.position.y += bob
-	node.scale = Vector2(sc * u.facing, sc)
+	node.scale = Vector2(sc * face, sc)
+
+
+## Куда смотрит на рисунке: идёт к своему месту в комнате — туда, иначе как в игре.
+func _facing(u: Unit) -> float:
+	var f: float = _spread_face.get(u.id, 0.0)
+	return f if f != 0.0 else float(u.facing)
 
 
 func _pose(u: Unit) -> String:
@@ -235,8 +314,10 @@ func _pose(u: Unit) -> String:
 					return "fish"
 				Unit.Task.GOTO, Unit.Task.NONE, Unit.Task.STROLL, Unit.Task.WARM:
 					return "idle"
-				Unit.Task.FARM, Unit.Task.RESEARCH:
-					return "work%d" % (int(u.anim * 4.0) % 4)
+				Unit.Task.FARM:
+					return "water%d" % (int(u.anim * 2.0) % 2)
+				Unit.Task.RESEARCH:
+					return "study%d" % (int(u.anim * 1.5) % 2)
 			return "work%d" % frame
 	return "blink" if fmod(u.anim + u.id * 0.37, 4.0) < 0.15 else "idle"
 
@@ -252,7 +333,7 @@ func _draw_overlay() -> void:
 		var foot := foot_of(u)
 		var sc := _scale(u)
 		var h := CreatureArt.height_of(BODY_W, node.looks) * sc
-		var pose := node.pose.split("|")[0]
+		var pose := ModelSprites.base_pose(node.pose)
 		if pose == "sleep":
 			var bob := sin(u.anim * 2.0) * 3.0
 			var bed := bed_rect(u)
@@ -277,14 +358,21 @@ func _draw_overlay() -> void:
 			if _is_model(node):
 				top = _models.hand_pos(pose, h / sc, node.looks).y * sc - 4 * sc
 			ResIcon.draw(_overlay, u.carry_key, foot + Vector2(0, top), 10)
+		elif u.state == Unit.State.WORK and _is_model(node) and _models.tool_ready(node.looks, ModelSprites.tool_of(node.pose), pose):
+			# Инструмент модели — в её листе; у удочки здесь только леска от кончика.
+			var tip = _models.tool_tip(pose, h / sc, node.looks, "rod") if u.task == Unit.Task.FISH else null
+			if tip != null:
+				var t: Vector2 = tip * sc
+				t.x *= u.facing
+				_overlay.draw_line(foot + t, foot + t + Vector2(u.facing * 6, 40 + sin(u.anim * 2.0) * 2), Color(0.9, 0.9, 0.9, 0.7), 1.0)
 		elif u.state == Unit.State.WORK and u.task != Unit.Task.EAT:
 			var g := node.looks.duplicate()
 			g["pose"] = POSES.get(pose, {})
 			var hand := CreatureArt.hand_pos(BODY_W, g, 1.0) * sc
 			if _is_model(node):
 				hand = _models.hand_pos(pose, h / sc, node.looks) * sc
-			hand.x *= u.facing
-			_draw_tool(u, foot + hand, float(u.facing))
+			hand.x *= _facing(u)
+			_draw_tool(u, foot + hand, _facing(u))
 		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))
 		if u.id == selected_unit:
 			_overlay.draw_arc(foot + Vector2(0, -h * 0.5), maxf(26.0, h * 0.75), 0, TAU, 32, Color.WHITE, 2.0)

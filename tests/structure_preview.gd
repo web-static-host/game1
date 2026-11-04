@@ -81,6 +81,10 @@ func _process(_delta: float) -> bool:
 				pr.phase = Project.Phase.DONE
 				pr.paid = true
 		colony.drops.clear()
+		# Знак ремонта: тоннель из железа и шахта — ветхие.
+		for pr in colony.projects:
+			if (pr.kind == Project.Kind.TUNNEL and pr.material == "iron") or pr.kind == Project.Kind.MINE:
+				pr.wear = 0.75
 		_main.hud._log.visible = false
 		_main.world_view.light.visible = false
 		_main.world_view.focus_cell(Vector2i(x0 + 3, s + 7))

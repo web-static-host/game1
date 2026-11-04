@@ -2133,13 +2133,12 @@ func _draw_cracks(p: Project, r: Rect2) -> void:
 ## Знак «нужен ремонт» над ветхой постройкой (мигает, если вот-вот рухнет).
 func _draw_wear_sign(p: Project) -> void:
 	var r := _rect_px(p.rect)
-	# Гаечный ключ: износ 70% — оранжевый, 90% — красный и мигает. В комнате — внутри,
-	# вверху посередине; у тоннеля, моста и пристани — над ними.
+	# Гаечный ключ: износ 70% — оранжевый, 90% — красный и мигает. Всегда внутри постройки:
+	# в высокой (комната, шахта) — вверху посередине, в узкой (тоннель, мост, пристань) — по центру.
 	var col := Color(1.0, 0.7, 0.2) if p.wear < Colony.WEAR_WARN[1] else Color(1.0, 0.3, 0.25)
 	if p.wear >= Colony.WEAR_WARN[1] and int(Time.get_ticks_msec() / 400) % 2 == 0:
 		col = col.lightened(0.4)
-	var c := Vector2(r.get_center().x, r.position.y + 22) if p.kind == Project.Kind.ROOM and p.rect.size.y >= 3 \
-		else Vector2(r.get_center().x, r.position.y - 16)
+	var c := Vector2(r.get_center().x, r.position.y + 22) if p.rect.size.y >= 3 else r.get_center()
 	_signs.draw_circle(c, 15, Color(0, 0, 0, 0.55))
 	_signs.draw_arc(c, 15, 0, TAU, 24, col, 2.0)
 	ResIcon.draw_glyph(_signs, "repair", c, 11, col)
