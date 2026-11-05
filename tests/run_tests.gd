@@ -46,6 +46,7 @@ func _initialize() -> void:
 	test_tech_tree()
 	test_genetics()
 	test_residents()
+	test_finish_first()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4358,6 +4359,48 @@ func test_forge_ores() -> void:
 	forge.forge_at = -INF
 	colony.inventory["gold"] = 260
 	check(colony.forge_pick(forge) == "gold", "не прыгает между металлами, пока руда для начатого есть в кузнице")
+
+
+## Назначение занятого гаврика: сразу или когда доделает текущее дело.
+func test_finish_first() -> void:
+	var res := _colony_with_room(25)
+	var colony: Colony = res[0]
+	var forge: Project = res[1]
+	forge.purpose = RoomType.FORGE
+	var u := colony.units[0]
+	u.task = Unit.Task.HAUL
+	u.state = Unit.State.MOVE
+	u.haul_stage = 1
+	u.carry_key = "stone"
+	u.carry_amount = 5
+	check(colony.assign_work(u, forge, true).is_empty() and u.workplace == 0 and u.next_workplace == forge.id,
+		"«доделает своё»: место запомнено, работа пока прежняя")
+	check(u.task == Unit.Task.HAUL and u.carry_amount == 5, "груз не бросил — несёт дальше")
+	check(colony.pending_to(forge).has(u), "в карточке комнаты — «придёт, когда доделает»")
+	var d := u.to_dict()
+	check(Unit.from_dict(d).next_workplace == forge.id, "отложенное назначение сохраняется")
+	u.task = Unit.Task.NONE
+	u.state = Unit.State.IDLE
+	u.carry_amount = 0
+	colony._assign(u)
+	check(u.workplace == forge.id and u.next_workplace == 0, "доделал — перешёл на новое место")
+	# Сразу: бросает дело.
+	var o := colony.units[1]
+	o.task = Unit.Task.HAUL
+	o.state = Unit.State.MOVE
+	o.haul_stage = 1
+	o.carry_key = "stone"
+	o.carry_amount = 4
+	check(colony.assign_work(o, forge).is_empty() and o.workplace == forge.id and o.task == Unit.Task.NONE,
+		"«сразу»: бросает дело и идёт на новое место")
+	# Роль тоже можно сменить после дела.
+	var r := colony.units[2]
+	r.task = Unit.Task.DIG
+	r.state = Unit.State.WORK
+	colony.set_profession(r, Unit.Prof.HAULER, true)
+	check(r.profession != Unit.Prof.HAULER and r.next_prof == Unit.Prof.HAULER and r.task == Unit.Task.DIG, "роль — тоже после дела")
+	colony.cancel_pending(r)
+	check(not colony.has_pending(r), "отложенное можно отменить")
 
 
 ## Уран: обогащают только на фабрике; облучённый живёт на 10% меньше, его дети — мутанты.

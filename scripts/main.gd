@@ -70,6 +70,8 @@ var _send_unit := 0
 var _extend_len := 5
 ## Фильтры в списках выбора гавриков: только без пары, только по призванию.
 var _pick_filters := {"single": false, "calling": false, "mutant": false}
+## Занятого гаврика при назначении: false — сразу на новое место, true — сначала доделает своё.
+var _finish_first := false
 ## На сколько метров сверлить буром.
 var _drill_len := 10
 ## Сдвиг комнаты: куда (0 ←, 1 →, 2 ↑, 3 ↓) и на сколько.
@@ -935,7 +937,7 @@ func _pick_workplace(u: Unit) -> void:
 		var here := u.workplace == 0 and u.profession == prof
 		items.append({"name": Unit.PROF_NAMES[prof] + (" — сейчас" if here else ""), "info": role[1],
 			"button": "Выбрать", "pick": func() -> void:
-				colony.set_profession(u, prof)
+				colony.set_profession(u, prof, _finish_first)
 				_show_unit(u)})
 	var places := colony.projects.filter(func(p: Project) -> bool: return colony.is_workplace(p))
 	places.sort_custom(func(a: Project, b: Project) -> bool: return colony.suitability(u, a) > colony.suitability(u, b))
@@ -946,12 +948,15 @@ func _pick_workplace(u: Unit) -> void:
 			"info": "мест %d/%d · подходит на %d%% · %s%s" % [taken, colony.work_slots(p), roundi(colony.suitability(u, p) * 100),
 				_fit_text(u, colony.work_task(p)), _calling_text(u, colony.work_task(p))],
 			"button": "Сюда", "pick": func() -> void:
-				var err := colony.assign_work(u, p)
+				var err := colony.assign_work(u, p, _finish_first)
 				if not err.is_empty():
 					hud.log_event(err, "warning")
 				_show_unit(u)})
-	hud.show_panel({"title": "Работа: " + u.name, "subtitle": "сейчас: " + colony.role_name(u).to_lower(),
-		"controls": [{"type": "people", "label": "Куда поставить (лучшие места — сверху):", "items": items,
+	var controls := []
+	if colony.busy_with_job(u):
+		controls.append(_finish_control(func() -> void: _pick_workplace(u)))
+	hud.show_panel({"title": "Работа: " + u.name, "subtitle": "сейчас: " + colony.role_name(u).to_lower() + _pending_text(u),
+		"controls": controls + [{"type": "people", "label": "Куда поставить (лучшие места — сверху):", "items": items,
 			"empty": "Нет комнат для работы: ферма, лаборатория, печь, кузница, склад, пристань."}],
 		"actions": [["Назад", func() -> void: _show_unit(u)]]})
 
@@ -1173,7 +1178,7 @@ func _unit_spec(u: Unit) -> Dictionary:
 		var ab := Genetics.ability_text(g)
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
-		tags.append(["Занятие: " + colony.role_name(u).to_lower(), Hud.MUTED])
+		tags.append(["Занятие: " + colony.role_name(u).to_lower() + _pending_text(u), Hud.MUTED])
 		# Почему не на своём месте: холодная ферма — грибы не растут, работы нет, помогает другим.
 		var wp := colony.project_by_id(u.workplace) if u.workplace != 0 else null
 		if wp != null and wp.purpose == RoomType.FARM and not colony.farm_warm(wp):
@@ -1618,6 +1623,12 @@ func _workers_list(p: Project) -> Dictionary:
 			"button": "Снять", "style": "danger", "pick": func() -> void:
 				colony.unassign_work(u)
 				_show_project(p)})
+	for u in colony.pending_to(p):
+		items.append({"looks": _looks(u), "open": _opener(u, func() -> void: _show_project(p)), "name": _name_sex(u),
+			"info": "придёт, когда доделает: " + Unit.TASK_NAMES[u.task].to_lower(),
+			"button": "Отменить", "style": "danger", "pick": func() -> void:
+				colony.cancel_pending(u)
+				_show_project(p)})
 	return {"type": "people", "label": "Работники %d/%d — работают только назначенные:" % [
 		items.size(), colony.work_slots(p)], "items": items, "empty": "Никто не назначен."}
 
@@ -1644,16 +1655,34 @@ func _pick_worker(p: Project) -> void:
 		items.append({"looks": _looks(u), "open": _opener(u, func() -> void: _pick_worker(p)), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
 			"pick": func() -> void:
-				var err := colony.assign_work(u, p)
+				var err := colony.assign_work(u, p, _finish_first)
 				if not err.is_empty():
 					hud.log_event(err, "warning")
 				_show_project(p)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
 		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
-		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)),
+		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)), _finish_control(func() -> void: _pick_worker(p)),
 			{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items,
 			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Все взрослые уже здесь."}],
 		"actions": [["Назад", func() -> void: _show_project(p)]]})
+
+
+## «· потом: ферма» — куда гаврик пойдёт, доделав своё.
+func _pending_text(u: Unit) -> String:
+	if u.next_workplace != 0:
+		return " · потом: " + colony.workplace_name(colony.project_by_id(u.next_workplace)).to_lower()
+	if u.next_prof >= 0:
+		return " · потом: " + Unit.PROF_NAMES[u.next_prof].to_lower()
+	return ""
+
+
+## Занятый гаврик: сразу на новое место или сначала доделает текущее дело.
+func _finish_control(refresh: Callable) -> Dictionary:
+	return {"type": "checks", "label": "Если гаврик занят:", "items": [
+		["finish", "сначала доделает своё (докопает, донесёт)", _finish_first]],
+		"toggled": func(_k: String, on: bool) -> void:
+			_finish_first = on
+			refresh.call()}
 
 
 ## Переключатели фильтров над списком выбора гавриков (по умолчанию выключены).
@@ -2230,10 +2259,10 @@ func _pick_role(prof: int) -> void:
 			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
-				colony.set_profession(o, prof)
+				colony.set_profession(o, prof, _finish_first)
 				_show_people()})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",
-		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)),
+		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)), _finish_control(func() -> void: _pick_role(prof)),
 			{"type": "people", "label": "Кого назначить:", "items": items,
 			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],
 		"actions": [["Назад", _show_people]]})

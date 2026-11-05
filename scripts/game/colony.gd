@@ -4955,16 +4955,70 @@ func _closed_for(u: Unit, p: Project) -> bool:
 	return u.workplace != p.id
 
 
-func assign_work(u: Unit, p: Project) -> String:
+## Дела, которые гаврик может доделать перед новой работой (одно действие: докопать
+## клетку, донести груз, поставить крепь…). Работа на месте (ферма, мастерская,
+## лаборатория, рыбалка) не кончается — с неё уходят сразу.
+const FINISHABLE := [Unit.Task.DIG, Unit.Task.BUILD, Unit.Task.HARVEST, Unit.Task.EQUIP,
+	Unit.Task.SUPPORT, Unit.Task.HAUL, Unit.Task.REPAIR]
+
+
+func busy_with_job(u: Unit) -> bool:
+	return u.task in FINISHABLE and u.state != Unit.State.FALL
+
+
+## Кто придёт сюда, когда доделает своё.
+func pending_to(p: Project) -> Array[Unit]:
+	var out: Array[Unit] = []
+	for u in units:
+		if u.next_workplace == p.id:
+			out.append(u)
+	return out
+
+
+func has_pending(u: Unit) -> bool:
+	return u.next_workplace != 0 or u.next_prof >= 0
+
+
+func cancel_pending(u: Unit) -> void:
+	u.next_workplace = 0
+	u.next_prof = -1
+
+
+## Отложенное назначение: гаврик доделал дело — переходит на новую работу.
+func _apply_pending(u: Unit) -> void:
+	if not has_pending(u):
+		return
+	var wp := u.next_workplace
+	var prof := u.next_prof
+	cancel_pending(u)
+	if wp != 0:
+		var p := project_by_id(wp)
+		if p != null and is_workplace(p):
+			assign_work(u, p)
+	elif prof >= 0:
+		set_profession(u, prof)
+
+
+## finish — занятый сначала доделает текущее дело (докопает, донесёт), потом пойдёт.
+func assign_work(u: Unit, p: Project, finish := false) -> String:
 	wake_idle()
 	if u.child:
 		return "Дети не работают"
 	if not is_workplace(p):
 		return "Сюда нельзя назначить"
 	if u.workplace == p.id:
+		cancel_pending(u)
 		return ""
-	if assigned_to(p).size() >= work_slots(p):
+	if u.next_workplace == p.id and finish:
+		return ""
+	if assigned_to(p).size() + pending_to(p).filter(func(o: Unit) -> bool: return o != u).size() >= work_slots(p):
 		return "Все места заняты (%d)" % work_slots(p)
+	if finish and busy_with_job(u):
+		u.next_workplace = p.id
+		u.next_prof = -1
+		_log("%s доделает дело и пойдёт: %s" % [u.name, workplace_name(p)], "info", u.cell())
+		return ""
+	cancel_pending(u)
 	u.workplace = p.id
 	u.profession = Unit.Prof.ANY
 	u.calling = calling_of(u)
@@ -4975,12 +5029,19 @@ func assign_work(u: Unit, p: Project) -> String:
 
 
 ## Роль гаврика без места работы: свободный, строитель или подсобный рабочий.
-func set_profession(u: Unit, prof: int) -> String:
+func set_profession(u: Unit, prof: int, finish := false) -> String:
 	wake_idle()
 	if u.child:
 		return "Дети не работают"
 	if u.profession == prof and u.workplace == 0:
+		cancel_pending(u)
 		return ""
+	if finish and busy_with_job(u):
+		u.next_prof = prof
+		u.next_workplace = 0
+		_log("%s доделает дело и станет: %s" % [u.name, Unit.PROF_NAMES[prof].to_lower()], "info", u.cell())
+		return ""
+	cancel_pending(u)
 	unassign_work(u)
 	u.profession = prof
 	u.calling = calling_of(u)
@@ -6379,6 +6440,7 @@ func _task_order(u: Unit) -> Array[String]:
 
 ## Ищет занятие для гаврика. true — назначено.
 func _assign(u: Unit) -> bool:
+	_apply_pending(u)
 	_ctx_on = true
 	_ctx_reset()
 	var found := _assign_core(u)
