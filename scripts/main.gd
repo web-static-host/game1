@@ -920,7 +920,10 @@ func _show_unit(u: Unit) -> void:
 			hud.hide_info()
 			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"],
 			["Работа", func() -> void: _pick_workplace(u)],
+			["Родословная", func() -> void: _show_lineage(colony.unit_uid(u), 2, func() -> void: _show_unit(u))],
 			["Гаврики", _show_people]]
+	else:
+		spec["actions"] = [["Родословная", func() -> void: _show_lineage(colony.unit_uid(u), 2, func() -> void: _show_unit(u))]]
 	hud.show_panel(spec)
 
 
@@ -1566,6 +1569,120 @@ func _show_project(p: Project) -> void:
 	spec["controls"] = controls
 	spec["controls_first"] = RoomType.is_store(p.purpose) and p.phase == Project.Phase.DONE
 	hud.show_panel(spec)
+
+
+## Родословная гаврика: сам, родители, бабушки и дедушки (depth = 2) или все предки.
+## У каждого — портрет (цвет, мутации видно), цвет словами и мутации.
+const LINEAGE_LEVELS := ["Родители", "Бабушки и дедушки", "Прабабушки и прадедушки"]
+
+
+func _show_lineage(key: String, depth: int, back: Callable) -> void:
+	_info_target = []
+	colony.ensure_lineage()
+	var rec: Dictionary = colony.lineage.get(key, {})
+	if rec.is_empty():
+		hud.log_event("Родословная не записана", "warning")
+		return
+	var again := func() -> void: _show_lineage(key, depth, back)
+	var controls := [{"type": "people", "label": "Сам:", "items": [_lineage_item(key, "", again, false)]}]
+	# Уровни: [[uid, кем приходится]] — дубли (общий предок по двум линиям) один раз.
+	var level := [[key, []]]
+	var lv := 0
+	var more := false
+	while true:
+		var next := []
+		var seen := {}
+		for e in level:
+			var r: Dictionary = colony.lineage.get(e[0], {})
+			for side in ["m", "f"]:
+				var pk := str(r.get(side, ""))
+				if pk.is_empty() or not colony.lineage.has(pk) or seen.has(pk):
+					continue
+				seen[pk] = true
+				next.append([pk, (e[1] as Array) + [side]])
+		if next.is_empty():
+			break
+		if lv >= depth:
+			more = true
+			break
+		lv += 1
+		var items := []
+		for e in next:
+			items.append(_lineage_item(e[0], _relation(e[1], int(colony.lineage[e[0]].get("s", 0))), again, true))
+		var title: String = LINEAGE_LEVELS[lv - 1] if lv <= LINEAGE_LEVELS.size() else "Предки %d-го колена" % lv
+		controls.append({"type": "people", "label": "%s — %d:" % [title, items.size()], "items": items})
+		level = next
+	if lv == 0:
+		controls.append({"type": "text", "text": "Предки неизвестны — это первое поколение (основатель) или прилетел без записи."})
+	var actions := []
+	if more:
+		actions.append(["Полная родословная", func() -> void: _show_lineage(key, 99, back), "primary"])
+	elif depth > 2:
+		actions.append(["Только ближние", func() -> void: _show_lineage(key, 2, back)])
+	actions.append(["Назад", back])
+	hud.show_panel({"title": "Родословная: " + str(rec.get("n", "")),
+		"subtitle": "поколение %d · %s" % [int(rec.get("gen", 1)), "все предки" if depth > 2 else "родители, бабушки и дедушки"],
+		"controls": controls, "actions": actions})
+
+
+## Кем приходится: chain — путь от гаврика к предку («m» — через маму, «f» — через папу).
+## «мама», «бабушка (по папе)», «прабабушка (мама мамы папы)».
+func _relation(chain: Array, sex: int) -> String:
+	var n := chain.size()
+	if n == 1:
+		return "мама" if chain[0] == "m" else "папа"
+	var base := "бабушка" if sex == Unit.Sex.FEMALE else "дедушка"
+	if n == 2:
+		return "%s (по %s)" % [base, "маме" if chain[0] == "m" else "папе"]
+	var words: PackedStringArray = ["мама" if chain[n - 1] == "m" else "папа"]
+	for i in range(n - 2, -1, -1):
+		words.append("мамы" if chain[i] == "m" else "папы")
+	return "%s%s (%s)" % ["пра".repeat(n - 2), base, " ".join(words)]
+
+
+func _lineage_item(key: String, relation: String, again: Callable, with_tree: bool) -> Dictionary:
+	var r: Dictionary = colony.lineage.get(key, {})
+	var g := Genetics.from_save(r["g"]) if not (r.get("g", {}) as Dictionary).is_empty() else {}
+	var live := colony.unit_by_uid(key)
+	var parts: PackedStringArray = []
+	if not relation.is_empty():
+		parts.append(relation)
+	if g.is_empty():
+		parts.append("цвет и мутации не записаны")
+	else:
+		var col := Genetics.color_of(g)
+		parts.append("цвет: " + Genetics.color_word(col))
+		if Genetics.is_super(g):
+			parts.append("СУПЕР-ГАВРИК")
+		var muts: PackedStringArray = []
+		for m in Genetics.visible_mutations(g):
+			if not Genetics.COSMETIC.has(m):
+				muts.append(Genetics.MUTATION_NAMES.get(m, m))
+		parts.append(("мутации: " + ", ".join(muts)) if not muts.is_empty() else "без мутаций")
+	var fem := int(r.get("s", 0)) == Unit.Sex.FEMALE
+	if bool(r.get("irr", false)):
+		parts.append("облучена" if fem else "облучён")
+	if live != null:
+		parts.append("жива" if fem else "жив")
+	elif bool(r.get("d", false)):
+		parts.append("умерла" if fem else "умер")
+	else:
+		parts.append("на другой планете")
+	var looks := {}
+	if not g.is_empty():
+		looks = Genetics.looks(g)
+		looks["mutant"] = Genetics.rarity(g) if Genetics.is_mutant(g) else -1
+		looks["sex_badge"] = true
+	var item := {"name": "%s · %s" % [str(r.get("n", "?")), "жен." if int(r.get("s", 0)) == Unit.Sex.FEMALE else "муж."],
+		"info": " · ".join(parts)}
+	if not looks.is_empty():
+		item["looks"] = looks
+	if live != null:
+		item["open"] = _opener(live, again)
+	if with_tree and (colony.lineage.has(str(r.get("m", ""))) or colony.lineage.has(str(r.get("f", "")))):
+		item["button"] = "Родословная"
+		item["pick"] = func() -> void: _show_lineage(key, 2, again)
+	return item
 
 
 ## Имя с полом: «Анна ♀» — чтобы сразу видеть, кого с кем сводить.

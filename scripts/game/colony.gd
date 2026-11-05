@@ -166,6 +166,9 @@ var cells_dug := 0
 var discovered := {}
 var next_project_id := 1
 var next_unit_id := 1
+## Родословная: uid → {"n" имя, "s" пол, "g" гены, "gen" поколение, "m"/"f" uid мамы и папы,
+## "d" умер, "irr" облучён}. Хранятся живые и предки живых (остальные отсеиваются при сохранении).
+var lineage := {}
 var rng := RandomNumberGenerator.new()
 ## Клетка базы на поверхности: возле неё кучи ресурсов и отвал.
 var home := Vector2i.ZERO
@@ -3748,6 +3751,7 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 			u.partner_name = stay.name
 			stay.partner_planet = planet_id
 			stay.partner_name = u.name
+		unit_uid(u)
 		crew_data.append(u.to_dict())
 		units.erase(u)
 		_units_rev += 1
@@ -3760,8 +3764,11 @@ func launch(p: Project, planet_id: String, crew: Array, cargo: Dictionary) -> Di
 	p.rocket = ""
 	_log("Старт! Экспедиция на %s: гавриков %d, груза %d." % [Planet.planet_name(planet_id), crew_data.size(), total], "good")
 	# Летит мгновенно: садится при следующем шаге игры (раньше — месяцами).
+	var roots: Array[String] = []
+	for u: Unit in crew:
+		roots.append(u.uid)
 	return {"planet": planet_id, "crew": crew_data, "cargo": cargo.duplicate(), "research": research.done.duplicate(),
-		"left": 0.0, "engine": engine}
+		"left": 0.0, "engine": engine, "lineage": lineage_of(roots)}
 
 
 ## Новая колония на планете: корабль садится на поверхность, экипаж и груз — в нём.
@@ -3780,6 +3787,10 @@ func start_planet(x: int, flight: Dictionary) -> void:
 ## Прилетела ракета: корабль садится рядом с колонией (или на месте первой высадки),
 ## гаврики и груз — в корабле.
 func receive_flight(flight: Dictionary) -> void:
+	var fl: Dictionary = flight.get("lineage", {})
+	for k in fl:
+		if not lineage.has(k):
+			lineage[k] = fl[k].duplicate(true)
 	var ship := _land_ship()
 	ship.ship_engine = str(flight.get("engine", ""))
 	var ids := {}
@@ -4570,6 +4581,10 @@ static var pair_finder: Callable
 
 func _kill(u: Unit, why: String, report := true) -> void:
 	_drop(u)
+	var rec: Dictionary = lineage.get(unit_uid(u), {})
+	if not rec.is_empty():
+		rec["d"] = true
+		rec["irr"] = u.irradiated
 	units.erase(u)
 	_units_rev += 1
 	for o in units:
@@ -4897,6 +4912,7 @@ func _birth(mother: Unit) -> void:
 	if father != null:
 		baby.father_id = father.id
 		baby.father_name = father.name
+	lineage_record(baby, mother, father)
 	# Немного таланта от родителей.
 	for k in baby.skills:
 		var parent_xp: float = mother.skills[k] + (father.skills[k] if father != null else 0.0)
@@ -4908,6 +4924,77 @@ func _birth(mother: Unit) -> void:
 		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good", baby.cell())
 	elif Genetics.is_mutant(genome):
 		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info", baby.cell())
+
+
+# --- Родословная ------------------------------------------------------------------------
+
+func unit_uid(u: Unit) -> String:
+	if u.uid.is_empty():
+		u.uid = "%s:%d" % [world.gen.planet_id, u.id]
+	return u.uid
+
+
+## Запись о гаврике в родословной (при рождении; у основателей и старых сохранений — когда
+## понадобится). Родители: живые — по их uid; уже умершие в старых сохранениях — по имени.
+func lineage_record(u: Unit, mother: Unit = null, father: Unit = null) -> Dictionary:
+	var key := unit_uid(u)
+	var rec: Dictionary = lineage.get(key, {})
+	if rec.is_empty():
+		rec = {"n": u.name, "s": u.sex, "gen": u.generation}
+		lineage[key] = rec
+	rec["g"] = Genetics.to_save(u.genome) if not u.genome.is_empty() else {}
+	rec["irr"] = u.irradiated
+	if mother == null and u.mother_id != 0:
+		mother = unit_by_id(u.mother_id)
+	if father == null and u.father_id != 0:
+		father = unit_by_id(u.father_id)
+	if not rec.has("m"):
+		rec["m"] = _parent_uid(key, mother, u.mother_name, Unit.Sex.FEMALE, "m")
+	if not rec.has("f"):
+		rec["f"] = _parent_uid(key, father, u.father_name, Unit.Sex.MALE, "f")
+	return rec
+
+
+func _parent_uid(child_key: String, parent: Unit, pname: String, sex: int, side: String) -> String:
+	if parent != null:
+		lineage_record(parent)
+		return unit_uid(parent)
+	if pname.is_empty():
+		return ""
+	# Старое сохранение: родителя уже нет — только имя, без генов.
+	var key := child_key + "/" + side
+	if not lineage.has(key):
+		lineage[key] = {"n": pname, "s": sex, "d": true, "m": "", "f": ""}
+	return key
+
+
+## Все живые — в родословной.
+func ensure_lineage() -> void:
+	for u in units:
+		if not lineage.has(unit_uid(u)):
+			lineage_record(u)
+
+
+## Записи о гавриках roots и всех их предках.
+func lineage_of(roots: Array[String]) -> Dictionary:
+	var out := {}
+	var stack: Array[String] = roots.duplicate()
+	while not stack.is_empty():
+		var k: String = stack.pop_back()
+		if k.is_empty() or out.has(k) or not lineage.has(k):
+			continue
+		out[k] = lineage[k]
+		stack.append(str(lineage[k].get("m", "")))
+		stack.append(str(lineage[k].get("f", "")))
+	return out
+
+
+## Живой гаврик этой колонии с таким uid (или null).
+func unit_by_uid(key: String) -> Unit:
+	for u in units:
+		if u.uid == key:
+			return u
+	return null
 
 
 ## Уран радиоактивен: кто его копает, носит или обогащает — облучён (один раз): живёт на
@@ -10476,6 +10563,16 @@ func _log(text: String, kind: String, at: Variant = null) -> void:
 
 # --- Сохранение -----------------------------------------------------------------------
 
+## В сохранение — только живые и их предки.
+func _lineage_to_save() -> Dictionary:
+	ensure_lineage()
+	var roots: Array[String] = []
+	for u in units:
+		roots.append(unit_uid(u))
+	lineage = lineage_of(roots)
+	return lineage
+
+
 func to_dict() -> Dictionary:
 	var dp := []
 	for c in dig_progress:
@@ -10506,6 +10603,7 @@ func to_dict() -> Dictionary:
 		"units": us,
 		"next_project_id": next_project_id,
 		"next_unit_id": next_unit_id,
+		"lineage": _lineage_to_save(),
 		"social_t": _social_t,
 		"acquaint": acquaint,
 		"home": [home.x, home.y],
@@ -10597,6 +10695,8 @@ func load_dict(d: Dictionary) -> void:
 				_pair(u, o)
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
+	lineage = d.get("lineage", {}).duplicate(true)
+	ensure_lineage()
 	_social_t = float(d.get("social_t", 0.0))
 	acquaint = d.get("acquaint", {}).duplicate()
 	_plant_t = float(d.get("plant_t", 0.0))

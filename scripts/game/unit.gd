@@ -52,6 +52,8 @@ var father_name := ""
 var workplace := 0
 ## Новая работа «когда доделает текущее дело»: место (id) или роль (next_prof ≥ 0).
 var next_workplace := 0
+## Знак в родословной: «планета:id» при рождении, не меняется и в полёте (id меняется).
+var uid := ""
 var next_prof := -1
 ## Потребности 0..100.
 var energy := 100.0
@@ -293,7 +295,7 @@ func to_dict() -> Dictionary:
 		"health": health, "genome": Genetics.to_save(genome) if not genome.is_empty() else {},
 		"mother_id": mother_id, "father_id": father_id, "mother_name": mother_name, "father_name": father_name,
 		"workplace": workplace, "lifespan": lifespan, "generation": generation,
-		"next_workplace": next_workplace, "next_prof": next_prof,
+		"next_workplace": next_workplace, "next_prof": next_prof, "uid": uid,
 	}
 
 
@@ -336,6 +338,7 @@ static func from_dict(d: Dictionary) -> Unit:
 	u.father_name = str(d.get("father_name", ""))
 	u.workplace = int(d.get("workplace", 0))
 	u.next_workplace = int(d.get("next_workplace", 0))
+	u.uid = str(d.get("uid", ""))
 	u.next_prof = int(d.get("next_prof", -1))
 	u.lifespan = float(d.get("lifespan", 0.0))
 	u.generation = int(d.get("generation", 1))

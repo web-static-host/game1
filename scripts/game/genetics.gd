@@ -498,6 +498,27 @@ static func stats(g: Dictionary) -> Dictionary:
 
 
 ## Насколько цвет похож на эталон (0..1): по оттенку и насыщенности.
+## Цвет словами: «тёмно-синий», «бирюза лого».
+static func color_word(c: Color) -> String:
+	if CreatureArt.super_distance(c) < SUPER_RADIUS:
+		return "бирюза лого"
+	if c.s < 0.18:
+		return "белый" if c.v > 0.85 else ("серый" if c.v > 0.35 else "чёрный")
+	var names := [[0.03, "красный"], [0.09, "оранжевый"], [0.15, "жёлтый"], [0.24, "салатовый"],
+		[0.42, "зелёный"], [0.5, "бирюзовый"], [0.57, "голубой"], [0.7, "синий"], [0.8, "фиолетовый"],
+		[0.94, "розовый"], [1.01, "красный"]]
+	var word := "красный"
+	for e in names:
+		if c.h < e[0]:
+			word = e[1]
+			break
+	if c.v < 0.6:
+		return "тёмно-" + word
+	if c.s < 0.5:
+		return "бледно-" + word
+	return word
+
+
 static func _near(c: Color, ref: Color) -> float:
 	var d := absf(c.ok_hsl_h - ref.ok_hsl_h)
 	d = minf(d, 1.0 - d)

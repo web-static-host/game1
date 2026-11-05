@@ -47,6 +47,7 @@ func _initialize() -> void:
 	test_genetics()
 	test_residents()
 	test_finish_first()
+	test_lineage()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4359,6 +4360,43 @@ func test_forge_ores() -> void:
 	forge.forge_at = -INF
 	colony.inventory["gold"] = 260
 	check(colony.forge_pick(forge) == "gold", "не прыгает между металлами, пока руда для начатого есть в кузнице")
+
+
+## Родословная: запись при рождении, умершие предки остаются, переносится с ракетой.
+func test_lineage() -> void:
+	var colony := _new_colony(77)
+	_start(colony, 0)
+	var females := colony.units.filter(func(u: Unit) -> bool: return u.sex == Unit.Sex.FEMALE)
+	var males := colony.units.filter(func(u: Unit) -> bool: return u.sex == Unit.Sex.MALE)
+	if females.size() < 2 or males.size() < 1:
+		check(false, "в стартовой колонии нужны 2 женщины и мужчина")
+		return
+	var mom: Unit = females[0]
+	var dad: Unit = males[0]
+	mom.partner_id = dad.id
+	dad.partner_id = mom.id
+	colony._birth(mom)
+	var kid: Unit = colony.units[colony.units.size() - 1]
+	var r: Dictionary = colony.lineage.get(kid.uid, {})
+	check(r.get("m", "") == mom.uid and r.get("f", "") == dad.uid and colony.lineage.has(mom.uid)
+		and not (r.get("g", {}) as Dictionary).is_empty(), "ребёнок записан в родословную: родители и гены")
+	# Внук: ребёнок вырос, пара — второй основатель.
+	kid.child = false
+	var other: Unit = females[1] if kid.sex == Unit.Sex.MALE else dad
+	var f2: Unit = other if other.sex == Unit.Sex.FEMALE else kid
+	var m2: Unit = kid if f2 == other else other
+	f2.partner_id = m2.id
+	m2.partner_id = f2.id
+	colony._birth(f2)
+	var grand: Unit = colony.units[colony.units.size() - 1]
+	colony._kill(mom, "", false)
+	check(bool(colony.lineage[mom.uid].get("d", false)), "умерла — в родословной отмечено")
+	var saved: Dictionary = colony.to_dict()["lineage"]
+	check(saved.has(mom.uid) and saved.has(kid.uid) and saved.has(grand.uid), "умершая бабушка остаётся в родословной внука")
+	var anc := colony.lineage_of([grand.uid] as Array[String])
+	check(anc.has(mom.uid) and anc.has(dad.uid), "с ракетой летят записи о предках (%d)" % anc.size())
+	check(Unit.from_dict(grand.to_dict()).uid == grand.uid, "знак родословной сохраняется")
+	check(Genetics.color_word(Genetics.BLUE) == "синий" and Genetics.color_word(CreatureArt.SUPER_A) == "бирюза лого", "цвет словами")
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
