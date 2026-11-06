@@ -48,6 +48,7 @@ func _initialize() -> void:
 	test_residents()
 	test_finish_first()
 	test_lineage()
+	test_stuck_note()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4397,6 +4398,39 @@ func test_lineage() -> void:
 	check(anc.has(mom.uid) and anc.has(dad.uid), "с ракетой летят записи о предках (%d)" % anc.size())
 	check(Unit.from_dict(grand.to_dict()).uid == grand.uid, "знак родословной сохраняется")
 	check(Genetics.color_word(Genetics.BLUE) == "синий" and Genetics.color_word(CreatureArt.SUPER_A) == "бирюза лого", "цвет словами")
+
+
+## Гаврик не может дойти до своей работы — предупреждение в журнале и в карточке.
+func test_stuck_note() -> void:
+	var colony := _new_colony(81)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 20)
+	var s := w.gen.surface_y(x)
+	colony.create_project(Project.Kind.MINE, Rect2i(x - 22, s + 3, 6, 3))
+	# Шахтёр в замурованной каморке глубоко под землёй.
+	var u: Unit = colony.units[0]
+	for cx in range(x, x + 3):
+		w.set_material(cx, s + 40, Mat.AIR)
+		w.set_material(cx, s + 39, Mat.AIR)
+		w.set_dug(cx, s + 40)
+		w.set_dug(cx, s + 39)
+	u.pos = Vector2(x + 1, s + 40)
+	colony.set_profession(u, Unit.Prof.MINER)
+	u.task = Unit.Task.NONE
+	u.state = Unit.State.IDLE
+	u.idle_fails = Colony.STUCK_AFTER
+	var logged := []
+	colony.event_logged.connect(func(t: String, _k: String) -> void: logged.append(t))
+	colony.offline = false
+	colony._check_stuck()
+	check(u.stuck_note == "не может дойти до шахты", "запертый шахтёр: «%s»" % u.stuck_note)
+	check(logged.any(func(t: String) -> bool: return t.begins_with(u.name + " не может дойти до шахты")), "в журнале — предупреждение")
+	logged.clear()
+	colony._check_stuck()
+	check(logged.is_empty(), "повторно не пишет, пока причина та же")
+	var o: Unit = colony.units[1]
+	check(colony.stuck_reason(o).is_empty(), "у того, кто может дойти, — ничего")
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.

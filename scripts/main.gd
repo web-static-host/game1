@@ -1182,6 +1182,8 @@ func _unit_spec(u: Unit) -> Dictionary:
 		if not ab.is_empty():
 			tags.append(["Умеет: " + ab, Hud.MUTED])
 		tags.append(["Занятие: " + colony.role_name(u).to_lower() + _pending_text(u), Hud.MUTED])
+		if not u.stuck_note.is_empty():
+			tags.append(["Не может работать: %s — проложите путь (лестница, тоннель)" % u.stuck_note, Color(1.0, 0.6, 0.4)])
 		# Почему не на своём месте: холодная ферма — грибы не растут, работы нет, помогает другим.
 		var wp := colony.project_by_id(u.workplace) if u.workplace != 0 else null
 		if wp != null and wp.purpose == RoomType.FARM and not colony.farm_warm(wp):

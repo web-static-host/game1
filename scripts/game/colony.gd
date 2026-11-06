@@ -874,6 +874,63 @@ func _check_access() -> void:
 const NO_SOURCE := "Склад недоступен"
 
 
+## Гаврик давно без дела, а его работа есть, только до неё не дойти (заперт в корабле,
+## отрезан обвалом, нет лестницы): предупреждаем в журнале и в карточке гаврика.
+## Проверяются только давно ищущие дела, и не больше STUCK_BUDGET за раз (обход дорогой).
+const STUCK_AFTER := 4
+const STUCK_BUDGET := 2
+## Меньше стольких клеток вокруг — гаврик заперт.
+const STUCK_ROOM := 60
+var _stuck_i := 0
+
+
+func _check_stuck() -> void:
+	if offline or units.is_empty():
+		return
+	var budget := STUCK_BUDGET
+	var n := units.size()
+	for i in n:
+		var u := units[(_stuck_i + i) % n]
+		if u.child or u.idle_fails < STUCK_AFTER or (u.task != Unit.Task.NONE and u.task != Unit.Task.STROLL):
+			continue
+		if budget <= 0:
+			_stuck_i = (_stuck_i + i) % n
+			return
+		budget -= 1
+		var why := stuck_reason(u)
+		if why != u.stuck_note:
+			u.stuck_note = why
+			if not why.is_empty():
+				_log("%s %s — проложите путь (лестница, тоннель)" % [u.name, why], "warning", u.cell())
+	_stuck_i = 0
+
+
+## Куда гаврику не дойти (пусто — дойти может или работы для него нет).
+func stuck_reason(u: Unit) -> String:
+	var dist: Dictionary = pathing.explore(u.cell())[1]
+	var cut := Pathing.truncated(dist)
+	if u.workplace != 0:
+		var wp := project_by_id(u.workplace)
+		if wp != null and not cut and _near_rect(site_rect(wp), dist) == null:
+			return "не может дойти до места работы (%s)" % workplace_name(wp).to_lower()
+	if u.profession == Unit.Prof.MINER or u.profession == Unit.Prof.BUILDER:
+		var mines := u.profession == Unit.Prof.MINER
+		var any := false
+		var reach := false
+		for p in projects:
+			if p.paused or p.phase == Project.Phase.DONE or (p.kind == Project.Kind.MINE) != mines:
+				continue
+			any = true
+			if _near_rect(site_rect(p), dist) != null:
+				reach = true
+				break
+		if any and not reach and not cut:
+			return "не может дойти до шахты" if mines else "не может дойти ни до одной стройки"
+	if not cut and dist.size() < STUCK_ROOM:
+		return "заперт: отсюда никуда не пройти"
+	return ""
+
+
 func _check_sources() -> void:
 	for p in projects:
 		var had := p.blocked.begins_with(NO_SOURCE)
@@ -5480,6 +5537,8 @@ func update(dt: float) -> void:
 		# в один долгий кадр.
 		if _access_t == 2:
 			_check_sources()
+		if _access_t == 4:
+			_check_stuck()
 		if _access_t >= 5:
 			_access_t = 0
 			_check_access()
@@ -5581,6 +5640,9 @@ func _update_unit(u: Unit, dt: float) -> void:
 				_think_spent += Time.get_ticks_usec() - t0
 				if found:
 					u.idle_fails = 0
+					# Поесть и погреться можно и запертому — предупреждение снимает только работа.
+					if not u.task in [Unit.Task.EAT, Unit.Task.WARM, Unit.Task.STROLL, Unit.Task.SLEEP]:
+						u.stuck_note = ""
 				else:
 					# Дела нет — ищем реже, чтобы толпа бездельников не грузила игру.
 					u.idle_fails += 1
