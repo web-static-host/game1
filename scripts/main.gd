@@ -824,7 +824,7 @@ func _on_tap(screen_pos: Vector2) -> void:
 	if u != null:
 		_select(u, null)
 		return
-	var p := colony.project_at(c)
+	var p := _tap_project(c)
 	if p != null:
 		_select(null, p)
 		return
@@ -835,6 +835,15 @@ func _on_tap(screen_pos: Vector2) -> void:
 		_show_feature(fx)
 		return
 	hud.show_panel(_cell_spec(c))
+
+
+## Постройка под пальцем. Бур и зонд стоят внутри шахты или тоннеля — нажатие достаётся
+## машине, а не выработке вокруг неё (раньше открывалась шахта, и до бура было не добраться).
+func _tap_project(c: Vector2i) -> Project:
+	for q in colony.projects:
+		if (q.kind == Project.Kind.DRILL or q.kind == Project.Kind.PROBE) and q.has_cell(c):
+			return q
+	return colony.project_at(c)
 
 
 const FEATURE_ACTIONS := {
