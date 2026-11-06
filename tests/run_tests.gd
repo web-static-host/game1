@@ -49,6 +49,7 @@ func _initialize() -> void:
 	test_finish_first()
 	test_lineage()
 	test_stuck_note()
+	test_ship_spacing()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4431,6 +4432,25 @@ func test_stuck_note() -> void:
 	check(logged.is_empty(), "повторно не пишет, пока причина та же")
 	var o: Unit = colony.units[1]
 	check(colony.stuck_reason(o).is_empty(), "у того, кто может дойти, — ничего")
+
+
+## Второй корабль садится так, чтобы корпуса (нос, стабилизаторы) не наезжали друг на друга.
+func test_ship_spacing() -> void:
+	var w := WorldData.new(WorldGen.new(5, WorldGen.LATEST, "uranus"))
+	var c := Colony.new(w)
+	var fl := {"planet": "uranus", "crew": [], "cargo": {}, "research": [], "left": 0.0, "engine": "chem"}
+	c.start_planet(0, fl.duplicate(true))
+	c.receive_flight(fl.duplicate(true))
+	c.receive_flight(fl.duplicate(true))
+	var ships := c.rooms_of(RoomType.SHIP)
+	var ok := ships.size() == 3
+	for i in ships.size():
+		for j in range(i + 1, ships.size()):
+			var a: Rect2i = ships[i].rect
+			var b: Rect2i = ships[j].rect
+			var gap := maxi(b.position.x - a.end.x, a.position.x - b.end.x)
+			ok = ok and gap >= 5
+	check(ok, "корабли садятся с зазором под нос и хвост: %s" % str(ships.map(func(q: Project) -> Rect2i: return q.rect)))
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.

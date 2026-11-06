@@ -3901,15 +3901,24 @@ func receive_flight(flight: Dictionary) -> void:
 
 ## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
 ## через десяток метров (между кораблями прокапывают ход).
+## Шаг между местами посадки кораблей и запас под нос и хвост корпуса (клеток).
+const SHIP_STEP := 15
+const SHIP_HULL_PAD := 6
+
+
 func _land_ship() -> Project:
 	var x0 = null
 	for k in 40:
 		for sgn in [1, -1]:
-			var x: int = home.x - 4 + sgn * k * 10
+			# Корпус корабля шире отсека: нос выступает на 3 клетки вправо, двигатель и
+			# стабилизаторы — на 3 влево. Соседний корабль садится через 15 клеток, чтобы
+			# корпуса не наезжали друг на друга.
+			var x: int = home.x - 4 + sgn * k * SHIP_STEP
 			var sx := world.gen.surface_y(x)
 			var free := true
 			for q in projects:
-				if q.rect.intersects(Rect2i(x - 1, sx - 4, 11, 5)):
+				var pad := SHIP_HULL_PAD if q.purpose == RoomType.SHIP else 1
+				if q.rect.intersects(Rect2i(x - pad, sx - 4, 9 + pad * 2, 5)):
 					free = false
 			if free and _flat_at(x):
 				x0 = x

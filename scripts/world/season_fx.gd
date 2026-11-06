@@ -27,8 +27,30 @@ func _surface(x: int) -> int:
 	return s
 
 
-func _process(_delta: float) -> void:
+## Ядовитый газ над поверхностью (Венера, газовые гиганты): дымка цвета газа, у земли гуще.
+## Где дегазация очистила воздух — дымка плавно рассеивается (и возвращается, если её выключить).
+const HAZE_H := 14
+const HAZE_FADE := 0.6
+const GAS_COLORS := {"venus": Color(0.95, 0.78, 0.25), "jupiter": Color(0.9, 0.58, 0.32),
+	"saturn": Color(0.92, 0.8, 0.42), "uranus": Color(0.55, 0.95, 0.55), "neptune": Color(0.45, 0.85, 0.75)}
+## Густота у земли.
+const HAZE_ALPHA := 0.62
+## Густота дымки по столбцам 0..1 (плавно идёт к 0 над очищенным, к 1 — над ядовитым).
+var _haze := {}
+
+
+func _gas_sky() -> bool:
+	return str(colony.world.gen.planet.get("atm", "air")) == "gas"
+
+
+func _process(delta: float) -> void:
 	if colony == null:
+		return
+	if _gas_sky():
+		for x in _haze.keys():
+			var target := 0.0 if colony.sky_clear(x) else 1.0
+			_haze[x] = move_toward(_haze[x], target, delta * HAZE_FADE)
+		queue_redraw()
 		return
 	# Ни снега, ни листопада — рисовать нечего (раньше слой перерисовывался каждый кадр).
 	var m := ChunkView.season_m
@@ -44,6 +66,8 @@ func _draw() -> void:
 	var half := view.get_viewport_rect().size * 0.5 / view.camera.zoom
 	var a := view.local_to_cell(view.camera.position - half)
 	var b := view.local_to_cell(view.camera.position + half)
+	if _gas_sky():
+		_draw_haze(a, b, t)
 	var m := ChunkView.season_m
 	if m >= 8.6 and m < 11.2:
 		# Листопад.
@@ -85,3 +109,55 @@ func _draw() -> void:
 			if cell.y >= _surface(cell.x):
 				continue
 			draw_circle(p, 1.6 + WorldGen.hash01(i, 4, 991) * 2.0, Color(1, 1, 1, 0.85))
+
+
+## Дымка: в каждом столбце — от земли вверх на HAZE_H клеток, прозрачнее кверху; постройки
+## (корабль, комнаты) не закрывает — внутри воздух свой. Сверху медленно плывут клубы.
+func _draw_haze(a: Vector2i, b: Vector2i, t: float) -> void:
+	var gas: Color = GAS_COLORS.get(colony.world.gen.planet_id, Color(0.7, 0.85, 0.5))
+	var seen := {}
+	for x in range(a.x - 5, b.x + 6):
+		seen[x] = true
+		if not _haze.has(x):
+			_haze[x] = 0.0 if colony.sky_clear(x) else 1.0
+	for x in range(a.x - 1, b.x + 2):
+		# Край очищенной зоны — плавный: густота по соседним столбцам.
+		var k := 0.0
+		for d in range(-3, 4):
+			k += _haze[x + d]
+		k /= 7.0
+		if k <= 0.01:
+			continue
+		var surf := _surface(x)
+		var top := surf - HAZE_H
+		if surf < a.y or top > b.y + 1:
+			continue
+		# Отрезки столбца вне построек — по градиенту каждый.
+		var y := top
+		while y < surf:
+			while y < surf and colony.interior.has(Vector2i(x, y)):
+				y += 1
+			var y0 := y
+			while y < surf and not colony.interior.has(Vector2i(x, y)):
+				y += 1
+			if y > y0:
+				var p0 := view.cell_to_local(Vector2i(x, y0))
+				var p1 := view.cell_to_local(Vector2i(x + 1, y))
+				var a0 := HAZE_ALPHA * k * (1.0 - float(surf - y0) / HAZE_H)
+				var a1 := HAZE_ALPHA * k * (1.0 - float(surf - y) / HAZE_H)
+				draw_polygon(PackedVector2Array([p0, Vector2(p1.x, p0.y), p1, Vector2(p0.x, p1.y)]),
+					PackedColorArray([Color(gas, a0), Color(gas, a0), Color(gas, a1), Color(gas, a1)]))
+		# Клубы: по одному на пару столбцов, плывут по ветру.
+		if (x & 1) == 0:
+			var ph := WorldGen.hash01(x, 7, 993)
+			var drift := fmod(t * (6.0 + ph * 6.0) + ph * 60.0, 60.0)
+			var c := view.cell_to_local(Vector2i(x, surf)) + Vector2(drift - 30.0, -TILE * (2.0 + ph * 6.0))
+			var cell := view.local_to_cell(c)
+			if not colony.interior.has(cell) and cell.y < _surface(cell.x):
+				var r := TILE * (1.2 + ph * 1.4)
+				draw_circle(c, r, Color(gas.lightened(0.2), 0.2 * k * (_haze.get(cell.x, k) as float)))
+	# Ушедшие с экрана столбцы забываем (появятся снова — сразу в нужном виде).
+	if _haze.size() > 600:
+		for x in _haze.keys():
+			if not seen.has(x):
+				_haze.erase(x)
