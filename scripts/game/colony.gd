@@ -926,8 +926,11 @@ func stuck_reason(u: Unit) -> String:
 				break
 		if any and not reach and not cut:
 			return "не может дойти до шахты" if mines else "не может дойти ни до одной стройки"
+	# Заперт — только если колонии есть что делать (свежая высадка: работы ещё нет — молчим).
 	if not cut and dist.size() < STUCK_ROOM:
-		return "заперт: отсюда никуда не пройти"
+		for p in projects:
+			if not p.paused and p.phase != Project.Phase.DONE and _near_rect(site_rect(p), dist) == null:
+				return "заперт: отсюда никуда не пройти"
 	return ""
 
 

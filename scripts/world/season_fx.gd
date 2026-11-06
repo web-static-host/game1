@@ -116,20 +116,32 @@ func _draw() -> void:
 func _draw_haze(a: Vector2i, b: Vector2i, t: float) -> void:
 	var gas: Color = GAS_COLORS.get(colony.world.gen.planet_id, Color(0.7, 0.85, 0.5))
 	var seen := {}
-	for x in range(a.x - 5, b.x + 6):
+	for x in range(a.x - 8, b.x + 9):
 		seen[x] = true
 		if not _haze.has(x):
 			_haze[x] = 0.0 if colony.sky_clear(x) else 1.0
-	for x in range(a.x - 1, b.x + 2):
-		# Край очищенной зоны — плавный: густота по соседним столбцам.
+	# Густота и высота земли — по границам столбцов (среднее соседей), а не по столбцу целиком:
+	# соседние столбцы сходятся без ступенек и полос. Густота сглажена по 11 столбцам.
+	var k_at := {}
+	for x in range(a.x - 2, b.x + 4):
 		var k := 0.0
-		for d in range(-3, 4):
+		for d in range(-5, 6):
 			k += _haze[x + d]
-		k /= 7.0
-		if k <= 0.01:
+		k /= 11.0
+		k_at[x] = k * k * (3.0 - 2.0 * k)
+	var edge_k := func(x: int) -> float: return (k_at[x - 1] + k_at[x]) * 0.5
+	var edge_s := func(x: int) -> float: return (_surface(x - 1) + _surface(x)) * 0.5
+	var alpha := func(k: float, surf: float, y: float) -> float:
+		return HAZE_ALPHA * k * clampf(1.0 - (surf - y) / HAZE_H, 0.0, 1.0)
+	for x in range(a.x - 1, b.x + 2):
+		var kl: float = edge_k.call(x)
+		var kr: float = edge_k.call(x + 1)
+		if kl <= 0.005 and kr <= 0.005:
 			continue
+		var sl: float = edge_s.call(x)
+		var sr: float = edge_s.call(x + 1)
 		var surf := _surface(x)
-		var top := surf - HAZE_H
+		var top := surf - HAZE_H - 1
 		if surf < a.y or top > b.y + 1:
 			continue
 		# Отрезки столбца вне построек — по градиенту каждый.
@@ -143,10 +155,9 @@ func _draw_haze(a: Vector2i, b: Vector2i, t: float) -> void:
 			if y > y0:
 				var p0 := view.cell_to_local(Vector2i(x, y0))
 				var p1 := view.cell_to_local(Vector2i(x + 1, y))
-				var a0 := HAZE_ALPHA * k * (1.0 - float(surf - y0) / HAZE_H)
-				var a1 := HAZE_ALPHA * k * (1.0 - float(surf - y) / HAZE_H)
 				draw_polygon(PackedVector2Array([p0, Vector2(p1.x, p0.y), p1, Vector2(p0.x, p1.y)]),
-					PackedColorArray([Color(gas, a0), Color(gas, a0), Color(gas, a1), Color(gas, a1)]))
+					PackedColorArray([Color(gas, alpha.call(kl, sl, y0)), Color(gas, alpha.call(kr, sr, y0)),
+						Color(gas, alpha.call(kr, sr, y)), Color(gas, alpha.call(kl, sl, y))]))
 		# Клубы: по одному на пару столбцов, плывут по ветру.
 		if (x & 1) == 0:
 			var ph := WorldGen.hash01(x, 7, 993)
@@ -154,8 +165,11 @@ func _draw_haze(a: Vector2i, b: Vector2i, t: float) -> void:
 			var c := view.cell_to_local(Vector2i(x, surf)) + Vector2(drift - 30.0, -TILE * (2.0 + ph * 6.0))
 			var cell := view.local_to_cell(c)
 			if not colony.interior.has(cell) and cell.y < _surface(cell.x):
+				# Мягкий клуб: несколько кругов, к середине плотнее.
 				var r := TILE * (1.2 + ph * 1.4)
-				draw_circle(c, r, Color(gas.lightened(0.2), 0.2 * k * (_haze.get(cell.x, k) as float)))
+				var ca := 0.07 * (k_at.get(cell.x, kl) as float)
+				for j in 4:
+					draw_circle(c, r * (1.0 - 0.22 * j), Color(gas.lightened(0.2), ca))
 	# Ушедшие с экрана столбцы забываем (появятся снова — сразу в нужном виде).
 	if _haze.size() > 600:
 		for x in _haze.keys():
