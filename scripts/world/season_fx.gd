@@ -165,11 +165,8 @@ func _draw_haze(a: Vector2i, b: Vector2i, t: float) -> void:
 			var c := view.cell_to_local(Vector2i(x, surf)) + Vector2(drift - 30.0, -TILE * (2.0 + ph * 6.0))
 			var cell := view.local_to_cell(c)
 			if not colony.interior.has(cell) and cell.y < _surface(cell.x):
-				# Мягкий клуб: несколько кругов, к середине плотнее.
 				var r := TILE * (1.2 + ph * 1.4)
-				var ca := 0.07 * (k_at.get(cell.x, kl) as float)
-				for j in 4:
-					draw_circle(c, r * (1.0 - 0.22 * j), Color(gas.lightened(0.2), ca))
+				draw_circle(c, r, Color(gas.lightened(0.2), 0.2 * (k_at.get(cell.x, kl) as float)))
 	# Ушедшие с экрана столбцы забываем (появятся снова — сразу в нужном виде).
 	if _haze.size() > 600:
 		for x in _haze.keys():
