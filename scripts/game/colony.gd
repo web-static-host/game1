@@ -3846,7 +3846,15 @@ func receive_flight(flight: Dictionary) -> void:
 ## через десяток метров (между кораблями прокапывают ход).
 func _land_ship() -> Project:
 	var x0 = null
-	for k in 40:
+	var y_top = null
+	# Без воздуха по поверхности не ходят: новый корабль причаливает вплотную к прежнему,
+	# на той же высоте — из него сразу проход в колонию.
+	if world.gen.airless():
+		var dock = _dock_spot()
+		if dock != null:
+			x0 = dock.x
+			y_top = dock.y
+	for k in (0 if x0 != null else 40):
 		for sgn in [1, -1]:
 			var x: int = home.x - 4 + sgn * k * 10
 			var sx := world.gen.surface_y(x)
@@ -3861,7 +3869,7 @@ func _land_ship() -> Project:
 			break
 	if x0 == null:
 		x0 = home.x - 4
-	var s0 := world.gen.surface_y(x0)
+	var s0: int = world.gen.surface_y(x0) if y_top == null else int(y_top) + 3
 	var p := Project.new()
 	p.id = next_project_id
 	next_project_id += 1
@@ -3886,8 +3894,76 @@ func _land_ship() -> Project:
 		interior[c] = p.id
 		world.dirty[WorldData.chunk_of(c.x, c.y)] = true
 	_register_room(p)
+	_ship_passage(p)
 	_rebuild_climb()
 	return p
+
+
+## Где причалить новому кораблю: вплотную справа или слева от стоящего корабля, на его
+## высоте, если там не мешают другие постройки и земля не сильно выше или ниже. [x, верх] или null.
+func _dock_spot() -> Variant:
+	for q in rooms_of(RoomType.SHIP):
+		for x in [q.rect.end.x, q.rect.position.x - 9]:
+			var r := Rect2i(x, q.rect.position.y, 9, 3)
+			var free := true
+			for o in projects:
+				if o.rect.intersects(r):
+					free = false
+					break
+			if not free:
+				continue
+			var ok := true
+			for cx in range(r.position.x, r.end.x):
+				if absi(world.gen.surface_y(cx) - r.end.y) > 3:
+					ok = false
+					break
+			if ok:
+				return Vector2i(x, r.position.y)
+	return null
+
+
+## Корабль сел в паре клеток от другой постройки, а на планете без воздуха по поверхности
+## не ходят: между ними — герметичный переход. Иначе прилетевшие заперты в корабле
+## (на Уране шахтёры второго рейса не могли выйти к шахте).
+func _ship_passage(ship: Project) -> void:
+	if not world.gen.airless():
+		return
+	var y := ship.rect.end.y - 1
+	for dir in [-1, 1]:
+		var x: int = ship.rect.position.x - 1 if dir < 0 else ship.rect.end.x
+		var gap: Array[int] = []
+		var found := false
+		for i in 4:
+			if interior.has(Vector2i(x, y)):
+				found = not gap.is_empty()
+				break
+			if not world.is_open(x, y) or not world.is_open(x, y - 1):
+				break
+			gap.append(x)
+			x += dir
+		if not found:
+			continue
+		var p := Project.new()
+		p.id = next_project_id
+		next_project_id += 1
+		p.kind = Project.Kind.TUNNEL
+		p.rect = Rect2i(gap.min(), y - 1, gap.size(), 2)
+		p.material = "iron"
+		p.phase = Project.Phase.DONE
+		p.paid = true
+		projects.append(p)
+		for gx in gap:
+			# Пол перехода — на твёрдом (подсыпаем, как под кораблём).
+			var below := Vector2i(gx, y + 1)
+			var n := 0
+			while world.is_open(below.x, below.y) and n < 12:
+				world.set_material(below.x, below.y, Mat.GRAVEL)
+				below.y += 1
+				n += 1
+		for c in p.cells():
+			interior[c] = p.id
+			world.dirty[WorldData.chunk_of(c.x, c.y)] = true
+		_log("Корабль соединён переходом с соседней постройкой — по поверхности без воздуха не ходят", "info", p.rect.get_center())
 
 
 func _flat_at(x: int) -> bool:
@@ -10696,6 +10772,10 @@ func load_dict(d: Dictionary) -> void:
 	next_project_id = int(d.get("next_project_id", projects.size() + 1))
 	next_unit_id = int(d.get("next_unit_id", units.size() + 1))
 	lineage = d.get("lineage", {}).duplicate(true)
+	# Старые сохранения: корабль сел через щель от другого — переход между ними.
+	for ship in rooms_of(RoomType.SHIP):
+		_ship_passage(ship)
+	_rebuild_climb()
 	ensure_lineage()
 	_social_t = float(d.get("social_t", 0.0))
 	acquaint = d.get("acquaint", {}).duplicate()

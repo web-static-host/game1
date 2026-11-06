@@ -48,6 +48,7 @@ func _initialize() -> void:
 	test_residents()
 	test_finish_first()
 	test_lineage()
+	test_ship_passage()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4397,6 +4398,38 @@ func test_lineage() -> void:
 	check(anc.has(mom.uid) and anc.has(dad.uid), "с ракетой летят записи о предках (%d)" % anc.size())
 	check(Unit.from_dict(grand.to_dict()).uid == grand.uid, "знак родословной сохраняется")
 	check(Genetics.color_word(Genetics.BLUE) == "синий" and Genetics.color_word(CreatureArt.SUPER_A) == "бирюза лого", "цвет словами")
+
+
+## Планета без воздуха: второй корабль сел рядом — между кораблями переход (по поверхности
+## не ходят, иначе прилетевшие заперты в корабле).
+func test_ship_passage() -> void:
+	var w := WorldData.new(WorldGen.new(5, WorldGen.LATEST, "uranus"))
+	var c := Colony.new(w)
+	var fl := {"planet": "uranus", "crew": [], "cargo": {}, "research": [], "left": 0.0, "engine": "chem"}
+	c.start_planet(0, fl.duplicate(true))
+	c.receive_flight(fl.duplicate(true))
+	var ships := c.rooms_of(RoomType.SHIP)
+	check(w.gen.airless() and ships.size() == 2, "на Уране сели два корабля")
+	if ships.size() < 2:
+		return
+	var b: Project = ships[1]
+	var e := c.pathing.explore(Vector2i(RoomType.floor_start(b), b.rect.end.y - 1))
+	check(c._near_rect(ships[0].rect, e[1]) != null, "из второго корабля можно дойти до первого — переход")
+	check(b.rect.position.x == ships[0].rect.end.x or b.rect.end.x == ships[0].rect.position.x, "второй корабль причалил вплотную")
+	# Старое сохранение: второй корабль стоит через щель в 1 клетку — при загрузке переход.
+	var c2 := Colony.new(w)
+	var d := c.to_dict()
+	for pd in d["projects"]:
+		if int(pd["id"]) == b.id:
+			pd["rect"][0] = float(int(pd["rect"][0]) + (1 if b.rect.position.x > ships[0].rect.position.x else -1))
+	c2.load_dict(d)
+	var b2 := c2.project_by_id(b.id)
+	var e2 := c2.pathing.explore(Vector2i(RoomType.floor_start(b2), b2.rect.end.y - 1))
+	check(c2._near_rect(c2.project_by_id(ships[0].id).rect, e2[1]) != null, "старое сохранение: корабли через щель — соединены переходом")
+	var n := c2.projects.size()
+	var c3 := Colony.new(w)
+	c3.load_dict(c2.to_dict())
+	check(c3.projects.size() == n, "при повторной загрузке лишний переход не строится")
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
