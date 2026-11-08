@@ -4761,7 +4761,11 @@ func _grass_free(x: int) -> bool:
 	var s := world.gen.surface_y(x)
 	if absi(world.gen.surface_y(x - 1) - s) > 1 or absi(world.gen.surface_y(x + 1) - s) > 1:
 		return false
-	if world.gen.water_level(x) < s or world.is_dug(x, s) or world.get_mat(x, s) != Mat.TOPSOIL:
+	# Земля — на почве; Венера (свои деревья, почвы нет) — на её грунте, как при создании мира
+	# (раньше требовали почву — и на Венере срубленные деревья не вырастали никогда).
+	var m := world.get_mat(x, s)
+	var native: bool = not world.gen.planet.get("plants", true) and float(world.gen.planet.get("trees", 0.0)) > 0.0
+	if world.gen.water_level(x) < s or world.is_dug(x, s) or not (m == Mat.TOPSOIL or (native and Mat.is_solid(m))):
 		return false
 	return project_at(Vector2i(x, s - 1)) == null and project_at(Vector2i(x, s)) == null
 

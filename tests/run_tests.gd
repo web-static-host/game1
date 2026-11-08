@@ -50,6 +50,7 @@ func _initialize() -> void:
 	test_lineage()
 	test_stuck_note()
 	test_ship_spacing()
+	test_venus_regrow()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4451,6 +4452,23 @@ func test_ship_spacing() -> void:
 			var gap := maxi(b.position.x - a.end.x, a.position.x - b.end.x)
 			ok = ok and gap >= 5
 	check(ok, "корабли садятся с зазором под нос и хвост: %s" % str(ships.map(func(q: Project) -> Rect2i: return q.rect)))
+
+
+## На Венере срубленные деревья вырастают снова (почвы там нет — растут на её грунте).
+func test_venus_regrow() -> void:
+	var w := WorldData.new(WorldGen.new(9, WorldGen.LATEST, "venus"))
+	var c := Colony.new(w)
+	c.start_planet(0, {"planet": "venus", "crew": [], "cargo": {}, "research": [], "left": 0.0, "engine": "chem"})
+	for x in range(c.home.x - Colony.PLANT_AREA, c.home.x + Colony.PLANT_AREA + 1):
+		if w.feature_at(x) != WorldGen.FEATURE_NONE:
+			w.remove_feature(x)
+	for i in 400:
+		c.grow_plants(Colony.PLANT_TICK * 10.0)
+	var n := 0
+	for x in range(c.home.x - Colony.PLANT_AREA, c.home.x + Colony.PLANT_AREA + 1):
+		if w.feature_at(x) == WorldGen.FEATURE_TREE:
+			n += 1
+	check(n > 0, "на Венере вырастают новые деревья (%d)" % n)
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
