@@ -922,6 +922,8 @@ func show_panel(spec: Dictionary) -> void:
 		b.pressed.connect(cb)
 		_actions.add_child(b)
 	_actions.visible = not spec.get("actions", []).is_empty()
+	if _tree_panel != null:
+		_tree_panel.visible = false
 	_info_panel.visible = true
 	_fit_scroll.call_deferred()
 	# Новая карточка — с начала, а не прокрученной, как была прежняя.
@@ -1634,7 +1636,203 @@ var _tree_items: Array = []
 var _tree_selected := ""
 
 
+# --- Родословная деревом -----------------------------------------------------------------
+## Снизу — сам гаврик, над ним родители, выше их родители… От родителя к ребёнку — стрелка
+## (от мамы — розовая, от папы — голубая). Карточка: портрет (виден цвет и мутации), рамка
+## цвета гаврика, имя, цвет словами, мутации, жив ли. Дерево двигают пальцем, как науку.
+const FAM_W := 262.0
+const FAM_H := 118.0
+const FAM_GAP_X := 18.0
+const FAM_GAP_Y := 46.0
+var _family := false
+
+
+## {"title", "subtitle", "actions": [[подпись, Callable, стиль?]], "nodes": [{"g" поколение (0 —
+## сам), "i" место в поколении (мама i*2, папа i*2+1 у ребёнка i), "name", "lines": [строки],
+## "color": Color?, "color_word", "looks"?, "dim", "pick": Callable?}]}.
+func show_family_tree(spec: Dictionary) -> void:
+	_menu.visible = false
+	_sub.visible = false
+	_info_panel.visible = false
+	_family = true
+	_tree_sig = ""
+	_tree_panel.visible = true
+	_tree_detail.visible = false
+	_tree_title.text = spec.get("title", "")
+	_tree_sub.text = spec.get("subtitle", "")
+	for c in _tree_rows.get_children():
+		_tree_rows.remove_child(c)
+		c.queue_free()
+	var acts := HBoxContainer.new()
+	acts.add_theme_constant_override("separation", 10)
+	for a in spec.get("actions", []):
+		var b := Button.new()
+		b.text = a[0]
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 52)
+		b.add_theme_font_size_override("font_size", 18)
+		var col := ACCENT if a.size() > 2 and a[2] == "primary" else Color(0.36, 0.4, 0.5)
+		b.add_theme_stylebox_override("normal", btn_box(col))
+		b.add_theme_stylebox_override("hover", btn_box(col))
+		b.add_theme_stylebox_override("pressed", btn_box(col, true))
+		var cb: Callable = a[1]
+		b.pressed.connect(func() -> void: cb.call())
+		acts.add_child(b)
+	# Масштаб: всё дерево целиком — «−», крупнее — «+».
+	for z in [["−", 0.8], ["+", 1.25]]:
+		var zb := Button.new()
+		zb.text = z[0]
+		zb.focus_mode = Control.FOCUS_NONE
+		zb.custom_minimum_size = Vector2(60, 52)
+		zb.add_theme_font_size_override("font_size", 24)
+		zb.add_theme_stylebox_override("normal", btn_box(Color(0.36, 0.4, 0.5)))
+		zb.add_theme_stylebox_override("pressed", btn_box(Color(0.36, 0.4, 0.5), true))
+		var f: float = z[1]
+		zb.pressed.connect(func() -> void: _zoom_family(f))
+		acts.add_child(zb)
+	_tree_rows.add_child(acts)
+	for c in _tree_canvas.get_children():
+		_tree_canvas.remove_child(c)
+		c.queue_free()
+	_tree_canvas.edges = []
+	_tree_canvas.lines = []
+	_tree_canvas.bands = []
+	var nodes: Array = spec.get("nodes", [])
+	var top := 0
+	var have := {}
+	for n in nodes:
+		top = maxi(top, int(n["g"]))
+		have[Vector2i(n["g"], n["i"])] = true
+	# Плотная раскладка: у кого нет известных родителей — следующее свободное место в ряду
+	# «листьев», ребёнок — посередине между родителями (пустых мест под неизвестных нет).
+	var slot_x := {}
+	var next_slot := [0]
+	var place := func(k: Vector2i, self_ref: Callable) -> float:
+		var xs: Array[float] = []
+		for side in 2:
+			var pk := Vector2i(k.x + 1, k.y * 2 + side)
+			if have.has(pk):
+				xs.append(self_ref.call(pk, self_ref))
+		var x: float
+		if xs.is_empty():
+			x = float(next_slot[0])
+			next_slot[0] += 1
+		else:
+			x = (xs[0] + xs[xs.size() - 1]) * 0.5
+		slot_x[k] = x
+		return x
+	place.call(Vector2i(0, 0), place)
+	var width := maxf(1.0, float(next_slot[0])) * (FAM_W + FAM_GAP_X) - FAM_GAP_X
+	var pos := {}
+	for n in nodes:
+		var k := Vector2i(n["g"], n["i"])
+		pos[k] = Vector2(float(slot_x.get(k, 0.0)) * (FAM_W + FAM_GAP_X), (top - int(n["g"])) * (FAM_H + FAM_GAP_Y))
+	var arrows := []
+	for n in nodes:
+		var g: int = n["g"]
+		var i: int = n["i"]
+		if g == 0:
+			continue
+		var child := Vector2i(g - 1, i >> 1)
+		if not pos.has(child):
+			continue
+		var a: Vector2 = pos[Vector2i(g, i)] + Vector2(FAM_W * 0.5, FAM_H)
+		var b: Vector2 = pos[child] + Vector2(FAM_W * 0.5, 0)
+		arrows.append([a, b, Color(1.0, 0.6, 0.78) if i % 2 == 0 else Color(0.5, 0.72, 1.0)])
+	_tree_canvas.arrows = arrows
+	for n in nodes:
+		_tree_canvas.add_child(_family_card(n, pos[Vector2i(n["g"], n["i"])]))
+	_tree_canvas.custom_minimum_size = Vector2(width, (top + 1) * (FAM_H + FAM_GAP_Y) - FAM_GAP_Y)
+	_tree_canvas.size = _tree_canvas.custom_minimum_size
+	_tree_canvas.queue_redraw()
+	_layout_tree_panel()
+	# Сначала видно самого гаврика (внизу) и тех, кто над ним; не влезает по высоте — мельче.
+	var view := _family_view()
+	var sc := clampf(minf(1.0, view.y / maxf(1.0, _tree_canvas.size.y + 20.0)), 0.3, 1.0)
+	_tree_canvas.scale = Vector2(sc, sc)
+	var me: Vector2 = pos.get(Vector2i(0, 0), Vector2.ZERO) * sc
+	_tree_pan = Vector2(view.x * 0.5 - me.x - FAM_W * sc * 0.5, view.y - _tree_canvas.size.y * sc - 10.0)
+	_clamp_tree_pan()
+
+
+func _family_view() -> Vector2:
+	var view := _tree_clip.size
+	if view.x < 10.0:
+		view = Vector2(size.x - SIDE * 2.0 - 30.0, size.y - BAR_H - 200.0)
+	return view
+
+
+## Масштаб дерева родословной вокруг середины видимого.
+func _zoom_family(f: float) -> void:
+	var view := _family_view()
+	var old := _tree_canvas.scale.x
+	var sc := clampf(old * f, 0.2, 1.4)
+	var mid := view * 0.5
+	var at := (mid - _tree_pan) / old
+	_tree_canvas.scale = Vector2(sc, sc)
+	_tree_pan = mid - at * sc
+	_clamp_tree_pan()
+
+
+func _family_card(n: Dictionary, p: Vector2) -> Control:
+	var card := PanelContainer.new()
+	card.position = p
+	card.size = Vector2(FAM_W, FAM_H)
+	card.custom_minimum_size = card.size
+	var border: Color = n.get("color", Color(0.45, 0.42, 0.45))
+	var sb := _box(Color(0.25, 0.21, 0.24), 12, 7)
+	sb.border_color = border
+	sb.set_border_width_all(5 if int(n["g"]) == 0 else 4)
+	card.add_theme_stylebox_override("panel", sb)
+	if n.get("dim", false):
+		card.modulate = Color(1, 1, 1, 0.78)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(row)
+	if n.has("looks"):
+		row.add_child(PortraitView.make(n["looks"], 84, 42))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 1)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(col)
+	var name := _label(n.get("name", ""), 16, Color.WHITE)
+	name.clip_text = true
+	col.add_child(name)
+	if n.has("color"):
+		var cr := HBoxContainer.new()
+		cr.add_theme_constant_override("separation", 6)
+		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var sw := ColorRect.new()
+		sw.color = n["color"]
+		sw.custom_minimum_size = Vector2(18, 18)
+		sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cr.add_child(sw)
+		cr.add_child(_label(n.get("color_word", ""), 15, Color(0.92, 0.9, 0.86)))
+		col.add_child(cr)
+	for line in n.get("lines", []):
+		var l := _label(str(line), 13, MUTED)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(FAM_W - 118.0 if n.has("looks") else FAM_W - 30.0, 0)
+		col.add_child(l)
+	for c in [card, row, col]:
+		for k in c.get_children():
+			if k is Control:
+				(k as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if n.has("pick"):
+		var pick: Callable = n["pick"]
+		card.mouse_filter = Control.MOUSE_FILTER_STOP
+		card.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and not ev.pressed:
+				pick.call())
+	return card
+
+
 class TreeCanvas extends Control:
+	## [[от, до, цвет]] — стрелки родословной (сверху вниз, от родителя к ребёнку).
+	var arrows: Array = []
 	## [[от, до, цвет]] в координатах холста (старое дерево без раскладки — плавные «S»).
 	var edges: Array = []
 	## [[точки ломаной, цвет]] — связи по раскладке веток.
@@ -1666,6 +1864,16 @@ class TreeCanvas extends Control:
 				var p := a.bezier_interpolate(Vector2(mx, a.y), Vector2(mx, b.y), b, t)
 				pts.append(p)
 			draw_polyline(pts, e[2], 3.0, true)
+		for ar in arrows:
+			var a: Vector2 = ar[0]
+			var b: Vector2 = ar[1]
+			var col: Color = ar[2]
+			var mid := (a.y + b.y) * 0.5
+			var pts := PackedVector2Array()
+			for i in 17:
+				pts.append(a.bezier_interpolate(Vector2(a.x, mid), Vector2(b.x, mid), b - Vector2(0, 12), i / 16.0))
+			draw_polyline(pts, col, 4.0, true)
+			draw_colored_polygon(PackedVector2Array([b, b + Vector2(-10, -14), b + Vector2(10, -14)]), col)
 		for l in lines:
 			var pts: PackedVector2Array = l[0]
 			var col: Color = l[1]
@@ -1728,6 +1936,9 @@ func _build_tree_panel() -> void:
 ## Дерево исследований: {"title", "subtitle", "rows", "items": [{"id", "name", "desc", "cost",
 ## "state": done|current|available|locked, "needs": [id], "pick": Callable}]}.
 func show_tech_tree(spec: Dictionary) -> void:
+	_family = false
+	_tree_canvas.scale = Vector2.ONE
+	_tree_detail.visible = true
 	_menu.visible = false
 	_sub.visible = false
 	_info_panel.visible = false
@@ -1740,7 +1951,7 @@ func show_tech_tree(spec: Dictionary) -> void:
 
 
 func refresh_tech_tree(spec: Dictionary) -> void:
-	if _scrolling() or not _tree_panel.visible:
+	if _scrolling() or not _tree_panel.visible or _family:
 		return
 	_fill_tree(spec)
 
@@ -1826,6 +2037,7 @@ func _build_tree_nodes() -> void:
 		c.queue_free()
 	_tree_canvas.lines = []
 	_tree_canvas.bands = []
+	_tree_canvas.arrows = []
 	if not _tree_items.is_empty() and _tree_items[0].has("row"):
 		_build_branch_tree(by_id)
 		return
@@ -2036,7 +2248,7 @@ func _clamp_tree_pan() -> void:
 	if _tree_canvas == null:
 		return
 	var view := _tree_clip.size
-	var cs := _tree_canvas.size
+	var cs := _tree_canvas.size * _tree_canvas.scale
 	_tree_pan.x = clampf(_tree_pan.x, minf(0.0, view.x - cs.x - 20.0), 20.0)
 	_tree_pan.y = clampf(_tree_pan.y, minf(0.0, view.y - cs.y - 20.0), 20.0)
 	_tree_canvas.position = _tree_pan
