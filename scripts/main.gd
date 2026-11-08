@@ -1593,6 +1593,9 @@ func _show_lineage(key: String, depth: int, back: Callable) -> void:
 	if rec.is_empty():
 		hud.log_event("Родословная не записана", "warning")
 		return
+	# Всегда вся родословная; открывается на самом гаврике, родителях и бабушках с дедушками —
+	# дальше листают вверх или уменьшают масштаб.
+	depth = LINEAGE_MAX
 	var again := func() -> void: _show_lineage(key, depth, back)
 	# По поколениям: в поколении g — 2^g мест (мама ребёнка i — место 2i, папа — 2i+1).
 	var nodes := [_lineage_node(key, [], 0, 0, again)]
@@ -1622,17 +1625,12 @@ func _show_lineage(key: String, depth: int, back: Callable) -> void:
 			nodes.append(_lineage_node(next[j], next_chains[j], g, j, again))
 		level = next
 		chains = next_chains
-	var actions := []
-	if more:
-		actions.append(["Полная родословная", func() -> void: _show_lineage(key, LINEAGE_MAX, back), "primary"])
-	elif depth > 2:
-		actions.append(["Только ближние", func() -> void: _show_lineage(key, 2, back)])
-	actions.append(["Назад", back])
+	var actions := [["Назад", back]]
 	var sub := "поколение %d · " % int(rec.get("gen", 1))
 	if g == 0:
 		sub += "предки неизвестны — основатель или прилетел без записи"
 	else:
-		sub += ("все предки" if depth > 2 else "родители, бабушки и дедушки") + " · двигайте дерево пальцем · нажмите на предка — его родословная"
+		sub += "предков: %d поколений%s · листайте вверх или «−» · нажмите на предка — его родословная" % [g, " (показано %d)" % LINEAGE_MAX if more else ""]
 	hud.show_family_tree({"title": "Родословная: " + str(rec.get("n", "")), "subtitle": sub, "nodes": nodes, "actions": actions})
 
 
@@ -1679,7 +1677,6 @@ func _lineage_node(key: String, chain: Array, g: int, i: int, again: Callable) -
 		if r.has("age"):
 			died += " (%s)" % str(r["age"])
 		lines.append(died)
-		n["dim"] = true
 		n["dead"] = true
 	elif live == null:
 		lines.append("на другой планете")

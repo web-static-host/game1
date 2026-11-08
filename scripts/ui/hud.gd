@@ -1643,7 +1643,7 @@ var _tree_selected := ""
 const FAM_W := 262.0
 const FAM_H := 118.0
 const FAM_GAP_X := 18.0
-const FAM_GAP_Y := 46.0
+const FAM_GAP_Y := 40.0
 var _family := false
 
 
@@ -1746,12 +1746,25 @@ func show_family_tree(spec: Dictionary) -> void:
 	_tree_canvas.size = _tree_canvas.custom_minimum_size
 	_tree_canvas.queue_redraw()
 	_layout_tree_panel()
-	# Сначала видно самого гаврика (внизу) и тех, кто над ним; не влезает по высоте — мельче.
+	# В натуральную величину: внизу сам гаврик, над ним родители, бабушки и дедушки; кто выше —
+	# листают вверх или уменьшают масштаб «−».
 	var view := _family_view()
-	var sc := clampf(minf(1.0, view.y / maxf(1.0, _tree_canvas.size.y + 20.0)), 0.3, 1.0)
+	# Масштаб — чтобы влезли все до бабушек и дедушек (по ширине и высоте), не крупнее 1.
+	var x0 := INF
+	var x1 := -INF
+	for k in pos:
+		if k.x <= 2:
+			x0 = minf(x0, pos[k].x)
+			x1 = maxf(x1, pos[k].x + FAM_W)
+	var rows := mini(top, 2) + 1
+	var sc := minf(1.0, minf(view.x / maxf(1.0, x1 - x0 + 20.0), (view.y - 12.0) / (rows * (FAM_H + FAM_GAP_Y) - FAM_GAP_Y)))
+	sc = maxf(sc, 0.35)
 	_tree_canvas.scale = Vector2(sc, sc)
-	var me: Vector2 = pos.get(Vector2i(0, 0), Vector2.ZERO) * sc
-	_tree_pan = Vector2(view.x * 0.5 - me.x - FAM_W * sc * 0.5, view.y - _tree_canvas.size.y * sc - 10.0)
+	# Ряд бабушек и дедушек — у верхнего края (а при малом дереве — всё дерево у нижнего).
+	var y := view.y - _tree_canvas.size.y * sc - 10.0
+	if top >= 2:
+		y = 6.0 - (top - 2) * (FAM_H + FAM_GAP_Y) * sc
+	_tree_pan = Vector2(view.x * 0.5 - (x0 + x1) * 0.5 * sc, y)
 	_clamp_tree_pan()
 
 
