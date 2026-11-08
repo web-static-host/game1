@@ -1797,21 +1797,20 @@ func _family_card(n: Dictionary, p: Vector2) -> Control:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(col)
+	# Цвет виден по портрету и рамке — словами не пишем. Умерший — значок гроба у имени.
+	var nr := HBoxContainer.new()
+	nr.add_theme_constant_override("separation", 6)
+	nr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(nr)
 	var name := _label(n.get("name", ""), 16, Color.WHITE)
 	name.clip_text = true
-	col.add_child(name)
-	if n.has("color"):
-		var cr := HBoxContainer.new()
-		cr.add_theme_constant_override("separation", 6)
-		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var sw := ColorRect.new()
-		sw.color = n["color"]
-		sw.custom_minimum_size = Vector2(18, 18)
-		sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cr.add_child(sw)
-		cr.add_child(_label(n.get("color_word", ""), 15, Color(0.92, 0.9, 0.86)))
-		col.add_child(cr)
+	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nr.add_child(name)
+	if n.get("dead", false):
+		var coffin := CoffinIcon.new()
+		coffin.custom_minimum_size = Vector2(20, 28)
+		coffin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		nr.add_child(coffin)
 	for line in n.get("lines", []):
 		var l := _label(str(line), 13, MUTED)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1828,6 +1827,21 @@ func _family_card(n: Dictionary, p: Vector2) -> Control:
 			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT and not ev.pressed:
 				pick.call())
 	return card
+
+
+## Гроб: шестиугольник тёмного дерева с крестом.
+class CoffinIcon extends Control:
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		var pts := PackedVector2Array([Vector2(w * 0.3, 0), Vector2(w * 0.7, 0), Vector2(w, h * 0.28),
+			Vector2(w * 0.78, h), Vector2(w * 0.22, h), Vector2(0, h * 0.28)])
+		draw_colored_polygon(pts, Color(0.42, 0.27, 0.16))
+		pts.append(pts[0])
+		draw_polyline(pts, Color(0.2, 0.12, 0.07), 1.5)
+		var cx := w * 0.5
+		draw_line(Vector2(cx, h * 0.18), Vector2(cx, h * 0.72), Color(0.92, 0.85, 0.6), 2.0)
+		draw_line(Vector2(cx - w * 0.22, h * 0.36), Vector2(cx + w * 0.22, h * 0.36), Color(0.92, 0.85, 0.6), 2.0)
 
 
 class TreeCanvas extends Control:

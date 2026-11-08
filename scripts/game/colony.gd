@@ -4654,6 +4654,9 @@ func _kill(u: Unit, why: String, report := true) -> void:
 	if not rec.is_empty():
 		rec["d"] = true
 		rec["irr"] = u.irradiated
+		# Отчего и во сколько лет — для родословной (пусто — от старости).
+		rec["why"] = why if not why.is_empty() else "от старости"
+		rec["age"] = u.age_text()
 	units.erase(u)
 	_units_rev += 1
 	for o in units:

@@ -1654,9 +1654,9 @@ func _lineage_node(key: String, chain: Array, g: int, i: int, again: Callable) -
 	if gen.is_empty():
 		lines.append("цвет и мутации не записаны")
 	else:
-		var col := Genetics.color_of(gen)
-		n["color"] = col
-		n["color_word"] = Genetics.color_word(col) + (" · СУПЕР" if Genetics.is_super(gen) else "")
+		n["color"] = Genetics.color_of(gen)
+		if Genetics.is_super(gen):
+			lines.append("СУПЕР-ГАВРИК")
 		var muts: PackedStringArray = []
 		for m in Genetics.visible_mutations(gen):
 			if not Genetics.COSMETIC.has(m):
@@ -1668,12 +1668,20 @@ func _lineage_node(key: String, chain: Array, g: int, i: int, again: Callable) -
 		if bool(r.get("irr", false)):
 			looks["irradiated"] = true
 		n["looks"] = looks
-	if live != null:
-		lines.append("жива" if fem else "жив")
-	elif bool(r.get("d", false)):
-		lines.append("умерла" if fem else "умер")
+	# Живых не подписываем; умерший — «умер» и значок гроба.
+	if live == null and bool(r.get("d", false)):
+		var why := str(r.get("why", ""))
+		var died := "умерла" if fem else "умер"
+		if why == "от старости":
+			died += " от старости"
+		elif not why.is_empty():
+			died += ": " + why
+		if r.has("age"):
+			died += " (%s)" % str(r["age"])
+		lines.append(died)
 		n["dim"] = true
-	else:
+		n["dead"] = true
+	elif live == null:
 		lines.append("на другой планете")
 	n["lines"] = lines
 	if g > 0:
