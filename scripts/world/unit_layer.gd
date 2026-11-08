@@ -75,6 +75,8 @@ var _lift_off := {}
 var _lift_face := {}
 ## Остановки, где ждут кабину: [клетка шахты, сторона (-1 — шахта слева от ждущих), вверх?].
 var _lift_calls: Array = []
+## Где макушка гаврика (по последнему кадру) — кнопку вызова лифта рисуем над ней.
+var _heads := {}
 const QUEUE_STEP := 0.45
 
 
@@ -240,6 +242,8 @@ func _update_lift_queue() -> void:
 	_lift_off.clear()
 	_lift_face.clear()
 	_lift_calls.clear()
+	if _heads.size() > colony.units.size() + 64:
+		_heads.clear()
 	var queues := {}
 	var cabins := {}
 	for u in colony.units:
@@ -267,7 +271,7 @@ func _update_lift_queue() -> void:
 		if side == 0.0:
 			side = 1.0
 		var up := (exit.y < board.y) if lift != null and lift.lift_vertical() else (exit.x > board.x)
-		_lift_calls.append([board, side, up, lift != null and lift.lift_vertical()])
+		_lift_calls.append([board, side, up, lift != null and lift.lift_vertical(), first.id])
 		for i in q.size():
 			var u: Unit = q[i]
 			# Первый — у самой шахты, остальные — по шагу назад; стоят лицом к лифту.
@@ -483,6 +487,7 @@ func _draw_overlay() -> void:
 				hand = _models.hand_pos(pose, h / sc, node.looks) * sc
 			hand.x *= _facing(u)
 			_draw_tool(u, foot + hand, _facing(u))
+		_heads[u.id] = foot + Vector2(0, -h)
 		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))
 		if u.id == selected_unit:
 			_overlay.draw_arc(foot + Vector2(0, -h * 0.5), maxf(26.0, h * 0.75), 0, TAU, 32, Color.WHITE, 2.0)
@@ -503,6 +508,9 @@ func _draw_lift_calls() -> void:
 		# Панель — на стене у шахты, на уровне груди (вертикальный лифт), иначе — над проходом.
 		var at := Vector2(cell.x + (TILE * 0.5 - side * TILE * 0.62), cell.y + TILE * 0.05) if c[3] \
 			else Vector2(cell.x + TILE * 0.5, cell.y - TILE * 0.15)
+		# Над головой первого в очереди (выше значков нужд), а не на нём самом.
+		if _heads.has(c[4]):
+			at = _heads[c[4]] + Vector2(0, -34)
 		_overlay.draw_rect(Rect2(at - Vector2(5, 8), Vector2(10, 16)), Color(0.2, 0.21, 0.25))
 		_overlay.draw_rect(Rect2(at - Vector2(5, 8), Vector2(10, 16)), Color(0.08, 0.08, 0.1), false, 1.0)
 		var col := Color(1.0, 0.78, 0.25) if lit else Color(0.85, 0.55, 0.15)

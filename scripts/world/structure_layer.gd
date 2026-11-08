@@ -92,7 +92,7 @@ func _process(delta: float) -> void:
 	_static_t -= delta
 	var sel := colony.project_by_id(selected_project) if colony != null and selected_project != 0 else null
 	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin,
-		sel.order_len if sel != null else 0]
+		sel.order_len if sel != null else 0, _drills_sig()]
 	var vis := _vis_rect().grow(-VIS_MARGIN + 2)
 	if _static_t <= 0.0 or sig != _drawn_sig or not _drawn_vis.encloses(vis):
 		_static_t = STATIC_REFRESH
@@ -245,6 +245,7 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 			_draw_supply(p, font)
 	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
 	_draw_extend(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
+	_draw_drill_plan(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
 		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
@@ -1942,6 +1943,44 @@ func _draw_rails(r: Rect2, alpha: float) -> void:
 		_c.draw_line(Vector2(sx, y + 1), Vector2(minf(sx + 6, r.end.x - 4), y + 1), Color(BEAM_DARK, alpha), 3.0)
 		sx += 10
 	_c.draw_line(Vector2(r.position.x + 2, y - 2), Vector2(r.end.x - 2, y - 2), rail, 2.0)
+
+
+## Сверлящие буры сдвинулись — пунктир их пути перерисовать.
+func _drills_sig() -> int:
+	var h := 0
+	if colony == null:
+		return h
+	for p in colony.projects:
+		if p.kind == Project.Kind.DRILL:
+			h = hash([h, p.rect.position, p.drill_left, p.drill_dir])
+	return h
+
+
+## Бур: выбран и стоит — пунктиром, докуда пройдёт на выбранные метры в каждую сторону
+## (зелёным — можно, красным — нельзя); сверлит — жёлтым пунктиром, сколько ещё осталось.
+const DRILL_PLAN := Color(1.0, 0.85, 0.2)
+
+
+func _draw_drill_plan(sel: Project, font: Font) -> void:
+	for p in colony.projects:
+		if p.kind != Project.Kind.DRILL or p.phase != Project.Phase.DONE:
+			continue
+		if colony.drilling(p):
+			var r := _rect_px(Colony.drill_path(p, p.drill_dir, p.drill_left))
+			_c.draw_rect(r, Color(DRILL_PLAN, 0.08))
+			_dashed_rect(r, Color(DRILL_PLAN, 0.95), 3.0)
+			var at := r.position + Vector2(4, -8) if p.drill_dir != Vector2i.DOWN else Vector2(r.position.x + 4, r.end.y + 22)
+			_label(font, at, "ещё %d м" % p.drill_left, DRILL_PLAN)
+		elif p == sel and p.order_len > 0:
+			var dirs: Array = [p.drill_lift_dir()] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP, Vector2i.LEFT]
+			for d: Vector2i in dirs:
+				var ok := colony.drill_error(p, d, p.order_len).is_empty()
+				var col := Color(0.45, 1.0, 0.5) if ok else Color(1.0, 0.4, 0.35)
+				var r := _rect_px(Colony.drill_path(p, d, p.order_len))
+				_c.draw_rect(r, Color(col, 0.1))
+				_dashed_rect(r, Color(col, 0.95), 3.0)
+				var at := r.position + Vector2(4, -8) if d != Vector2i.DOWN else Vector2(r.position.x + 4, r.end.y + 22)
+				_label(font, at, "%d м" % p.order_len, col)
 
 
 ## Выбранная готовая шахта, тоннель или лифт: пунктиром — докуда дойдёт продление на выбранные
