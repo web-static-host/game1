@@ -3918,27 +3918,43 @@ func receive_flight(flight: Dictionary) -> void:
 ## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
 ## через десяток метров (между кораблями прокапывают ход).
 ## Места, куда может сесть корабль (левый край отсека), по порядку: первое — куда сядет
-## следующий. Ищем от базы наружу клетку за клеткой (а не по сетке через 15 — так пропускались
-## ровные места между узлами), в обе стороны поровну: ближайшее подходящее — первое. Годится
-## место, где под кораблём 9 клеток ровной земли (одной высоты) и рядом нет построек (до
-## кораблей — SHIP_HULL_PAD). Места в списке друг друга не перекрывают.
+## следующий. Проверяется каждая клетка (а не сетка через 15 — так пропускались ровные места),
+## порядок — по расстоянию до ближайшего уже стоящего корабля (нет кораблей — до базы).
+## Годится место, где под кораблём 9 клеток ровной земли (одной высоты) и рядом нет построек
+## (до кораблей — SHIP_HULL_PAD). Места в списке друг друга не перекрывают.
 func landing_spots(limit := 12) -> Array[int]:
-	var out: Array[int] = []
+	var ships := rooms_of(RoomType.SHIP)
 	var base := home.x - 4
-	for d in LANDING_RANGE:
-		for sgn in ([1] if d == 0 else [1, -1]):
-			var x: int = base + sgn * d
-			var clash := false
-			for o in out:
-				if absi(o - x) < 9 + SHIP_HULL_PAD * 2:
-					clash = true
-					break
-			if clash or not landing_ok(x):
-				continue
-			out.append(x)
-			if out.size() >= limit:
-				return out
+	var cand := []
+	for x in range(base - LANDING_RANGE, base + LANDING_RANGE + 1):
+		if landing_ok(x):
+			cand.append([_landing_dist(x, ships, base), absi(x - base), x])
+	cand.sort()
+	var out: Array[int] = []
+	for e in cand:
+		var x: int = e[2]
+		var clash := false
+		for o in out:
+			if absi(o - x) < 9 + SHIP_HULL_PAD * 2:
+				clash = true
+				break
+		if clash:
+			continue
+		out.append(x)
+		if out.size() >= limit:
+			break
 	return out
+
+
+## Сколько клеток между местом (отсек 9 клеток от x) и ближайшим кораблём.
+static func _landing_dist(x: int, ships: Array, base: int) -> int:
+	if ships.is_empty():
+		return absi(x - base)
+	var best := 1 << 30
+	for q: Project in ships:
+		var gap := maxi(q.rect.position.x - (x + 9), x - q.rect.end.x)
+		best = mini(best, maxi(0, gap))
+	return best
 
 
 func landing_ok(x: int) -> bool:
