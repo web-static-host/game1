@@ -2032,8 +2032,11 @@ func test_genetics() -> void:
 	var kid := Genetics.child(mom, dad, rng)
 	check(Genetics.color_of(kid).v >= 0.95, "дети ярких родителей — яркие")
 	var logo := Genetics.founder(rng)
+	var plain := logo.duplicate(true)
 	logo["color"] = [CreatureArt.SUPER_A, CreatureArt.SUPER_B]
-	check(Genetics.is_super(logo) and Genetics.stats(logo)["vision"] >= 1.5 and Genetics.stats(logo)["vision"] < 2.0, "цвет лого — супер-гаврик, характеристики ×1,5")
+	var ratio: float = Genetics.stats(logo)["vision"] / maxf(0.001, Genetics.stats(plain)["vision"])
+	check(Genetics.is_super(logo) and not Genetics.is_super(plain) and absf(ratio - Genetics.SUPER_MULT) < 0.01 and Genetics.SUPER_MULT == 1.5,
+		"цвет лого — супер-гаврик, характеристики ×1,5 (%.2f)" % ratio)
 	var m := Genetics.founder(rng)
 	Genetics.mutate(m, rng, "eyes")
 	check(Genetics.is_mutant(m) and Genetics.mutation_text(m).begins_with("Мутант"), "мутант помечен: " + Genetics.mutation_text(m))
