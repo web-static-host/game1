@@ -2176,7 +2176,9 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					Fmt.int_spaced(roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * (1.5 if colony.research.has("shelving") else 1.0))),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				if colony.assigned_to(p).is_empty():
-					rows.append({"type": "text", "text": "Нет работника — сюда никто ничего не носит. Назначьте работника (кнопка «Работа» у гаврика)."})
+					rows.append({"type": "text", "text": "Нет работника — добытое сюда носят свободные и подсобные, а добывать до нормы некому. Назначьте работника (кнопка «Работа» у гаврика)."})
+				if not colony.drops_note.is_empty():
+					rows.append({"type": "warning", "text": colony.drops_note})
 				var lacking := colony.storage_deficit(p)
 				if not colony.assigned_to(p).is_empty() and not lacking.is_empty():
 					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())

@@ -869,6 +869,74 @@ func _check_access() -> void:
 			_log("%s: %s" % [p.title(), p.blocked], "warning", p.rect.get_center())
 
 
+## Добытое лежит на земле, а его не уносят: склада для него нет или на складах нет места под
+## этот ресурс. Предупреждаем в журнале — раз, пока
+## причина та же (свободные стоят, и непонятно почему).
+const DROPS_WARN_MIN := 20
+var drops_note := ""
+
+
+func _check_drops_stored() -> void:
+	if offline or drops.is_empty():
+		if drops.is_empty():
+			drops_note = ""
+		return
+	var none := {}
+	var full := {}
+	var ok := {}
+	for c: Vector2i in drops:
+		for k in drops[c]:
+			var n := drop_amount(c, k)
+			if n <= 0:
+				continue
+			if not ok.has(k):
+				ok[k] = 2 if _store_room_for(k) else (1 if can_store(k) else 0)
+			if ok[k] == 0:
+				none[k] = int(none.get(k, 0)) + n
+				continue
+			if ok[k] == 1:
+				full[k] = int(full.get(k, 0)) + n
+	var parts: PackedStringArray = []
+	var line := func(d: Dictionary) -> String:
+		var keys := d.keys().filter(func(k: String) -> bool: return int(d[k]) >= DROPS_WARN_MIN)
+		keys.sort_custom(func(a: String, b: String) -> bool: return int(d[a]) > int(d[b]))
+		return ", ".join(keys.map(func(k: String) -> String: return "%s %d" % [Mat.resource_name(k).to_lower(), int(d[k])]))
+	var o: String = line.call(none)
+	if not o.is_empty():
+		parts.append("Нет склада — на земле лежит: %s. Постройте склад (амбар для еды)." % o)
+	var f: String = line.call(full)
+	if not f.is_empty():
+		parts.append("Склады полны — на земле лежит: %s. На складе каждого ресурса помещается не больше нормы (до 480): постройте ещё склад (амбар для еды) или поднимите нормы." % f)
+	var note := " ".join(parts)
+	if note != drops_note:
+		# Повторяем, только если причина поменялась (не каждое изменение числа).
+		var changed := _drops_keys(note) != _drops_keys(drops_note)
+		drops_note = note
+		if changed and not note.is_empty():
+			_log(note, "warning")
+
+
+## Есть ли склад (или грузовой лифт к складу), куда влезет хоть одна полная ноша ресурса:
+## на почти полный склад по одной штуке не носят.
+func _store_room_for(key: String) -> bool:
+	for room in store_rooms():
+		if RoomType.stores(room, key) and store_staffed(room) and room_free(room, key) >= carry_cap():
+			return true
+	for p in lifts():
+		if p.cargo and lift_powered(p):
+			for e in 2:
+				for room in lift_stores(p, 1 - e):
+					if RoomType.stores(room, key) and room_free(room, key) >= carry_cap():
+						return true
+	return false
+
+
+## Список ресурсов в предупреждении без чисел — чтобы не повторять его при каждой новой куче.
+static func _drops_keys(note: String) -> String:
+	var re := RegEx.create_from_string("\\d+")
+	return re.sub(note, "", true)
+
+
 ## Материал на складе есть, но склад отрезан (яма без лестницы, обвал): гаврики не могут
 ## его взять, и стройка молча стояла бы. Предупреждаем — игрок проложит путь.
 const NO_SOURCE := "Склад недоступен"
@@ -5605,6 +5673,8 @@ func update(dt: float) -> void:
 		# в один долгий кадр.
 		if _access_t == 2:
 			_check_sources()
+		if _access_t == 3:
+			_check_drops_stored()
 		if _access_t == 4:
 			_check_stuck()
 		if _access_t >= 5:

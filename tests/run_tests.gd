@@ -94,6 +94,7 @@ func _initialize() -> void:
 	test_crew_roles()
 	test_digger_stays()
 	test_haul_batches()
+	test_drops_note()
 	test_worlds()
 	test_crew_takeover()
 	test_hearth_on_demand()
@@ -3804,6 +3805,25 @@ func test_haul_batches() -> void:
 	colony.drop_item(src, "stone", 1)
 	colony.drop_born[src] = colony.game_time - Colony.DROP_WAIT - 1.0
 	check(colony._try_cleanup(u, reach[0], reach[1]), "пролежала долго — несут и одну")
+
+
+## Добытое лежит, а его не уносят — в журнале и карточке склада сказано почему: склад полон.
+func test_drops_note() -> void:
+	var res := _colony_with_room(24, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var store: Project = res[1]
+	colony.drops.clear()
+	var spot := Vector2i(store.rect.position.x + 2, store.rect.end.y - 1)
+	colony.drop_item(spot, "stone", 30)
+	colony._check_drops_stored()
+	check(colony.drops_note.is_empty(), "место на складе есть — предупреждения нет")
+	store.limits["stone"] = 0
+	colony._check_drops_stored()
+	check(colony.drops_note.begins_with("Склады полны") and "камень 30" in colony.drops_note, "склад полон — сказано: " + colony.drops_note)
+	store.limits.erase("stone")
+	colony.drops.clear()
+	colony._check_drops_stored()
+	check(colony.drops_note.is_empty(), "куч нет — предупреждения нет")
 
 
 ## Миры — отдельные игры со своими сохранениями; автосохранение одно и перезаписывается.
