@@ -4455,8 +4455,16 @@ func test_ship_spacing() -> void:
 			var gap := maxi(b.position.x - a.end.x, a.position.x - b.end.x)
 			ok = ok and gap >= 5
 	check(ok, "корабли садятся с зазором под нос и хвост: %s" % str(ships.map(func(q: Project) -> Rect2i: return q.rect)))
-	# Кнопка «Места посадки» показывает, куда сядет следующий, — он туда и садится.
+	# Ближе «сядет сюда» к базе подходящих мест нет (ищут клетку за клеткой, а не по сетке).
 	var next := c.landing_spots(5)
+	var nearest := true
+	if not next.is_empty():
+		var d0 := absi(next[0] - (c.home.x - 4))
+		for x in range(c.home.x - 4 - d0 + 1, c.home.x - 4 + d0):
+			if c.landing_ok(x):
+				nearest = false
+	check(nearest, "«сядет сюда» — ближайшее подходящее место к базе")
+	# Кнопка «Места посадки» показывает, куда сядет следующий, — он туда и садится.
 	c.receive_flight(fl.duplicate(true))
 	var landed: Project = c.rooms_of(RoomType.SHIP)[-1]
 	check(not next.is_empty() and landed.rect.position.x == next[0] and c._flat_at(next[0]),

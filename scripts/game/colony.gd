@@ -3918,17 +3918,26 @@ func receive_flight(flight: Dictionary) -> void:
 ## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
 ## через десяток метров (между кораблями прокапывают ход).
 ## Места, куда может сесть корабль (левый край отсека), по порядку: первое — куда сядет
-## следующий. Места — через SHIP_STEP от базы в обе стороны; годится место, где под кораблём
-## 9 клеток ровной земли (одной высоты) и рядом нет построек (до кораблей — SHIP_HULL_PAD).
+## следующий. Ищем от базы наружу клетку за клеткой (а не по сетке через 15 — так пропускались
+## ровные места между узлами), в обе стороны поровну: ближайшее подходящее — первое. Годится
+## место, где под кораблём 9 клеток ровной земли (одной высоты) и рядом нет построек (до
+## кораблей — SHIP_HULL_PAD). Места в списке друг друга не перекрывают.
 func landing_spots(limit := 12) -> Array[int]:
 	var out: Array[int] = []
-	for k in LANDING_TRIES:
-		for sgn in ([1] if k == 0 else [1, -1]):
-			var x: int = home.x - 4 + sgn * k * SHIP_STEP
-			if landing_ok(x):
-				out.append(x)
-				if out.size() >= limit:
-					return out
+	var base := home.x - 4
+	for d in LANDING_RANGE:
+		for sgn in ([1] if d == 0 else [1, -1]):
+			var x: int = base + sgn * d
+			var clash := false
+			for o in out:
+				if absi(o - x) < 9 + SHIP_HULL_PAD * 2:
+					clash = true
+					break
+			if clash or not landing_ok(x):
+				continue
+			out.append(x)
+			if out.size() >= limit:
+				return out
 	return out
 
 
@@ -3943,11 +3952,11 @@ func landing_ok(x: int) -> bool:
 	return true
 
 
-const LANDING_TRIES := 40
+## Как далеко от базы ищут место посадки (клеток в каждую сторону).
+const LANDING_RANGE := 600
 
 
-## Шаг между местами посадки кораблей и запас под нос и хвост корпуса (клеток).
-const SHIP_STEP := 15
+## Запас под нос и хвост корпуса: ближе к другому кораблю не садятся (клеток).
 const SHIP_HULL_PAD := 6
 
 
