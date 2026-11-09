@@ -169,7 +169,7 @@ static func animated(p: Project) -> bool:
 		Project.Kind.ROOM:
 			if p.phase != Project.Phase.DONE:
 				return false
-			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE]
+			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE, RoomType.OIL_PUMP]
 	return false
 
 
@@ -1419,6 +1419,99 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 
 ## Насосная: насос на каждые 3 м, справа бак с водой; от насоса труба в потолок; под потолком —
 ## водопровод с вентилями и манометрами. Насос «крутится», когда комната работает.
+## Нефтекачалка — работает по-настоящему: кривошип на редукторе крутится, шатун тянет хвост
+## балансира, балансир кивает «головой», шток с подвеской ходит вверх-вниз в устье скважины.
+## Детали — art_src/rooms/cut_oil_pump.py; оси — в пикселях вырезанных картинок. Сборка — в
+## координатах картинки станины (frame), потом масштаб под 3 м комнаты.
+const PJ_A := Vector2(232.0, 331.1)        # ось кривошипа на станине
+const PJ_O := Vector2(463.1, 35.0)         # шарнир балансира на станине
+const PJ_FLOOR := 491.0                    # низ станины
+const PJ_BEAM_O := Vector2(407.3, 182.0)   # ось на картинке балансира
+const PJ_REAR := Vector2(-354.2, -19.3)    # палец шатуна на балансире — от оси
+const PJ_HEAD := 367.7                     # радиус «головы лошади» (дуга вокруг оси)
+const PJ_CRANK_O := Vector2(222.3, 135.1)  # ось на картинке кривошипа
+const PJ_CRANK_PIN := Vector2(382.3, 130.5)
+const PJ_CRANK_SCALE := 0.6                # кривошип меньше, чем на листе: балансир кивает на ±18°
+const PJ_ROD_A := Vector2(46.5, 46.8)      # проушины шатуна
+const PJ_ROD_LEN := 363.7
+const PJ_POLISH_TOP := Vector2(60.0, 29.0) # подвес штока
+const PJ_WELL := Vector2(147.0, 11.0)      # верх устья (центр)
+const PJ_WIDTH := 990.0                    # вся качалка от хвоста балансира до устья
+const PJ_HEIGHT := 690.0                   # от пола до верха «головы» в верхней точке
+const PJ_PERIOD := 3.2                     # секунд на ход
+## Длина шатуна в сборке: при горизонтальном балансире кривошип смотрит вниз.
+static var _pj_rod := -1.0
+## id -> [угол кривошипа, угол балансира, когда считали (мс)].
+static var _pj_state := {}
+
+
+func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var on := p.phase == Project.Phase.DONE and not p.paused and p.blocked.is_empty() and colony.powered()
+	var s := minf(lay.unit * 3.0 * 0.96 / PJ_WIDTH, TILE * (CEILING - 0.15) / PJ_HEIGHT)
+	if _pj_rod < 0.0:
+		_pj_rod = (PJ_O + PJ_REAR).distance_to(PJ_A + Vector2(0, PJ_CRANK_PIN.distance_to(PJ_CRANK_O) * PJ_CRANK_SCALE))
+	# Угол кривошипа и балансира (балансир — из длины шатуна, Ньютоном от прошлого угла).
+	var now := Time.get_ticks_msec()
+	var st: Array = _pj_state.get(p.id, [PI * 0.5, 0.0, now])
+	if on and alpha >= 1.0:
+		st[0] = fmod(st[0] + TAU * minf(0.1, (now - int(st[2])) / 1000.0) / PJ_PERIOD, TAU)
+	st[2] = now
+	var cr := PJ_CRANK_PIN.distance_to(PJ_CRANK_O) * PJ_CRANK_SCALE
+	var pin := PJ_A + Vector2(cos(st[0]), sin(st[0])) * cr
+	var phi: float = st[1]
+	for it in 8:
+		var b := PJ_O + PJ_REAR.rotated(phi)
+		var d := b.distance_to(pin) - _pj_rod
+		var b2 := PJ_O + PJ_REAR.rotated(phi + 0.001)
+		var g := (b2.distance_to(pin) - _pj_rod - d) / 0.001
+		if absf(g) < 1e-6:
+			break
+		phi -= d / g
+	phi = clampf(phi, -0.6, 0.6)
+	st[1] = phi
+	_pj_state[p.id] = st
+	var frame := furniture("oil_pump", "frame")
+	var beam := furniture("oil_pump", "beam")
+	var crank := furniture("oil_pump", "crank")
+	var rod := furniture("oil_pump", "rod")
+	var polished := furniture("oil_pump", "polished")
+	var well := furniture("oil_pump", "wellhead")
+	var mod := Color(1, 1, 1, alpha)
+	var rear := PJ_O + PJ_REAR.rotated(phi)
+	var head_x := PJ_O.x + PJ_HEAD
+	for cx in _block_centers(lay, n):
+		# Начало координат сборки (левый верх станины) — так, чтобы вся качалка была по центру
+		# блока, а станина стояла на полу.
+		var org := Vector2(cx - PJ_WIDTH * 0.5 * s, fy - PJ_FLOOR * s)
+		var at := func(v: Vector2) -> Vector2: return org + v * s
+		# Шток: висит под «головой» на канате; ход — длина дуги головы (радиус × угол).
+		var well_top := PJ_FLOOR - (well.get_height() - PJ_WELL.y)
+		var rod_top := PJ_O.y + 45.0 + PJ_HEAD * phi
+		var vis := maxf(10.0, well_top + 30.0 - rod_top)
+		var src := Rect2(0, PJ_POLISH_TOP.y - 12.0, polished.get_width(), minf(vis + 12.0, polished.get_height() - PJ_POLISH_TOP.y + 12.0))
+		_c.draw_texture_rect_region(polished, Rect2(at.call(Vector2(head_x - PJ_POLISH_TOP.x, rod_top - 12.0)), src.size * s), src, mod)
+		var head_y := PJ_O.y + Vector2(PJ_HEAD, -9.0).rotated(phi).y
+		for dx in [-3.0, 3.0]:
+			_c.draw_line(at.call(Vector2(head_x + dx, head_y)), at.call(Vector2(head_x + dx, rod_top - 6.0)), Color(0.15, 0.15, 0.17, alpha), maxf(1.0, 5.0 * s))
+		_c.draw_texture_rect(well, Rect2(at.call(Vector2(head_x - PJ_WELL.x, well_top - PJ_WELL.y)), well.get_size() * s), false, mod)
+		_c.draw_texture_rect(frame, Rect2(org, frame.get_size() * s), false, mod)
+		# Балансир — вокруг шарнира на раме.
+		_c.draw_set_transform(at.call(PJ_O), phi, Vector2(s, s))
+		_c.draw_texture(beam, -PJ_BEAM_O, mod)
+		# Кривошип — вокруг оси редуктора (палец — по углу кривошипа).
+		var pin0 := (PJ_CRANK_PIN - PJ_CRANK_O).angle()
+		_c.draw_set_transform(at.call(PJ_A), st[0] - pin0, Vector2(s, s) * PJ_CRANK_SCALE)
+		_c.draw_texture(crank, -PJ_CRANK_O, mod)
+		# Шатун — от пальца кривошипа к хвосту балансира (тянется по длине, толщина та же).
+		var dv := rear - pin
+		_c.draw_set_transform(at.call(pin), dv.angle(), Vector2(s * dv.length() / PJ_ROD_LEN, s))
+		_c.draw_texture(rod, -PJ_ROD_A, mod)
+		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
 func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
@@ -1761,6 +1854,9 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 		return
 	if purpose in RoomType.GENERATORS and furniture("generator", "coal_on") != null:
 		_draw_generator_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.OIL_PUMP and furniture("oil_pump", "frame") != null:
+		_draw_oil_pump_furniture(p, r, alpha)
 		return
 	if purpose == RoomType.PUMP and furniture("pump", "pump_on") != null:
 		_draw_pump_furniture(p, r, alpha)

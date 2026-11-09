@@ -82,7 +82,7 @@ func _process(_delta: float) -> bool:
 					pr.purpose = {2: RoomType.VENT, 5: RoomType.FORGE if left else RoomType.VENT,
 						8: RoomType.VENT if left else RoomType.FORGE, 11: RoomType.FORGE if left else RoomType.VENT}[row]
 				if _set5:
-					pr.purpose = {2: RoomType.REFINERY, 5: RoomType.OIL_TANK if left else RoomType.OIL_PUMP,
+					pr.purpose = {2: RoomType.OIL_PUMP, 5: RoomType.OIL_TANK if left else RoomType.OIL_PUMP,
 						8: RoomType.DIESEL_GEN if left else RoomType.TELEPORT, 11: RoomType.ENRICHMENT if left else RoomType.OIL_TANK}[row]
 				if _set6:
 					pr.material = {2: "gold", 5: "silver" if left else "diamond", 8: "diamond" if left else "gold",
