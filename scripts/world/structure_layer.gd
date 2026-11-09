@@ -31,6 +31,8 @@ var view: WorldView
 var colony: Colony
 ## Рамка новой стройки (size == 0 — нет).
 var preview := Rect2i()
+## Места посадки корабля (кнопка «Места посадки»): первое — куда сядет следующий.
+var landing: Array[Rect2i] = []
 var preview_ok := false
 var preview_text := ""
 var selected_project := 0
@@ -92,7 +94,7 @@ func _process(delta: float) -> void:
 	_static_t -= delta
 	var sel := colony.project_by_id(selected_project) if colony != null and selected_project != 0 else null
 	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin,
-		sel.order_len if sel != null else 0, _drills_sig()]
+		sel.order_len if sel != null else 0, _drills_sig(), landing.size(), view.camera.zoom.x if not landing.is_empty() else 0.0]
 	var vis := _vis_rect().grow(-VIS_MARGIN + 2)
 	if _static_t <= 0.0 or sig != _drawn_sig or not _drawn_vis.encloses(vis):
 		_static_t = STATIC_REFRESH
@@ -246,6 +248,7 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
 	_draw_extend(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
 	_draw_drill_plan(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
+	_draw_landing(font)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
 		var col := Color(0.4, 1.0, 0.45) if preview_ok else Color(1.0, 0.35, 0.3)
@@ -1954,6 +1957,23 @@ func _drills_sig() -> int:
 		if p.kind == Project.Kind.DRILL:
 			h = hash([h, p.rect.position, p.drill_left, p.drill_dir])
 	return h
+
+
+## Места посадки: корабль (отсек 9×3) пунктиром над ровной землёй; первое — ярче, «сядет сюда».
+func _draw_landing(font: Font) -> void:
+	for i in landing.size():
+		var r := _rect_px(landing[i])
+		var col := Color(0.45, 1.0, 0.5) if i == 0 else Color(0.6, 0.85, 1.0, 0.8)
+		_c.draw_rect(r, Color(col, 0.12 if i == 0 else 0.06))
+		_dashed_rect(r, Color(col, 0.95), 3.5 if i == 0 else 2.5)
+		# Ровная земля под кораблём — 9 клеток.
+		_c.draw_line(Vector2(r.position.x, r.end.y + 2), Vector2(r.end.x, r.end.y + 2), Color(col, 0.9), 3.0)
+		# Подпись — читаемая и при отдалённой камере.
+		var fs := int(22.0 / clampf(view.camera.zoom.x, 0.3, 1.0))
+		var at := r.position + Vector2(4, -10)
+		var text := "сядет сюда" if i == 0 else "место %d" % (i + 1)
+		_c.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, maxi(6, fs / 4), Color(0, 0, 0, 0.85))
+		_c.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 
 
 ## Бур: выбран и стоит — пунктиром, докуда пройдёт на выбранные метры в каждую сторону

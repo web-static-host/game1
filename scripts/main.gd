@@ -72,6 +72,31 @@ var _extend_len := 5
 var _pick_filters := {"single": false, "calling": false, "mutant": false}
 ## Занятого гаврика при назначении: false — сразу на новое место, true — сначала доделает своё.
 var _finish_first := false
+## Показаны места, куда может сесть следующий корабль.
+var _landing_on := false
+
+
+func _toggle_landing() -> void:
+	_landing_on = not _landing_on
+	_refresh_landing()
+
+
+## Места посадки на карте (пунктиром; первое — куда сядет следующий корабль).
+func _refresh_landing() -> void:
+	var spots: Array[Rect2i] = []
+	if _landing_on:
+		for x in colony.landing_spots(12):
+			var s := world.gen.surface_y(x)
+			spots.append(Rect2i(x, s - 3, 9, 3))
+		if spots.is_empty():
+			hud.log_event("Ровных мест для посадки (9 клеток одной высоты) рядом нет — корабль сядет прямо на базу", "warning")
+		else:
+			# Отдалить и показать места правее карточки (она занимает левую часть экрана).
+			world_view.camera.zoom = Vector2(0.45, 0.45)
+			var cells_wide := get_viewport().get_visible_rect().size.x / world_view.camera.zoom.x / ChunkView.TILE
+			world_view.focus_cell(spots[0].get_center() - Vector2i(int(cells_wide * 0.2), 0))
+	world_view.structures.landing = spots
+	world_view.structures.queue_redraw()
 ## На сколько метров сверлить буром.
 var _drill_len := 10
 ## Сдвиг комнаты: куда (0 ←, 1 →, 2 ↑, 3 ↓) и на сколько.
@@ -467,6 +492,9 @@ func _switch_world(planet: String) -> void:
 		return
 	_cameras[_planet] = world_view.camera_cell()
 	_to_look()
+	# Места посадки — свои у каждой планеты: при смене мира прячем.
+	_landing_on = false
+	world_view.structures.landing = []
 	hud.close_overlays()
 	remove_child(world_view)
 	world_view.queue_free()
@@ -691,7 +719,11 @@ func _launch_cargo_spec() -> Dictionary:
 	return {"id": "cargo", "title": "Груз: %d из %d" % [total, _launch_hold()],
 		"subtitle": "экипаж %d · на %s" % [_launch["crew"].size(), Planet.planet_name(_launch["planet"])],
 		"rows": [{"type": "text", "text": "Домой: корабль сядет рядом с колонией на Земле, гаврики и груз — в нём." if _launch["planet"] == "earth" else
-			"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."}]}
+			"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."},
+			{"type": "warning", "text": LANDING_TEXT}]}
+
+
+const LANDING_TEXT := "Куда сядет корабль: на РОВНОЕ место — 9 клеток земли одной высоты, без построек рядом; места — через 15 клеток от базы в обе стороны (ближние — первыми). Неровно или занято — садится дальше. Где можно сесть — кнопка «Места посадки» в карточке корабля или космодрома на той планете."
 
 
 func _do_launch() -> void:
@@ -1480,6 +1512,10 @@ func _show_project(p: Project) -> void:
 	var preview := {"v": maxi(current, 1)}
 	if p.phase == Project.Phase.DONE and p.purpose == RoomType.SHIP:
 		controls.append(_storage_control(p))
+	if p.phase == Project.Phase.DONE and (p.purpose == RoomType.SHIP or p.purpose == RoomType.LAUNCHPAD):
+		actions.append([("Скрыть места посадки" if _landing_on else "Места посадки"), func() -> void:
+			_toggle_landing()
+			_show_project(p)])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM and p.purpose != RoomType.SHIP:
 		if RoomType.is_store(p.purpose):
 			controls.append(_storage_control(p))
@@ -2200,6 +2236,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				chips.append(["home", "мест %d" % RoomType.beds(p)])
 				chips.append(["power", "реактор: %d" % RoomType.SHIP_POWER])
 				rows.append({"type": "text", "text": "Корабль — жильё на 10 человек: внутри воздух, тепло (+20 °C) и свет, трюм держит груз. Наружу на поверхность без воздуха не выйти — копайте тоннель вниз прямо из корабля."})
+				rows.append({"type": "text", "text": LANDING_TEXT})
 			RoomType.OIL_PUMP:
 				chips.append(["", "качает на %d м вокруг" % RoomType.effect_radius(p)])
 				var oil_cell = colony._nearest_oil(p)

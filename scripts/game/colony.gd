@@ -3917,32 +3917,43 @@ func receive_flight(flight: Dictionary) -> void:
 
 ## Корабль садится на ровное место у базы: комната 9×3 на поверхности. Следующие — рядом,
 ## через десяток метров (между кораблями прокапывают ход).
+## Места, куда может сесть корабль (левый край отсека), по порядку: первое — куда сядет
+## следующий. Места — через SHIP_STEP от базы в обе стороны; годится место, где под кораблём
+## 9 клеток ровной земли (одной высоты) и рядом нет построек (до кораблей — SHIP_HULL_PAD).
+func landing_spots(limit := 12) -> Array[int]:
+	var out: Array[int] = []
+	for k in LANDING_TRIES:
+		for sgn in ([1] if k == 0 else [1, -1]):
+			var x: int = home.x - 4 + sgn * k * SHIP_STEP
+			if landing_ok(x):
+				out.append(x)
+				if out.size() >= limit:
+					return out
+	return out
+
+
+func landing_ok(x: int) -> bool:
+	if not _flat_at(x):
+		return false
+	var sx := world.gen.surface_y(x)
+	for q in projects:
+		var pad := SHIP_HULL_PAD if q.purpose == RoomType.SHIP else 1
+		if q.rect.intersects(Rect2i(x - pad, sx - 4, 9 + pad * 2, 5)):
+			return false
+	return true
+
+
+const LANDING_TRIES := 40
+
+
 ## Шаг между местами посадки кораблей и запас под нос и хвост корпуса (клеток).
 const SHIP_STEP := 15
 const SHIP_HULL_PAD := 6
 
 
 func _land_ship() -> Project:
-	var x0 = null
-	for k in 40:
-		for sgn in [1, -1]:
-			# Корпус корабля шире отсека: нос выступает на 3 клетки вправо, двигатель и
-			# стабилизаторы — на 3 влево. Соседний корабль садится через 15 клеток, чтобы
-			# корпуса не наезжали друг на друга.
-			var x: int = home.x - 4 + sgn * k * SHIP_STEP
-			var sx := world.gen.surface_y(x)
-			var free := true
-			for q in projects:
-				var pad := SHIP_HULL_PAD if q.purpose == RoomType.SHIP else 1
-				if q.rect.intersects(Rect2i(x - pad, sx - 4, 9 + pad * 2, 5)):
-					free = false
-			if free and _flat_at(x):
-				x0 = x
-				break
-		if x0 != null:
-			break
-	if x0 == null:
-		x0 = home.x - 4
+	var spots := landing_spots(1)
+	var x0: int = spots[0] if not spots.is_empty() else home.x - 4
 	var s0 := world.gen.surface_y(x0)
 	var p := Project.new()
 	p.id = next_project_id

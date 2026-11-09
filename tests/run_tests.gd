@@ -4455,6 +4455,12 @@ func test_ship_spacing() -> void:
 			var gap := maxi(b.position.x - a.end.x, a.position.x - b.end.x)
 			ok = ok and gap >= 5
 	check(ok, "корабли садятся с зазором под нос и хвост: %s" % str(ships.map(func(q: Project) -> Rect2i: return q.rect)))
+	# Кнопка «Места посадки» показывает, куда сядет следующий, — он туда и садится.
+	var next := c.landing_spots(5)
+	c.receive_flight(fl.duplicate(true))
+	var landed: Project = c.rooms_of(RoomType.SHIP)[-1]
+	check(not next.is_empty() and landed.rect.position.x == next[0] and c._flat_at(next[0]),
+		"«сядет сюда» — туда и сел (x %d), там 9 ровных клеток" % (next[0] if not next.is_empty() else 0))
 
 
 ## На Венере срубленные деревья вырастают снова (почвы там нет — растут на её грунте).
