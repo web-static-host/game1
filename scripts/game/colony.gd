@@ -6599,7 +6599,7 @@ func _task_order(u: Unit) -> Array[String]:
 		return ["haul", "projects", "need"]
 	# Шахтёр — только шахты (копает, крепит, чинит), строитель — остальные стройки.
 	if u.profession == Unit.Prof.MINER:
-		return ["mines"]
+		return ["mines", "projects"]
 	if u.profession == Unit.Prof.BUILDER:
 		return ["builds", "projects", "need"]
 	# Строители и свободные: сначала стройка, потом переноска.
@@ -6887,6 +6887,9 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 		return false
 	var mine := p.kind == Project.Kind.MINE
 	var crew := _crew_ok(u, mine, miners, builders)
+	# Шахтёр без дела в шахтах копает и крепит и на других стройках (тоннель и т. п.), но не строит:
+	# иначе, когда строитель погиб или греется, тоннель стоял при свободном шахтёре.
+	var dig_help := not crew and u.workplace == 0 and u.profession == Unit.Prof.MINER and p.phase == Project.Phase.DIG
 	# Своя бригада (строители, у шахты — шахтёры) идёт без ограничения мест; места в карточке —
 	# для помощников. Помощник уступает клетку подошедшему строителю (см. _takeover).
 	var own_crew := crew and builder_or_miner(u)
@@ -6894,6 +6897,10 @@ func _try_project(u: Unit, p: Project, parents: Dictionary, dist: Dictionary, mi
 		return false
 	# Дальняя стройка (глубоко в большой колонии) — путь к ней ищут прицельно.
 	_reach_far(u.cell(), p.rect, parents, dist)
+	if dig_help:
+		# Крепь для копки несёт сам, если некому (как в своей шахте) — ровно сколько нужно сейчас.
+		return _try_support(u, p, parents, dist) or _try_dig(u, p, parents, dist) \
+			or (not free_hauler_exists() and _try_haul(u, p, parents, dist, true))
 	if crew:
 		if p.phase == Project.Phase.DIG:
 			if _try_harvest(u, parents, dist, uncleared(p), p.id) or _try_support(u, p, parents, dist) \

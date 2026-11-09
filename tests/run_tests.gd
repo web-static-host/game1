@@ -51,6 +51,7 @@ func _initialize() -> void:
 	test_stuck_note()
 	test_ship_spacing()
 	test_venus_regrow()
+	test_miner_helps_tunnel()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4469,6 +4470,27 @@ func test_venus_regrow() -> void:
 		if w.feature_at(x) == WorldGen.FEATURE_TREE:
 			n += 1
 	check(n > 0, "на Венере вырастают новые деревья (%d)" % n)
+
+
+## Шахтёр без дела в шахтах копает тоннель (строитель погиб или греется — тоннель не стоит).
+func test_miner_helps_tunnel() -> void:
+	var colony := _new_colony(83)
+	var w := colony.world
+	var x := _find_solid_column(w, 40)
+	_start(colony, x - 3)
+	var s := w.gen.surface_y(x)
+	var miner: Unit = colony.units[0]
+	colony.units = [miner]
+	colony.set_profession(miner, Unit.Prof.MINER)
+	colony.inventory["wood"] = 50
+	var t := colony.create_project(Project.Kind.TUNNEL, Rect2i(x, s, 1, 6))
+	var dug := false
+	for i in 1200:
+		colony.update(0.1)
+		if miner.project_id == t.id and (miner.task == Unit.Task.DIG or miner.task == Unit.Task.SUPPORT):
+			dug = true
+			break
+	check(dug, "шахтёр без шахт копает тоннель")
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
