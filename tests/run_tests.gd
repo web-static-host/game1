@@ -4564,6 +4564,37 @@ func test_dig_from_other_end() -> void:
 	colony.pathing.clear_cache()
 	var ex := colony.pathing.explore(u.cell())
 	check(colony._try_dig(u, t, ex[0], ex[1]) and u.target.x == x + 11, "копает навстречу с правого конца (клетка %s)" % u.target)
+	# Два среза выкопаны и ждут крепь — дальше не копают ни с какого конца (раньше копали весь
+	# ход, а крепь ставили потом).
+	colony._drop(u)
+	for cx in [x, x + 1]:
+		for cy in [y, y + 1]:
+			w.set_material(cx, cy, Mat.AIR)
+	colony.pathing.clear_cache()
+	ex = colony.pathing.explore(u.cell())
+	check(colony.diggable_now(t).is_empty(), "выкопанное ждёт крепь — копать сейчас нечего")
+	check(not colony._try_dig(u, t, ex[0], ex[1]), "без крепи дальше не копают (взял %s)" % u.target)
+	# Крепь взял дальний (идёт издалека), а ближний ждёт её — ставит ближний, дальний свободен.
+	for c in t.cells():
+		w.set_material(c.x, c.y, Mat.AIR)
+	colony.pathing.clear_cache()
+	ex = colony.pathing.explore(u.cell())
+	var far: Unit = colony.units[1]
+	colony._drop(far)
+	far.profession = Unit.Prof.ANY
+	u.profession = Unit.Prof.ANY
+	var k: String = Colony.support_keys(t)[0]
+	t.delivered[k] = Colony.support_amount(t, k)
+	far.task = Unit.Task.SUPPORT
+	far.project_id = t.id
+	far.state = Unit.State.MOVE
+	far.path.clear()
+	for j in 60:
+		far.path.append(Vector2i(x - 60 + j, y))
+	far.path_i = 0
+	colony.reserved["s%d" % t.id] = far.id
+	check(colony._try_support(u, t, ex[0], ex[1]) and u.task == Unit.Task.SUPPORT, "ближний взял крепь у дальнего")
+	check(far.task == Unit.Task.NONE and colony.reserved.get("s%d" % t.id) == u.id, "дальний ушёл искать другое дело")
 
 
 ## Прогноз железа на крепь: столько, сколько уйдёт на деле, и минус то, что ждут другие стройки.
@@ -5528,6 +5559,22 @@ func test_mine_caves() -> void:
 		w.reveal(xx, s + 7)
 	colony._rebuild_climb()
 	check(colony.pathing.standable(Vector2i(x + 2, s + 6)), "пол шахты над пещерой держит")
+	# Добытое в шахте над пещерой лежит на её полу, а не проваливается в пещеру — и пока шахту
+	# копают без крепи.
+	var phase0 := mine.phase
+	var sup0 := mine.supported.duplicate()
+	mine.phase = Project.Phase.DIG
+	mine.supported.clear()
+	colony._rebuild_climb()
+	colony.drops.clear()
+	colony.drop_item(Vector2i(x + 2, s + 4), "iron_ore", 3)
+	check(colony.drop_amount(Vector2i(x + 2, s + 6), "iron_ore") == 3, "добытое лежит на полу шахты над пещерой (%s)" % colony.drops)
+	colony._settle_drops()
+	check(colony.drop_amount(Vector2i(x + 2, s + 6), "iron_ore") == 3, "и не проваливается потом")
+	colony.drops.clear()
+	mine.phase = phase0
+	mine.supported = sup0
+	colony._rebuild_climb()
 	# Падение в пещеру: низ полости не открыт — гаврик всё равно долетает до дна и встаёт.
 	var u: Unit = colony.units[0]
 	u.pos = Vector2(x - 1, s + 7)

@@ -2976,6 +2976,15 @@ func _rebuild_climb() -> void:
 		if p.kind == Project.Kind.LIFT and p.phase == Project.Phase.DONE:
 			for c in p.cells():
 				_lift_cells[c] = p
+	# Куда падает добытое: на те же полы, а ещё на нижний ряд шахты и горизонтального хода в
+	# любой стадии — у выработки есть пол, даже пока крепь не поставлена (раньше добытое
+	# проваливалось сквозь пол шахты в пещеру или нижнюю выработку).
+	drop_floor = fl.duplicate()
+	for p in projects:
+		if p.kind == Project.Kind.MINE or (p.kind == Project.Kind.TUNNEL and not p.vertical()):
+			var y := p.rect.end.y - 1
+			for x in range(p.rect.position.x, p.rect.end.x):
+				drop_floor[Vector2i(x, y)] = true
 	if lad != pathing.ladders or site != pathing.sites or fl != pathing.floors or nr != pathing.no_roof:
 		var diff := []
 		for pair in [[lad, pathing.ladders], [site, pathing.sites], [fl, pathing.floors], [nr, pathing.no_roof]]:
@@ -7570,8 +7579,10 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 				best_cell = c
 				best_stand = spot[0]
 	# Начатый забой — с другой стороны, отсюда к нему не подойти (там некому работать: замёрзли,
-	# погибли): копаем навстречу со своей стороны, иначе ход не сойдётся.
-	if best_cell == null:
+	# погибли): копаем навстречу со своей стороны, иначе ход не сойдётся. Только когда забой
+	# есть: пустой — значит, выкопанное ждёт крепь, и копать дальше без неё нельзя (раньше
+	# копали всю шахту, а крепь ставили потом).
+	if best_cell == null and not now.is_empty():
 		var reach_now := false
 		for c in now:
 			if _work_spot(c, dist)[0] != null:
@@ -7733,11 +7744,18 @@ func _hazard_stop_rect(p: Project, cells: Rect2i) -> bool:
 func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
 	# Крепь среза ставит один гаврик; помощника сменяет подошедший строитель (шахтёр).
 	var helper := 0
+	var far_one: Unit = null
 	if reserved.has("s%d" % p.id):
 		var o := _unit_by_id(int(reserved["s%d" % p.id]))
-		if not builder_or_miner(u) or o == null or o.takeover_by != 0 or builder_or_miner(o) or o.task != Unit.Task.SUPPORT:
+		if o != null and o != u and o.task == Unit.Task.SUPPORT and o.state == Unit.State.MOVE and o.takeover == 0 \
+				and o.takeover_by == 0 and (not builder_or_miner(o) or builder_or_miner(u)):
+			# Крепь взял дальний (шёл с поверхности), а рядом стоят и ждут её, потому что без
+			# крепи дальше не копают, — ставит тот, кто ближе, а дальний ищет другое дело.
+			far_one = o
+		elif not builder_or_miner(u) or o == null or o.takeover_by != 0 or builder_or_miner(o) or o.task != Unit.Task.SUPPORT:
 			return false
-		helper = o.id
+		else:
+			helper = o.id
 	var i := slice_to_support(p)
 	if i < 0 or not _pay_support(p, i):
 		return false
@@ -7750,6 +7768,14 @@ func _try_support(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) ->
 				best = stand
 	if best == null:
 		return false
+	if far_one != null:
+		if best_d + CREW_LEAD >= far_one.path.size() - far_one.path_i:
+			if not builder_or_miner(u) or builder_or_miner(far_one):
+				return false
+			# Дальний — помощник, а этот строитель (шахтёр) ближе не намного: сменит его, как обычно.
+			helper = far_one.id
+		else:
+			_drop(far_one)
 	_start(u, Unit.Task.SUPPORT, p.slice_cells(i)[0], best, p.id, parents)
 	_mark_takeover(u, helper)
 	return true
@@ -8030,11 +8056,15 @@ func drop_item(c: Vector2i, key: String, n: int, site: Project = null) -> void:
 
 
 ## Куда упадёт предмет из клетки c: до пола, настила или перекрытия.
+## Клетки, на полу которых лежит добытое (полы выработок и комнат) — см. _rebuild_climb.
+var drop_floor := {}
+
+
 func _landing(c: Vector2i) -> Vector2i:
 	var k := c
 	for i in 64:
 		var below := k + Vector2i(0, 1)
-		if deck.has(k) or not world.is_open(below.x, below.y):
+		if deck.has(k) or drop_floor.has(k) or not world.is_open(below.x, below.y):
 			break
 		if room_cells.has(below) and room_cells[below] != room_cells.get(k, -1):
 			break
