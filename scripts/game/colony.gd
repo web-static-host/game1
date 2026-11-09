@@ -5123,7 +5123,7 @@ func _birth(mother: Unit) -> void:
 	var parents := mother.name + (" и " + father.name if father != null else "")
 	_log("Родился ребёнок: %s (%s %s)" % [baby.name, who, parents], "good", baby.cell())
 	if Genetics.is_super(genome):
-		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики вдвое выше!" % baby.name, "good", baby.cell())
+		_log("Родился СУПЕР-ГАВРИК: %s — цвета лого, все характеристики в полтора раза выше!" % baby.name, "good", baby.cell())
 	elif Genetics.is_mutant(genome):
 		_log("%s — %s" % [baby.name, Genetics.mutation_text(genome).to_lower()], "good" if Genetics.rarity(genome) >= 2 else "info", baby.cell())
 
