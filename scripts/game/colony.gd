@@ -1541,6 +1541,19 @@ func in_transit(p: Project, key: String) -> int:
 	return n
 
 
+## Сколько ресурса key ещё ждут начатые стройки (нужно − принесено − несут): этого на складе
+## уже как бы нет — для прогноза новой стройки.
+func promised(key: String) -> int:
+	var n := 0
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing):
+			continue
+		var need := int(required(p).get(key, 0)) - int(p.delivered.get(key, 0)) - in_transit(p, key)
+		if need > 0:
+			n += need
+	return n
+
+
 ## Что ещё осталось принести (без учёта того, что уже несут).
 func remaining(p: Project) -> Dictionary:
 	var out := {}

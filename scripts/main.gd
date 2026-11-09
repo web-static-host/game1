@@ -2302,13 +2302,45 @@ static func _plural(n: int, one: String, few: String, many: String) -> String:
 	return many
 
 
-## Плашки стоимости: [ресурс, есть на складе, нужно, хватает].
-func _cost_items(cost: Dictionary) -> Array:
+## Плашки стоимости: [ресурс, есть на складе, нужно, хватает]. free — для новой стройки:
+## «есть» без того, что уже ждут другие стройки (иначе прогноз «хватает», а железо уйдёт им).
+## В одном прогнозе стены, крепь и обустройство берут из одного запаса: каждая строка видит, что
+## осталось после предыдущих (_taken сбрасывают в начале прогноза).
+var _taken := {}
+
+
+func _cost_items(cost: Dictionary, free := false) -> Array:
 	var out := []
 	for k in cost:
 		var have: int = colony.inventory.get(k, 0)
+		if free:
+			have = maxi(0, _free(colony, k) - int(_taken.get(k, 0)))
+			_taken[k] = int(_taken.get(k, 0)) + int(cost[k])
 		out.append([k, have, cost[k], have >= cost[k]])
 	return out
+
+
+## Сколько ресурса на складе ещё никому не обещано (минус то, что ждут начатые стройки).
+static func _free(c: Colony, k: String) -> int:
+	return maxi(0, int(c.inventory.get(k, 0)) - c.promised(k))
+
+
+## Сколько ресурса key уйдёт на крепь постройки (по срезам с породой, как будет на деле).
+func _support_for(kind: int, r: Rect2i, mat: String, sup: String, key: String) -> int:
+	var tmp := Project.new()
+	tmp.kind = kind
+	tmp.rect = r
+	tmp.material = mat
+	tmp.support_choice = sup
+	tmp.support_wood = colony.support_needed(kind, r)
+	var n := 0
+	for i in tmp.slice_count():
+		for c in tmp.slice_cells(i):
+			if Mat.is_solid(world.get_mat(c.x, c.y)):
+				n += 1
+				break
+	tmp.needs_support.resize(n)
+	return n * Colony.support_amount(tmp, key)
 
 
 # --- Гаврики: кто чем занят, строители и подсобные -----------------------------------------
@@ -2739,6 +2771,7 @@ func _pending_spec() -> Dictionary:
 	var r := _pending
 	var kind := _pending_kind
 	var rows := []
+	_taken = {}
 	var tp := Project.new()
 	tp.id = -1
 	tp.kind = kind
@@ -2760,24 +2793,23 @@ func _pending_spec() -> Dictionary:
 		for k in lc:
 			cost[k] = int(cost.get(k, 0)) + int(lc[k])
 	if not cost.is_empty():
-		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost)})
+		rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(cost, true)})
 	var chips := []
 	if kind == Project.Kind.ROOM or kind == Project.Kind.TUNNEL or kind == Project.Kind.MINE:
 		var sw := _support_estimate(kind, r, tp.material, tp.support_choice)
 		var have: int = colony.inventory.get("wood", 0)
 		var fixed := Colony.support_fixed(tp)
 		if sw > 0 and not fixed.is_empty():
-			# Крепь из материала постройки (металл и алмаз — вдвое меньше).
-			var fn := ceili(sw / 2.0) if Project.half_support(fixed) else sw
-			var fh: int = colony.inventory.get(fixed, 0)
-			rows.append({"type": "resources", "label": "Укрепление", "items": [[fixed, fh, fn, fh >= fn]]})
+			# Крепь из материала постройки — столько, сколько уйдёт на деле (по срезам).
+			var fn := _support_for(kind, r, tp.material, tp.support_choice, fixed)
+			rows.append({"type": "resources", "label": "Укрепление", "items": _cost_items({fixed: fn}, true)})
 		elif sw > 0:
-			# Нет дерева — крепь из железа (его вдвое меньше), после «Железного каркаса».
-			var iron: int = colony.inventory.get("iron", 0)
-			if have < sw and iron > 0 and colony.research.has("steel_frame"):
-				rows.append({"type": "resources", "label": "Укрепление", "items": [["iron", iron, ceili(sw / 2.0), iron >= ceili(sw / 2.0)]]})
+			# Нет дерева — крепь из железа, после «Железного каркаса».
+			var iron := _free(colony, "iron")
+			if _free(colony, "wood") < sw and iron > 0 and colony.research.has("steel_frame"):
+				rows.append({"type": "resources", "label": "Укрепление", "items": _cost_items({"iron": _support_for(kind, r, tp.material, tp.support_choice, "iron")}, true)})
 			else:
-				rows.append({"type": "resources", "label": "Укрепление", "items": [["wood", have, sw, have >= sw]]})
+				rows.append({"type": "resources", "label": "Укрепление", "items": _cost_items({"wood": sw}, true)})
 	var support := colony.support_needed(kind, r)
 	if support > 0:
 		var span: Array = colony.ceiling_span(r)
@@ -2848,7 +2880,7 @@ func _pending_spec() -> Dictionary:
 			tmp2.material = tp.material
 			var ec := RoomType.equip_cost(plan, tmp2)
 			if not ec.is_empty():
-				rows.insert(1 if not rows.is_empty() else 0, {"type": "resources", "label": "Обустройство (после постройки)", "items": _cost_items(ec)})
+				rows.insert(1 if not rows.is_empty() else 0, {"type": "resources", "label": "Обустройство (после постройки)", "items": _cost_items(ec, true)})
 	if kind == Project.Kind.ROOM or tp.material != "wood":
 		title += " · " + Project.MATERIALS[tp.material][0].to_lower()
 	return {"title": title, "rows": rows}
@@ -2867,10 +2899,12 @@ func _extend_rows(p: Project, rows: Array) -> void:
 	if dirs.is_empty() or colony.extension_of(p) != null or p.order_len <= 0:
 		return
 	for d: Vector2i in dirs:
+		# Стороны — на выбор (одна или другая): каждая — со всего свободного запаса.
+		_taken = {}
 		var cost := _extend_cost(p, d, p.order_len)
 		var label: String = {Vector2i.LEFT: "←", Vector2i.DOWN: "↓", Vector2i.RIGHT: "→", Vector2i.UP: "↑"}.get(d, "")
 		rows.append({"type": "resources", "label": "Продлить %s на %d м:" % [label, p.order_len],
-			"items": _cost_items(cost) if not cost.is_empty() else []})
+			"items": _cost_items(cost, true) if not cost.is_empty() else []})
 		if cost.is_empty():
 			rows[-1] = {"type": "text", "text": "Продлить %s на %d м: материалов не нужно (там пусто — копать и укреплять нечего)" % [label, p.order_len]}
 
@@ -2893,7 +2927,7 @@ func _extend_cost(p: Project, d: Vector2i, n: int) -> Dictionary:
 			if key.is_empty():
 				# Дерево, а нет его — железо (вдвое меньше), после «Железного каркаса».
 				key = "wood" if int(colony.inventory.get("wood", 0)) >= sw or not colony.research.has("steel_frame") else "iron"
-			cost[key] = int(cost.get(key, 0)) + (ceili(sw / 2.0) if Project.half_support(key) else sw)
+			cost[key] = int(cost.get(key, 0)) + _support_for(p.kind, tp.rect, p.material, "", key)
 	return cost
 
 

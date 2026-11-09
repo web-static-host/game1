@@ -53,6 +53,7 @@ func _initialize() -> void:
 	test_venus_regrow()
 	test_miner_helps_tunnel()
 	test_dig_from_other_end()
+	test_iron_promised()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4523,6 +4524,26 @@ func test_dig_from_other_end() -> void:
 	colony.pathing.clear_cache()
 	var ex := colony.pathing.explore(u.cell())
 	check(colony._try_dig(u, t, ex[0], ex[1]) and u.target.x == x + 11, "копает навстречу с правого конца (клетка %s)" % u.target)
+
+
+## Прогноз железа на крепь: столько, сколько уйдёт на деле, и минус то, что ждут другие стройки.
+func test_iron_promised() -> void:
+	var colony := _new_colony(87)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 30)
+	colony.inventory["iron"] = 30
+	colony.research.done.append("steel_frame")
+	var y := w.gen.surface_y(x) + 6
+	var m := colony.create_project(Project.Kind.MINE, Rect2i(x, y, 8, 3), 3, "iron")
+	check(m != null and colony.support_key(m) == "iron", "шахта на железной крепи: " + colony.validate(Project.Kind.MINE, Rect2i(x, y, 8, 3), "iron"))
+	if m == null:
+		return
+	var slices := m.needs_support.size()
+	check(colony.promised("iron") == slices * Colony.support_amount(m, "iron") and Colony.support_amount(m, "iron") == 1,
+		"шахта ждёт 1 железо на каждый метр крепи: %d из %d" % [colony.promised("iron"), slices])
+	m.paused = true
+	check(colony.promised("iron") == 0, "на паузе — железо не ждёт")
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
