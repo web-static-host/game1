@@ -169,8 +169,11 @@ func _neighbors(c: Vector2i) -> Array[Vector2i]:
 			var ledge := c + Vector2i(dx, -2)
 			if _pass_m(c + UP * 2) and _node_m(step_up):
 				out.append(step_up)
-			elif _pass_m(c + UP * 2) and _pass_m(c + UP * 3) and _node_m(ledge) and not climbable(ledge):
-				# Уступ в 2 м — залезают (на лестницу так не прыгают: по ней лезут).
+			elif _pass_m(c + UP * 2) and _pass_m(c + UP * 3) and _node_m(ledge) and not climbable(ledge) \
+					and not (on_ladder and _node_m(up)):
+				# Уступ в 2 м — залезают (на лестницу так не прыгают: по ней лезут). И с лестницы,
+				# что идёт дальше вверх, — тоже нет: иначе путь «прыгнуть с лестницы на пол шахты
+				# сбоку и шагнуть обратно» был той же длины, и гаврик заходил в каждую шахту по пути.
 				out.append(ledge)
 			var step_down := c + Vector2i(dx, 1)
 			var drop := c + Vector2i(dx, 2)

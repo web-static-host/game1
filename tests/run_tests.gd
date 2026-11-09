@@ -771,6 +771,22 @@ func test_needs_realtime() -> void:
 	colony.projects.erase(hearth)
 	colony.elements._heat_src = null
 	colony._drop(u)
+	# Мёрзнущий с ношей в руках её доносит (бросает, только если совсем ослаб).
+	colony.elements._temp_memo[u.cell()] = -30.0
+	u.health = Colony.WARM_HEALTH - 5.0
+	u.task = Unit.Task.HAUL
+	u.haul_stage = 1
+	u.carry_key = "iron_ore"
+	u.carry_amount = 4
+	check(colony.needs_warmth(u) and not colony._needs_interrupt(u), "мёрзнет, но ношу доносит")
+	u.health = Colony.WARM_CARRY_HEALTH - 1.0
+	check(colony._needs_interrupt(u), "совсем ослаб — бросает ношу и идёт греться")
+	u.carry_amount = 0
+	u.carry_key = ""
+	u.haul_stage = 0
+	colony._drop(u)
+	u.health = 100.0
+	colony.elements._temp_memo.clear()
 
 
 func test_family() -> void:
@@ -4737,6 +4753,11 @@ func test_ladder_straight() -> void:
 	path = Pathing.path_to(reach[0], bottom)
 	off = path.filter(func(c: Vector2i) -> bool: return c.x != x)
 	check(not path.is_empty() and off.is_empty(), "сверху вниз — тоже прямо (в сторону шагов: %d)" % off.size())
+	# С лестницы, что идёт дальше вверх, на пол шахты сбоку (уступ в 2 м) не прыгают — лезут.
+	var below_floor := Vector2i(x, s + 10)
+	check(colony.pathing.climbable(below_floor) and not colony.pathing.neighbors(below_floor).has(Vector2i(x + 1, s + 8)),
+		"с лестницы на пол шахты сбоку не прыгают (соседи %s)" % [colony.pathing.neighbors(below_floor)])
+	check(colony.pathing.neighbors(Vector2i(x, s + 8)).has(Vector2i(x + 1, s + 8)), "а с той же высоты в шахту шагают")
 
 
 ## Лифты встык одного вида соединяются в один.

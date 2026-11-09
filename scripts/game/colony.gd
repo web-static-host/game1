@@ -40,8 +40,11 @@ const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "u
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
 const SATIETY_DECAY := 100.0 / 600.0 * 0.85
 ## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока гаврик
-## отогревается в тепле — втрое быстрее (как раньше во сне).
+## отогревается в тепле — в WARM_HEAL раз быстрее.
 const HEAL_TIME := 2400.0
+## Во сколько раз быстрее заживает, пока греется (было 3 — с 60% до 90% грелись 4 минуты, на
+## Нептуне гаврики больше грелись, чем работали).
+const WARM_HEAL := 15.0
 ## Ниже этого здоровья гаврик, которому холодно (или жарко), бросает дела и идёт греться.
 const WARM_HEALTH := 60.0
 ## Греется, пока здоровье не станет таким (или не пройдёт WARM_MAX секунд).
@@ -4992,7 +4995,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.starving_warned = false
 		u.energy = 100.0
 		var heal := 100.0 / HEAL_TIME \
-			* (3.0 if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
+			* (WARM_HEAL if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн гаврики сами едят и спят по расписанию.
@@ -5882,6 +5885,16 @@ func _stroll(u: Unit, home_only := false) -> bool:
 			elif dist[c] <= 40 and not home_only:
 				near.append(c)
 	var pool := home if not home.is_empty() else near
+	# У назначенного — пол его места работы (с лестницы у кузницы не уходит в дальнюю комнату).
+	var wp := project_by_id(u.workplace) if u.workplace != 0 and not home_only else null
+	if wp != null and wp.kind == Project.Kind.ROOM and wp.phase == Project.Phase.DONE:
+		var own: Array[Vector2i] = []
+		for x in range(RoomType.floor_start(wp), wp.rect.end.x):
+			var c := Vector2i(x, wp.rect.end.y - 1)
+			if not taken.has(c) and dist.has(c) and c != u.cell() and not pathing.climbable(c):
+				own.append(c)
+		if not own.is_empty():
+			pool = own
 	if pool.is_empty():
 		return false
 	var to: Vector2i = pool[rng.randi() % pool.size()]
@@ -6067,20 +6080,42 @@ func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 const WARM_MIN := 5.0
 
 
-## Место работы гаврика — в тепле для него (там он и согреется, работая).
+## Место работы гаврика — в тепле для него и работа там есть прямо сейчас (там он и
+## согреется, работая). Если работы там нет и придётся идти за сырьём на холодный склад —
+## нет: раньше мастер уходил греться «в кузницу», шёл за рудой, на складе снова мёрз, бросал
+## руду и бежал греться — и так по кругу.
 func _workplace_warm(u: Unit) -> bool:
 	var w := project_by_id(u.workplace)
-	if w == null or w.kind != Project.Kind.ROOM:
+	if w == null or w.kind != Project.Kind.ROOM or w.paused:
 		return false
 	var c := Vector2i(RoomType.floor_start(w), w.rect.end.y - 1)
-	return comfortable(u, c)
+	if not comfortable(u, c):
+		return false
+	match w.purpose:
+		RoomType.FARM:
+			return farm_warm(w) and not _mark_full(w)
+		RoomType.LAB:
+			return not research.current.is_empty()
+		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
+			return has_inputs(w) and not _mark_full(w)
+	return false
 
 
 ## Совсем устал или голоден — бросает работу.
 func _needs_interrupt(u: Unit) -> bool:
 	if u.task == Unit.Task.SLEEP or u.task == Unit.Task.EAT or u.task == Unit.Task.WARM:
 		return false
-	return (u.satiety < 15.0 and has_food()) or needs_warmth(u)
+	if u.satiety < 15.0 and has_food():
+		return true
+	# Ношу в руках доносит (иначе бросал руду на полу холодного склада и бежал греться),
+	# бросает, только если совсем ослаб.
+	if u.task == Unit.Task.HAUL and u.haul_stage == 1 and u.carry_amount > 0 and u.health >= WARM_CARRY_HEALTH:
+		return false
+	return needs_warmth(u)
+
+
+## Ниже такого здоровья мёрзнущий бросает и ношу.
+const WARM_CARRY_HEALTH := 40.0
 
 
 ## «Канаты и блоки» — по лестницам быстрее; «Рельсы» — с грузом по шахтам и горизонтальным
