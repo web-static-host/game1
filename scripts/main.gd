@@ -1615,7 +1615,19 @@ func _show_project(p: Project) -> void:
 	spec["actions"] = actions
 	spec["controls"] = controls
 	spec["controls_first"] = RoomType.is_store(p.purpose) and p.phase == Project.Phase.DONE
+	_info_shape = _project_shape(p)
 	hud.show_panel(spec)
+
+
+## От чего зависят кнопки карточки постройки. Раз в секунду карточка обновляет только текст;
+## поменялось это (бур досверлил — вместо «Остановить» выбор, куда сверлить; стройка
+## закончилась, ремонт начался) — карточку строим заново.
+var _info_shape := []
+
+
+func _project_shape(p: Project) -> Array:
+	return [p.id, p.phase, p.paused, p.repairing, p.purpose, p.priority, p.material,
+		colony.drilling(p), colony.probing(p)]
 
 
 ## Родословная гаврика: сам, родители, бабушки и дедушки (depth = 2) или все предки.
@@ -2549,6 +2561,8 @@ func _refresh_info() -> void:
 		var p := colony.project_by_id(_info_target[1])
 		if p == null:
 			_select(null, null)
+		elif _project_shape(p) != _info_shape:
+			_show_project(p)
 		else:
 			hud.refresh_panel(_project_spec(p, _info_target[2]))
 
