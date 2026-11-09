@@ -7427,6 +7427,24 @@ func _try_dig(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> boo
 				best_d = spot[1]
 				best_cell = c
 				best_stand = spot[0]
+	# Начатый забой — с другой стороны, отсюда к нему не подойти (там некому работать: замёрзли,
+	# погибли): копаем навстречу со своей стороны, иначе ход не сойдётся.
+	if best_cell == null:
+		var reach_now := false
+		for c in now:
+			if _work_spot(c, dist)[0] != null:
+				reach_now = true
+				break
+		if not reach_now:
+			for c in remaining_dig(p):
+				if reserved.has(c) or now.has(c) or _under_drill(c, drills):
+					continue
+				var spot := _work_spot(c, dist)
+				if spot[0] != null and spot[1] < best_d:
+					any_free = true
+					best_d = spot[1]
+					best_cell = c
+					best_stand = spot[0]
 	# Свободных клеток нет, а строитель (шахтёр) к своей клетке ещё далеко идёт — помощник,
 	# который ближе, копает её, пока тот не дойдёт (дойдёт — сменит).
 	if best_cell == null and not builder_or_miner(u):

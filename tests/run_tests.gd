@@ -52,6 +52,7 @@ func _initialize() -> void:
 	test_ship_spacing()
 	test_venus_regrow()
 	test_miner_helps_tunnel()
+	test_dig_from_other_end()
 	test_loads()
 	test_economy()
 	test_drops_and_scouting()
@@ -4491,6 +4492,37 @@ func test_miner_helps_tunnel() -> void:
 			dug = true
 			break
 	check(dug, "шахтёр без шахт копает тоннель")
+
+
+## Тоннель начат с одного конца, а к тому забою не подойти — копают навстречу с другого конца.
+func test_dig_from_other_end() -> void:
+	var colony := _new_colony(85)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 30)
+	var y := w.gen.surface_y(x) + 20
+	var t := _dug_project(colony, Project.Kind.TUNNEL, Rect2i(x, y, 12, 2), 950)
+	t.phase = Project.Phase.DIG
+	for c in t.cells():
+		w.set_material(c.x, c.y, Mat.GRANITE)
+	t.needs_support.clear()
+	for i in t.slice_count():
+		t.needs_support.append(i)
+	# Левый забой начат (одна клетка вынута, крепи нет), к нему не подойти.
+	w.set_material(x, y, Mat.AIR)
+	# Справа — каморка, где стоит гаврик.
+	for cx in range(x + 12, x + 15):
+		for cy in [y, y + 1]:
+			w.set_material(cx, cy, Mat.AIR)
+			w.set_dug(cx, cy)
+	var u: Unit = colony.units[0]
+	u.pos = Vector2(x + 13, y + 1)
+	u.task = Unit.Task.NONE
+	u.state = Unit.State.IDLE
+	colony._rebuild_climb()
+	colony.pathing.clear_cache()
+	var ex := colony.pathing.explore(u.cell())
+	check(colony._try_dig(u, t, ex[0], ex[1]) and u.target.x == x + 11, "копает навстречу с правого конца (клетка %s)" % u.target)
 
 
 ## Назначение занятого гаврика: сразу или когда доделает текущее дело.
