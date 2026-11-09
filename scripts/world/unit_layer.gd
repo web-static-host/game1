@@ -489,6 +489,7 @@ func _draw_overlay() -> void:
 			_draw_tool(u, foot + hand, _facing(u))
 		_heads[u.id] = foot + Vector2(0, -h)
 		_draw_needs(u, foot + Vector2(0, -h - 14 * sc))
+		_draw_temp_sign(u, foot + Vector2(0, -h - 30 * sc))
 		if u.id == selected_unit:
 			_overlay.draw_arc(foot + Vector2(0, -h * 0.5), maxf(26.0, h * 0.75), 0, TAU, 32, Color.WHITE, 2.0)
 			var w := font.get_string_size(u.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
@@ -539,6 +540,35 @@ func _draw_needs(u: Unit, p: Vector2) -> void:
 		var c := p + Vector2((i - (icons.size() - 1) * 0.5) * 14, 0)
 		_overlay.draw_circle(c, 6, Color(0, 0, 0, 0.5))
 		_overlay.draw_circle(c, 4.5, icons[i])
+
+
+## Над замёрзшим (ушёл греться или уже мёрзнет и слаб) — снежинка, над перегретым — солнце:
+## сразу видно, почему гаврик стоит.
+const SNOW := Color(0.72, 0.9, 1.0)
+const HEAT_SIGN := Color(1.0, 0.55, 0.2)
+
+
+func _draw_temp_sign(u: Unit, p: Vector2) -> void:
+	var warming := u.task == Unit.Task.WARM
+	if not warming and not colony.needs_warmth(u):
+		return
+	var hot := u.too_hot if warming else colony.elements.temperature(u.cell()) > colony.elements.heat_limit(u)
+	var pulse := 1.0 + 0.08 * sin(u.anim * 3.0)
+	var r := 9.0 * pulse
+	_overlay.draw_circle(p, r + 4.0, Color(0, 0, 0, 0.45))
+	if hot:
+		_overlay.draw_circle(p, r * 0.5, HEAT_SIGN)
+		for i in 8:
+			var d := Vector2.from_angle(TAU * i / 8.0)
+			_overlay.draw_line(p + d * r * 0.65, p + d * r, HEAT_SIGN, 2.0)
+		return
+	# Снежинка: три линии через центр и по паре веточек на каждом луче.
+	for i in 6:
+		var d := Vector2.from_angle(TAU * i / 6.0 - PI / 2.0)
+		_overlay.draw_line(p, p + d * r, SNOW, 2.0)
+		var m := p + d * r * 0.6
+		_overlay.draw_line(m, m + d.rotated(0.8) * r * 0.35, SNOW, 1.5)
+		_overlay.draw_line(m, m + d.rotated(-0.8) * r * 0.35, SNOW, 1.5)
 
 
 ## Инструмент в правой руке: кирка, молоток, лейка, удочка, топор.

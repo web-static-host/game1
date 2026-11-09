@@ -6005,23 +6005,61 @@ func needs_warmth(u: Unit) -> bool:
 	return u.health < WARM_HEALTH and not u.invulnerable() and not comfortable(u, u.cell())
 
 
-## Ближайшее место, где гаврику не холодно и не жарко (с запасом 3 °C), — туда греться.
+## Куда идти греться (или остывать) — где не холодно и не жарко (с запасом 3 °C):
+## сначала к огню, который горит всегда (очаг, генератор, корабль), потом к горящей печи или
+## кузнице, и лишь если до огня не дойти — в ближайшее тёплое место. На лестницу — в последнюю
+## очередь (раньше грелись где попало: на лестнице, куда едва доходит тепло от соседней комнаты).
 func _start_warm(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
-	var best = null
-	var best_d := 1 << 30
 	var lo := cold_limit(u) + 3.0
 	var hi := elements.heat_limit(u) - 3.0
-	for c: Vector2i in dist:
-		if dist[c] >= best_d:
-			continue
-		var t := elements.temperature(c)
-		if t >= lo and t <= hi:
-			best_d = dist[c]
-			best = c
+	var best = null
+	var hot := elements.temperature(u.cell()) > elements.heat_limit(u)
+	if not hot:
+		for steady in [true, false]:
+			var best_d := 1 << 30
+			for p: Project in elements._heat_sources():
+				if not p.burning or p.phase != Project.Phase.DONE:
+					continue
+				if steady != (Elements.BURNERS.has(p.purpose) or RoomType.GENERATORS.has(p.purpose)):
+					continue
+				var r := p.rect.grow(1)
+				for y in range(r.position.y, r.end.y):
+					for x in range(r.position.x, r.end.x):
+						var c := Vector2i(x, y)
+						if not dist.has(c) or dist[c] >= best_d or pathing.climbable(c):
+							continue
+						var t := elements.temperature(c)
+						if t >= lo and t <= hi:
+							best_d = dist[c]
+							best = c
+			if best != null:
+				break
+	if best == null:
+		# Огня рядом нет (или жарко) — ближайшее место, где терпимо; лестница — только если иначе никак.
+		var best_d := 1 << 30
+		var ladder = null
+		var ladder_d := 1 << 30
+		for c: Vector2i in dist:
+			var d: int = dist[c]
+			if d >= best_d and d >= ladder_d:
+				continue
+			var t := elements.temperature(c)
+			if t < lo or t > hi:
+				continue
+			if pathing.climbable(c):
+				if d < ladder_d:
+					ladder_d = d
+					ladder = c
+			elif d < best_d:
+				best_d = d
+				best = c
+		if best == null:
+			best = ladder
 	if best == null:
 		return false
 	_drop(u)
 	_start(u, Unit.Task.WARM, best, best, 0, parents)
+	u.too_hot = hot
 	return true
 
 

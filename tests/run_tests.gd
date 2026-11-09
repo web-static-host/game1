@@ -747,6 +747,30 @@ func test_needs_realtime() -> void:
 	colony.elements._temp_memo[warm_cell] = 20.0
 	colony.elements._temp_memo[cold_spot] = -30.0
 	check(colony._start_warm(u, reach[0], reach[1]) and u.task == Unit.Task.WARM and u.target == warm_cell, "идёт греться в тёплое место")
+	# Горит очаг — греться идут к нему, а не в ближнее место, куда тепло едва доходит.
+	colony._drop(u)
+	var cells: Array = reach[1].keys().filter(func(c: Vector2i) -> bool: return not colony.pathing.climbable(c))
+	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return reach[1][a] < reach[1][b])
+	var near_warm: Vector2i = cells[1]
+	var fire_cell: Vector2i = cells[cells.size() - 1]
+	colony.elements._temp_memo[warm_cell] = -30.0
+	var lo := Colony.cold_limit(u) + 3.0
+	colony.elements._temp_memo[near_warm] = lo + 1.0
+	colony.elements._temp_memo[fire_cell] = lo + 10.0
+	var hearth := Project.new()
+	hearth.id = 9901
+	hearth.kind = Project.Kind.ROOM
+	hearth.phase = Project.Phase.DONE
+	hearth.purpose = RoomType.HEARTH
+	hearth.rect = Rect2i(fire_cell + Vector2i(0, 1), Vector2i(1, 1))
+	hearth.burning = true
+	colony.projects.append(hearth)
+	colony.elements._heat_src = null
+	check(colony._start_warm(u, reach[0], reach[1]) and u.target == fire_cell and not u.too_hot,
+		"греется у очага, а не где попало (цель %s, очаг у %s, ближнее тепло %s)" % [u.target, fire_cell, near_warm])
+	colony.projects.erase(hearth)
+	colony.elements._heat_src = null
+	colony._drop(u)
 
 
 func test_family() -> void:
