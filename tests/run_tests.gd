@@ -861,6 +861,11 @@ func test_professions() -> void:
 	u.profession = Unit.Prof.ANY
 	u.workplace = 999
 	check(colony._task_order(u)[0] == "workplace", "назначенный сначала идёт на своё место работы")
+	check(colony._task_order(u) == ["workplace"], "назначенный не уходит с места работы на стройки и переноску")
+	u.last_project = 1
+	u.last_work_t = colony.game_time
+	check(colony._own_project(u) == null, "назначенный не держится чужой стройки")
+	u.last_project = 0
 	u.workplace = 0
 	check(not colony._task_order(u).has("farm") and not colony._task_order(u).has("fish"), "свободные сами не фермерствуют и не рыбачат")
 	var kid := colony._new_unit(Unit.Sex.FEMALE, Vector2.ZERO)

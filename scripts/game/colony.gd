@@ -5730,7 +5730,8 @@ func _update_unit(u: Unit, dt: float) -> void:
 					# проходу) — расходятся по комнатам.
 					elif not offline and u.state == Unit.State.IDLE:
 						var on_ladder := pathing.climbable(u.cell()) and not u.waiting_own
-						if (on_ladder or _crowded(u)) and not _stroll(u) and on_ladder:
+						var crowd := _crowded(u) and not (u.workplace != 0 and _at_workplace(u))
+						if (on_ladder or crowd) and not _stroll(u) and on_ladder:
 							_off_ladder(u)
 		Unit.State.FALL:
 			u.pos.x = roundf(u.pos.x)
@@ -6642,8 +6643,10 @@ func _reserve_key(u: Unit) -> Variant:
 ## рубят, не ловят рыбу, не фермерствуют и ничего не носят на хранение.
 func _task_order(u: Unit) -> Array[String]:
 	# need — добыть то, чего не хватает стройке: это тоже стройка, она важнее переноски.
+	# Назначенный на место работы с него не уходит: ни копать, ни строить, ни носить на
+	# чужие стройки (раньше при любой паузе мастерской уходил — и застревал на чужой стройке).
 	if u.workplace != 0:
-		return ["workplace", "projects", "need", "haul"]
+		return ["workplace"]
 	if u.profession == Unit.Prof.HAULER:
 		return ["haul", "projects", "need"]
 	# Шахтёр — только шахты (копает, крепит, чинит), строитель — остальные стройки.
@@ -6724,7 +6727,7 @@ func _assign_core(u: Unit) -> bool:
 	for kind in _task_order(u):
 		match kind:
 			"workplace":
-				if _try_workplace(u, parents, dist):
+				if _try_workplace(u, parents, dist) or _wait_at_workplace(u, parents, dist):
 					return true
 			"harvest":
 				if _try_harvest(u, parents, dist):
@@ -6763,7 +6766,27 @@ func _assign_core(u: Unit) -> bool:
 			"builds":
 				if _try_projects(u, parents, dist, -1, Project.Kind.MINE):
 					return true
+	# Работник ждёт на своём месте работы, а не тянется к базе.
+	if u.workplace != 0 and _near_rect(site_rect(project_by_id(u.workplace)), dist) != null:
+		return false
 	return _return_home(u, parents, dist)
+
+
+## Место работы стоит (нечего плавить, склад полон, нет исследования) — работник ждёт там же.
+## true — пошёл к нему.
+func _wait_at_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	if u.workplace == 0 or _at_workplace(u):
+		return false
+	var to = _near_rect(site_rect(project_by_id(u.workplace)), dist)
+	if to == null:
+		return false
+	_start(u, Unit.Task.STROLL, to, to, 0, parents)
+	return true
+
+
+func _at_workplace(u: Unit) -> bool:
+	var p := project_by_id(u.workplace)
+	return p != null and site_rect(p).grow(1).has_point(u.cell())
 
 
 ## Свободный (или подсобный) без места работы, сытый, в тепле и без своей выработки, а работы,
@@ -7010,7 +7033,7 @@ func _continue_own(u: Unit) -> void:
 
 
 func _own_project(u: Unit) -> Project:
-	if u.last_project == 0 or game_time - u.last_work_t > STAY_TIME:
+	if u.workplace != 0 or u.last_project == 0 or game_time - u.last_work_t > STAY_TIME:
 		return null
 	var p := project_by_id(u.last_project)
 	if p == null or p.paused or p.phase != Project.Phase.DIG or not p.blocked.is_empty() or p.bored_by > 0:
