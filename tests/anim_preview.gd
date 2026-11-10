@@ -55,6 +55,8 @@ func _process(_d: float) -> bool:
 		for i in _rooms.size():
 			var pr := _rooms[i]
 			pr.blocked = ""
+			if pr.purpose == RoomType.OIL_TANK:
+				pr.held["oil"] = int(colony.room_limit(pr, "oil") * 0.6)
 			pr.burning = true
 			pr.on_gas = false
 			# Мастер за работой (печь и горн горят, пока работают).

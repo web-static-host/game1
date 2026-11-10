@@ -115,8 +115,8 @@ func _watch_launches() -> void:
 		seen[p.id] = true
 		var was: String = _pad_rockets.get(p.id, "")
 		if not was.is_empty() and p.rocket.is_empty() and p.equip_rocket.is_empty():
-			var r := p.rect
-			var stand := Vector2(r.get_center().x - 0.6 + 0.0, float(r.end.y) - 16.0 / TILE)
+			var st: Vector2 = _pad_layout(_rect_px(p.rect))["stand"]
+			var stand := (st - view.cell_to_local(Vector2i.ZERO)) / TILE
 			launches.append([stand, "rocket_nuclear" if was == "nuclear" else "rocket_chem", Time.get_ticks_msec()])
 		_pad_rockets[p.id] = p.rocket
 	for id in _pad_rockets.keys():
@@ -154,9 +154,16 @@ func _draw_launches() -> void:
 		var flick := 0.85 + 0.15 * sin(t * 50.0)
 		var len := (TILE * (0.8 + t * 1.4) if t < LAUNCH_IGNITE else TILE * 4.0) * flick
 		var w := TILE * 0.9
-		_glow(at + Vector2(0, len * 0.4), len * 0.9, Color(1.0, 0.6, 0.2, 0.35))
-		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w, -4), at + Vector2(w, -4), at + Vector2(0, len)]), Color(1.0, 0.55, 0.15, 0.95))
-		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w * 0.55, -4), at + Vector2(w * 0.55, -4), at + Vector2(0, len * 0.65)]), Color(1.0, 0.92, 0.5))
+		var blue := String(l[1]).ends_with("nuclear")
+		_glow(at + Vector2(0, len * 0.4), len * 0.9, Color(0.4, 0.7, 1.0, 0.35) if blue else Color(1.0, 0.6, 0.2, 0.35))
+		var ft := furniture("cosmodrome", "flame_blue" if blue else "flame_orange")
+		if ft != null:
+			# Пламя-картинка (широкое у сопла, узкое к низу): ширина дрожит, длина — по ходу старта.
+			var fw := TILE * 2.2 * (0.92 + 0.08 * sin(t * 37.0))
+			_c.draw_texture_rect(ft, Rect2(at.x - fw * 0.5, at.y - 6.0, fw, len * 1.35), false)
+		else:
+			_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w, -4), at + Vector2(w, -4), at + Vector2(0, len)]), Color(1.0, 0.55, 0.15, 0.95))
+			_c.draw_colored_polygon(PackedVector2Array([at + Vector2(-w * 0.55, -4), at + Vector2(w * 0.55, -4), at + Vector2(0, len * 0.65)]), Color(1.0, 0.92, 0.5))
 		if not _sprite(l[1], at, 1.0):
 			_rbox(Rect2(at.x - TILE * 1.2, at.y - TILE * 12, TILE * 2.4, TILE * 12), 6, HULL, HULL_DARK, 2)
 
@@ -170,7 +177,8 @@ static func animated(p: Project) -> bool:
 			if p.phase != Project.Phase.DONE:
 				return false
 			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE, RoomType.OIL_PUMP,
-				RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN, RoomType.DIESEL_GEN]
+				RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN, RoomType.DIESEL_GEN,
+				RoomType.OIL_TANK, RoomType.REFINERY, RoomType.ENRICHMENT, RoomType.TELEPORT, RoomType.LAUNCHPAD]
 	return false
 
 
@@ -332,7 +340,9 @@ func _draw_done(p: Project) -> void:
 		if p.purpose == RoomType.SHIP:
 			# Корпус снаружи — под отсеком: нос, стабилизаторы и обшивка видны вокруг комнаты.
 			_sprite("ship_hull", r.position + Vector2(0, r.size.y), 1.0)
-		_draw_room_shell(p, r)
+		# Космодром — открытая площадка, не здание: без стен (стол и пульты — в _draw_launchpad).
+		if not (p.purpose == RoomType.LAUNCHPAD and p.phase == Project.Phase.DONE and furniture("cosmodrome", "table") != null):
+			_draw_room_shell(p, r)
 		if p.phase == Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
 			var t := clampf(p.equip_done / w, 0.0, 1.0) if p.equip_paid else 0.0
@@ -381,7 +391,49 @@ const HULL_DARK := Color(0.45, 0.48, 0.55)
 func _draw_ship(p: Project, r: Rect2, alpha: float) -> void:
 	if structure_texture("ship_hull") == null:
 		_draw_ship_hull(r, alpha)
-	_draw_ship_inside(r, alpha)
+	if furniture("ship", "bunk") != null:
+		_draw_ship_cabin(r, alpha)
+	else:
+		_draw_ship_inside(r, alpha)
+
+
+## Каюта корабля (прототип art_src/rooms/prototypes/ship_9.png): по 3 м — двухъярусная койка;
+## тумбочка с лампой и койка, над ними полка; пульт с планетой на экране. Под потолком — светильники.
+func _draw_ship_cabin(r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var k := TILE / FURN_PX_PER_M
+	var b := r.size.x / 3.0
+	var x0 := r.position.x
+	var light := furniture("ship", "light")
+	for i in 3:
+		var lx := x0 + b * (i + 0.5)
+		_c.draw_texture_rect(light, Rect2(lx - light.get_width() * k * 0.5, fy - TILE * (CEILING - 0.02), light.get_width() * k, light.get_height() * k), false, Color(1, 1, 1, alpha))
+		if alpha >= 1.0:
+			_glow(Vector2(lx, fy - TILE * (CEILING - 0.25)), TILE * 1.3, Color(1.0, 0.95, 0.8, 0.1))
+	_furn_at(furniture("ship", "bunk"), x0 + b * 0.5, fy, alpha, 1)
+	var stand := furniture("ship", "nightstand")
+	var bed := furniture("ship", "bed")
+	var sw := stand.get_width() * k
+	var bw := bed.get_width() * k
+	var mx := x0 + b * 1.5 - (sw + bw + TILE * 0.08) * 0.5
+	_furn_at(stand, mx + sw * 0.5, fy, alpha, 1)
+	var lamp := furniture("ship", "lamp")
+	_furn_at(lamp, mx + sw * 0.5, fy - stand.get_height() * k + 2.0, alpha)
+	_furn_at(bed, mx + sw + TILE * 0.08 + bw * 0.5, fy, alpha, 1)
+	# Полка — ниже иллюминатора.
+	var shelf := furniture("ship", "shelf")
+	_furn_at(shelf, x0 + b * 1.5, fy - TILE * 1.25, alpha, 2)
+	var con := furniture("ship", "console")
+	_furn_at(con, x0 + b * 2.5, fy, alpha, 1)
+	if alpha >= 1.0:
+		var ch := con.get_height() * k
+		var t := _anim_t()
+		_glow(Vector2(x0 + b * 2.5, fy - ch * 0.68), TILE * 0.7, Color(0.3, 0.75, 1.0, 0.2 + 0.08 * sin(t * 2.0)))
+		# Огоньки пульта мигают по очереди.
+		var lit := int(t * 2.0) % 3
+		var cols := [Color(0.3, 1.0, 0.4), Color(1.0, 0.85, 0.2), Color(1.0, 0.3, 0.25)]
+		var lx := x0 + b * 2.5 - con.get_width() * k * 0.075
+		_glow(Vector2(lx + lit * con.get_width() * k * 0.075, fy - ch * 0.42), TILE * 0.18, Color(cols[lit], 0.6))
 
 
 ## Нос, стабилизаторы, опоры и иллюминаторы — кодом (если нет рендера корпуса).
@@ -427,10 +479,42 @@ func _draw_ship_inside(r: Rect2, alpha: float) -> void:
 
 
 ## Космодром: бетонный стол, башня обслуживания; ракета на столе (во время сборки — в лесах).
+## Стартовый стол космодрома (картинка cosmodrome/table): во всю ширину площадки, ракета — в
+## гнезде посередине (TABLE_STAND — его верх, пиксели картинки), башня и пульты — на настиле
+## (TABLE_DECK). -> {"deck": y настила, "stand": точка, где стоит ракета} (пиксели слоя).
+const TABLE_DECK := 52.0
+const TABLE_STAND := 18.0
+func _pad_layout(r: Rect2) -> Dictionary:
+	var table := furniture("cosmodrome", "table")
+	if table == null:
+		return {"deck": r.end.y - 16, "stand": Vector2(r.get_center().x - TILE * 0.6, r.end.y - 16), "k": 0.0}
+	var k := r.size.x * 0.99 / table.get_width()
+	var bottom := r.end.y - 2.0
+	var top := bottom - table.get_height() * k
+	return {"deck": top + TABLE_DECK * k, "stand": Vector2(r.get_center().x, top + TABLE_STAND * k), "k": k, "top": top}
+
+
 func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
-	_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
+	var lay := _pad_layout(r)
 	var tx := r.end.x - TILE * 0.8
-	var stand := r.end.y - 16
+	var stand: float = lay["deck"]
+	var table := furniture("cosmodrome", "table")
+	if table == null:
+		_rbox(Rect2(r.position.x + 4, r.end.y - 16, r.size.x - 8, 12), 3, Color(0.62, 0.62, 0.6, alpha), Color(0.4, 0.4, 0.4, alpha), 2)
+	else:
+		# Пульт и ящики слева, баллоны справа — на настиле, вне ракеты и башни.
+		var dk: float = lay["deck"]
+		var kk := TILE / FURN_PX_PER_M
+		var x0 := r.position.x
+		_furn_at(furniture("cosmodrome", "console"), x0 + TILE * 0.85, dk, alpha, 1)
+		_furn_at(furniture("cosmodrome", "crate"), x0 + TILE * 1.9, dk, alpha, 1)
+		_furn_at(furniture("cosmodrome", "lever"), x0 + TILE * 1.75, dk - furniture("cosmodrome", "crate").get_height() * kk + 2.0, alpha)
+		for cx in [r.end.x - TILE * 1.95, r.end.x - TILE * 1.5]:
+			_furn_at(furniture("cosmodrome", "cylinder"), cx, dk, alpha, 1)
+		_c.draw_texture_rect(table, Rect2(r.position.x + r.size.x * 0.005, lay["top"], table.get_width() * lay["k"], table.get_height() * lay["k"]), false, Color(1, 1, 1, alpha))
+		if alpha >= 1.0:
+			var lit := int(_anim_t() * 2.0) % 2 == 0
+			_glow(Vector2(x0 + TILE * 0.85, dk - TILE * 0.62), TILE * 0.35, Color(0.3, 0.8, 1.0, 0.25 if lit else 0.12))
 	if not _sprite("launch_tower", Vector2(tx, stand), alpha):
 		_draw_tower_code(r, tx, alpha)
 	var t := 0.0
@@ -441,7 +525,7 @@ func _draw_launchpad(p: Project, r: Rect2, alpha: float) -> void:
 	else:
 		return
 	var nuclear := p.rocket == "nuclear" or p.equip_rocket == "nuclear"
-	var at := Vector2(r.get_center().x - TILE * 0.6, stand)
+	var at: Vector2 = lay["stand"]
 	var name := "rocket_nuclear" if nuclear else "rocket_chem"
 	if structure_texture(name) != null:
 		# Во время сборки — силуэт ракеты и собранная снизу часть.
@@ -728,13 +812,13 @@ static func structure_texture(name: String) -> Texture2D:
 
 ## Нарисовать постройку-рендер с опорной точкой at (пиксели слоя). built — какая доля снизу
 ## видна (сборка ракеты); false — картинки нет, рисуйте кодом.
-func _sprite(name: String, at: Vector2, alpha: float, built := 1.0) -> bool:
+func _sprite(name: String, at: Vector2, alpha: float, built := 1.0, scale := 1.0) -> bool:
 	var tex := structure_texture(name)
 	if tex == null:
 		return false
 	var f: Array = STRUCT_FRAMES[name] if STRUCT_FRAMES.has(name) else PART_FRAMES[name.get_slice("_", 0)]
-	var size := Vector2(float(f[1]) - float(f[0]), float(f[3]) - float(f[2])) * TILE
-	var rect := Rect2(at + Vector2(float(f[0]), -float(f[3])) * TILE, size)
+	var size := Vector2(float(f[1]) - float(f[0]), float(f[3]) - float(f[2])) * TILE * scale
+	var rect := Rect2(at + Vector2(float(f[0]), -float(f[3])) * TILE * scale, size)
 	if built >= 1.0:
 		_c.draw_texture_rect(tex, rect, false, Color(1, 1, 1, alpha))
 		return true
@@ -1526,6 +1610,7 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var pipe := furniture("generator", "gas_pipe")
 	var valve := furniture("generator", "valve")
 	var live := _anim("coal_body") != null
+	var diesel := p.purpose == RoomType.DIESEL_GEN and furniture("diesel", "engine") != null
 	for x in xs:
 		var top := fy - mh
 		# Провод от динамо (справа) вверх к гирлянде.
@@ -1533,6 +1618,16 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var gx := x + (0.17 - 0.5) * mw
 		var cx := x + (0.145 - 0.5) * mw
 		var unit := {}
+		if diesel:
+			unit = _diesel_unit(x, fy, lay.unit * 3 * 0.92, on and alpha >= 1.0, alpha, x * 0.017)
+			dx = unit["dynamo"].x
+			top = unit["top"]
+			gx = unit["inlet"]
+			# Выхлоп — к потолку от коллектора.
+			_tile_v(chimney, gx - chimney.get_width() * k * 0.5, fy - TILE * CEILING, unit["inlet_y"], alpha)
+			_c.draw_line(unit["dynamo"], Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
+			_diesel_unit(x, fy, lay.unit * 3 * 0.92, on and alpha >= 1.0, alpha, x * 0.017, true)
+			continue
 		if live:
 			unit = _gen_unit(gas, x, fy, mw, on and alpha >= 1.0, alpha, x * 0.017)
 			dx = unit["dynamo"].x
@@ -1553,6 +1648,51 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			_gen_unit(gas, x, fy, mw, on and alpha >= 1.0, alpha, x * 0.017, true)
 		else:
 			_furn_at(machine, x, fy, alpha, 1, sc)
+
+
+## Дизельный генератор шириной width по центру x: канистра, зелёный дизель (дрожит, пока
+## работает), маховик на его конце (крутится), вал к синему генератору. draw = false — только
+## места: верх (top), выхлоп (inlet, inlet_y) и верх генератора (dynamo).
+func _diesel_unit(x: float, fy: float, width: float, on: bool, alpha: float, seed: float, draw := false) -> Dictionary:
+	var k := TILE / FURN_PX_PER_M
+	var can := furniture("diesel", "canister")
+	var eng := furniture("diesel", "engine")
+	var gen := furniture("diesel", "generator")
+	var fly := furniture("diesel", "flywheel")
+	var shaft := furniture("diesel", "shaft")
+	var fly_m := 0.6                       # маховик, м (на листе 0.82 — велик для конца дизеля)
+	var gap := 0.08
+	var total_m := can.get_width() / FURN_PX_PER_M + gap + eng.get_width() / FURN_PX_PER_M + fly_m * 0.35 + 0.18 + gen.get_width() / FURN_PX_PER_M
+	var sc := minf(1.0, width / (total_m * TILE))
+	var m := TILE * sc                     # пикселей на метр
+	var x0 := x - total_m * m * 0.5
+	var cw := can.get_width() / FURN_PX_PER_M * m
+	var ew := eng.get_width() / FURN_PX_PER_M * m
+	var eh := eng.get_height() / FURN_PX_PER_M * m
+	var ex := x0 + cw + gap * m
+	var shake := Vector2(sin(_anim_t() * 47.0 + seed), sin(_anim_t() * 39.0 + seed * 2.0) * 0.6) * (0.7 if on else 0.0)
+	var hub := Vector2(ex + ew * 188.0 / 198.0 + 0.05 * m, fy - maxf(eh * 33.0 / 116.0, fly_m * 0.5 * m + 0.02 * m))
+	var gw := gen.get_width() / FURN_PX_PER_M * m
+	var gh := gen.get_height() / FURN_PX_PER_M * m
+	var gx := hub.x + fly_m * 0.35 * m + 0.18 * m
+	var out := {"top": fy - eh, "inlet": ex + ew * 182.0 / 198.0, "inlet_y": fy - eh + 4.0 * sc,
+		"dynamo": Vector2(gx + gw * 0.55, fy - gh + 3.0)}
+	if not draw:
+		return out
+	_furn_at(can, x0 + cw * 0.5, fy, alpha, 1, sc)
+	# Вал — от маховика к порту генератора (на высоте оси).
+	var sh := shaft.get_size()
+	var from := hub
+	var to := Vector2(gx + gw * 0.05, hub.y)
+	_c.draw_set_transform(from, 0.0, Vector2((to.x - from.x) / sh.x, m * 0.12 / sh.y))
+	_c.draw_texture(shaft, Vector2(0, -sh.y * 0.5), Color(1, 1, 1, alpha))
+	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_furn_at(gen, gx + gw * 0.5, fy, alpha, 1, sc)
+	_soft_ellipse(Vector2(ex + ew * 0.5, fy - 1.0), ew * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+	_c.draw_texture_rect(eng, Rect2(Vector2(ex, fy - eh) + shake, Vector2(ew, eh)), false, Color(1, 1, 1, alpha))
+	var ang := fmod(_anim_t() * 4.5 + seed, TAU) if on else 0.3
+	_spin_t(fly, fly.get_size() * 0.5, hub + shake, ang, sc * fly_m / (fly.get_width() / FURN_PX_PER_M), alpha)
+	return out
 
 
 ## Генератор из деталей шириной width (пиксели) по центру x: двигатель (на угле — топка с живым
@@ -1645,7 +1785,9 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var n := RoomType.blocks(p)
 	var lay := _inside(p, r, n * 3.0)
 	var on := p.phase == Project.Phase.DONE and not p.paused and p.blocked.is_empty() and colony.powered()
-	var s := minf(lay.unit * 3.0 * 0.96 / PJ_WIDTH, TILE * (CEILING - 0.15) / PJ_HEIGHT)
+	# Рядом с качалкой — смотровой бачок и бочка нефти (если есть картинки), качалка — левее.
+	var extras := furniture("oil_pump", "barrel") != null
+	var s := minf(lay.unit * 3.0 * (0.7 if extras else 0.96) / PJ_WIDTH, TILE * (CEILING - 0.15) / PJ_HEIGHT)
 	if _pj_rod < 0.0:
 		_pj_rod = (PJ_O + PJ_REAR).distance_to(PJ_A + Vector2(0, PJ_CRANK_PIN.distance_to(PJ_CRANK_O) * PJ_CRANK_SCALE))
 	# Угол кривошипа и балансира (балансир — из длины шатуна, Ньютоном от прошлого угла).
@@ -1681,6 +1823,24 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		# Начало координат сборки (левый верх станины) — так, чтобы вся качалка была по центру
 		# блока, а станина стояла на полу.
 		var org := Vector2(cx - PJ_WIDTH * 0.5 * s, fy - PJ_FLOOR * s)
+		if extras:
+			org.x = cx - lay.unit * 1.5 + TILE * 0.05
+			var kk := TILE / FURN_PX_PER_M
+			var barrel := furniture("oil_pump", "barrel")
+			var sight := furniture("oil_pump", "sight")
+			var bx: float = cx + lay.unit * 1.5 - barrel.get_width() * kk * 0.5 - TILE * 0.05
+			var sx: float = bx - barrel.get_width() * kk * 0.5 - sight.get_width() * kk * 0.5 - TILE * 0.06
+			# Труба от устья к бачку у пола.
+			var pipe := furniture("oil_pump", "pipe_h")
+			var wx: float = org.x + (PJ_O.x + PJ_HEAD) * s
+			_tile_h(pipe, wx, sx, fy - TILE * 0.2 - pipe.get_height() * kk * 0.5, alpha)
+			_furn_at(sight, sx, fy, alpha, 1)
+			_furn_at(barrel, bx, fy, alpha, 1)
+			if on:
+				# В бачке нефть колышется: тёмный блик ходит вверх-вниз.
+				var sh := sight.get_height() * kk
+				var yy := fy - sh * (0.45 + 0.08 * sin(_anim_t() * 2.2 + cx))
+				_c.draw_rect(Rect2(sx - sight.get_width() * kk * 0.18, yy, sight.get_width() * kk * 0.36, 2.0), Color(0, 0, 0, 0.35 * alpha))
 		var at := func(v: Vector2) -> Vector2: return org + v * s
 		# Шток: висит под «головой» на канате; ход — длина дуги головы (радиус × угол).
 		var well_top := PJ_FLOOR - (well.get_height() - PJ_WELL.y)
@@ -1705,6 +1865,210 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_c.draw_set_transform(at.call(pin), dv.angle(), Vector2(s * dv.length() / PJ_ROD_LEN, s))
 		_c.draw_texture(rod, -PJ_ROD_A, mod)
 		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Деталь t, повёрнутая на angle вокруг своей точки pivot (пиксели картинки); pivot — в точке at,
+## sc — масштаб к обычному (128 px на метр).
+func _spin_t(t: Texture2D, pivot: Vector2, at: Vector2, angle: float, sc: float, alpha: float) -> void:
+	var k := TILE / FURN_PX_PER_M * sc
+	_c.draw_set_transform(at, angle, Vector2(k, k))
+	_c.draw_texture(t, -pivot, Color(1, 1, 1, alpha))
+	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Стрелка прибора: картинка стрелки смотрит вверх, втулка внизу; value 0..1 — от −120° до +120°,
+## дрожит, пока прибор работает. dial — центр циферблата (пиксели слоя), len — длина стрелки.
+func _needle(t: Texture2D, dial: Vector2, len: float, value: float, live: bool, alpha: float, seed := 0.0) -> void:
+	var a := lerpf(-2.1, 2.1, clampf(value, 0.0, 1.0))
+	if live:
+		a += 0.06 * sin(_anim_t() * 9.0 + seed) + 0.03 * sin(_anim_t() * 23.0 + seed * 2.0)
+	var piv := Vector2(t.get_width() * 0.5, t.get_height() - t.get_width() * 0.5)
+	var s := len / (t.get_height() - t.get_width() * 0.5) * FURN_PX_PER_M / TILE
+	_spin_t(t, piv, dial, a, s, alpha)
+
+
+## Ремень между двумя шкивами (центры a, b; радиусы ra, rb): две прямые ветви картинкой ремня.
+func _belt(t: Texture2D, a: Vector2, ra: float, b: Vector2, rb: float, thick: float, alpha: float) -> void:
+	for side in [-1.0, 1.0]:
+		var p0 := a + Vector2(0, side * ra)
+		var p1 := b + Vector2(0, side * rb)
+		var d := p1 - p0
+		_c.draw_set_transform(p0, d.angle(), Vector2(d.length() / t.get_width(), thick / t.get_height()))
+		_c.draw_texture(t, Vector2(0, -t.get_height() * 0.5), Color(1, 1, 1, alpha))
+		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Нефтехранилище: чёрный бак на каждые 3 м, в окошке бака — уровень нефти (сколько её в
+## хранилище); у пола баки соединены трубой с вентилями (крутятся, пока качалка гонит нефть);
+## на стене — манометр (стрелка — заполнение) и фонарь.
+func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var k := TILE / FURN_PX_PER_M
+	var tank := furniture("oil_storage", "tank")
+	var sc := minf(1.0, lay.unit * 3 * 0.62 / (tank.get_width() * k))
+	var xs := _block_centers(lay, n, 0.0)
+	var limit := float(colony.room_limit(p, "oil"))
+	var fill := clampf(colony.held_in(p, "oil") / maxf(1.0, limit), 0.0, 1.0)
+	var flowing := p.phase == Project.Phase.DONE and alpha >= 1.0 and fill < 1.0
+	if flowing:
+		flowing = false
+		for q in colony.rooms_of(RoomType.OIL_PUMP):
+			if not q.paused and q.blocked.is_empty() and colony.powered():
+				flowing = true
+	# Труба у пола — через все баки, за ними.
+	var py := fy - TILE * 0.2 * sc
+	var right: float = lay.x + n * 3 * lay.unit
+	var pipe := furniture("oil_storage", "pipe_h")
+	_tile_h(pipe, lay.x + TILE * 0.15, right - TILE * 0.15, py - pipe.get_height() * k * 0.5, alpha)
+	var tw := tank.get_width() * k * sc
+	var th := tank.get_height() * k * sc
+	var posts := wall_posts(p.rect.size.x)
+	for i in n:
+		var x: float = xs[i]
+		_furn_at(tank, x, fy, alpha, 1, sc)
+		# Окошко: стекло, нефть снизу по заполнению, блик.
+		var win := Rect2(x - tw * 0.5 + tw * 85.0 / 188.0, fy - th + th * 120.0 / 272.0, tw * 28.0 / 188.0, th * 74.0 / 272.0)
+		_rbox(win, win.size.x * 0.5, Color(0.86, 0.88, 0.9, alpha))
+		var oh := win.size.y * fill
+		if oh > 1.0:
+			var wave := sin(_anim_t() * 2.0 + i) * 0.6 if flowing else 0.0
+			_rbox(Rect2(win.position.x, win.end.y - oh + wave, win.size.x, oh - wave), minf(win.size.x * 0.5, oh * 0.5), Color(0.08, 0.07, 0.07, alpha))
+		_c.draw_rect(Rect2(win.position.x + win.size.x * 0.2, win.position.y + win.size.y * 0.12, win.size.x * 0.18, win.size.y * 0.5), Color(1, 1, 1, 0.35 * alpha))
+		# Вентиль между баками (и справа от последнего).
+		var vx: float = (x + xs[i + 1]) * 0.5 if i + 1 < n else minf(x + tw * 0.62, right - TILE * 0.2)
+		var valve := furniture("oil_storage", "valve_small")
+		_spin_t(valve, valve.get_size() * 0.5, Vector2(vx, py), fmod(_anim_t() * 1.6 + i, TAU) if flowing else 0.0, sc, alpha)
+	# На стене: манометр со стрелкой (заполнение) и фонарь — между баками или сбоку.
+	var gauge := furniture("oil_storage", "gauge")
+	var gx: float = (xs[0] + xs[1]) * 0.5 if n > 1 else xs[0] + tw * 0.5 + TILE * 0.35
+	gx = minf(gx, right - TILE * 0.3)
+	var gs := gauge.get_size() * k
+	var grect := Rect2(gx - gs.x * 0.5, fy - TILE * 1.75, gs.x, gs.y)
+	_c.draw_texture_rect(gauge, grect, false, Color(1, 1, 1, alpha))
+	_needle(furniture("oil_storage", "needle"), grect.position + Vector2(gs.x * 0.5, gs.x * 0.5), gs.x * 0.36, fill, flowing, alpha)
+	var lamp := furniture("oil_storage", "lamp")
+	var lx: float = (xs[n - 2] + xs[n - 1]) * 0.5 if n > 1 else xs[0] - tw * 0.5 - TILE * 0.3
+	lx = maxf(lx, lay.x + TILE * 0.2)
+	_furn_hang(lamp, lx, fy, alpha)
+	if alpha >= 1.0:
+		_glow(Vector2(lx, fy - TILE * HANG_TOP + lamp.get_height() * k * 0.6), TILE * 1.4, Color(1.0, 0.8, 0.45, 0.16))
+
+
+## Нефтезавод: на каждые 3 м — медная перегонная колонна (в окошках булькает, пока идёт
+## перегонка), холодильник-змеевик (светится), канистра дизеля. Трубы между
+## ними на высоте метра с вентилями (крутятся при работе); на стене — манометры со стрелками.
+func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var on := _crafting(p) and alpha >= 1.0
+	var k := TILE / FURN_PX_PER_M
+	var col := furniture("refinery", "column")
+	var cond := furniture("refinery", "condenser")
+	var can := furniture("refinery", "canister")
+	var pipe := furniture("refinery", "pipe_h")
+	var valve := furniture("refinery", "valve_gold")
+	var gauge := furniture("refinery", "gauge")
+	var right: float = lay.x + n * 3 * lay.unit
+	var py := fy - TILE * 0.95
+	_tile_h(pipe, lay.x + TILE * 0.2, right - TILE * 0.3, py - pipe.get_height() * k * 0.5, alpha)
+	var t := _anim_t()
+	for i in n:
+		var items: Array = [col, cond, can]
+		var sc := _group_fit(items, lay.unit * 3)
+		var gap := TILE * 0.1 * sc
+		var x: float = lay.x + i * 3 * lay.unit
+		var w := 0.0
+		for it in items:
+			w += it.get_width() * k * sc + gap
+		x += (lay.unit * 3 - w + gap) * 0.5
+		var cx := []
+		for it in items:
+			var iw: float = it.get_width() * k * sc
+			cx.append(x + iw * 0.5)
+			_furn_at(it, x + iw * 0.5, fy, alpha, 1, sc)
+			x += iw + gap
+		# Колонна: огоньки в окошках «кипят»; змеевик светится.
+		var ch: float = col.get_height() * k * sc
+		if on:
+			for j in 4:
+				var wy: float = fy - ch + ch * (0.31 + j * 0.19)
+				var pulse := 0.5 + 0.5 * sin(t * 5.0 + j * 1.7 + i)
+				_glow(Vector2(cx[0], wy), TILE * 0.32 * sc, Color(1.0, 0.75, 0.25, 0.35 * pulse))
+			var cc := Vector2(cx[1], fy - cond.get_height() * k * sc * 0.48)
+			_glow(cc, TILE * 0.75 * sc, Color(0.35, 1.0, 0.85, 0.22 + 0.1 * sin(t * 3.0 + i)))
+		# Вентили на трубе — между колонной и змеевиком и между змеевиком и канистрой.
+		for v in [0.5 * (cx[0] + cx[1]), 0.5 * (cx[1] + cx[2])]:
+			_spin_t(valve, valve.get_size() * 0.5, Vector2(v, py), fmod(t * 1.2 + i, TAU) if on else 0.4, sc, alpha)
+		# Манометр на стене над змеевиком.
+		var gs := gauge.get_size() * k
+		var grect := Rect2(cx[1] - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
+		_c.draw_texture_rect(gauge, grect, false, Color(1, 1, 1, alpha))
+
+
+## Обогатительная: на каждые 3 м — центрифуга (сверху шкивы с ремнём крутятся, в окне вращается
+## барабан — по стеклу бегут блики), рядом шкаф для урана или пульт и контейнер с ураном; на стене —
+## знак радиации.
+func _draw_enrichment(p: Project, r: Rect2, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var n := RoomType.blocks(p)
+	var lay := _inside(p, r, n * 3.0)
+	var on := _crafting(p) and alpha >= 1.0
+	var k := TILE / FURN_PX_PER_M
+	var cen := furniture("enrichment", "centrifuge")
+	var can := furniture("enrichment", "canister")
+	var wheel := furniture("enrichment", "wheel")
+	var small := furniture("enrichment", "wheel_small")
+	var belt := furniture("enrichment", "belt")
+	var sign := furniture("enrichment", "sign")
+	var t := _anim_t()
+	for i in n:
+		var mid := furniture("enrichment", "panel" if i % 2 == 0 else "cabinet")
+		var items: Array = [cen, mid, can]
+		var sc := _group_fit(items, lay.unit * 3)
+		var gap := TILE * 0.12 * sc
+		var x: float = lay.x + i * 3 * lay.unit
+		var w := 0.0
+		for it in items:
+			w += it.get_width() * k * sc + gap
+		x += (lay.unit * 3 - w + gap) * 0.5
+		var cx := []
+		for it in items:
+			var iw: float = it.get_width() * k * sc
+			cx.append(x + iw * 0.5)
+			x += iw + gap
+		var cw: float = cen.get_width() * k * sc
+		var chh: float = cen.get_height() * k * sc
+		var left: float = cx[0] - cw * 0.5
+		var top := fy - chh
+		# Шкивы над центрифугой: большой над левой опорой, малый над правой, ремень между ними.
+		var wa := Vector2(left + cw * 37.0 / 147.0, top - TILE * 0.05)
+		var wb := Vector2(left + cw * 112.0 / 147.0, top + TILE * 0.02)
+		var ra := wheel.get_width() * 0.5 * k * sc * 0.92
+		var rb := small.get_width() * 0.5 * k * sc * 0.92
+		var ang := fmod(t * 3.0 + i, TAU) if on else 0.2
+		_belt(belt, wa, ra, wb, rb, TILE * 0.05 * sc, alpha)
+		_spin_t(wheel, wheel.get_size() * 0.5, wa, ang, sc, alpha)
+		_spin_t(small, small.get_size() * 0.5, wb, ang * ra / rb, sc, alpha)
+		_furn_at(cen, cx[0], fy, alpha, 1, sc)
+		# Барабан крутится: по зелёному окну бегут светлые полосы.
+		var win := Rect2(left + cw * 50.0 / 147.0, top + chh * 64.0 / 174.0, cw * 48.0 / 147.0, chh * 62.0 / 174.0)
+		if on:
+			for j in 3:
+				var u := fmod(t * 0.9 + j / 3.0 + i * 0.13, 1.0)
+				var bw := win.size.x * 0.16 * sin(u * PI)
+				var bx := win.position.x + u * win.size.x
+				_c.draw_rect(Rect2(bx - bw * 0.5, win.position.y + 2, bw, win.size.y - 4), Color(0.85, 1.0, 0.6, 0.28 * sin(u * PI)))
+			_glow(win.get_center(), win.size.x * 1.2, Color(0.45, 1.0, 0.35, 0.18 + 0.08 * sin(t * 4.0 + i)))
+		_furn_at(mid, cx[1], fy, alpha, 1, sc)
+		_furn_at(can, cx[2], fy, alpha, 1, sc)
+		if on and i % 2 == 0:
+			# Пульт: экран-радар мигает.
+			var mh: float = mid.get_height() * k * sc
+			_glow(Vector2(cx[1] - mid.get_width() * k * sc * 0.12, fy - mh * 0.6), TILE * 0.3 * sc, Color(0.4, 1.0, 0.4, 0.3 + 0.2 * sin(t * 6.0)))
+		_furn_hang(sign, cx[1], fy, alpha)
 
 
 func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
@@ -2008,6 +2372,9 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 func _draw_teleport(p: Project, r: Rect2, alpha: float) -> void:
 	var c := view.cell_to_local(Colony.portal_cell(p)) + Vector2(TILE * 0.5, TILE)
 	var linked := colony.teleports().size() >= 2 and p.phase == Project.Phase.DONE
+	if furniture("teleport", "pedestal") != null and structure_texture("teleport") != null:
+		_draw_teleport_pedestal(p, r, c, linked, alpha)
+		return
 	var h := minf(r.size.y - 14.0, TILE * 2.6)
 	var w := TILE * 1.15
 	var glow := Color(1.0, 0.2, 0.45, (0.55 if linked else 0.2) * alpha)
@@ -2034,6 +2401,46 @@ func _draw_teleport(p: Project, r: Rect2, alpha: float) -> void:
 		var gem := Color(0.92, 0.08, 0.22, alpha) if i % 2 == 0 else Color(0.66, 0.3, 1.0, alpha)
 		_c.draw_colored_polygon(PackedVector2Array([at + Vector2(0, -9), at + Vector2(7, 0), at + Vector2(0, 9), at + Vector2(-7, 0)]), gem)
 		_c.draw_circle(at + Vector2(-2, -3), 2.0, Color(1, 1, 1, 0.7 * alpha))
+
+
+## Телепорт (прототип teleport_3.png): пьедестал на полу, на нём арка с самоцветами (поменьше —
+## вместе с пьедесталом в комнату 3 м), на пьедестале — светящееся кольцо (пульсирует; когда
+## телепорты связаны — ярко, и в арке переливается портал); на стене — пульт.
+const TP_PEDESTAL := 1.95
+const TP_ARCH := 0.68
+func _draw_teleport_pedestal(p: Project, r: Rect2, c: Vector2, linked: bool, alpha: float) -> void:
+	var fy := r.end.y - FURN_FLOOR * TILE
+	var k := TILE / FURN_PX_PER_M
+	var ped := furniture("teleport", "pedestal")
+	var sc := TP_PEDESTAL / (ped.get_width() / FURN_PX_PER_M)
+	var pw := ped.get_width() * k * sc
+	var ph := ped.get_height() * k * sc
+	var top := fy - ph + ph * 15.0 / 87.0         # середина верхней площадки
+	var t := _anim_t()
+	var pulse := 0.5 + 0.5 * sin(t * 2.4)
+	# Портал в арке.
+	var ah := 2.95 * TP_ARCH * TILE
+	var aw := 1.15 * TP_ARCH * TILE
+	var glow := Color(0.85, 0.3, 1.0, (0.45 + 0.2 * pulse if linked else 0.14) * alpha)
+	_c.draw_colored_polygon(PackedVector2Array([Vector2(c.x - aw * 0.85, top), Vector2(c.x + aw * 0.85, top),
+		Vector2(c.x + aw * 0.55, top - ah * 0.82), Vector2(c.x, top - ah * 0.9), Vector2(c.x - aw * 0.55, top - ah * 0.82)]), glow)
+	if linked and alpha >= 1.0:
+		for j in 3:
+			var u := fmod(t * 0.35 + j / 3.0, 1.0)
+			_c.draw_arc(Vector2(c.x, top - ah * 0.42), aw * 0.75 * u, 0, TAU, 28, Color(1.0, 0.85, 1.0, 0.35 * (1.0 - u) * alpha), 2.0)
+	_sprite("teleport", Vector2(c.x, top + ph * 0.05), alpha, 1.0, TP_ARCH)
+	_furn_at(ped, c.x, fy, alpha, 1, sc)
+	# Кольцо на площадке — лёжа (сплюснуто), пульсирует.
+	var ring := furniture("teleport", "ring")
+	var rw := pw * 0.62
+	var ring_a := (0.55 + 0.45 * pulse if linked else 0.3) * alpha
+	_c.draw_texture_rect(ring, Rect2(c.x - rw * 0.5, top - rw * 0.11, rw, rw * 0.22), false, Color(1, 1, 1, ring_a))
+	if linked and alpha >= 1.0:
+		_glow(Vector2(c.x, top), rw * 0.7, Color(0.8, 0.35, 1.0, 0.18 * pulse))
+	# Пульт на стене слева от арки.
+	var panel := furniture("teleport", "panel")
+	var px := maxf(r.position.x + TILE * 0.35, c.x - pw * 0.5 - panel.get_width() * k * 0.2)
+	_furn_hang(panel, px, fy, alpha)
 
 
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
@@ -2074,6 +2481,15 @@ func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
 		return
 	if purpose in RoomType.GENERATORS and furniture("generator", "coal_on") != null:
 		_draw_generator_furniture(p, r, alpha)
+		return
+	if purpose == RoomType.OIL_TANK and furniture("oil_storage", "tank") != null:
+		_draw_oil_storage(p, r, alpha)
+		return
+	if purpose == RoomType.REFINERY and furniture("refinery", "column") != null:
+		_draw_refinery(p, r, alpha)
+		return
+	if purpose == RoomType.ENRICHMENT and furniture("enrichment", "centrifuge") != null:
+		_draw_enrichment(p, r, alpha)
 		return
 	if purpose == RoomType.OIL_PUMP and furniture("oil_pump", "frame") != null:
 		_draw_oil_pump_furniture(p, r, alpha)

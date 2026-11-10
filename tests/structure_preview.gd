@@ -116,8 +116,8 @@ func _process(_delta: float) -> bool:
 		if tp != null:
 			tp.purpose = RoomType.TELEPORT
 		_pad_focus = Vector2i(xs + 6, _main.world.gen.surface_y(xs) - 9)
-		_main.world_view.focus_cell(Vector2i(xs + 6, _main.world.gen.surface_y(xs) - 7))
-		_main.camera.zoom = Vector2(1.0, 1.0)
+		_main.world_view.focus_cell(Vector2i(xs + 5, _main.world.gen.surface_y(xs) - 6))
+		_main.camera.zoom = Vector2(1.5, 1.5)
 	if _frame == 60:
 		_shot("launchpad")
 		var colony: Colony = _main.colony
