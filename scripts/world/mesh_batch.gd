@@ -112,6 +112,10 @@ func draw_set_transform(pos: Vector2, rot := 0.0, scale := Vector2.ONE) -> void:
 	_xf = Transform2D(rot, scale, 0.0, pos)
 
 
+func draw_set_transform_matrix(xf: Transform2D) -> void:
+	_xf = xf
+
+
 func draw_texture(tex: Texture2D, pos: Vector2, modulate := Color.WHITE) -> void:
 	if tex != null:
 		draw_texture_rect(tex, Rect2(pos, tex.get_size()), false, modulate)

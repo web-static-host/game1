@@ -420,9 +420,9 @@ func _draw_ship_cabin(r: Rect2, alpha: float) -> void:
 	var lamp := furniture("ship", "lamp")
 	_furn_at(lamp, mx + sw * 0.5, fy - stand.get_height() * k + 2.0, alpha)
 	_furn_at(bed, mx + sw + TILE * 0.08 + bw * 0.5, fy, alpha, 1)
-	# Полка — ниже иллюминатора.
+	# Полка — между спинкой кровати и иллюминатором (цветок и ракета не заходят на стекло).
 	var shelf := furniture("ship", "shelf")
-	_furn_at(shelf, x0 + b * 1.5, fy - TILE * 1.25, alpha, 2)
+	_furn_at(shelf, x0 + b * 1.5, fy - TILE * 0.98, alpha, 2, 0.85)
 	var con := furniture("ship", "console")
 	_furn_at(con, x0 + b * 2.5, fy, alpha, 1)
 	if alpha >= 1.0:
@@ -767,11 +767,29 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
 	if colony.edge_ladder(p, 1):
 		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
-	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет.
-	if colony.research.has("electricity") and colony.is_underground(p):
+	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет. Не посередине
+	# блока (там у машин трубы и дымоходы в потолок, верх арки телепорта — лампа пряталась за
+	# ними) и не на лестнице у стены.
+	# (У корабля свои светильники под потолком.)
+	if colony.research.has("electricity") and colony.is_underground(p) and p.purpose != RoomType.SHIP:
 		var n := RoomType.blocks(p)
+		var ladders: Array[float] = []
+		if p.ladder or colony.edge_ladder(p, -1):
+			ladders.append(r.position.x + TILE * 0.5)
+		if colony.edge_ladder(p, 1):
+			ladders.append(r.end.x - TILE * 0.5)
+		var blk := r.size.x / n
 		for i in n:
-			var lamp := Vector2(r.position.x + r.size.x * (i + 0.5) / n, r.position.y + 10)
+			var lx := r.position.x + blk * (i + 0.5)
+			for off in [0.25, -0.25, -0.15, 0.15]:
+				var ok := true
+				for lad in ladders:
+					if absf(lx + blk * off - lad) < TILE * 0.5:
+						ok = false
+				if ok:
+					lx += blk * off
+					break
+			var lamp := Vector2(lx, r.position.y + 10)
 			_c.draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
 			if p.lit:
 				_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
@@ -1390,9 +1408,9 @@ static func _anim_t() -> float:
 func _spin(name: String, at: Vector2, angle: float, sc: float, alpha: float) -> void:
 	var t := _anim(name)
 	var k := TILE / FURN_PX_PER_M * sc
-	_c.draw_set_transform(at, angle, Vector2(k, k))
+	_xform(at, angle, Vector2(k, k))
 	_c.draw_texture(t, -(ANIM[name]["pivot"] as Vector2), Color(1, 1, 1, alpha))
-	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_xform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Прямоугольник детали name, стоящей низом на bottom по центру cx (как _furn_at).
@@ -1458,6 +1476,8 @@ func _stove(name: String, cx: float, bottom: float, sc: float, burning: bool, ga
 	return rect
 
 
+## Патрубки газового котла (stove_boiler): высота верхнего и нижнего — доля высоты спрайта сверху.
+const BOILER_PORTS := [0.39, 0.59]
 func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.stoves(p)
@@ -1479,16 +1499,17 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		xs.append(lay.x + (i * 3 + 1.5) * lay.unit - (TILE * 0.35 if fuel != null else 0.0))
 	var sh := stove.get_height() * k
 	if gas:
-		# Трубы отопления — за котлами, от первого котла до правой стены, на уровне патрубков.
-		var right: float = lay.x + n * 3 * lay.unit
-		for pipe in [["pipe_red", 0.32], ["pipe_blue", 0.68]]:
+		# Трубы отопления — за котлами, от первого котла в правую стену, на уровне патрубков
+		# котла (доли его высоты сверху: верхний и нижний патрубок).
+		var right: float = r.end.x - TILE * 0.15
+		for pipe in [["pipe_red", BOILER_PORTS[0]], ["pipe_blue", BOILER_PORTS[1]]]:
 			var t := furniture("hearth", pipe[0])
 			_tile_h(t, xs[0], right, fy - sh * (1.0 - pipe[1]) - t.get_height() * k * 0.5, alpha)
 		var valve := furniture("hearth", "valve")
 		for i in n:
 			var vx: float = (xs[i] + xs[i + 1]) * 0.5 if i + 1 < n else (xs[i] + right) * 0.5 + TILE * 0.2
 			var vs := valve.get_size() * k
-			_c.draw_texture_rect(valve, Rect2(vx - vs.x * 0.5, fy - sh * 0.68 - vs.y * 0.5, vs.x, vs.y), false, mod)
+			_c.draw_texture_rect(valve, Rect2(vx - vs.x * 0.5, fy - sh * (1.0 - BOILER_PORTS[0]) - vs.y * 0.5, vs.x, vs.y), false, mod)
 	var chimney := furniture("hearth", "chimney")
 	if not gas:
 		_tools_between(p, r, lay, xs, furniture("hearth", "tools"), fy, alpha)
@@ -1623,8 +1644,9 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			dx = unit["dynamo"].x
 			top = unit["top"]
 			gx = unit["inlet"]
-			# Выхлоп — к потолку от коллектора.
-			_tile_v(chimney, gx - chimney.get_width() * k * 0.5, fy - TILE * CEILING, unit["inlet_y"], alpha)
+			# Выхлоп — к потолку от фланца коллектора, толщиной с фланец (0.13 м).
+			var es: float = 0.13 / (chimney.get_width() / FURN_PX_PER_M) * unit["scale"]
+			_tile_v(chimney, gx - chimney.get_width() * k * es * 0.5, fy - TILE * CEILING, unit["inlet_y"], alpha, es)
 			_c.draw_line(unit["dynamo"], Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
 			_diesel_unit(x, fy, lay.unit * 3 * 0.92, on and alpha >= 1.0, alpha, x * 0.017, true)
 			continue
@@ -1635,12 +1657,15 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			gx = unit["inlet"]
 			cx = unit["inlet"]
 		_c.draw_line(Vector2(dx, (unit["dynamo"].y if live else top + 6 * k)), Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
+		# Труба — толщиной по патрубку двигателя (в узкой комнате двигатель меньше — и она тоньше).
+		var us: float = unit.get("scale", 1.0)
 		if gas:
-			_tile_v(pipe, gx - pipe.get_width() * k * 0.5, fy - TILE * CEILING, top + 8 * k, alpha)
-			var vs := valve.get_size() * k
+			_tile_v(pipe, gx - pipe.get_width() * k * us * 0.5, fy - TILE * CEILING, top + 8 * k * us, alpha, us)
+			var vs := valve.get_size() * k * us
 			_c.draw_texture_rect(valve, Rect2(gx - vs.x * 0.5, (fy - TILE * CEILING + top) * 0.5 - vs.y * 0.5, vs.x, vs.y), false, mod)
 		else:
-			_tile_v(chimney, cx - chimney.get_width() * k * 0.5, fy - TILE * CEILING, top + 4 * k, alpha)
+			var cs := us * (0.13 / (chimney.get_width() / FURN_PX_PER_M) if live else 1.0)
+			_tile_v(chimney, cx - chimney.get_width() * k * cs * 0.5, fy - TILE * CEILING, top + 4 * k * us, alpha, cs)
 			_furn_at(coal, x - mw * 0.5 - coal.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
 		if on and alpha >= 1.0:
 			_glow(Vector2(x, fy - mh * 0.5), TILE * 2.0, Color(0.3, 0.55, 1.0, 0.16) if gas else Color(1.0, 0.75, 0.3, 0.18))
@@ -1675,7 +1700,7 @@ func _diesel_unit(x: float, fy: float, width: float, on: bool, alpha: float, see
 	var gw := gen.get_width() / FURN_PX_PER_M * m
 	var gh := gen.get_height() / FURN_PX_PER_M * m
 	var gx := hub.x + fly_m * 0.35 * m + 0.18 * m
-	var out := {"top": fy - eh, "inlet": ex + ew * 182.0 / 198.0, "inlet_y": fy - eh + 4.0 * sc,
+	var out := {"top": fy - eh, "inlet": ex + ew * 180.0 / 200.0, "inlet_y": fy - eh + 3.0 * sc, "scale": sc,
 		"dynamo": Vector2(gx + gw * 0.55, fy - gh + 3.0)}
 	if not draw:
 		return out
@@ -1684,9 +1709,9 @@ func _diesel_unit(x: float, fy: float, width: float, on: bool, alpha: float, see
 	var sh := shaft.get_size()
 	var from := hub
 	var to := Vector2(gx + gw * 0.05, hub.y)
-	_c.draw_set_transform(from, 0.0, Vector2((to.x - from.x) / sh.x, m * 0.12 / sh.y))
+	_xform(from, 0.0, Vector2((to.x - from.x) / sh.x, m * 0.12 / sh.y))
 	_c.draw_texture(shaft, Vector2(0, -sh.y * 0.5), Color(1, 1, 1, alpha))
-	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_xform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_furn_at(gen, gx + gw * 0.5, fy, alpha, 1, sc)
 	_soft_ellipse(Vector2(ex + ew * 0.5, fy - 1.0), ew * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
 	_c.draw_texture_rect(eng, Rect2(Vector2(ex, fy - eh) + shake, Vector2(ew, eh)), false, Color(1, 1, 1, alpha))
@@ -1726,7 +1751,8 @@ func _gen_unit(gas: bool, x: float, fy: float, width: float, on: bool, alpha: fl
 	var pul_c := drect.get_center()
 	var brect := Rect2(left, fy - bh * s, bw * s, bh * s)
 	var out := {"top": brect.position.y, "inlet": left + float(ANIM[pre + "_body"]["top"]) * s,
-		"dynamo": Vector2(drect.get_center().x, drect.position.y + drect.size.y * 0.1)}
+		"dynamo": Vector2(drect.get_center().x, drect.position.y + drect.size.y * 0.1),
+		"scale": s * FURN_PX_PER_M / TILE}
 	if not draw:
 		return out
 	var sc := s * FURN_PX_PER_M / TILE
@@ -1745,9 +1771,9 @@ func _gen_unit(gas: bool, x: float, fy: float, width: float, on: bool, alpha: fl
 		var a := fly_c + Vector2(0, side * fr * s * 0.97)
 		var b := pul_c + Vector2(0, side * pr * s * 0.9)
 		var d := b - a
-		_c.draw_set_transform(a, d.angle(), Vector2(d.length() / belt.get_width(), s * 0.8))
+		_xform(a, d.angle(), Vector2(d.length() / belt.get_width(), s * 0.8))
 		_c.draw_texture(belt, Vector2(0, -belt.get_height() * 0.5), Color(1, 1, 1, alpha))
-		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_xform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_spin(pre + "_pulley", pul_c, ang * fr / pr, sc, alpha)
 	return out
 
@@ -1828,19 +1854,30 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var kk := TILE / FURN_PX_PER_M
 			var barrel := furniture("oil_pump", "barrel")
 			var sight := furniture("oil_pump", "sight")
-			var bx: float = cx + lay.unit * 1.5 - barrel.get_width() * kk * 0.5 - TILE * 0.05
-			var sx: float = bx - barrel.get_width() * kk * 0.5 - sight.get_width() * kk * 0.5 - TILE * 0.06
-			# Труба от устья к бачку у пола.
+			# Бочка и бачок — в месте правее качалки (не заходя под её голову); не влезают —
+			# меньше, а в совсем узкой комнате бачка нет, только бочка.
+			var room_x: float = cx + lay.unit * 1.5 - TILE * 0.05
+			var free: float = room_x - (org.x + PJ_WIDTH * s) - TILE * 0.03
+			var bw: float = barrel.get_width() * kk
+			var sw: float = sight.get_width() * kk
+			var es := minf(1.0, free / (bw + sw + TILE * 0.06))
+			var with_sight := es >= 0.75
+			if not with_sight:
+				es = minf(1.0, free / bw)
+			var bx: float = room_x - bw * es * 0.5
+			var sx: float = bx - bw * es * 0.5 - sw * es * 0.5 - TILE * 0.06 * es
+			# Труба от устья к бачку (или к бочке) у пола.
 			var pipe := furniture("oil_pump", "pipe_h")
 			var wx: float = org.x + (PJ_O.x + PJ_HEAD) * s
-			_tile_h(pipe, wx, sx, fy - TILE * 0.2 - pipe.get_height() * kk * 0.5, alpha)
-			_furn_at(sight, sx, fy, alpha, 1)
-			_furn_at(barrel, bx, fy, alpha, 1)
-			if on:
+			_tile_h(pipe, wx, sx if with_sight else bx, fy - TILE * 0.2 * es - pipe.get_height() * kk * es * 0.5, alpha, es)
+			if with_sight:
+				_furn_at(sight, sx, fy, alpha, 1, es)
+			_furn_at(barrel, bx, fy, alpha, 1, es)
+			if on and with_sight:
 				# В бачке нефть колышется: тёмный блик ходит вверх-вниз.
-				var sh := sight.get_height() * kk
+				var sh := sight.get_height() * kk * es
 				var yy := fy - sh * (0.45 + 0.08 * sin(_anim_t() * 2.2 + cx))
-				_c.draw_rect(Rect2(sx - sight.get_width() * kk * 0.18, yy, sight.get_width() * kk * 0.36, 2.0), Color(0, 0, 0, 0.35 * alpha))
+				_c.draw_rect(Rect2(sx - sw * es * 0.18, yy, sw * es * 0.36, 2.0), Color(0, 0, 0, 0.35 * alpha))
 		var at := func(v: Vector2) -> Vector2: return org + v * s
 		# Шток: висит под «головой» на канате; ход — длина дуги головы (радиус × угол).
 		var well_top := PJ_FLOOR - (well.get_height() - PJ_WELL.y)
@@ -1854,26 +1891,33 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_c.draw_texture_rect(well, Rect2(at.call(Vector2(head_x - PJ_WELL.x, well_top - PJ_WELL.y)), well.get_size() * s), false, mod)
 		_c.draw_texture_rect(frame, Rect2(org, frame.get_size() * s), false, mod)
 		# Балансир — вокруг шарнира на раме.
-		_c.draw_set_transform(at.call(PJ_O), phi, Vector2(s, s))
+		_xform(at.call(PJ_O), phi, Vector2(s, s))
 		_c.draw_texture(beam, -PJ_BEAM_O, mod)
 		# Кривошип — вокруг оси редуктора (палец — по углу кривошипа).
 		var pin0 := (PJ_CRANK_PIN - PJ_CRANK_O).angle()
-		_c.draw_set_transform(at.call(PJ_A), st[0] - pin0, Vector2(s, s) * PJ_CRANK_SCALE)
+		_xform(at.call(PJ_A), st[0] - pin0, Vector2(s, s) * PJ_CRANK_SCALE)
 		_c.draw_texture(crank, -PJ_CRANK_O, mod)
 		# Шатун — от пальца кривошипа к хвосту балансира (тянется по длине, толщина та же).
 		var dv := rear - pin
-		_c.draw_set_transform(at.call(pin), dv.angle(), Vector2(s * dv.length() / PJ_ROD_LEN, s))
+		_xform(at.call(pin), dv.angle(), Vector2(s * dv.length() / PJ_ROD_LEN, s))
 		_c.draw_texture(rod, -PJ_ROD_A, mod)
-		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_xform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Перенос-поворот-масштаб для следующих картинок: масштаб — вдоль осей самой картинки (до
+## поворота). У CanvasItem.draw_set_transform неравный масштаб ложится после поворота — наклонные
+## ремни и шатун сплющивались и не доставали до шкивов.
+func _xform(pos: Vector2, rot := 0.0, scale := Vector2.ONE) -> void:
+	_c.draw_set_transform_matrix(Transform2D(rot, scale, 0.0, pos))
 
 
 ## Деталь t, повёрнутая на angle вокруг своей точки pivot (пиксели картинки); pivot — в точке at,
 ## sc — масштаб к обычному (128 px на метр).
 func _spin_t(t: Texture2D, pivot: Vector2, at: Vector2, angle: float, sc: float, alpha: float) -> void:
 	var k := TILE / FURN_PX_PER_M * sc
-	_c.draw_set_transform(at, angle, Vector2(k, k))
+	_xform(at, angle, Vector2(k, k))
 	_c.draw_texture(t, -pivot, Color(1, 1, 1, alpha))
-	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_xform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Стрелка прибора: картинка стрелки смотрит вверх, втулка внизу; value 0..1 — от −120° до +120°,
@@ -1893,9 +1937,9 @@ func _belt(t: Texture2D, a: Vector2, ra: float, b: Vector2, rb: float, thick: fl
 		var p0 := a + Vector2(0, side * ra)
 		var p1 := b + Vector2(0, side * rb)
 		var d := p1 - p0
-		_c.draw_set_transform(p0, d.angle(), Vector2(d.length() / t.get_width(), thick / t.get_height()))
+		_xform(p0, d.angle(), Vector2(d.length() / t.get_width(), thick / t.get_height()))
 		_c.draw_texture(t, Vector2(0, -t.get_height() * 0.5), Color(1, 1, 1, alpha))
-		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_xform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Нефтехранилище: чёрный бак на каждые 3 м, в окошке бака — уровень нефти (сколько её в
@@ -1959,6 +2003,7 @@ func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
 ## Нефтезавод: на каждые 3 м — медная перегонная колонна (в окошках булькает, пока идёт
 ## перегонка), холодильник-змеевик (светится), канистра дизеля. Трубы между
 ## ними на высоте метра с вентилями (крутятся при работе); на стене — манометры со стрелками.
+const REFINERY_PIPE := 0.7
 func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
@@ -1971,9 +2016,6 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 	var pipe := furniture("refinery", "pipe_h")
 	var valve := furniture("refinery", "valve_gold")
 	var gauge := furniture("refinery", "gauge")
-	var right: float = lay.x + n * 3 * lay.unit
-	var py := fy - TILE * 0.95
-	_tile_h(pipe, lay.x + TILE * 0.2, right - TILE * 0.3, py - pipe.get_height() * k * 0.5, alpha)
 	var t := _anim_t()
 	for i in n:
 		var items: Array = [col, cond, can]
@@ -1988,8 +2030,13 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 		for it in items:
 			var iw: float = it.get_width() * k * sc
 			cx.append(x + iw * 0.5)
-			_furn_at(it, x + iw * 0.5, fy, alpha, 1, sc)
 			x += iw + gap
+		# Труба за машинами — от колонны через патрубки змеевика к горловине канистры, на высоте
+		# патрубков (REFINERY_PIPE м над полом при полном размере).
+		var py := fy - TILE * REFINERY_PIPE * sc
+		_tile_h(pipe, cx[0], cx[2], py - pipe.get_height() * k * sc * 0.5, alpha, sc)
+		for j in items.size():
+			_furn_at(items[j], cx[j], fy, alpha, 1, sc)
 		# Колонна: огоньки в окошках «кипят»; змеевик светится.
 		var ch: float = col.get_height() * k * sc
 		if on:
@@ -2092,7 +2139,13 @@ func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var b0: float = lay.x + i * 3 * lay.unit
 		var x: float = b0 + (lay.unit * 3 - pw - tw) * 0.5 + pw * 0.5
 		var px := x + (0.465 - 0.5) * pw
-		_tile_v(pipe_v, px - pipe_v.get_width() * k * 0.5, fy - TILE * CEILING, fy - pump.get_height() * k * sc + 4 * k, alpha)
+		var ptop := fy - pump.get_height() * k * sc + 4 * k
+		if _anim("pump_body") != null:
+			# Новый насос: труба — в его верхний патрубок (сверху картинки).
+			var nb := _anim_rect("pump_body", x, fy, sc * pump.get_width() / _anim("pump_body").get_width())
+			px = nb.position.x + float(ANIM["pump_body"]["top"]) * nb.size.x / _anim("pump_body").get_width()
+			ptop = nb.position.y + 3.0
+		_tile_v(pipe_v, px - pipe_v.get_width() * k * 0.5, fy - TILE * CEILING, ptop, alpha)
 		# На водопроводе — вентиль левее трубы насоса и манометр правее, если помещаются в блок.
 		for it in [["valve", -1], ["gauge", 1]]:
 			var t := furniture("pump", it[0])
@@ -2225,11 +2278,13 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var gap := TILE * 0.08 * sc
 	var row := (forge.get_width() + anvil.get_width() + barrel.get_width()) * k + 2 * gap
 	var fxs: Array[float] = []
+	var hoods: Array[float] = []
 	for i in n:
 		var x0: float = lay.x + i * 3 * lay.unit + (lay.unit * 3 - row) * 0.5
 		var fx := x0 + forge.get_width() * k * 0.5
 		fxs.append(fx)
 		var hood := x0 + (float(ANIM["stove_forge"]["top"]) if live else forge.get_width() * 0.657) * k
+		hoods.append(hood)
 		_tile_v(chimney, hood - chimney.get_width() * k * 0.5, fy - TILE * CEILING, fy - forge.get_height() * k + 3 * k, alpha)
 		if on and alpha >= 1.0:
 			_glow(Vector2(hood, fy - TILE * 0.5 * sc), TILE * 2.0, Color(1.0, 0.55, 0.2, 0.22))
@@ -2242,7 +2297,8 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_furn_at(barrel, ax + anvil.get_width() * k * 0.5 + gap + barrel.get_width() * k * 0.5, fy, alpha, 1, sc)
 		_furn_at(ore, x0 + ore.get_width() * k * 0.45, fy + TILE * 0.04, alpha, 1, sc)
 		_furn_at(ingots, x0 + forge.get_width() * k * 0.8, fy + TILE * 0.04, alpha, 1, sc)
-	_tools_between(p, r, lay, fxs, furniture("forge", "tools"), fy, alpha)
+	# Инструменты — мимо труб (они над колпаками горнов, а не над серединой горна).
+	_tools_between(p, r, lay, hoods, furniture("forge", "tools"), fy, alpha)
 
 
 ## Столовая: стол с лавкой на каждые 3 м, на столе — свой набор посуды; на стене — полки и меню.
@@ -2305,8 +2361,8 @@ func _place_row(items: Array[Texture2D], cx: float, width: float, bottom: float,
 
 
 ## Повторяющийся по горизонтали предмет (трубы) от left до right, верхом на top.
-func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float) -> void:
-	var k := TILE / FURN_PX_PER_M
+func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float, scale := 1.0) -> void:
+	var k := TILE / FURN_PX_PER_M * scale
 	var x := left
 	while x < right - 0.5:
 		var seg := minf(t.get_width() * k, right - x)
@@ -2315,8 +2371,8 @@ func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float) 
 
 
 ## Повторяющийся по вертикали предмет (труба дымохода) с левым краем x от top до bottom.
-func _tile_v(t: Texture2D, x: float, top: float, bottom: float, alpha: float) -> void:
-	var k := TILE / FURN_PX_PER_M
+func _tile_v(t: Texture2D, x: float, top: float, bottom: float, alpha: float, scale := 1.0) -> void:
+	var k := TILE / FURN_PX_PER_M * scale
 	var y := top
 	while y < bottom - 0.5:
 		var seg := minf(t.get_height() * k, bottom - y)
