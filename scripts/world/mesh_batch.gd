@@ -21,6 +21,8 @@ var strict := false
 ## рисовать] (в строгом порядке — между сетками там же, где их рисовали; иначе — поверх всего).
 var texts: Array = []
 var _break := false
+## Перенос-поворот-масштаб, как draw_set_transform у CanvasItem (крутящиеся детали мебели).
+var _xf := Transform2D.IDENTITY
 var _groups := {}
 var _order: Array = []
 const CIRCLE_SEGS := 16
@@ -44,6 +46,7 @@ func clear() -> void:
 	_order.clear()
 	texts.clear()
 	_break = false
+	_xf = Transform2D.IDENTITY
 
 
 func _group(tex: Texture2D) -> Array:
@@ -69,6 +72,10 @@ func _tri(g: Array, a: Vector2, b: Vector2, c: Vector2, ca: Color, cb: Color, cc
 	var v: PackedVector2Array = g[0]
 	var col: PackedColorArray = g[1]
 	var uv: PackedVector2Array = g[2]
+	if _xf != Transform2D.IDENTITY:
+		a = _xf * a
+		b = _xf * b
+		c = _xf * c
 	v.append(a)
 	v.append(b)
 	v.append(c)
@@ -99,6 +106,15 @@ func draw_rect(r: Rect2, color: Color, filled := true, width := -1.0) -> void:
 	_quad(g, Vector2(a.x - h, b.y - h), Vector2(b.x + h, b.y - h), Vector2(b.x + h, b.y + h), Vector2(a.x - h, b.y + h), color)
 	_quad(g, Vector2(a.x - h, a.y + h), Vector2(a.x + h, a.y + h), Vector2(a.x + h, b.y - h), Vector2(a.x - h, b.y - h), color)
 	_quad(g, Vector2(b.x - h, a.y + h), Vector2(b.x + h, a.y + h), Vector2(b.x + h, b.y - h), Vector2(b.x - h, b.y - h), color)
+
+
+func draw_set_transform(pos: Vector2, rot := 0.0, scale := Vector2.ONE) -> void:
+	_xf = Transform2D(rot, scale, 0.0, pos)
+
+
+func draw_texture(tex: Texture2D, pos: Vector2, modulate := Color.WHITE) -> void:
+	if tex != null:
+		draw_texture_rect(tex, Rect2(pos, tex.get_size()), false, modulate)
 
 
 func draw_texture_rect(tex: Texture2D, r: Rect2, _tile := false, modulate := Color.WHITE) -> void:

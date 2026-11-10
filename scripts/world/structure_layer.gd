@@ -169,7 +169,8 @@ static func animated(p: Project) -> bool:
 		Project.Kind.ROOM:
 			if p.phase != Project.Phase.DONE:
 				return false
-			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE, RoomType.OIL_PUMP]
+			return p.purpose in [RoomType.PUMP, RoomType.VENT, RoomType.HEARTH, RoomType.SHIP, RoomType.NONE, RoomType.OIL_PUMP,
+				RoomType.KILN, RoomType.FORGE, RoomType.GENERATOR, RoomType.GAS_GEN, RoomType.DIESEL_GEN]
 	return false
 
 
@@ -1261,6 +1262,118 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 ## Очаг: печь на каждые 3 м (каменная, кирпичная; с газом — отопительный котёл вместо печи),
 ## горит, когда топится; от печи труба в потолок, рядом её топливо (дрова, у кирпичной — уголь).
 ## Котлы соединены трубами отопления с вентилями. На стене между печами — кочерга и совок.
+## Движущиеся детали комнат (art_src/rooms/cut_anim.py → assets/furniture/anim/): ось (pivot),
+## верх под трубу (top, x) и топка (mouth) — в пикселях картинки (128 px на метр). Печи и топки
+## пустые и прозрачные внутри: за ними — тёмная глубина и живое пламя; колёса, лопасти и стрелки
+## крутятся вокруг своей оси.
+const ANIM := {
+	"pump_body": {"pivot": Vector2(112.0, 95.1), "top": 87.5},
+	"pump_wheel": {"pivot": Vector2(37.0, 37.5), "top": 37.5},
+	"flame_orange": {"pivot": Vector2(130.0, 138.5), "top": 116.8},
+	"flame_blue": {"pivot": Vector2(130.0, 136.0), "top": 113.5},
+	"gas_body": {"pivot": Vector2(119.6, 46.1), "top": 55.0, "mouth": Rect2(38.7, 38.7, 32.9, 29.3)},
+	"gas_dynamo": {"pivot": Vector2(40.5, 43.5), "top": 40.6},
+	"gas_flywheel": {"pivot": Vector2(52.0, 53.5), "top": 52.2},
+	"gas_pulley": {"pivot": Vector2(21.5, 21.5), "top": 21.1},
+	"gas_belt": {"pivot": Vector2(65.0, 6.0), "top": 64.6},
+	"gauge_dial": {"pivot": Vector2(22.7, 23.3), "top": 22.2},
+	"gauge_needle": {"pivot": Vector2(2.3, 10.5), "top": 8.3},
+	"vent_housing": {"pivot": Vector2(79.6, 77.0), "top": 79.9},
+	"vent_blades": {"pivot": Vector2(65.0, 66.0), "top": 65.2},
+	"coal_body": {"pivot": Vector2(92.9, 107.1), "top": 42.6, "mouth": Rect2(25.0, 81.5, 36.3, 32.8)},
+	"coal_dynamo": {"pivot": Vector2(46.0, 43.5), "top": 53.2},
+	"coal_flywheel": {"pivot": Vector2(52.0, 53.5), "top": 52.0},
+	"coal_pulley": {"pivot": Vector2(21.5, 21.5), "top": 21.0},
+	"coal_belt": {"pivot": Vector2(65.0, 6.0), "top": 64.5},
+	"stove_stone": {"pivot": Vector2(65.5, 64.5), "top": 65.3, "mouth": Rect2(31.9, 39.1, 66.7, 54.1)},
+	"stove_brick": {"pivot": Vector2(65.5, 64.0), "top": 65.1, "mouth": Rect2(33.0, 39.4, 65.2, 52.1)},
+	"stove_kiln": {"pivot": Vector2(78.5, 90.0), "top": 78.4, "mouth": Rect2(51.9, 124.5, 52.7, 35.7)},
+	"stove_forge": {"pivot": Vector2(91.0, 71.0), "top": 119.2, "mouth": Rect2(93.8, 69.0, 50.9, 36.0)},
+	"stove_boiler": {"pivot": Vector2(62.5, 95.0), "top": 60.8, "mouth": Rect2(34.7, 109.4, 54.3, 47.8)},
+}
+
+
+func _anim(name: String) -> Texture2D:
+	return furniture("anim", name)
+
+
+## Время для анимации мебели, с.
+static func _anim_t() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+
+## Деталь name, повёрнутая на angle вокруг своей оси; ось — в точке at, масштаб sc (1 — 128 px/м).
+func _spin(name: String, at: Vector2, angle: float, sc: float, alpha: float) -> void:
+	var t := _anim(name)
+	var k := TILE / FURN_PX_PER_M * sc
+	_c.draw_set_transform(at, angle, Vector2(k, k))
+	_c.draw_texture(t, -(ANIM[name]["pivot"] as Vector2), Color(1, 1, 1, alpha))
+	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Прямоугольник детали name, стоящей низом на bottom по центру cx (как _furn_at).
+func _anim_rect(name: String, cx: float, bottom: float, sc: float) -> Rect2:
+	var sz := _anim(name).get_size() / FURN_PX_PER_M * TILE * sc
+	return Rect2(cx - sz.x * 0.5, bottom - sz.y, sz.x, sz.y)
+
+
+## Точка картинки детали (пиксели картинки) на экране, если деталь в прямоугольнике rect.
+func _anim_at(name: String, rect: Rect2, px: Vector2) -> Vector2:
+	return rect.position + px * rect.size.x / _anim(name).get_width()
+
+
+## Живое пламя: картинка огня на сетке, которую каждый кадр колышет (языки качаются волной снизу
+## вверх, пламя то вытягивается, то приседает) — плавно, без кадров. base — середина низа, w —
+## ширина (пиксели), seed — чтобы соседние огни горели вразнобой.
+const FLAME_COLS := 4
+const FLAME_ROWS := 6
+func _flame(gas: bool, base: Vector2, w: float, seed: float, alpha: float) -> void:
+	var t := _anim("flame_blue" if gas else "flame_orange")
+	if t == null:
+		return
+	var tt := _anim_t() + seed * 3.7
+	var stretch := 1.0 + 0.14 * sin(tt * 8.3) + 0.08 * sin(tt * 21.0 + 1.3)
+	var h := w * t.get_height() / t.get_width() * stretch
+	var pts := []
+	for j in FLAME_ROWS + 1:
+		var v := float(j) / FLAME_ROWS     # 0 — верх, 1 — низ
+		var up := 1.0 - v
+		var row := []
+		for i in FLAME_COLS + 1:
+			var u := float(i) / FLAME_COLS
+			var sway := w * (0.11 * sin(tt * 6.0 - v * 4.0) + 0.05 * sin(tt * 13.0 + u * 3.0 - v * 6.0)) * up * up
+			var pinch := 1.0 + 0.06 * sin(tt * 9.0 + v * 5.0) * up
+			row.append(Vector2(base.x + (u - 0.5) * w * pinch + sway, base.y - h * up))
+		pts.append(row)
+	var col := Color(1, 1, 1, alpha)
+	for j in FLAME_ROWS:
+		for i in FLAME_COLS:
+			var u0 := float(i) / FLAME_COLS
+			var u1 := float(i + 1) / FLAME_COLS
+			var v0 := float(j) / FLAME_ROWS
+			var v1 := float(j + 1) / FLAME_ROWS
+			_c.draw_colored_polygon(PackedVector2Array([pts[j][i], pts[j][i + 1], pts[j + 1][i + 1], pts[j + 1][i]]), col,
+				PackedVector2Array([Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1)]), t)
+
+
+## Печь или топка name (пустая внутри): низом на bottom по центру cx, масштаб sc. Горит — за
+## прозрачной топкой тёмная глубина, пламя и отсвет. Возвращает прямоугольник печи.
+func _stove(name: String, cx: float, bottom: float, sc: float, burning: bool, gas: bool, alpha: float, seed := 0.0) -> Rect2:
+	var rect := _anim_rect(name, cx, bottom, sc)
+	var m: Rect2 = ANIM[name]["mouth"]
+	var kk := rect.size.x / _anim(name).get_width()
+	var mouth := Rect2(rect.position + m.position * kk, m.size * kk)
+	_c.draw_rect(mouth.grow(-1.0), Color(0.09, 0.05, 0.04, alpha))
+	if burning:
+		var flick := 0.85 + 0.15 * sin(_anim_t() * 7.0 + seed * 5.0)
+		_glow(mouth.get_center() + Vector2(0, mouth.size.y * 0.2), mouth.size.x * 1.3,
+			Color(0.3, 0.55, 1.0, 0.35 * flick * alpha) if gas else Color(1.0, 0.55, 0.2, 0.4 * flick * alpha))
+		_flame(gas, Vector2(mouth.get_center().x, mouth.end.y - mouth.size.y * 0.04), mouth.size.x * 0.85, seed, alpha)
+	_soft_ellipse(Vector2(cx, bottom - 1.0), rect.size.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+	_c.draw_texture_rect(_anim(name), rect, false, Color(1, 1, 1, alpha))
+	return rect
+
+
 func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.stoves(p)
@@ -1269,6 +1382,11 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var gas := p.gas_boiler and done
 	var kind := "gas" if gas else ("brick" if p.brick_stoves and done else "stone")
 	var stove := furniture("hearth", kind + ("_on" if p.burning else "_off"))
+	# Новые печи — пустые внутри, огонь живой (см. _stove).
+	var live_name: String = "stove_" + {"gas": "boiler", "brick": "brick", "stone": "stone"}[kind]
+	var live := _anim(live_name) != null
+	if live:
+		stove = _anim(live_name)
 	var fuel := null if gas else furniture("hearth", "coal" if kind == "brick" else "logs")
 	var k := TILE / FURN_PX_PER_M
 	var mod := Color(1, 1, 1, alpha)
@@ -1295,7 +1413,10 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_tile_v(chimney, xs[i] - cw * 0.5, fy - TILE * 2.62, fy - sh + 4 * k, alpha)
 		if p.burning and alpha >= 1.0:
 			_glow(Vector2(xs[i], fy - sh * 0.4), TILE * 2.2, Color(0.3, 0.55, 1.0, 0.18) if gas else Color(1.0, 0.6, 0.25, 0.22))
-		_furn_at(stove, xs[i], fy, alpha, 1)
+		if live:
+			_stove(live_name, xs[i], fy, 1.0, p.burning and alpha >= 1.0, p.on_gas, alpha, i + p.id * 0.37)
+		else:
+			_furn_at(stove, xs[i], fy, alpha, 1)
 		if fuel != null:
 			_furn_at(fuel, xs[i] + stove.get_width() * k * 0.5 + fuel.get_width() * k * 0.5 + TILE * 0.05, fy, alpha, 1)
 
@@ -1349,6 +1470,9 @@ func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var lay := _inside(p, r, n * 3.0)
 	var on := _crafting(p)
 	var kiln := furniture("kiln", "kiln_on" if on else "kiln_off")
+	var live := _anim("stove_kiln") != null
+	if live:
+		kiln = _anim("stove_kiln")
 	var chimney := furniture("hearth", "chimney")
 	var clay := furniture("kiln", "clay")
 	var bricks := furniture("kiln", "bricks")
@@ -1363,7 +1487,10 @@ func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		_tile_v(chimney, x - chimney.get_width() * k * 0.5, fy - TILE * CEILING, fy - kiln.get_height() * k + 4 * k, alpha)
 		if on and alpha >= 1.0:
 			_glow(Vector2(x, fy - TILE * 0.3), TILE * 2.0, Color(1.0, 0.6, 0.25, 0.22))
-		_furn_at(kiln, x, fy, alpha, 1, sc)
+		if live:
+			_stove("stove_kiln", x, fy, sc, on and alpha >= 1.0, false, alpha, x * 0.013)
+		else:
+			_furn_at(kiln, x, fy, alpha, 1, sc)
 		_furn_at(clay, x - kw * 0.5 - clay.get_width() * k * 0.5 - TILE * 0.03, fy, alpha, 1, sc)
 		_furn_at(bricks, x + kw * 0.5 + bricks.get_width() * k * 0.5 + TILE * 0.03, fy, alpha, 1, sc)
 
@@ -1398,23 +1525,91 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var chimney := furniture("hearth", "chimney")
 	var pipe := furniture("generator", "gas_pipe")
 	var valve := furniture("generator", "valve")
+	var live := _anim("coal_body") != null
 	for x in xs:
 		var top := fy - mh
 		# Провод от динамо (справа) вверх к гирлянде.
 		var dx := x + mw * 0.36
-		_c.draw_line(Vector2(dx, top + 6 * k), Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
+		var gx := x + (0.17 - 0.5) * mw
+		var cx := x + (0.145 - 0.5) * mw
+		var unit := {}
+		if live:
+			unit = _gen_unit(gas, x, fy, mw, on and alpha >= 1.0, alpha, x * 0.017)
+			dx = unit["dynamo"].x
+			top = unit["top"]
+			gx = unit["inlet"]
+			cx = unit["inlet"]
+		_c.draw_line(Vector2(dx, (unit["dynamo"].y if live else top + 6 * k)), Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
 		if gas:
-			var gx := x + (0.17 - 0.5) * mw
 			_tile_v(pipe, gx - pipe.get_width() * k * 0.5, fy - TILE * CEILING, top + 8 * k, alpha)
 			var vs := valve.get_size() * k
 			_c.draw_texture_rect(valve, Rect2(gx - vs.x * 0.5, (fy - TILE * CEILING + top) * 0.5 - vs.y * 0.5, vs.x, vs.y), false, mod)
 		else:
-			var cx := x + (0.145 - 0.5) * mw
 			_tile_v(chimney, cx - chimney.get_width() * k * 0.5, fy - TILE * CEILING, top + 4 * k, alpha)
 			_furn_at(coal, x - mw * 0.5 - coal.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
 		if on and alpha >= 1.0:
 			_glow(Vector2(x, fy - mh * 0.5), TILE * 2.0, Color(0.3, 0.55, 1.0, 0.16) if gas else Color(1.0, 0.75, 0.3, 0.18))
-		_furn_at(machine, x, fy, alpha, 1, sc)
+		if live:
+			_gen_unit(gas, x, fy, mw, on and alpha >= 1.0, alpha, x * 0.017, true)
+		else:
+			_furn_at(machine, x, fy, alpha, 1, sc)
+
+
+## Генератор из деталей шириной width (пиксели) по центру x: двигатель (на угле — топка с живым
+## огнём, на газе — синий мотор с голубым пламенем в окошке), маховик (у угольного — за правым
+## краем двигателя, у газового — на его валу), ремень к шкиву динамо-машины; маховик и шкив
+## крутятся, пока генератор работает. draw = false — только посчитать места: верх двигателя,
+## куда подходит труба (inlet), и верх динамо (dynamo — туда идёт провод).
+const GEN_FLY := {"coal": 1.0, "gas": 0.85}
+func _gen_unit(gas: bool, x: float, fy: float, width: float, on: bool, alpha: float, seed: float, draw := false) -> Dictionary:
+	var pre := "gas" if gas else "coal"
+	var body := _anim(pre + "_body")
+	var dyn := _anim(pre + "_dynamo")
+	var fly := _anim(pre + "_flywheel")
+	var pul := _anim(pre + "_pulley")
+	# Раскладка в пикселях картинок (128 px/м), потом — масштаб под ширину width.
+	var bw := float(body.get_width())
+	var bh := float(body.get_height())
+	var fr: float = fly.get_width() * 0.5 * float(GEN_FLY[pre])
+	var axle: Vector2      # ось маховика — от левого низа двигателя (y вверх)
+	if gas:
+		var pv: Vector2 = ANIM["gas_body"]["pivot"]
+		axle = Vector2(pv.x, bh - pv.y)
+	else:
+		axle = Vector2(bw, fr + 4.0)
+	var dx0 := maxf(bw, axle.x + fr) + 14.0
+	var total := dx0 + dyn.get_width()
+	var s := width / total            # пикселей экрана на пиксель картинки
+	var left := x - total * s * 0.5
+	var fly_c := Vector2(left + axle.x * s, fy - axle.y * s)
+	var drect := Rect2(left + dx0 * s, fy - dyn.get_height() * s, dyn.get_width() * s, dyn.get_height() * s)
+	var pul_c := drect.get_center()
+	var brect := Rect2(left, fy - bh * s, bw * s, bh * s)
+	var out := {"top": brect.position.y, "inlet": left + float(ANIM[pre + "_body"]["top"]) * s,
+		"dynamo": Vector2(drect.get_center().x, drect.position.y + drect.size.y * 0.1)}
+	if not draw:
+		return out
+	var sc := s * FURN_PX_PER_M / TILE
+	var ang := fmod(_anim_t() * 2.6 + seed, TAU) if on else 0.4
+	var pr := pul.get_width() * 0.5
+	if not gas:
+		_spin(pre + "_flywheel", fly_c, ang, sc * GEN_FLY[pre], alpha)
+	_stove(pre + "_body", brect.get_center().x, fy, sc, on, gas, alpha, seed)
+	if gas:
+		_spin(pre + "_flywheel", fly_c, ang, sc * GEN_FLY[pre], alpha)
+	_soft_ellipse(Vector2(drect.get_center().x, fy - 1.0), drect.size.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+	_c.draw_texture_rect(dyn, drect, false, Color(1, 1, 1, alpha))
+	# Ремень: верхняя и нижняя ветви от обода маховика к шкиву.
+	var belt := _anim(pre + "_belt")
+	for side in [-1.0, 1.0]:
+		var a := fly_c + Vector2(0, side * fr * s * 0.97)
+		var b := pul_c + Vector2(0, side * pr * s * 0.9)
+		var d := b - a
+		_c.draw_set_transform(a, d.angle(), Vector2(d.length() / belt.get_width(), s * 0.8))
+		_c.draw_texture(belt, Vector2(0, -belt.get_height() * 0.5), Color(1, 1, 1, alpha))
+		_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_spin(pre + "_pulley", pul_c, ang * fr / pr, sc, alpha)
+	return out
 
 
 ## Насосная: насос на каждые 3 м, справа бак с водой; от насоса труба в потолок; под потолком —
@@ -1541,7 +1736,15 @@ func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var tx: float = px + it[1] * (ts.x * 0.5 + TILE * 0.15)
 			if tx - ts.x * 0.5 >= b0 and tx + ts.x * 0.5 <= b0 + lay.unit * 3:
 				_c.draw_texture_rect(t, Rect2(tx - ts.x * 0.5, line_y - ts.y * 0.5, ts.x, ts.y), false, mod)
-		_furn_at(pump, x, fy, alpha, 1, sc)
+		if _anim("pump_body") != null:
+			var pr := _anim_rect("pump_body", x, fy, sc * pump.get_width() / _anim("pump_body").get_width())
+			var pk := pr.size.x / _anim("pump_body").get_width()
+			_soft_ellipse(Vector2(x, fy - 1.0), pr.size.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+			_c.draw_texture_rect(_anim("pump_body"), pr, false, Color(1, 1, 1, alpha))
+			var ang := fmod(_anim_t() * 4.0 + x, TAU) if on else 0.0
+			_spin("pump_wheel", _anim_at("pump_body", pr, ANIM["pump_body"]["pivot"]), ang, pk * FURN_PX_PER_M / TILE, alpha)
+		else:
+			_furn_at(pump, x, fy, alpha, 1, sc)
 		_furn_at(tank, x + pw * 0.5 + tw * 0.5 + TILE * 0.05, fy, alpha, 1, sc)
 
 
@@ -1615,7 +1818,18 @@ func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		if on:
 			var asz := air.get_size() * k
 			_c.draw_texture_rect(air, Rect2(x - asz.x * 0.5, top + dh * 0.8, asz.x, asz.y), false, Color(1, 1, 1, 0.85 * alpha))
-		_furn_at(fan, x, fy, alpha, 1, sc)
+		if _anim("vent_housing") != null:
+			# Корпус с прозрачным нутром: за решёткой — тёмная глубина и крутящаяся крыльчатка.
+			var hr := _anim_rect("vent_housing", x, fy, sc * fan.get_width() / _anim("vent_housing").get_width())
+			var hk := hr.size.x / _anim("vent_housing").get_width()
+			var hub := _anim_at("vent_housing", hr, ANIM["vent_housing"]["pivot"])
+			_c.draw_circle(hub, hk * 66.0, Color(0.06, 0.06, 0.07, alpha))
+			var ang := fmod(_anim_t() * 9.0 + x, TAU) if on else 0.3
+			_spin("vent_blades", hub, ang, hk * FURN_PX_PER_M / TILE, alpha)
+			_soft_ellipse(Vector2(x, fy - 1.0), hr.size.x * 0.5, 3.0, Color(0, 0, 0, 0.3 * alpha))
+			_c.draw_texture_rect(_anim("vent_housing"), hr, false, Color(1, 1, 1, alpha))
+		else:
+			_furn_at(fan, x, fy, alpha, 1, sc)
 	# Термометр — на стене возле первой установки (между установками или справа от неё).
 	var a := (xs[0] - r.position.x) / TILE + 0.85 * sc
 	var b: float = minf(a + 0.9, (lay.x + n * 3 * lay.unit - r.position.x) / TILE)
@@ -1634,6 +1848,9 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var lay := _inside(p, r, n * 3.0)
 	var on := _crafting(p)
 	var forge := furniture("forge", "forge_on" if on else "forge_off")
+	var live := _anim("stove_forge") != null
+	if live:
+		forge = _anim("stove_forge")
 	var anvil := furniture("forge", "anvil")
 	var barrel := furniture("forge", "barrel")
 	var ore := furniture("forge", "ore")
@@ -1648,11 +1865,14 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var x0: float = lay.x + i * 3 * lay.unit + (lay.unit * 3 - row) * 0.5
 		var fx := x0 + forge.get_width() * k * 0.5
 		fxs.append(fx)
-		var hood := x0 + forge.get_width() * k * 0.657
+		var hood := x0 + (float(ANIM["stove_forge"]["top"]) if live else forge.get_width() * 0.657) * k
 		_tile_v(chimney, hood - chimney.get_width() * k * 0.5, fy - TILE * CEILING, fy - forge.get_height() * k + 3 * k, alpha)
 		if on and alpha >= 1.0:
 			_glow(Vector2(hood, fy - TILE * 0.5 * sc), TILE * 2.0, Color(1.0, 0.55, 0.2, 0.22))
-		_furn_at(forge, fx, fy, alpha, 1, sc)
+		if live:
+			_stove("stove_forge", fx, fy, sc, on and alpha >= 1.0, false, alpha, fx * 0.011)
+		else:
+			_furn_at(forge, fx, fy, alpha, 1, sc)
 		var ax := x0 + forge.get_width() * k + gap + anvil.get_width() * k * 0.5
 		_furn_at(anvil, ax, fy, alpha, 1, sc)
 		_furn_at(barrel, ax + anvil.get_width() * k * 0.5 + gap + barrel.get_width() * k * 0.5, fy, alpha, 1, sc)
