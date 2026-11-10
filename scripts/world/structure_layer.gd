@@ -1204,8 +1204,11 @@ func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:
 ## Мебель — только внутри комнаты: между лестницей (или боковой стеной) и правой стеной, с
 ## отступом от стен (задняя стена уже пола). Место делится на units частей (метров по задумке);
 ## если не хватает — части уже. Возвращает x — левый край, unit — ширина части в px.
-func _inside(p: Project, r: Rect2, units: float) -> Dictionary:
-	var lo := r.position.x + TILE * (1.1 if p.ladder else RACK_INSET)
+## Машины и столы (блоки по 3 м) стоят от стены до стены одинаково, есть у левой стены лестница
+## или нет (её полметра у стены они и так перекрывают) — иначе в малой комнате с лестницей им
+## оставалось полтора метра и всё мельчало.
+func _inside(p: Project, r: Rect2, units: float, machines := false) -> Dictionary:
+	var lo := r.position.x + TILE * (1.1 if p.ladder and not machines else RACK_INSET)
 	var hi := r.end.x - TILE * RACK_INSET
 	var unit := minf(TILE, (hi - lo) / units)
 	return {"x": (lo + hi - unit * units) * 0.5, "unit": unit}
@@ -1589,7 +1592,7 @@ const BOILER_PORTS := [0.39, 0.59]
 func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.stoves(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var done := p.phase == Project.Phase.DONE
 	var gas := p.gas_boiler and done
 	var kind := "gas" if gas else ("brick" if p.brick_stoves and done else "stone")
@@ -1659,6 +1662,32 @@ func _block_centers(lay: Dictionary, n: int, shift := 0.0) -> Array[float]:
 	return xs
 
 
+## Ширина блока обычной комнаты (6 м, м): по ней — размер машин во всех комнатах.
+const BLOCK_REF := 2.65
+## Ряд предметов блока одного размера в комнате любой ширины: масштаб — как в блоке обычной
+## комнаты; в узком блоке (малая комната) сначала убираем необязательные (opt — их номера по
+## порядку), и только если и так не влезает — мельче. Возвращает [масштаб, оставленные (null —
+## убран)].
+func _row_fit(items: Array, opt: Array, width: float) -> Array:
+	var sc := _group_fit(items, TILE * BLOCK_REF)
+	var kept := items.duplicate()
+	for i in opt:
+		if _row_w(kept) * sc <= width:
+			break
+		kept[i] = null
+	sc = minf(sc, width / _row_w(kept))
+	return [sc, kept]
+
+
+## Ширина ряда (px при обычном размере): предметы и зазоры по 0,1 м; null — пропуск.
+func _row_w(items: Array) -> float:
+	var w := 0.0
+	for t in items:
+		if t != null:
+			w += t.get_width() / FURN_PX_PER_M * TILE + TILE * 0.1
+	return w
+
+
 ## Масштаб группы предметов в ряд (с зазорами), чтобы она поместилась в ширину width (px).
 func _group_fit(items: Array, width: float) -> float:
 	var w := TILE * 0.1 * items.size()
@@ -1680,7 +1709,7 @@ func _crafting(p: Project) -> bool:
 func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := _crafting(p)
 	var kiln := furniture("kiln", "kiln_on" if on else "kiln_off")
 	var live := _anim("stove_kiln") != null
@@ -1689,14 +1718,20 @@ func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var chimney := furniture("hearth", "chimney")
 	var clay := furniture("kiln", "clay")
 	var bricks := furniture("kiln", "bricks")
-	# Глина, печь и кирпичи в ряд; не помещаются в блок — всё мельче.
-	var sc := _group_fit([clay, kiln, bricks], lay.unit * 3)
+	# Глина, печь и кирпичи в ряд — печь одного размера в любой обжиговой; в малой нет глины.
+	var fit := _row_fit([clay, kiln, bricks], [0], lay.unit * 3)
+	var sc: float = fit[0]
+	if fit[1][0] == null:
+		clay = null
 	var k := TILE / FURN_PX_PER_M * sc
 	var xs := _block_centers(lay, n, 0.0)
 	var kw := kiln.get_width() * k
+	var cw := clay.get_width() * k + TILE * 0.03 if clay != null else 0.0
+	var shift := (cw - bricks.get_width() * k - TILE * 0.03) * 0.5
+	for j in xs.size():
+		xs[j] += shift
 	_tools_between(p, r, lay, xs, furniture("kiln", "tools"), fy, alpha)
 	for x in xs:
-		x += (clay.get_width() - bricks.get_width()) * k * 0.5
 		_tile_v(chimney, x - chimney.get_width() * k * 0.5, fy - TILE * CEILING, fy - kiln.get_height() * k + 4 * k, alpha)
 		if on and alpha >= 1.0:
 			_glow(Vector2(x, fy - TILE * 0.3), TILE * 2.0, Color(1.0, 0.6, 0.25, 0.22))
@@ -1704,7 +1739,8 @@ func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			_stove("stove_kiln", x, fy, sc, on and alpha >= 1.0, false, alpha, x * 0.013)
 		else:
 			_furn_at(kiln, x, fy, alpha, 1, sc)
-		_furn_at(clay, x - kw * 0.5 - clay.get_width() * k * 0.5 - TILE * 0.03, fy, alpha, 1, sc)
+		if clay != null:
+			_furn_at(clay, x - kw * 0.5 - clay.get_width() * k * 0.5 - TILE * 0.03, fy, alpha, 1, sc)
 		_furn_at(bricks, x + kw * 0.5 + bricks.get_width() * k * 0.5 + TILE * 0.03, fy, alpha, 1, sc)
 
 
@@ -1715,7 +1751,7 @@ func _draw_kiln_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	# Дизельный — пока как газовый (двигатель с топливной трубой, без угля), своей картинки нет.
 	var gas := p.purpose == RoomType.GAS_GEN or p.purpose == RoomType.DIESEL_GEN
 	var on := p.burning
@@ -1723,10 +1759,14 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var mod := Color(1, 1, 1, alpha)
 	var machine := furniture("generator", ("gas" if gas else "coal") + ("_on" if on else "_off"))
 	var coal := furniture("hearth", "coal")
-	var sc := _group_fit([machine] if gas else [coal, machine], lay.unit * 3)
+	# Генератор одного размера в любой генераторной; в малой — без кучи угля рядом.
+	var fit := _row_fit([machine] if gas else [coal, machine], [] if gas else [0], lay.unit * 3)
+	var sc: float = fit[0]
+	if gas or fit[1][0] == null:
+		coal = null
 	var mw := machine.get_width() * k * sc
 	var mh := machine.get_height() * k * sc
-	var xs := _block_centers(lay, n, 0.0 if gas else coal.get_width() / FURN_PX_PER_M * sc * 0.5)
+	var xs := _block_centers(lay, n, 0.0 if coal == null else coal.get_width() / FURN_PX_PER_M * sc * 0.5)
 	# Гирлянда под потолком от левого края до щитка справа.
 	var panel := furniture("generator", "panel_on" if on else "panel_off")
 	var ps := panel.get_size() * k
@@ -1749,7 +1789,7 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		var cx := x + (0.145 - 0.5) * mw
 		var unit := {}
 		if diesel:
-			unit = _diesel_unit(x, fy, lay.unit * 3 * 0.92, on and alpha >= 1.0, alpha, x * 0.017)
+			unit = _diesel_unit(x, fy, lay.unit * 3, on and alpha >= 1.0, alpha, x * 0.017)
 			dx = unit["dynamo"].x
 			top = unit["top"]
 			gx = unit["inlet"]
@@ -1757,7 +1797,7 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			var es: float = 0.13 / (chimney.get_width() / FURN_PX_PER_M) * unit["scale"]
 			_tile_v(chimney, gx - chimney.get_width() * k * es * 0.5, fy - TILE * CEILING, unit["inlet_y"], alpha, es)
 			_c.draw_line(unit["dynamo"], Vector2(dx, line_y + 4 * k), cable, maxf(2.0, 4 * k))
-			_diesel_unit(x, fy, lay.unit * 3 * 0.92, on and alpha >= 1.0, alpha, x * 0.017, true)
+			_diesel_unit(x, fy, lay.unit * 3, on and alpha >= 1.0, alpha, x * 0.017, true)
 			continue
 		if live:
 			unit = _gen_unit(gas, x, fy, mw, on and alpha >= 1.0, alpha, x * 0.017)
@@ -1775,7 +1815,8 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		else:
 			var cs := us * (0.13 / (chimney.get_width() / FURN_PX_PER_M) if live else 1.0)
 			_tile_v(chimney, cx - chimney.get_width() * k * cs * 0.5, fy - TILE * CEILING, top + 4 * k * us, alpha, cs)
-			_furn_at(coal, x - mw * 0.5 - coal.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
+			if coal != null:
+				_furn_at(coal, x - mw * 0.5 - coal.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
 		if on and alpha >= 1.0:
 			_glow(Vector2(x, fy - mh * 0.5), TILE * 2.0, Color(0.3, 0.55, 1.0, 0.16) if gas else Color(1.0, 0.75, 0.3, 0.18))
 		if live:
@@ -1796,11 +1837,17 @@ func _diesel_unit(x: float, fy: float, width: float, on: bool, alpha: float, see
 	var shaft := furniture("diesel", "shaft")
 	var fly_m := 0.6                       # маховик, м (на листе 0.82 — велик для конца дизеля)
 	var gap := 0.08
-	var total_m := can.get_width() / FURN_PX_PER_M + gap + eng.get_width() / FURN_PX_PER_M + fly_m * 0.35 + 0.18 + gen.get_width() / FURN_PX_PER_M
-	var sc := minf(1.0, width / (total_m * TILE))
+	var can_m := can.get_width() / FURN_PX_PER_M + gap
+	var total_m := can_m + eng.get_width() / FURN_PX_PER_M + fly_m * 0.35 + 0.18 + gen.get_width() / FURN_PX_PER_M
+	# Размер — как в блоке обычной комнаты; в малой — без канистры, и только потом мельче.
+	var sc := minf(1.0, BLOCK_REF * 0.92 / total_m)
+	var with_can := total_m * sc * TILE <= width * 0.96
+	if not with_can:
+		total_m -= can_m
+		sc = minf(sc, width * 0.96 / (total_m * TILE))
 	var m := TILE * sc                     # пикселей на метр
 	var x0 := x - total_m * m * 0.5
-	var cw := can.get_width() / FURN_PX_PER_M * m
+	var cw := (can.get_width() / FURN_PX_PER_M * m) if with_can else -gap * m
 	var ew := eng.get_width() / FURN_PX_PER_M * m
 	var eh := eng.get_height() / FURN_PX_PER_M * m
 	var ex := x0 + cw + gap * m
@@ -1813,7 +1860,8 @@ func _diesel_unit(x: float, fy: float, width: float, on: bool, alpha: float, see
 		"dynamo": Vector2(gx + gw * 0.55, fy - gh + 3.0)}
 	if not draw:
 		return out
-	_furn_at(can, x0 + cw * 0.5, fy, alpha, 1, sc)
+	if with_can:
+		_furn_at(can, x0 + cw * 0.5, fy, alpha, 1, sc)
 	# Вал — от маховика к порту генератора (на высоте оси).
 	var sh := shaft.get_size()
 	var from := hub
@@ -1918,11 +1966,13 @@ static var _pj_state := {}
 func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := p.phase == Project.Phase.DONE and not p.paused and p.blocked.is_empty() and colony.powered()
 	# Рядом с качалкой — смотровой бачок и бочка нефти (если есть картинки), качалка — левее.
 	var extras := furniture("oil_pump", "barrel") != null
-	var s := minf(lay.unit * 3.0 * (0.7 if extras else 0.96) / PJ_WIDTH, TILE * (CEILING - 0.15) / PJ_HEIGHT)
+	# Качалка одного размера в любой комнате (как в блоке обычной); бочка и бачок — рядом, если
+	# помещаются в полный размер.
+	var s := minf(TILE * BLOCK_REF * (0.7 if extras else 0.96) / PJ_WIDTH, TILE * (CEILING - 0.15) / PJ_HEIGHT)
 	if _pj_rod < 0.0:
 		_pj_rod = (PJ_O + PJ_REAR).distance_to(PJ_A + Vector2(0, PJ_CRANK_PIN.distance_to(PJ_CRANK_O) * PJ_CRANK_SCALE))
 	# Угол кривошипа и балансира (балансир — из длины шатуна, Ньютоном от прошлого угла).
@@ -1958,21 +2008,18 @@ func _draw_oil_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		# Начало координат сборки (левый верх станины) — так, чтобы вся качалка была по центру
 		# блока, а станина стояла на полу.
 		var org := Vector2(cx - PJ_WIDTH * 0.5 * s, fy - PJ_FLOOR * s)
-		if extras:
+		var kk := TILE / FURN_PX_PER_M
+		var barrel := furniture("oil_pump", "barrel")
+		var sight := furniture("oil_pump", "sight")
+		var bw: float = barrel.get_width() * kk if extras else 0.0
+		var sw: float = sight.get_width() * kk if extras else 0.0
+		var free: float = lay.unit * 3 - TILE * 0.13 - PJ_WIDTH * s
+		var with_sight := extras and free >= bw + sw + TILE * 0.06
+		if extras and free >= bw:
+			# Бочка (и бачок, если влезает) — правее качалки, не заходя под её голову.
 			org.x = cx - lay.unit * 1.5 + TILE * 0.05
-			var kk := TILE / FURN_PX_PER_M
-			var barrel := furniture("oil_pump", "barrel")
-			var sight := furniture("oil_pump", "sight")
-			# Бочка и бачок — в месте правее качалки (не заходя под её голову); не влезают —
-			# меньше, а в совсем узкой комнате бачка нет, только бочка.
+			var es := 1.0
 			var room_x: float = cx + lay.unit * 1.5 - TILE * 0.05
-			var free: float = room_x - (org.x + PJ_WIDTH * s) - TILE * 0.03
-			var bw: float = barrel.get_width() * kk
-			var sw: float = sight.get_width() * kk
-			var es := minf(1.0, free / (bw + sw + TILE * 0.06))
-			var with_sight := es >= 0.75
-			if not with_sight:
-				es = minf(1.0, free / bw)
 			var bx: float = room_x - bw * es * 0.5
 			var sx: float = bx - bw * es * 0.5 - sw * es * 0.5 - TILE * 0.06 * es
 			# Труба от устья к бачку (или к бочке) у пола.
@@ -2057,10 +2104,10 @@ func _belt(t: Texture2D, a: Vector2, ra: float, b: Vector2, rb: float, thick: fl
 func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var k := TILE / FURN_PX_PER_M
 	var tank := furniture("oil_storage", "tank")
-	var sc := minf(1.0, lay.unit * 3 * 0.62 / (tank.get_width() * k))
+	var sc := minf(1.0, TILE * BLOCK_REF * 0.62 / (tank.get_width() * k))
 	var xs := _block_centers(lay, n, 0.0)
 	var limit := float(colony.room_limit(p, "oil"))
 	var fill := clampf(colony.held_in(p, "oil") / maxf(1.0, limit), 0.0, 1.0)
@@ -2096,16 +2143,34 @@ func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
 	# На стене: манометр со стрелкой (заполнение) и фонарь — между баками или сбоку.
 	var gauge := furniture("oil_storage", "gauge")
 	var gs := gauge.get_size() * k
-	var gx: float = (xs[0] + xs[1]) * 0.5 if n > 1 else xs[0] + tw * 0.5 + TILE * 0.35
-	gx = _wall_x(p, r, minf(gx, right - TILE * 0.3), gs.x)
-	var grect := Rect2(gx - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
+	var grect: Rect2
+	var tank_side: Array[float] = []    # бок бака занят (м от левого края) — для фонаря
+	var tm := (xs[0] - tw * 0.5 - r.position.x) / TILE
+	while tm <= (xs[0] + tw * 0.5 - r.position.x) / TILE:
+		tank_side.append(tm)
+		tm += 0.2
+	var gx: float = (xs[0] + xs[1]) * 0.5 if n > 1 else NAN
+	if n > 1:
+		gx = _wall_x(p, r, minf(gx, right - TILE * 0.3), gs.x)
+		grect = Rect2(gx - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
+	else:
+		# Один бак: на стене рядом места нет (лестницы) — манометр на самом баке, на его
+		# правом плече, поменьше.
+		var gsz := gs * 0.75
+		grect = Rect2(Vector2(xs[0] + tw * 0.5 - gsz.x * 0.85, fy - th * 0.72 - gsz.y * 0.5), gsz)
+		gs = gsz
 	_wall_items.append(Vector3(grect.position.x, grect.end.x, grect.position.y))
 	_c.draw_texture_rect(gauge, grect, false, Color(1, 1, 1, alpha))
 	_needle(furniture("oil_storage", "needle"), grect.position + Vector2(gs.x * 0.5, gs.x * 0.5), gs.x * 0.36, fill, flowing, alpha)
 	var lamp := furniture("oil_storage", "lamp")
 	# При двух баках между ними манометр — фонарь слева от первого.
 	var lx: float = (xs[n - 2] + xs[n - 1]) * 0.5 if n > 2 else xs[0] - tw * 0.5 - TILE * 0.3
-	lx = _wall_x(p, r, maxf(lx, lay.x + TILE * 0.2), lamp.get_width() * k)
+	# Места нет (малая комната с лестницами) — без фонаря.
+	if n > 1:
+		tank_side.clear()
+	lx = _wall_x(p, r, maxf(lx, lay.x + TILE * 0.2), lamp.get_width() * k, tank_side, n == 1)
+	if is_nan(lx):
+		return
 	_furn_hang(lamp, lx, fy, alpha)
 	if alpha >= 1.0:
 		_glow(Vector2(lx, fy - TILE * HANG_TOP + lamp.get_height() * k * 0.6), TILE * 1.4, Color(1.0, 0.8, 0.45, 0.16))
@@ -2118,7 +2183,7 @@ const REFINERY_PIPE := 0.7
 func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := _crafting(p) and alpha >= 1.0
 	var k := TILE / FURN_PX_PER_M
 	var col := furniture("refinery", "column")
@@ -2129,8 +2194,10 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 	var gauge := furniture("refinery", "gauge")
 	var t := _anim_t()
 	for i in n:
-		var items: Array = [col, cond, can]
-		var sc := _group_fit(items, lay.unit * 3)
+		# Колонна и змеевик — одного размера в любом заводе; канистра — если помещается.
+		var fit := _row_fit([col, cond, can], [2], lay.unit * 3)
+		var sc: float = fit[0]
+		var items: Array = fit[1].filter(func(it) -> bool: return it != null)
 		var gap := TILE * 0.1 * sc
 		var x: float = lay.x + i * 3 * lay.unit
 		var w := 0.0
@@ -2145,7 +2212,7 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 		# Труба за машинами — от колонны через патрубки змеевика к горловине канистры, на высоте
 		# патрубков (REFINERY_PIPE м над полом при полном размере).
 		var py := fy - TILE * REFINERY_PIPE * sc
-		_tile_h(pipe, cx[0], cx[2], py - pipe.get_height() * k * sc * 0.5, alpha, sc)
+		_tile_h(pipe, cx[0], cx[-1], py - pipe.get_height() * k * sc * 0.5, alpha, sc)
 		for j in items.size():
 			_furn_at(items[j], cx[j], fy, alpha, 1, sc)
 		# Колонна: огоньки в окошках «кипят»; змеевик светится.
@@ -2158,7 +2225,10 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 			var cc := Vector2(cx[1], fy - cond.get_height() * k * sc * 0.48)
 			_glow(cc, TILE * 0.75 * sc, Color(0.35, 1.0, 0.85, 0.22 + 0.1 * sin(t * 3.0 + i)))
 		# Вентили на трубе — между колонной и змеевиком и между змеевиком и канистрой.
-		for v in [0.5 * (cx[0] + cx[1]), 0.5 * (cx[1] + cx[2])]:
+		var vxs := [0.5 * (cx[0] + cx[1])]
+		if cx.size() > 2:
+			vxs.append(0.5 * (cx[1] + cx[2]))
+		for v in vxs:
 			_spin_t(valve, valve.get_size() * 0.5, Vector2(v, py), fmod(t * 1.2 + i, TAU) if on else 0.4, sc, alpha)
 		# Манометр на стене над змеевиком.
 		var gs := gauge.get_size() * k
@@ -2172,7 +2242,7 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_enrichment(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := _crafting(p) and alpha >= 1.0
 	var k := TILE / FURN_PX_PER_M
 	var cen := furniture("enrichment", "centrifuge")
@@ -2184,8 +2254,10 @@ func _draw_enrichment(p: Project, r: Rect2, alpha: float) -> void:
 	var t := _anim_t()
 	for i in n:
 		var mid := furniture("enrichment", "panel" if i % 2 == 0 else "cabinet")
-		var items: Array = [cen, mid, can]
-		var sc := _group_fit(items, lay.unit * 3)
+		# Центрифуга одного размера в любой обогатительной; канистра и пульт — если помещаются.
+		var fit := _row_fit([cen, mid, can], [2, 1], lay.unit * 3)
+		var sc: float = fit[0]
+		var items: Array = fit[1].filter(func(it) -> bool: return it != null)
 		var gap := TILE * 0.12 * sc
 		var x: float = lay.x + i * 3 * lay.unit
 		var w := 0.0
@@ -2220,19 +2292,19 @@ func _draw_enrichment(p: Project, r: Rect2, alpha: float) -> void:
 				var bx := win.position.x + u * win.size.x
 				_c.draw_rect(Rect2(bx - bw * 0.5, win.position.y + 2, bw, win.size.y - 4), Color(0.85, 1.0, 0.6, 0.28 * sin(u * PI)))
 			_glow(win.get_center(), win.size.x * 1.2, Color(0.45, 1.0, 0.35, 0.18 + 0.08 * sin(t * 4.0 + i)))
-		_furn_at(mid, cx[1], fy, alpha, 1, sc)
-		_furn_at(can, cx[2], fy, alpha, 1, sc)
-		if on and i % 2 == 0:
+		for j in range(1, items.size()):
+			_furn_at(items[j], cx[j], fy, alpha, 1, sc)
+		if on and i % 2 == 0 and items.size() > 1 and items[1] == mid:
 			# Пульт: экран-радар мигает.
 			var mh: float = mid.get_height() * k * sc
 			_glow(Vector2(cx[1] - mid.get_width() * k * sc * 0.12, fy - mh * 0.6), TILE * 0.3 * sc, Color(0.4, 1.0, 0.4, 0.3 + 0.2 * sin(t * 6.0)))
-		_furn_hang(sign, _wall_x(p, r, cx[1], sign.get_width() * k), fy, alpha)
+		_furn_hang(sign, _wall_x(p, r, cx[mini(1, cx.size() - 1)] if cx.size() > 1 else cx[0] + cw * 0.7, sign.get_width() * k), fy, alpha)
 
 
 func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := p.phase == Project.Phase.DONE and not p.paused
 	var pump := furniture("pump", "pump_on" if on else "pump_off")
 	var tank := furniture("pump", "tank")
@@ -2282,16 +2354,19 @@ func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var k := TILE / FURN_PX_PER_M
 	var mod := Color(1, 1, 1, alpha)
 	var tank := furniture("degas", "tank_%d" % clampi(n, 1, 3))
 	var comp := furniture("degas", "compressor")
 	var span: float = n * 3 * lay.unit
-	var total := (tank.get_width() + comp.get_width()) * k + TILE * 0.1
-	var sc := minf(1.0, (span - TILE * 0.2) / total)
-	var x0: float = lay.x + (span - total * sc) * 0.5
-	var tw := tank.get_width() * k * sc
+	# Компрессор и трубы одного размера в любой комнате; бак (он и так свой на каждую ширину) —
+	# по оставшемуся месту.
+	var cw := comp.get_width() * k
+	var tw := minf(tank.get_width() * k, span - TILE * 0.2 - cw)
+	var sc := tw / (tank.get_width() * k)
+	var total := tw + TILE * 0.1 + cw
+	var x0: float = lay.x + (span - total) * 0.5
 	var tank_x := x0 + tw * 0.5
 	# Газовая труба под потолком, на концах раструбы (правый — зеркально).
 	var line_y := fy - TILE * 2.15
@@ -2312,7 +2387,7 @@ func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 		if absf(gx - tank_x) > TILE * 0.4:
 			_c.draw_texture_rect(gauge, Rect2(gx - gs.x * 0.5, line_y - gs.y * 0.3, gs.x, gs.y), false, mod)
 	_furn_at(tank, tank_x, fy, alpha, 1, sc)
-	_furn_at(comp, x0 + tw + TILE * 0.1 * sc + comp.get_width() * k * sc * 0.5, fy, alpha, 1, sc)
+	_furn_at(comp, x0 + tw + TILE * 0.1 + cw * 0.5, fy, alpha, 1)
 
 
 ## Вентиляция: установка на каждые 3 м; под потолком — воздуховод во всю комнату, над каждой
@@ -2321,7 +2396,7 @@ func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := p.phase == Project.Phase.DONE and not p.paused and colony.powered()
 	var fan := furniture("vent", "fan_on" if on else "fan_off")
 	var sc := _fit(fan, lay.unit * 3)
@@ -2373,7 +2448,7 @@ func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.blocks(p)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var on := _crafting(p)
 	var forge := furniture("forge", "forge_on" if on else "forge_off")
 	var live := _anim("stove_forge") != null
@@ -2384,10 +2459,16 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var ore := furniture("forge", "ore")
 	var ingots := furniture("forge", "ingots")
 	var chimney := furniture("hearth", "chimney")
-	var sc := _group_fit([forge, anvil, barrel], lay.unit * 3)
+	# Горн и наковальня — всегда; бочка — если помещается (в малой кузнице её нет).
+	var fit := _row_fit([forge, anvil, barrel], [2], lay.unit * 3)
+	var sc: float = fit[0]
+	if fit[1][2] == null:
+		barrel = null
 	var k := TILE / FURN_PX_PER_M * sc
 	var gap := TILE * 0.08 * sc
-	var row := (forge.get_width() + anvil.get_width() + barrel.get_width()) * k + 2 * gap
+	var row := (forge.get_width() + anvil.get_width()) * k + gap
+	if barrel != null:
+		row += barrel.get_width() * k + gap
 	var fxs: Array[float] = []
 	var hoods: Array[float] = []
 	for i in n:
@@ -2405,7 +2486,8 @@ func _draw_forge_furniture(p: Project, r: Rect2, alpha: float) -> void:
 			_furn_at(forge, fx, fy, alpha, 1, sc)
 		var ax := x0 + forge.get_width() * k + gap + anvil.get_width() * k * 0.5
 		_furn_at(anvil, ax, fy, alpha, 1, sc)
-		_furn_at(barrel, ax + anvil.get_width() * k * 0.5 + gap + barrel.get_width() * k * 0.5, fy, alpha, 1, sc)
+		if barrel != null:
+			_furn_at(barrel, ax + anvil.get_width() * k * 0.5 + gap + barrel.get_width() * k * 0.5, fy, alpha, 1, sc)
 		_furn_at(ore, x0 + ore.get_width() * k * 0.45, fy + TILE * 0.04, alpha, 1, sc)
 		_furn_at(ingots, x0 + forge.get_width() * k * 0.8, fy + TILE * 0.04, alpha, 1, sc)
 	# Инструменты — мимо труб (они над колпаками горнов, а не над серединой горна).
@@ -2418,7 +2500,7 @@ const DINING_TABLEWARE := ["bowl", "jug_blue", "mug_red", "fruit", "mug_blue", "
 func _draw_dining_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := maxi(1, p.rect.size.x / 3)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var table := furniture("dining", "table")
 	var k := TILE / FURN_PX_PER_M
 	var first := int(WorldGen.hash01(p.id, 0, 93) * DINING_TABLEWARE.size())
@@ -2442,7 +2524,7 @@ const LAB_SETS := [["tubes", "still"], ["microscope", "crystal", "rock", "gold"]
 func _draw_lab_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := maxi(1, p.rect.size.x / 3)
-	var lay := _inside(p, r, n * 3.0)
+	var lay := _inside(p, r, n * 3.0, true)
 	var desk := furniture("lab", "desk")
 	var k := TILE / FURN_PX_PER_M
 	for i in n:
