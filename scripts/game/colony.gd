@@ -40,11 +40,14 @@ const NOTABLE := ["coal", "iron_ore", "copper_ore", "silver_ore", "gold_ore", "u
 # устают (раньше во сне голод рос медленнее; теперь он всегда чуть медленнее — еды уходит столько же).
 const SATIETY_DECAY := 100.0 / 600.0 * 0.85
 ## Раны и истощение заживают за 40 минут (с медициной — вдвое быстрее); пока гаврик
-## отогревается в тепле — в WARM_HEAL раз быстрее.
+## отогревается в тепле — быстрее, и чем теплее, тем быстрее (warm_heal).
 const HEAL_TIME := 2400.0
-## Во сколько раз быстрее заживает, пока греется (было 3 — с 60% до 90% грелись 4 минуты, на
-## Нептуне гаврики больше грелись, чем работали).
-const WARM_HEAL := 15.0
+## Пока греется, заживает в WARM_HEAL_MIN раз быстрее там, где еле тепло, и ещё на
+## WARM_HEAL_PER_DEG за каждый градус сверх его предела холода — до WARM_HEAL_MAX
+## (у очага, +20 °C сверх предела, — около ×15; в жарко натопленной комнате — до ×30).
+const WARM_HEAL_MIN := 5.0
+const WARM_HEAL_PER_DEG := 0.5
+const WARM_HEAL_MAX := 30.0
 ## Ниже этого здоровья гаврик, которому холодно (или жарко), бросает дела и идёт греться.
 const WARM_HEALTH := 60.0
 ## Греется, пока здоровье не станет таким (или не пройдёт WARM_MAX секунд).
@@ -4995,7 +4998,7 @@ func _life_tick(dt: float, offline: bool) -> void:
 			u.starving_warned = false
 		u.energy = 100.0
 		var heal := 100.0 / HEAL_TIME \
-			* (WARM_HEAL if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
+			* (warm_heal(u) if u.task == Unit.Task.WARM and u.state == Unit.State.WORK else 1.0)
 		u.health = minf(100.0, u.health + dt * heal)
 		if offline:
 			# Оффлайн гаврики сами едят и спят по расписанию.
@@ -6021,6 +6024,14 @@ func on_flooded(p: Project, _c: Vector2i) -> void:
 func comfortable(u: Unit, c: Vector2i) -> bool:
 	var t := elements.temperature(c)
 	return t >= cold_limit(u) and t <= elements.heat_limit(u)
+
+
+## Во сколько раз быстрее заживает, пока греется здесь: чем теплее сверх его предела холода,
+## тем быстрее (перегретый — чем прохладнее ниже предела жары).
+func warm_heal(u: Unit) -> float:
+	var t := elements.temperature(u.cell())
+	var margin := (elements.heat_limit(u) - t) if u.too_hot else (t - cold_limit(u))
+	return clampf(WARM_HEAL_MIN + maxf(0.0, margin) * WARM_HEAL_PER_DEG, WARM_HEAL_MIN, WARM_HEAL_MAX)
 
 
 ## Гаврик мёрзнет (или перегрелся) и уже заметно ослаб — пора в тепло.

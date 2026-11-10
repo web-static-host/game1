@@ -772,6 +772,18 @@ func test_needs_realtime() -> void:
 	colony.projects.erase(hearth)
 	colony.elements._heat_src = null
 	colony._drop(u)
+	# Чем теплее, тем быстрее греется: еле тепло — медленно, у жаркого огня — до предела.
+	var here := u.cell()
+	var lim := Colony.cold_limit(u)
+	u.too_hot = false
+	colony.elements._temp_memo[here] = lim + 2.0
+	var slow := colony.warm_heal(u)
+	colony.elements._temp_memo[here] = lim + 20.0
+	var mid := colony.warm_heal(u)
+	colony.elements._temp_memo[here] = lim + 200.0
+	var top := colony.warm_heal(u)
+	check(slow < mid and mid < top and top == Colony.WARM_HEAL_MAX and slow >= Colony.WARM_HEAL_MIN,
+		"чем теплее, тем быстрее греется (×%.1f, ×%.1f, ×%.1f)" % [slow, mid, top])
 	# Мёрзнущий с ношей в руках её доносит (бросает, только если совсем ослаб).
 	colony.elements._temp_memo[u.cell()] = -30.0
 	u.health = Colony.WARM_HEALTH - 5.0
