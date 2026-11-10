@@ -343,6 +343,10 @@ func _draw_done(p: Project) -> void:
 		# Космодром — открытая площадка, не здание: без стен (стол и пульты — в _draw_launchpad).
 		if not (p.purpose == RoomType.LAUNCHPAD and p.phase == Project.Phase.DONE and furniture("cosmodrome", "table") != null):
 			_draw_room_shell(p, r)
+		_ceil.clear()
+		_rails.clear()
+		_wall_items.clear()
+		_room_top = r.position.y
 		if p.phase == Project.Phase.EQUIP:
 			var w := RoomType.job_work(p)
 			var t := clampf(p.equip_done / w, 0.0, 1.0) if p.equip_paid else 0.0
@@ -359,6 +363,9 @@ func _draw_done(p: Project) -> void:
 			_draw_furniture(p, r, p.purpose, 1.0)
 			if p.purpose == RoomType.NONE and p.phase == Project.Phase.DONE:
 				_draw_question(r)
+		_room_top = -INF
+		if not (p.purpose == RoomType.LAUNCHPAD and p.phase == Project.Phase.DONE and furniture("cosmodrome", "table") != null):
+			_draw_room_lamps(p, r)
 	elif p.kind == Project.Kind.LIFT:
 		_draw_lift(p, r)
 	elif p.kind != Project.Kind.DRILL and p.kind != Project.Kind.PROBE:
@@ -767,36 +774,107 @@ func _draw_room_shell(p: Project, r: Rect2) -> void:
 		_ladder(r.position.x + TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
 	if colony.edge_ladder(p, 1):
 		_ladder(r.end.x - TILE * 0.5, r.position.y + 5, r.end.y - 6, 1.0, RoomType.furnish_material(p))
-	# Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет. Не посередине
-	# блока (там у машин трубы и дымоходы в потолок, верх арки телепорта — лампа пряталась за
-	# ними) и не на лестнице у стены.
-	# (У корабля свои светильники под потолком.)
-	if colony.research.has("electricity") and colony.is_underground(p) and p.purpose != RoomType.SHIP:
-		var n := RoomType.blocks(p)
-		var ladders: Array[float] = []
-		if p.ladder or colony.edge_ladder(p, -1):
-			ladders.append(r.position.x + TILE * 0.5)
-		if colony.edge_ladder(p, 1):
-			ladders.append(r.end.x - TILE * 0.5)
-		var blk := r.size.x / n
-		for i in n:
-			var lx := r.position.x + blk * (i + 0.5)
-			for off in [0.25, -0.25, -0.15, 0.15]:
-				var ok := true
-				for lad in ladders:
-					if absf(lx + blk * off - lad) < TILE * 0.5:
-						ok = false
-				if ok:
-					lx += blk * off
-					break
-			var lamp := Vector2(lx, r.position.y + 10)
-			_c.draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
-			if p.lit:
-				_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
-				_c.draw_circle(lamp + Vector2(0, 4), 5, LAMP)
-				_c.draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
-			else:
-				_c.draw_circle(lamp + Vector2(0, 4), 5, Color(0.35, 0.35, 0.38))
+
+
+## Что мебель комнаты тянет к потолку (дымоходы, трубы, короба, арка телепорта) — отрезки по x
+## (пиксели); и брусья под потолком (воздуховод, таль) — Rect2: x, ширина, низ (y). Собирается,
+## пока рисуется мебель комнаты, — по нему лампы ищут свободное место.
+var _ceil: Array[Vector2] = []
+var _rails: Array[Rect2] = []
+## Настенные предметы комнаты: x0, x1, верх (y) — лампа под брусом на них не садится.
+var _wall_items: Array[Vector3] = []
+var _room_top := -INF
+
+
+## Лампочки — по одной на каждые 3 м; горят, когда в комнате включён свет. Рисуются после мебели:
+## не на дымоходе или трубе в потолок, не на лестнице у стены; под воздуховодом или талью — висят
+## под ними. У корабля свои светильники под потолком.
+func _draw_room_lamps(p: Project, r: Rect2) -> void:
+	if not colony.research.has("electricity") or not colony.is_underground(p) or p.purpose == RoomType.SHIP:
+		return
+	var n := RoomType.blocks(p)
+	var ladders: Array[Vector2] = []
+	if p.ladder or colony.edge_ladder(p, -1):
+		ladders.append(Vector2(r.position.x, r.position.x + TILE * 0.8))
+	if colony.edge_ladder(p, 1):
+		ladders.append(Vector2(r.end.x - TILE * 0.8, r.end.x))
+	var busy: Array[Vector2] = _ceil.duplicate()
+	busy.append_array(ladders)
+	# Места ламп зависят только от раскладки мебели — считаем раз на раскладку.
+	var key := hash([r, n, busy, _rails, _wall_items])
+	var spots: Array = _lamp_cache.get(p.id, [0, []])
+	if spots[0] != key:
+		spots = [key, _lamp_spots(r, n, busy)]
+		_lamp_cache[p.id] = spots
+	for spot in spots[1]:
+		var lamp := Vector2(spot.x, spot.y + 5)
+		_c.draw_line(lamp + Vector2(0, -5), lamp, Color(0.25, 0.25, 0.3), 2.0)
+		if p.lit:
+			_glow(lamp + Vector2(0, 6), r.size.y * 0.9, Color(1.0, 0.86, 0.45, 0.28))
+			_c.draw_circle(lamp + Vector2(0, 4), 5, LAMP)
+			_c.draw_circle(lamp + Vector2(-1.5, 2.5), 1.6, Color.WHITE)
+		else:
+			_c.draw_circle(lamp + Vector2(0, 4), 5, Color(0.35, 0.35, 0.38))
+
+
+## Лампы: точки подвеса (x, верх шнура) — по одной на блок.
+var _lamp_cache := {}
+func _lamp_spots(r: Rect2, n: int, busy: Array[Vector2]) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	var blk := r.size.x / n
+	var placed: Array[float] = []
+	for i in n:
+		# Лучше — посередине блока (лампы ровно через 3 м); занято — ближайшее свободное место в
+		# комнате, не ближе 0,8 м к соседней лампе. Сначала — где ничего нет, потом — хоть перед
+		# настенным предметом; совсем негде (тесный склад с талью) — без лампы.
+		var mid := r.position.x + blk * (i + 0.5)
+		var lx := NAN
+		var hang := r.position.y + 5
+		for strict in [true, false]:
+			var best := INF
+			var x := r.position.x + 8.0
+			while x <= r.end.x - 8.0:
+				var near := false
+				for q in placed:
+					if absf(q - x) < TILE * 0.8:
+						near = true
+				var d := absf(x - mid)
+				if not near and d < best:
+					var y := _lamp_hang(r, x)
+					if _lamp_free(x, y, busy, strict):
+						best = d
+						lx = x
+						hang = y
+				x += 3.0
+			if not is_nan(lx):
+				break
+		if is_nan(lx):
+			continue
+		placed.append(lx)
+		out.append(Vector2(lx, hang))
+	return out
+
+
+## Откуда свисает лампа в точке x: с потолка или из-под бруса (воздуховод, таль).
+func _lamp_hang(r: Rect2, x: float) -> float:
+	var hang := r.position.y + 5
+	for rail in _rails:
+		if x >= rail.position.x and x <= rail.position.x + rail.size.x:
+			hang = maxf(hang, rail.size.y)
+	return hang
+
+
+## Лампа (шнур от hang, шар радиусом 5 под ним) в x не задевает занятое и настенные предметы.
+func _lamp_free(x: float, hang: float, busy: Array[Vector2], walls := true) -> bool:
+	for b in busy:
+		if x + 7 > b.x and x - 7 < b.y:
+			return false
+	if not walls:
+		return true
+	for w in _wall_items:
+		if x + 7 > w.x and x - 7 < w.y and hang + 16 > w.z:
+			return false
+	return true
 
 
 ## Готовая картинка комнаты (рендер из Blender, assets/rooms/) или null — тогда рисуем сами.
@@ -1075,6 +1153,19 @@ static func wall_posts(w: int) -> Array[float]:
 	return out
 
 
+## Что мешает вешать на стену этой комнаты: стойки и лестницы у стен (лестница ~0.5 м у края —
+## три «стойки» подряд закрывают её целиком). По возрастанию.
+func _wall_posts(p: Project) -> Array[float]:
+	var w := p.rect.size.x
+	var out := wall_posts(w)
+	if colony != null and (p.ladder or colony.edge_ladder(p, -1)):
+		out.append_array([0.3, 0.5, 0.7])
+	if colony != null and colony.edge_ladder(p, 1):
+		out.append_array([w - 0.7, w - 0.5, w - 0.3])
+	out.sort()
+	return out
+
+
 const BED_COLORS := ["blue", "pink", "green", "yellow"]
 const HOME_DECOR := ["shelf_plant", "shelf_toy", "shelf_vine", "picture_mountain", "picture_sun", "picture_leaf"]
 
@@ -1087,7 +1178,7 @@ func _draw_home_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var n := RoomType.beds(p)
 	var spare := RoomType.usable_width(p) - n * 2 >= 1
 	var lay := _inside(p, r, n * 2.0 + (1.0 if spare else 0.0))
-	var posts := wall_posts(p.rect.size.x)
+	var posts := _wall_posts(p)
 	var used := {}
 	var start := int(WorldGen.hash01(p.id, 0, 90) * HOME_DECOR.size())
 	for i in n:
@@ -1129,6 +1220,8 @@ func _furn_hang(t: Texture2D, cx: float, fy: float, alpha: float, scale := 1.0) 
 	var top := fy - TILE * HANG_TOP
 	if t.resource_path.get_file().begins_with("shelf_"):
 		top = fy - TILE * SHELF_BOARD - _board_row(t) * h
+	var hw := t.get_width() / FURN_PX_PER_M * TILE * scale * 0.5
+	_wall_items.append(Vector3(cx - hw, cx + hw, top))
 	_furn_at(t, cx, top + h, alpha, 2, scale)
 
 
@@ -1143,7 +1236,9 @@ func _hang_fit(t: Texture2D, r: Rect2, a: float, b: float, posts: Array[float], 
 		return true
 	# Свободные промежутки между стойками внутри [a, b].
 	var cuts: Array[float] = [a + 0.05]
-	for pst in posts:
+	var sorted := posts.duplicate()
+	sorted.sort()
+	for pst in sorted:
 		if pst > a and pst < b:
 			cuts.append_array([pst - 0.14, pst + 0.14])
 	cuts.append(b - 0.05)
@@ -1182,6 +1277,19 @@ func _board_row(t: Texture2D) -> float:
 ## Масштаб, при котором предмет помещается в ширину width (px) с зазором; крупнее не делаем.
 func _fit(t: Texture2D, width: float) -> float:
 	return minf(1.0, (width - TILE * 0.06) / (t.get_width() / FURN_PX_PER_M * TILE))
+
+
+## Настенный предмет шириной w (px) около x (px): ближайшее место, где он не на стойке и не на
+## лестнице (не дальше метра); нет такого — где был.
+## extra — ещё занятые места (м от левого края), strict — нет места: NAN, а не «где был».
+func _wall_x(p: Project, r: Rect2, x: float, w: float, extra: Array[float] = [], strict := false) -> float:
+	var m := (x - r.position.x) / TILE
+	var posts := _wall_posts(p)
+	posts.append_array(extra)
+	var dx := _decor_x(maxf(0.1, m - 1.0), minf(p.rect.size.x - 0.1, m + 1.0), w / TILE, posts)
+	if is_nan(dx):
+		return NAN if strict else x
+	return r.position.x + dx * TILE
 
 
 ## Где повесить предмет шириной wm (м) над местом [a, b]: по центру, а если там стойка —
@@ -1335,7 +1443,7 @@ func _draw_farm_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var fy := r.end.y - FURN_FLOOR * TILE
 	var n := RoomType.farm_slots(p)
 	var lay := _inside(p, r, n * 2.0)
-	var posts := wall_posts(p.rect.size.x)
+	var posts := _wall_posts(p)
 	var first := int(WorldGen.hash01(p.id, 0, 92) * FARM_DECOR.size())
 	var grow := clampf(p.farm_progress / RoomType.FARM_CYCLE, 0.0, 1.0)
 	var shoots := furniture("farm", "shoots_%d" % (1 + mini(2, int(grow * 3.0))))
@@ -1530,7 +1638,7 @@ func _draw_hearth_furniture(p: Project, r: Rect2, alpha: float) -> void:
 ## Инструменты на стене между печами (по одним на промежуток); у единственной печи — где есть
 ## место, мимо стоек и трубы.
 func _tools_between(p: Project, r: Rect2, lay: Dictionary, xs: Array[float], tools: Texture2D, fy: float, alpha: float) -> void:
-	var posts := wall_posts(p.rect.size.x)
+	var posts := _wall_posts(p)
 	if xs.size() > 1:
 		for i in xs.size() - 1:
 			_hang_fit(tools, r, (xs[i] - r.position.x) / TILE + 1.1, (xs[i + 1] - r.position.x) / TILE - 0.6, posts, fy, alpha)
@@ -1626,6 +1734,7 @@ func _draw_generator_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var right: float = lay.x + n * 3 * lay.unit
 	_tile_h(furniture("generator", "bulbs_on" if on else "bulbs_off"), lay.x + TILE * 0.1, right - ps.x, line_y, alpha)
 	_c.draw_texture_rect(panel, Rect2(right - ps.x, line_y - ps.y * 0.3, ps.x, ps.y), false, mod)
+	_ceil.append(Vector2(right - ps.x, right))
 	var cable := Color(0.12, 0.12, 0.14, alpha)
 	var chimney := furniture("hearth", "chimney")
 	var pipe := furniture("generator", "gas_pipe")
@@ -1968,7 +2077,7 @@ func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
 	_tile_h(pipe, lay.x + TILE * 0.15, right - TILE * 0.15, py - pipe.get_height() * k * 0.5, alpha)
 	var tw := tank.get_width() * k * sc
 	var th := tank.get_height() * k * sc
-	var posts := wall_posts(p.rect.size.x)
+	var posts := _wall_posts(p)
 	for i in n:
 		var x: float = xs[i]
 		_furn_at(tank, x, fy, alpha, 1, sc)
@@ -1986,15 +2095,17 @@ func _draw_oil_storage(p: Project, r: Rect2, alpha: float) -> void:
 		_spin_t(valve, valve.get_size() * 0.5, Vector2(vx, py), fmod(_anim_t() * 1.6 + i, TAU) if flowing else 0.0, sc, alpha)
 	# На стене: манометр со стрелкой (заполнение) и фонарь — между баками или сбоку.
 	var gauge := furniture("oil_storage", "gauge")
-	var gx: float = (xs[0] + xs[1]) * 0.5 if n > 1 else xs[0] + tw * 0.5 + TILE * 0.35
-	gx = minf(gx, right - TILE * 0.3)
 	var gs := gauge.get_size() * k
-	var grect := Rect2(gx - gs.x * 0.5, fy - TILE * 1.75, gs.x, gs.y)
+	var gx: float = (xs[0] + xs[1]) * 0.5 if n > 1 else xs[0] + tw * 0.5 + TILE * 0.35
+	gx = _wall_x(p, r, minf(gx, right - TILE * 0.3), gs.x)
+	var grect := Rect2(gx - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
+	_wall_items.append(Vector3(grect.position.x, grect.end.x, grect.position.y))
 	_c.draw_texture_rect(gauge, grect, false, Color(1, 1, 1, alpha))
 	_needle(furniture("oil_storage", "needle"), grect.position + Vector2(gs.x * 0.5, gs.x * 0.5), gs.x * 0.36, fill, flowing, alpha)
 	var lamp := furniture("oil_storage", "lamp")
-	var lx: float = (xs[n - 2] + xs[n - 1]) * 0.5 if n > 1 else xs[0] - tw * 0.5 - TILE * 0.3
-	lx = maxf(lx, lay.x + TILE * 0.2)
+	# При двух баках между ними манометр — фонарь слева от первого.
+	var lx: float = (xs[n - 2] + xs[n - 1]) * 0.5 if n > 2 else xs[0] - tw * 0.5 - TILE * 0.3
+	lx = _wall_x(p, r, maxf(lx, lay.x + TILE * 0.2), lamp.get_width() * k)
 	_furn_hang(lamp, lx, fy, alpha)
 	if alpha >= 1.0:
 		_glow(Vector2(lx, fy - TILE * HANG_TOP + lamp.get_height() * k * 0.6), TILE * 1.4, Color(1.0, 0.8, 0.45, 0.16))
@@ -2051,7 +2162,7 @@ func _draw_refinery(p: Project, r: Rect2, alpha: float) -> void:
 			_spin_t(valve, valve.get_size() * 0.5, Vector2(v, py), fmod(t * 1.2 + i, TAU) if on else 0.4, sc, alpha)
 		# Манометр на стене над змеевиком.
 		var gs := gauge.get_size() * k
-		var grect := Rect2(cx[1] - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
+		var grect := Rect2(_wall_x(p, r, cx[1], gs.x) - gs.x * 0.5, fy - TILE * HANG_TOP, gs.x, gs.y)
 		_c.draw_texture_rect(gauge, grect, false, Color(1, 1, 1, alpha))
 
 
@@ -2115,7 +2226,7 @@ func _draw_enrichment(p: Project, r: Rect2, alpha: float) -> void:
 			# Пульт: экран-радар мигает.
 			var mh: float = mid.get_height() * k * sc
 			_glow(Vector2(cx[1] - mid.get_width() * k * sc * 0.12, fy - mh * 0.6), TILE * 0.3 * sc, Color(0.4, 1.0, 0.4, 0.3 + 0.2 * sin(t * 6.0)))
-		_furn_hang(sign, cx[1], fy, alpha)
+		_furn_hang(sign, _wall_x(p, r, cx[1], sign.get_width() * k), fy, alpha)
 
 
 func _draw_pump_furniture(p: Project, r: Rect2, alpha: float) -> void:
@@ -2192,9 +2303,8 @@ func _draw_degas_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	_tile_h(pipe, left + is_.x * 0.6, right - is_.x * 0.6, line_y - pipe.get_height() * k * 0.5, alpha)
 	_c.draw_texture_rect(intake, Rect2(left, line_y - is_.y * 0.5, is_.x, is_.y), false, mod)
 	_c.draw_texture_rect(intake, Rect2(right, line_y - is_.y * 0.5, -is_.x, is_.y), false, mod)
-	# Труба вниз к баку.
-	var pc := Color(0.5, 0.53, 0.58, alpha)
-	_c.draw_rect(Rect2(tank_x - TILE * 0.06, line_y, TILE * 0.12, fy - tank.get_height() * k * sc - line_y + 4), pc)
+	# Отвод вниз к баку — та же труба, стоймя и потоньше.
+	_tile_v_rot(pipe, tank_x, line_y, fy - tank.get_height() * k * sc + 4, alpha, 0.6)
 	var gauge := furniture("degas", "gauge")
 	var gs := gauge.get_size() * k
 	for i in n:
@@ -2223,6 +2333,7 @@ func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	var top := fy - TILE * 2.38
 	var right: float = lay.x + n * 3 * lay.unit
 	_tile_h(duct, lay.x + TILE * 0.05, right - TILE * 0.05, top, alpha)
+	_rails.append(Rect2(lay.x, 0.0, right - lay.x, top + dh))
 	var grille := furniture("vent", "grille")
 	var gw := grille.get_width() * k
 	var box := furniture("vent", "duct_v")
@@ -2253,7 +2364,7 @@ func _draw_vent_furniture(p: Project, r: Rect2, alpha: float) -> void:
 	if b - a < 0.3:     # справа места нет — слева от установки
 		b = (xs[0] - r.position.x) / TILE - 0.85 * sc
 		a = maxf(b - 0.9, (lay.x - r.position.x) / TILE)
-	_hang_fit(thermo, r, a, b, wall_posts(p.rect.size.x), fy, alpha)
+	_hang_fit(thermo, r, a, b, _wall_posts(p), fy, alpha)
 
 
 ## Кузница: на каждые 3 м — горн с мехами (угли горят, пока кузнец работает), наковальня на пне,
@@ -2351,7 +2462,7 @@ func _draw_lab_furniture(p: Project, r: Rect2, alpha: float) -> void:
 func _wall_item(p: Project, r: Rect2, room: String, name: String, cx: float, width: float, fy: float, alpha: float) -> void:
 	var t := furniture(room, name)
 	var a := (cx - width * 0.5 - r.position.x) / TILE
-	_hang_fit(t, r, a, a + width / TILE, wall_posts(p.rect.size.x), fy, alpha)
+	_hang_fit(t, r, a, a + width / TILE, _wall_posts(p), fy, alpha)
 
 
 ## Предметы в ряд на поверхности (стол): поровну по ширине width с центром cx, низом на bottom.
@@ -2373,11 +2484,26 @@ func _tile_h(t: Texture2D, left: float, right: float, top: float, alpha: float, 
 ## Повторяющийся по вертикали предмет (труба дымохода) с левым краем x от top до bottom.
 func _tile_v(t: Texture2D, x: float, top: float, bottom: float, alpha: float, scale := 1.0) -> void:
 	var k := TILE / FURN_PX_PER_M * scale
+	if top < _room_top + TILE * 0.6:
+		_ceil.append(Vector2(x, x + t.get_width() * k))
 	var y := top
 	while y < bottom - 0.5:
 		var seg := minf(t.get_height() * k, bottom - y)
 		_c.draw_texture_rect_region(t, Rect2(x, y, t.get_width() * k, seg), Rect2(0, 0, t.get_width(), seg / k), Color(1, 1, 1, alpha))
 		y += seg
+
+
+## Горизонтальная труба t, поставленная стоймя (повёрнута на 90°) по центру cx от top до bottom.
+func _tile_v_rot(t: Texture2D, cx: float, top: float, bottom: float, alpha: float, scale := 1.0) -> void:
+	var k := TILE / FURN_PX_PER_M * scale
+	var hw := t.get_height() * k
+	var y := top
+	while y < bottom - 0.5:
+		var seg := minf(t.get_width() * k, bottom - y)
+		_xform(Vector2(cx + hw * 0.5, y), PI * 0.5, Vector2(k, k))
+		_c.draw_texture_rect_region(t, Rect2(0, 0, seg / k, t.get_height()), Rect2(0, 0, seg / k, t.get_height()), Color(1, 1, 1, alpha))
+		y += seg
+	_xform(Vector2.ZERO)
 
 
 ## Стеллаж шириной width: стойки как на спрайте, середина (полки) сжата.
@@ -2414,6 +2540,11 @@ func _draw_hoist(left: float, right: float, block_x: float, top: float, alpha: f
 		_c.draw_texture_rect_region(beam, Rect2(x, top, seg, beam.get_height() * k), Rect2(0, 0, seg / k, beam.get_height()), mod)
 		x += seg
 	_c.draw_texture_rect(cap, Rect2(left, top, cap.get_width() * k, cap.get_height() * k), false, mod)
+	# Лампы — под брусом, мимо лебёдки и блока с крюком.
+	_rails.append(Rect2(left, 0.0, right - left, top + beam.get_height() * k))
+	_ceil.append(Vector2(winch_x, right))
+	if not is_nan(block_x):
+		_ceil.append(Vector2(block_x - block.get_width() * k * 0.5, block_x + block.get_width() * k * 0.5))
 	if is_nan(block_x):
 		_c.draw_texture_rect(winch, Rect2(winch_x, top, winch.get_width() * k, winch.get_height() * k), false, mod)
 		return
@@ -2485,6 +2616,7 @@ func _draw_teleport_pedestal(p: Project, r: Rect2, c: Vector2, linked: bool, alp
 			var u := fmod(t * 0.35 + j / 3.0, 1.0)
 			_c.draw_arc(Vector2(c.x, top - ah * 0.42), aw * 0.75 * u, 0, TAU, 28, Color(1.0, 0.85, 1.0, 0.35 * (1.0 - u) * alpha), 2.0)
 	_sprite("teleport", Vector2(c.x, top + ph * 0.05), alpha, 1.0, TP_ARCH)
+	_ceil.append(Vector2(c.x - aw * 0.75, c.x + aw * 0.75))
 	_furn_at(ped, c.x, fy, alpha, 1, sc)
 	# Кольцо на площадке — лёжа (сплюснуто), пульсирует.
 	var ring := furniture("teleport", "ring")
@@ -2496,7 +2628,17 @@ func _draw_teleport_pedestal(p: Project, r: Rect2, c: Vector2, linked: bool, alp
 	# Пульт на стене слева от арки.
 	var panel := furniture("teleport", "panel")
 	var px := maxf(r.position.x + TILE * 0.35, c.x - pw * 0.5 - panel.get_width() * k * 0.2)
-	_furn_hang(panel, px, fy, alpha)
+	# Арка занята от ноги до ноги; места нет (3 м между лестницами) — без пульта.
+	var arch: Array[float] = []
+	var a0 := (c.x - aw * 0.75 - r.position.x) / TILE
+	var a1 := (c.x + aw * 0.75 - r.position.x) / TILE
+	var am := a0
+	while am <= a1:
+		arch.append(am)
+		am += 0.2
+	px = _wall_x(p, r, px, panel.get_width() * k, arch, true)
+	if not is_nan(px):
+		_furn_hang(panel, px, fy, alpha)
 
 
 func _draw_furniture(p: Project, r: Rect2, purpose: int, alpha: float) -> void:
