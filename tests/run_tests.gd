@@ -3910,6 +3910,31 @@ func test_master_carries_output() -> void:
 	check(colony._try_supply(u, forge, reach[0], reach[1]) and u.carry_key == "iron_ore", "а за кучей рядом — идёт")
 	colony._drop(u)
 	colony.drops.clear()
+	# В кузнице делать нечего — мастер подносит материалы на стройку рядом (не копает и не строит).
+	var site := _dug_project(colony, Project.Kind.ROOM, Rect2i(r.end.x, r.position.y, 3, 3), 9903)
+	site.phase = Project.Phase.BUILD
+	colony._register_room(site)
+	colony._rebuild_climb()
+	colony.pathing.clear_cache()
+	reach = colony.pathing.explore(u.cell())
+	var need: Dictionary = colony.remaining(site)
+	var key: String = need.keys()[0] if not need.is_empty() else ""
+	# Материал — на складе за стенкой, остальные гаврики заняты.
+	for st in colony.store_rooms():
+		st.held.erase(key)
+	store.held[key] = 50
+	colony.inventory[key] = 50
+	for o in colony.units:
+		if o != u:
+			o.task = Unit.Task.SLEEP
+	check(not key.is_empty() and colony._haul_near_workplace(u, reach[0], reach[1]) and u.task == Unit.Task.HAUL and u.project_id == site.id,
+		"делать нечего — мастер подносит %s на стройку рядом (%s)" % [key, Unit.Task.keys()[u.task]])
+	colony._drop(u)
+	# Далёкую стройку не берёт.
+	site.rect.position.x += Colony.WORKPLACE_HELP * 3
+	reach = colony.pathing.explore(u.cell())
+	check(not colony._haul_near_workplace(u, reach[0], reach[1]), "на далёкую стройку мастер не ходит")
+	colony.projects.erase(site)
 
 
 ## Миры — отдельные игры со своими сохранениями; автосохранение одно и перезаписывается.

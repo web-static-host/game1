@@ -6889,7 +6889,8 @@ func _assign_core(u: Unit) -> bool:
 	for kind in _task_order(u):
 		match kind:
 			"workplace":
-				if _try_workplace(u, parents, dist) or _wait_at_workplace(u, parents, dist):
+				if _try_workplace(u, parents, dist) or _haul_near_workplace(u, parents, dist) \
+						or _wait_at_workplace(u, parents, dist):
 					return true
 			"harvest":
 				if _try_harvest(u, parents, dist):
@@ -6932,6 +6933,34 @@ func _assign_core(u: Unit) -> bool:
 	if u.workplace != 0 and _near_rect(site_rect(project_by_id(u.workplace)), dist) != null:
 		return false
 	return _return_home(u, parents, dist)
+
+
+## На своём месте делать нечего — работник подносит материалы на стройку рядом (не дальше
+## WORKPLACE_HELP шагов от себя, источник — тоже рядом). Копать, строить и уходить далеко —
+## нет (раньше мастер уходил из кузницы копать; а потом, наоборот, фермеры стояли у генератора,
+## которому не хватало 4 железа со склада за стенкой, — несли его свободные из шахты внизу).
+const WORKPLACE_HELP := 30
+
+
+func _haul_near_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
+	if u.satiety < HUNGRY or needs_warmth(u):
+		return false
+	for p in projects:
+		if p.paused or (p.phase == Project.Phase.DONE and not p.repairing) or remaining(p).is_empty():
+			continue
+		if p.kind == Project.Kind.MINE and not may_haul_mine(u):
+			continue
+		var near = _near_rect(site_rect(p), dist)
+		if near == null or int(dist[near]) > WORKPLACE_HELP:
+			continue
+		if not _try_haul(u, p, parents, dist):
+			continue
+		# Источник далеко (склад на другом конце) — не идём.
+		if u.path.size() > WORKPLACE_HELP:
+			_drop(u)
+			continue
+		return true
+	return false
 
 
 ## Место работы стоит (нечего плавить, склад полон, нет исследования) — работник ждёт там же.
