@@ -5485,19 +5485,21 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 	if p.is_water_structure():
 		return _fish_at(u, p, parents, dist)
 	# Склад урожая или изделий полон — к станку не встают (раньше вставали и тут же бросали:
-	# фермеры дёргались «стоит — идёт — поливает» по кругу на месте).
+	# фермеры дёргались «стоит — идёт — поливает» по кругу на месте), а сами относят готовое
+	# на склад или в амбар (свободные могут быть все на стройках — и производство стояло).
 	if (p.purpose == RoomType.FARM or RoomType.RECIPES.has(p.purpose)) and _mark_full(p):
-		return false
+		return _carry_output(u, p, parents, dist)
 	match p.purpose:
 		RoomType.FARM:
 			return farm_warm(p) and _room_work_at(u, p, Unit.Task.FARM, parents, dist)
 		RoomType.LAB:
 			return not research.current.is_empty() and _room_work_at(u, p, Unit.Task.RESEARCH, parents, dist)
 		RoomType.KILN, RoomType.FORGE, RoomType.REFINERY, RoomType.ENRICHMENT:
-			# Нет сырья — мастер сам приносит его со склада в свою мастерскую.
+			# Нет сырья — мастер сам приносит его со склада в свою мастерскую; и его нет —
+			# уносит готовое на склад.
 			if has_inputs(p):
 				return _room_work_at(u, p, Unit.Task.CRAFT, parents, dist)
-			return _try_supply(u, p, parents, dist)
+			return _try_supply(u, p, parents, dist) or _carry_output(u, p, parents, dist)
 		RoomType.STORAGE, RoomType.GRANARY:
 			# Работники склада и амбара: сначала шахты (крепь туда, добытое оттуда),
 			# потом уносят на хранение то, что уже лежит (улов, урожай ферм, добытое),
@@ -5513,6 +5515,14 @@ func _try_workplace(u: Unit, parents: Dictionary, dist: Dictionary) -> bool:
 					return true
 			return false
 	return false
+
+
+## Мастер (фермер) сам уносит готовое из ящиков своей мастерской на склад (в амбар).
+func _carry_output(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
+	if not is_producer(p) or output_held(p) <= 0:
+		return false
+	var cells: Array[Vector2i] = [output_cell(p)]
+	return _try_cleanup(u, parents, dist, null, false, cells)
 
 
 # --- Знакомства и пары -----------------------------------------------------------------
@@ -8448,7 +8458,8 @@ const CARRY_BONUS := {"iron_ore": 40, "copper_ore": 40, "silver_ore": 60, "gold_
 const CARRY_BONUS_MAX := 100
 
 
-func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false) -> bool:
+func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project = null, mines_only := false,
+		from_cells: Array[Vector2i] = []) -> bool:
 	var may_mine := may_carry_out_mine(u)
 	var best = null
 	var best_c := Vector2i.ZERO
@@ -8460,7 +8471,8 @@ func _try_cleanup(u: Unit, parents: Dictionary, dist: Dictionary, only: Project 
 	var routes := {}
 	var claims := _drop_claims()
 	var mines := _mine_rects()
-	for c: Vector2i in (_cleanup_cells() if only == null else _storable_cells(only)):
+	var cells: Array[Vector2i] = from_cells if not from_cells.is_empty() else (_cleanup_cells() if only == null else _storable_cells(only))
+	for c: Vector2i in cells:
 		if not drops.has(c):
 			continue
 		# Добытое в шахте уносят только работники складов и подсобные.
@@ -8751,6 +8763,10 @@ func _incoming_to(p: Project, key: String) -> int:
 	return n
 
 
+## Дальше скольких шагов мастер сам за кучами сырья не ходит.
+const MASTER_PILE_RANGE := 40
+
+
 ## Подсобный несёт сырьё в мастерскую (запас на пару циклов).
 func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> bool:
 	if _near_rect(p.rect, dist) == null:
@@ -8768,6 +8784,11 @@ func _try_supply(u: Unit, p: Project, parents: Dictionary, dist: Dictionary) -> 
 		var want: int = need[k] * SUPPLY_FILL - have
 		var src := _haul_source(k, dist, u, parents, p.rect.get_center())
 		if src[0] == null:
+			continue
+		# Мастер сам носит сырьё со склада и из куч поблизости, а за кучами вдали (по штуке
+		# в шахте на глубине) не ходит — их сносят на склад свободные и подсобные. Раньше мастер
+		# ехал за одной рудой на 70 м вниз, мёрз, а кузница стояла.
+		if src[1] != null and u.workplace == p.id and int(dist.get(src[0], 1 << 30)) > MASTER_PILE_RANGE:
 			continue
 		u.carry_key = k
 		u.carry_amount = mini(carry_cap(), mini(want, src[2]))

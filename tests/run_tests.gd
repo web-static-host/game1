@@ -95,6 +95,7 @@ func _initialize() -> void:
 	test_digger_stays()
 	test_haul_batches()
 	test_drops_note()
+	test_master_carries_output()
 	test_worlds()
 	test_crew_takeover()
 	test_hearth_on_demand()
@@ -3867,6 +3868,48 @@ func test_drops_note() -> void:
 	colony.drops.clear()
 	colony._check_drops_stored()
 	check(colony.drops_note.is_empty(), "куч нет — предупреждения нет")
+
+
+## Ящики кузницы полны — мастер сам уносит готовое на склад (свободные могут быть заняты на
+## стройках); за кучами руды вдали мастер сам не ходит.
+func test_master_carries_output() -> void:
+	var res := _colony_with_room(26, RoomType.STORAGE)
+	var colony: Colony = res[0]
+	var store: Project = res[1]
+	var r := Rect2i(store.rect.end.x, store.rect.position.y, 3, 3)
+	var forge := _dug_project(colony, Project.Kind.ROOM, r, 9902)
+	forge.purpose = RoomType.FORGE
+	colony._register_room(forge)
+	colony._rebuild_climb()
+	colony.pathing.clear_cache()
+	var u: Unit = colony.units[0]
+	colony._drop(u)
+	u.workplace = forge.id
+	u.pos = Vector2(Colony.output_cell(forge))
+	colony.drops.clear()
+	colony.drop_item(Colony.output_cell(forge), "iron", Colony.PRODUCE_CAP)
+	var reach := colony.pathing.explore(u.cell())
+	check(colony.output_full(forge) and colony._try_workplace(u, reach[0], reach[1]) and u.task == Unit.Task.HAUL \
+		and u.to_store and u.carry_key == "iron", "ящики кузницы полны — мастер несёт готовое на склад (%s %s)" % [Unit.Task.keys()[u.task], u.carry_key])
+	colony._drop(u)
+	colony.drops.clear()
+	# Руды нет ни в кузнице, ни на складе — только кучка далеко: мастер за ней не идёт.
+	var far := Vector2i.ZERO
+	for c: Vector2i in reach[1]:
+		if int(reach[1][c]) > Colony.MASTER_PILE_RANGE + 5 and colony.pathing.standable(c):
+			far = c
+			break
+	colony.inventory.erase("iron_ore")
+	forge.stock.clear()
+	forge.forge_key = "iron"
+	forge.forge_at = colony.game_time
+	colony.drop_item(far, "iron_ore", 20)
+	check(far != Vector2i.ZERO and not colony._try_supply(u, forge, reach[0], reach[1]), "за кучей руды вдали (%s) мастер не идёт" % far)
+	colony.drops.clear()
+	colony.drop_item(store.rect.end - Vector2i(2, 1), "iron_ore", 20)
+	check(colony._try_supply(u, forge, reach[0], reach[1]) and u.carry_key == "iron_ore", "а за кучей рядом — идёт")
+	colony._drop(u)
+	colony.drops.clear()
 
 
 ## Миры — отдельные игры со своими сохранениями; автосохранение одно и перезаписывается.
