@@ -19,6 +19,8 @@ var colony: Colony
 ## Все миры (Земля и планеты) и полёты; на экране — мир _planet.
 var universe := Universe.new()
 var _planet := "earth"
+## Камера в прошлом кадре (позиция, зум) — фон подстраивается, только пока она движется.
+var _sky_cam := Vector3.ZERO
 var _cameras := {}
 ## Сборка экспедиции: космодром, планета, экипаж, груз.
 var _launch := {}
@@ -753,6 +755,7 @@ func _do_launch() -> void:
 ## в слот холмов (0.45). Ширина куска — по пропорциям картинки (у разных планет полосы
 ## разной высоты, а горы на экране должны быть одного роста).
 const PLANET_LAYERS := {"mountains": ["mountains", 19.0, 1.0], "hills": ["forest", 12.5, 2.0], "near": ["hills", 8.5, 3.0]}
+const SKY_H := 26.0
 const EARTH_GEO := {"mountains": Vector3(36.0, -6.354, 18.916), "forest": Vector3(30.0, -0.226, 5.354), "hills": Vector3(30.0, -6.602, 11.31)}
 
 
@@ -770,7 +773,9 @@ func _apply_planet_sky() -> void:
 	if own:
 		var sky: Texture2D = load(dir + "sky.png")
 		m.set_shader_parameter("sky_tex", sky)
-		m.set_shader_parameter("sky_size", Vector2(120.0, 120.0 * sky.get_height() / sky.get_width()))
+		# Картинка неба — на SKY_H клеток над горизонтом (на весь экран и выше), ширина — по её
+		# пропорциям; выше — её верхний цвет.
+		m.set_shader_parameter("sky_size", Vector2(SKY_H * sky.get_width() / sky.get_height(), SKY_H))
 		m.set_shader_parameter("sky_horizon", _bottom_color(sky))
 		for layer in PLANET_LAYERS:
 			var spec: Array = PLANET_LAYERS[layer]
@@ -3266,10 +3271,15 @@ func _update_sky(delta := 0.0) -> void:
 	while x <= int(cx + view_w * 0.6):
 		low = maxi(low, world.gen.land_y(x))
 		x += 3
+	# Фон подстраивается, только пока камера движется (быстро, но без рывка): остановились —
+	# фон стоит, а не доезжает ещё секунду-две.
+	var cam_now := Vector3(camera.position.x, camera.position.y, camera.zoom.x)
+	var moving := cam_now != _sky_cam
+	_sky_cam = cam_now
 	if is_nan(_sky_ground) or delta <= 0.0:
 		_sky_ground = low
-	else:
-		_sky_ground = lerpf(_sky_ground, low, 1.0 - exp(-delta * 1.5))
+	elif moving:
+		_sky_ground = lerpf(_sky_ground, low, 1.0 - exp(-delta * 8.0))
 	m.set_shader_parameter("ground_alt", -_sky_ground)
 	world_view.set_season(colony.is_winter(), colony.calendar_month())
 	# Ночью мир чуть темнее.

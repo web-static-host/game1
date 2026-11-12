@@ -71,21 +71,90 @@ def cut_layer(rgb, closed=False):
     return out[max(0, ys[0] - 4):]
 
 
+def drop_specks(a, min_px=300):
+    """Слой без отдельных крошек (меньше min_px пикселей) — на фоне они видны точками."""
+    lab, n = ndimage.label(a[..., 3] > 0.05)
+    if n > 1:
+        sizes = ndimage.sum(np.ones_like(lab), lab, range(n + 1))
+        small = (sizes < min_px)
+        small[0] = False
+        a = a.copy()
+        a[small[lab], 3] = 0.0
+    return a
+
+
+def clear_seam_islands(a):
+    """Отдельные клубы (дым, облака над склоном), попавшие в зону сшивки краёв, — прочь:
+    при сшивке столбцы тянутся по высоте, и клуб превращается в вертикальные полосы."""
+    w = a.shape[1]
+    e = int(w * P.EDGE)
+    lab, n = ndimage.label(a[..., 3] > 0.05)
+    if n < 2:
+        return a
+    ground = set(np.unique(lab[-1])) - {0}
+    a = a.copy()
+    for i, sl in enumerate(ndimage.find_objects(lab)):
+        if i + 1 in ground or sl is None:
+            continue
+        if sl[1].start < e or sl[1].stop > w - e:
+            a[lab == i + 1, 3] = 0.0
+    return a
+
+
 def premul(a):
     a = a.copy()
     a[..., :3] *= a[..., 3:4]
     return a
 
 
-def seam(a):
+## Слои с дымом и клубами: края сшиваем плавным наложением, а не вытягиванием столбцов
+## (у дыма вытягивание даёт вертикальные полосы).
+FADE_SEAM = {'venus'}
+
+
+def seam(a, fade=False):
     """Сшить края одного слоя (как P.seam_layer для одного варианта)."""
     w = a.shape[1]
     e = int(w * P.EDGE)
     wo = w - e
     o = a[:, :wo].copy()
     for j in range(e):
-        o[:, j] = P.morph(a[:, w - e + j], a[:, j], j / e)
+        if fade:
+            t = j / e
+            t = t * t * (3 - 2 * t)
+            o[:, j] = a[:, w - e + j] * (1 - t) + a[:, j] * t
+        else:
+            o[:, j] = P.morph(a[:, w - e + j], a[:, j], j / e)
     return o
+
+
+def only_main(rgba):
+    """Облако без соринок: только самый большой кусок (и то, что внутри него), край — мягче;
+    крошки шахматки и обрезки соседних облаков у края — прочь. rgba — uint8."""
+    al = rgba[..., 3] > 60
+    lab, n = ndimage.label(ndimage.binary_closing(al, iterations=2))
+    if n == 0:
+        return rgba
+    sizes = ndimage.sum(np.ones_like(lab), lab, range(1, n + 1))
+    keep = ndimage.binary_fill_holes(lab == 1 + int(np.argmax(sizes)))
+    keep = ndimage.binary_erosion(keep, iterations=1)
+    soft_a = ndimage.gaussian_filter(keep.astype(np.float32), 0.8)
+    out = rgba.copy()
+    out[..., 3] = (np.minimum(rgba[..., 3] / 255.0, soft_a) * 255).astype(np.uint8)
+    return out
+
+
+def to_atlas(ims, out):
+    cw, ch = P.CLOUD_CELL
+    atlas = Image.new('RGBA', (cw * 5, ch), (0, 0, 0, 0))
+    for i, arr in enumerate(ims):
+        im = Image.fromarray(only_main(arr))
+        bb = im.getchannel('A').point(lambda v: 255 if v > 8 else 0).getbbox()
+        im = im.crop(bb)
+        k = min((cw - 8) / im.width, (ch - 6) / im.height)
+        im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
+        atlas.alpha_composite(im, (i * cw + (cw - im.width) // 2, ch - 3 - im.height))
+    atlas.save(os.path.join(out, 'clouds.png'))
 
 
 def clouds(rgb, out):
@@ -95,20 +164,20 @@ def clouds(rgb, out):
     lab, n = ndimage.label(mask)
     boxes = sorted([s for s in ndimage.find_objects(lab) if (s[0].stop - s[0].start) * (s[1].stop - s[1].start) > 4000],
                    key=lambda s: -(s[0].stop - s[0].start) * (s[1].stop - s[1].start))[:5]
-    cw, ch = P.CLOUD_CELL
-    atlas = Image.new('RGBA', (cw * 5, ch), (0, 0, 0, 0))
-    for i, s in enumerate(boxes):
+    ims = []
+    for s in boxes:
         y0, y1 = max(0, s[0].start - 6), min(rgb.shape[0], s[0].stop + 6)
         x0, x1 = max(0, s[1].start - 6), min(rgb.shape[1], s[1].stop + 6)
         # Вокруг облака — шахматка со всех сторон: светлая рамка, чтобы фон был связан с верхом.
         sub = cut_layer(np.pad(rgb[y0:y1, x0:x1], ((8, 8), (8, 8), (0, 0)), constant_values=250), closed=True)
-        im = Image.fromarray((np.clip(sub, 0, 1) * 255 + 0.5).astype(np.uint8))
-        bb = im.getchannel('A').point(lambda v: 255 if v > 8 else 0).getbbox()
-        im = im.crop(bb)
-        k = min((cw - 8) / im.width, (ch - 6) / im.height)
-        im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
-        atlas.alpha_composite(im, (i * cw + (cw - im.width) // 2, ch - 3 - im.height))
-    atlas.save(os.path.join(out, 'clouds.png'))
+        arr = (np.clip(sub, 0, 1) * 255 + 0.5).astype(np.uint8)
+        # Светлые серые крошки шахматки у края (облака цветные) — прозрачные, с каймой в 1 px.
+        c = arr[..., :3].astype(np.int32)
+        grey = (c.max(-1) - c.min(-1) < 30) & (c.min(-1) > 170)
+        grey = ndimage.binary_dilation(grey, iterations=1)
+        arr[grey, 3] = 0
+        ims.append(arr)
+    to_atlas(ims, out)
 
 
 ## --- Листы с настоящей прозрачностью (второй заход: Меркурий … Уран) -------------------
@@ -211,14 +280,13 @@ def rgba_clouds(a, out):
     objs = [s for s in ndimage.find_objects(lab) if s is not None]
     objs = sorted(objs, key=lambda s: -(s[0].stop - s[0].start) * (s[1].stop - s[1].start))[:5]
     objs = sorted(objs, key=lambda s: (s[0].start // 80, s[1].start))
-    cw, ch = P.CLOUD_CELL
-    atlas = Image.new('RGBA', (cw * 5, ch), (0, 0, 0, 0))
-    for i, s in enumerate(objs):
-        im = Image.fromarray(a[s]).copy()
-        k = min((cw - 8) / im.width, (ch - 6) / im.height)
-        im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
-        atlas.alpha_composite(im, (i * cw + (cw - im.width) // 2, ch - 3 - im.height))
-    atlas.save(os.path.join(out, 'clouds.png'))
+    # С запасом по краям: облако может быть шире рамки своего «ядра».
+    ims = []
+    for s in objs:
+        y0, y1 = max(0, s[0].start - 8), min(a.shape[0], s[0].stop + 8)
+        x0, x1 = max(0, s[1].start - 8), min(a.shape[1], s[1].stop + 8)
+        ims.append(a[y0:y1, x0:x1].copy())
+    to_atlas(ims, out)
 
 
 def main_auto(planet):
@@ -230,7 +298,7 @@ def main_auto(planet):
     xs = np.nonzero((a[y0:y1, :, 3] > 128).mean(0) > 0.5)[0]
     Image.fromarray(a[y0 + 4:y1 - 4, xs[0] + 4:xs[-1] - 4, :3]).save(os.path.join(out, 'sky.png'))
     for name, (y0, y1) in zip(['mountains', 'hills', 'near'], bs[1:4]):
-        lay = seam(premul(strip_layer(a[y0:y1])))
+        lay = drop_specks(seam(premul(drop_specks(strip_layer(a[y0:y1]))), planet in FADE_SEAM), 60) if planet in FADE_SEAM else drop_specks(seam(premul(clear_seam_islands(drop_specks(strip_layer(a[y0:y1]))))), 60)
         lay = P.pad_bottom([lay])[0]
         P.save(lay, os.path.join(out, name + '.png'))
     cl = os.path.join(out, 'clouds.png')
@@ -259,7 +327,7 @@ def main(planet):
         elif name == 'clouds':
             clouds(part, out)
         else:
-            lay = seam(premul(cut_layer(part)))
+            lay = drop_specks(seam(premul(clear_seam_islands(drop_specks(cut_layer(part))))), 60)
             lay = P.pad_bottom([lay])[0]
             P.save(lay, os.path.join(out, name + '.png'))
         im = Image.open(os.path.join(out, name + '.png'))
