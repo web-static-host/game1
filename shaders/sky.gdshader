@@ -107,8 +107,13 @@ void fragment() {
 	vec2 sdx = dFdx(sg), sdy = dFdy(sg);
 	if (use_sky > 0.5) {
 		float su = abs(fract(sx * 0.5) * 2.0 - 1.0);
-		float sv = clamp(1.0 - above / sky_size.y, 0.002, 0.998);
+		float sv0 = 1.0 - above / sky_size.y;
+		float sv = clamp(sv0, 0.002, 0.998);
 		c = textureGrad(sky_tex, vec2(su, sv), sdx, sdy).rgb;
+		// Выше картинки — её верхний цвет, усреднённый (иначе тянутся полосы верхней строки);
+		// к верху картинки плавно переходим в него.
+		vec3 top_c = textureLod(sky_tex, vec2(0.5, 0.02), 8.0).rgb;
+		c = mix(c, top_c, smoothstep(0.25, -0.05, sv0));
 		horizon = sky_horizon;
 	}
 	c = mix(c, mid, smoothstep(200.0, 12000.0, alt));

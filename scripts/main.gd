@@ -748,10 +748,11 @@ func _do_launch() -> void:
 
 
 ## Свой фон планеты (assets/background/<планета>/, art_src/backgrounds/planets/prepare_planet.py):
-## слой → [слот шейдера, ширина куска в клетках, насколько низ рисунка уходит под землю].
+## слой → [слот шейдера, высота куска в клетках, насколько низ рисунка уходит под землю].
 ## Дальние горы — в слот гор (параллакс 0.15), холмы — в слот леса (0.3), ближний край —
-## в слот холмов (0.45).
-const PLANET_LAYERS := {"mountains": ["mountains", 90.0, 1.0], "hills": ["forest", 60.0, 2.0], "near": ["hills", 40.0, 3.0]}
+## в слот холмов (0.45). Ширина куска — по пропорциям картинки (у разных планет полосы
+## разной высоты, а горы на экране должны быть одного роста).
+const PLANET_LAYERS := {"mountains": ["mountains", 19.0, 1.0], "hills": ["forest", 12.5, 2.0], "near": ["hills", 8.5, 3.0]}
 const EARTH_GEO := {"mountains": Vector3(36.0, -6.354, 18.916), "forest": Vector3(30.0, -0.226, 5.354), "hills": Vector3(30.0, -6.602, 11.31)}
 
 
@@ -774,8 +775,8 @@ func _apply_planet_sky() -> void:
 		for layer in PLANET_LAYERS:
 			var spec: Array = PLANET_LAYERS[layer]
 			var t: Texture2D = load(dir + layer + ".png")
-			var tw: float = spec[1]
-			var th := tw * t.get_height() / t.get_width()
+			var th: float = spec[1]
+			var tw := th * t.get_width() / t.get_height()
 			# Низ картинки продлён на 30% (prepare.py, PAD) — он весь под землёй.
 			var pad := th - th / 1.3
 			m.set_shader_parameter("geo_" + spec[0], Vector3(tw, -spec[2] - pad, th))
