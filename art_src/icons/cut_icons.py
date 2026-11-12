@@ -18,6 +18,7 @@ SHEETS = [
         'uranium_ore', 'diamond', 'salt', 'oil', 'limestone',
         'brick', 'ingot_base', 'methane', 'soil', 'sand',
         'gravel', 'people', 'power', 'health', 'science']),
+    ('resources_sheet2.png', 3, 1, ['diesel', 'amethyst', 'ruby']),
     ('weather_sheet.png', 4, 2, [
         'weather_sun', 'weather_sun_cloud', 'weather_cloud', 'weather_rain',
         'weather_snow', 'weather_storm', 'weather_fog', 'weather_moon']),
