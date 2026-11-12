@@ -262,9 +262,14 @@ def strip_layer(a):
     a = a[3:-2, xs[0] + 3:xs[-1] - 2]
     if (a[:4, :, 3] > 200).mean() > 0.95:
         out = soft(sky_key(a[..., :3]), a[..., :3])
-        # Дым и облака, упёршиеся в верх полосы, — не срезаны ровной линией, а тают кверху.
-        fade = np.clip(np.arange(out.shape[0], dtype=np.float32) / 30.0, 0.0, 1.0)
-        out[..., 3] *= (fade * fade * (3 - 2 * fade))[:, None]
+        # Дым, упёршийся в верх полосы (ChatGPT обрезал его рамкой), — не срезан ровной
+        # линией, а плавно тает кверху; только там, где он упирается (вершины гор не трогаем).
+        h = out.shape[0]
+        touch = (out[:4, :, 3].max(axis=0) > 0.3).astype(np.float32)
+        touch = np.clip(ndimage.gaussian_filter1d(touch, 25, mode='nearest') * 2.5, 0.0, 1.0)
+        f = np.clip(np.arange(h, dtype=np.float32) / min(90.0, h * 0.45), 0.0, 1.0)
+        f = f * f * (3 - 2 * f)
+        out[..., 3] *= 1.0 - touch[None, :] * (1.0 - f[:, None])
     else:
         out = a.astype(np.float32) / 255.0
         # Низ и бока полосы — край листа, не рисунка: там рисунок сплошной.

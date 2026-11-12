@@ -28,13 +28,12 @@ uniform sampler2D hills_2 : source_color, filter_linear_mipmap, repeat_disable;
 // Атлас из 5 облаков в ряд.
 uniform sampler2D clouds : source_color, filter_linear_mipmap, repeat_disable;
 
-// Своё небо планеты (assets/background/<планета>/sky.png): use_sky = 1 — небо у земли берётся
-// из картинки (кусок sky_size клеток, повторяется с отражением, параллакс 0.05), выше —
-// её верхний цвет уходит в стратосферу как обычно. sky_horizon — цвет у горизонта (к нему
-// уходят горы в дымке).
+// Своё небо планеты (assets/background/<планета>/sky.png): use_sky = 1 — небо из картинки
+// (sky_aspect — её ширина к высоте), выше в стратосфере темнеет как обычно. sky_horizon —
+// цвет у горизонта (к нему уходят горы в дымке).
 uniform sampler2D sky_tex : source_color, filter_linear_mipmap, repeat_disable;
 uniform float use_sky = 0.0;
-uniform vec2 sky_size = vec2(120.0, 51.0);
+uniform float sky_aspect = 2.0;
 uniform vec3 sky_horizon = vec3(0.72, 0.9, 1.0);
 // Сила дымки на слоях (у своих слоёв планеты дымка уже нарисована — почти без неё).
 uniform float haze_k = 1.0;
@@ -88,10 +87,6 @@ vec3 over(vec3 c, vec4 tex, float haze, vec3 horizon, inout float cover) {
 	return mix(c, col, tex.a);
 }
 
-float px_sky(float ux) {
-	return (ux - 0.5) * view_w;
-}
-
 void fragment() {
 	float alt = mix(alt_top, alt_bottom, UV.y);
 	float above = alt - ground_alt;
@@ -101,19 +96,17 @@ void fragment() {
 	vec3 high = vec3(0.04, 0.07, 0.2);
 	vec3 space = vec3(0.0, 0.0, 0.02);
 	vec3 c = mix(horizon, low, smoothstep(0.0, 40.0, above));
-	// Небо-картинка планеты: производные — вне ветвления.
-	float sx = (cam_x * 0.05 + px_sky(UV.x)) / sky_size.x;
-	vec2 sg = vec2(sx, -above / sky_size.y);
-	vec2 sdx = dFdx(sg), sdy = dFdy(sg);
+	// Небо-картинка планеты — как бесконечно далёкий задник: закреплена на экране (вся по
+	// высоте, по ширине — сколько влезает), без повторов и отражений. Когда камера уходит
+	// вбок, картинка медленно проезжает от края до края и обратно.
 	if (use_sky > 0.5) {
-		float su = abs(fract(sx * 0.5) * 2.0 - 1.0);
-		float sv0 = 1.0 - above / sky_size.y;
-		float sv = clamp(sv0, 0.002, 0.998);
-		c = textureGrad(sky_tex, vec2(su, sv), sdx, sdy).rgb;
-		// Выше картинки — её верхний цвет, усреднённый (иначе тянутся полосы верхней строки);
-		// к верху картинки плавно переходим в него.
-		vec3 top_c = textureLod(sky_tex, vec2(0.5, 0.02), 8.0).rgb;
-		c = mix(c, top_c, smoothstep(0.25, -0.05, sv0));
+		float scr = SCREEN_PIXEL_SIZE.y / SCREEN_PIXEL_SIZE.x;
+		float u_span = min(1.0, scr / sky_aspect);
+		float v_span = min(1.0, sky_aspect / scr);
+		float sweep = abs(fract(cam_x / 600.0) * 2.0 - 1.0);
+		float su = (1.0 - u_span) * sweep + UV.x * u_span;
+		float sv = 1.0 - (1.0 - UV.y) * v_span;
+		c = texture(sky_tex, vec2(su, sv)).rgb;
 		horizon = sky_horizon;
 	}
 	c = mix(c, mid, smoothstep(200.0, 12000.0, alt));

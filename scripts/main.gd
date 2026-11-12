@@ -755,7 +755,6 @@ func _do_launch() -> void:
 ## в слот холмов (0.45). Ширина куска — по пропорциям картинки (у разных планет полосы
 ## разной высоты, а горы на экране должны быть одного роста).
 const PLANET_LAYERS := {"mountains": ["mountains", 19.0, 1.0], "hills": ["forest", 12.5, 2.0], "near": ["hills", 8.5, 3.0]}
-const SKY_H := 26.0
 const EARTH_GEO := {"mountains": Vector3(36.0, -6.354, 18.916), "forest": Vector3(30.0, -0.226, 5.354), "hills": Vector3(30.0, -6.602, 11.31)}
 
 
@@ -773,9 +772,7 @@ func _apply_planet_sky() -> void:
 	if own:
 		var sky: Texture2D = load(dir + "sky.png")
 		m.set_shader_parameter("sky_tex", sky)
-		# Картинка неба — на SKY_H клеток над горизонтом (на весь экран и выше), ширина — по её
-		# пропорциям; выше — её верхний цвет.
-		m.set_shader_parameter("sky_size", Vector2(SKY_H * sky.get_width() / sky.get_height(), SKY_H))
+		m.set_shader_parameter("sky_aspect", float(sky.get_width()) / sky.get_height())
 		m.set_shader_parameter("sky_horizon", _bottom_color(sky))
 		for layer in PLANET_LAYERS:
 			var spec: Array = PLANET_LAYERS[layer]
