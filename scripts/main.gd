@@ -747,18 +747,68 @@ func _do_launch() -> void:
 	get_tree().create_timer(StructureLayer.LAUNCH_IGNITE + 3.0).timeout.connect(_show_worlds)
 
 
-## Небо планеты: свой оттенок; на других планетах нет лесов, холмов с травой и облаков.
+## Свой фон планеты (assets/background/<планета>/, art_src/backgrounds/planets/prepare_planet.py):
+## слой → [слот шейдера, ширина куска в клетках, насколько низ рисунка уходит под землю].
+## Дальние горы — в слот гор (параллакс 0.15), холмы — в слот леса (0.3), ближний край —
+## в слот холмов (0.45).
+const PLANET_LAYERS := {"mountains": ["mountains", 90.0, 1.0], "hills": ["forest", 60.0, 2.0], "near": ["hills", 40.0, 3.0]}
+const EARTH_GEO := {"mountains": Vector3(36.0, -6.354, 18.916), "forest": Vector3(30.0, -0.226, 5.354), "hills": Vector3(30.0, -6.602, 11.31)}
+
+
+## Небо планеты: если для неё нарисован свой фон — его слои и небо; иначе земные горы в её
+## оттенке (без лесов, холмов с травой и облаков).
 func _apply_planet_sky() -> void:
 	var m := _sky.material as ShaderMaterial
 	var earth := _planet == "earth"
-	for n in ["forest_1", "forest_2", "hills_1", "hills_2", "clouds"]:
-		m.set_shader_parameter(n, load("res://assets/background/%s.png" % n) if earth else _blank_tex())
-	var tint: Color = Planet.data(_planet)["sky"]
-	m.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+	var dir := "res://assets/background/%s/" % _planet
+	var own := not earth and ResourceLoader.exists(dir + "sky.png")
+	for slot in EARTH_GEO:
+		m.set_shader_parameter("geo_" + slot, EARTH_GEO[slot])
+	m.set_shader_parameter("use_sky", 1.0 if own else 0.0)
+	m.set_shader_parameter("haze_k", 0.2 if own else 1.0)
+	if own:
+		var sky: Texture2D = load(dir + "sky.png")
+		m.set_shader_parameter("sky_tex", sky)
+		m.set_shader_parameter("sky_size", Vector2(120.0, 120.0 * sky.get_height() / sky.get_width()))
+		m.set_shader_parameter("sky_horizon", _bottom_color(sky))
+		for layer in PLANET_LAYERS:
+			var spec: Array = PLANET_LAYERS[layer]
+			var t: Texture2D = load(dir + layer + ".png")
+			var tw: float = spec[1]
+			var th := tw * t.get_height() / t.get_width()
+			# Низ картинки продлён на 30% (prepare.py, PAD) — он весь под землёй.
+			var pad := th - th / 1.3
+			m.set_shader_parameter("geo_" + spec[0], Vector3(tw, -spec[2] - pad, th))
+			m.set_shader_parameter(spec[0] + "_1", t)
+			m.set_shader_parameter(spec[0] + "_2", t)
+		m.set_shader_parameter("clouds", load(dir + "clouds.png") if ResourceLoader.exists(dir + "clouds.png") else _blank_tex())
+		m.set_shader_parameter("tint", Vector3.ONE)
+	else:
+		for n in ["mountains_1", "mountains_2"]:
+			m.set_shader_parameter(n, load("res://assets/background/%s.png" % n))
+		for n in ["forest_1", "forest_2", "hills_1", "hills_2", "clouds"]:
+			m.set_shader_parameter(n, load("res://assets/background/%s.png" % n) if earth else _blank_tex())
+		var tint: Color = Planet.data(_planet)["sky"]
+		m.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
 	# Породы и листва — своего цвета у каждой планеты.
 	var geo: Dictionary = Planet.data(_planet).get("geo", {})
 	ChunkView.palette = geo.get("palette", Color(1, 1, 1))
 	ChunkView.leaf = geo.get("leaf", Color(0, 0, 0, 0))
+
+
+## Средний цвет нижних строк картинки неба — цвет у горизонта.
+func _bottom_color(t: Texture2D) -> Vector3:
+	var img := t.get_image()
+	if img.is_compressed():
+		img.decompress()
+	var c := Vector3.ZERO
+	var n := 0
+	for y in range(img.get_height() - 6, img.get_height()):
+		for x in range(0, img.get_width(), 8):
+			var p := img.get_pixel(x, y)
+			c += Vector3(p.r, p.g, p.b)
+			n += 1
+	return c / maxf(1.0, n)
 
 
 var _blank: ImageTexture

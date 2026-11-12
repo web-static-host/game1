@@ -28,6 +28,22 @@ uniform sampler2D hills_2 : source_color, filter_linear_mipmap, repeat_disable;
 // Атлас из 5 облаков в ряд.
 uniform sampler2D clouds : source_color, filter_linear_mipmap, repeat_disable;
 
+// Своё небо планеты (assets/background/<планета>/sky.png): use_sky = 1 — небо у земли берётся
+// из картинки (кусок sky_size клеток, повторяется с отражением, параллакс 0.05), выше —
+// её верхний цвет уходит в стратосферу как обычно. sky_horizon — цвет у горизонта (к нему
+// уходят горы в дымке).
+uniform sampler2D sky_tex : source_color, filter_linear_mipmap, repeat_disable;
+uniform float use_sky = 0.0;
+uniform vec2 sky_size = vec2(120.0, 51.0);
+uniform vec3 sky_horizon = vec3(0.72, 0.9, 1.0);
+// Сила дымки на слоях (у своих слоёв планеты дымка уже нарисована — почти без неё).
+uniform float haze_k = 1.0;
+// Слои: ширина куска, низ куска над землёй, высота куска (клетки) — у планет свои картинки.
+// По умолчанию — земные (prepare.py: 1199 px шириной, низ продлён на 30%).
+uniform vec3 geo_mountains = vec3(36.0, -6.354, 18.916);
+uniform vec3 geo_forest = vec3(30.0, -0.226, 5.354);
+uniform vec3 geo_hills = vec3(30.0, -6.602, 11.31);
+
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -65,11 +81,15 @@ vec4 layer_uv(float lx, float above, float tile_w, float base, float tile_h, flo
 
 // Слой поверх цвета: дымка к горизонту, зимой светлее и бледнее.
 vec3 over(vec3 c, vec4 tex, float haze, vec3 horizon, inout float cover) {
-	vec3 col = mix(tex.rgb, horizon, haze);
+	vec3 col = mix(tex.rgb, horizon, haze * haze_k);
 	float l = dot(col, vec3(0.3, 0.59, 0.11));
 	col = mix(col, mix(vec3(l), vec3(0.9, 0.93, 0.98), 0.55) * 1.08, winter * 0.75);
 	cover = max(cover, tex.a);
 	return mix(c, col, tex.a);
+}
+
+float px_sky(float ux) {
+	return (ux - 0.5) * view_w;
 }
 
 void fragment() {
@@ -81,6 +101,16 @@ void fragment() {
 	vec3 high = vec3(0.04, 0.07, 0.2);
 	vec3 space = vec3(0.0, 0.0, 0.02);
 	vec3 c = mix(horizon, low, smoothstep(0.0, 40.0, above));
+	// Небо-картинка планеты: производные — вне ветвления.
+	float sx = (cam_x * 0.05 + px_sky(UV.x)) / sky_size.x;
+	vec2 sg = vec2(sx, -above / sky_size.y);
+	vec2 sdx = dFdx(sg), sdy = dFdy(sg);
+	if (use_sky > 0.5) {
+		float su = abs(fract(sx * 0.5) * 2.0 - 1.0);
+		float sv = clamp(1.0 - above / sky_size.y, 0.002, 0.998);
+		c = textureGrad(sky_tex, vec2(su, sv), sdx, sdy).rgb;
+		horizon = sky_horizon;
+	}
 	c = mix(c, mid, smoothstep(200.0, 12000.0, alt));
 	c = mix(c, high, smoothstep(9000.0, 35000.0, alt));
 	c = mix(c, space, smoothstep(50000.0, 100000.0, alt));
@@ -93,7 +123,7 @@ void fragment() {
 
 	// Горы: кусок 36 клеток, низ чуть под землёй, параллакс 0.15.
 	// Производные — вне ветвлений: внутри них на мобильных GPU они не определены.
-	q = layer_uv(cam_x * 0.15 + px, above, 36.0, -2.0 - 36.0 * 145.0 / 1199.0, 36.0 * 630.0 / 1199.0, 1.0, 2.0, true, g);
+	q = layer_uv(cam_x * 0.15 + px, above, geo_mountains.x, geo_mountains.y, geo_mountains.z, 1.0, 2.0, true, g);
 	vec2 dx = dFdx(g), dy = dFdy(g);
 	if (q.w > 0.0) {
 		tex = q.z < 0.5 ? textureGrad(mountains_1, q.xy, dx, dy) : textureGrad(mountains_2, q.xy, dx, dy);
@@ -123,7 +153,7 @@ void fragment() {
 	}
 
 	// Далёкий лес в дымке: кусок 30 клеток, параллакс 0.3.
-	q = layer_uv(cam_x * 0.3 + px, above, 30.0, 1.0 - 30.0 * 49.0 / 1199.0, 30.0 * 214.0 / 1199.0, 2.0, 2.0, true, g);
+	q = layer_uv(cam_x * 0.3 + px, above, geo_forest.x, geo_forest.y, geo_forest.z, 2.0, 2.0, true, g);
 	dx = dFdx(g);
 	dy = dFdy(g);
 	if (q.w > 0.0) {
@@ -132,7 +162,7 @@ void fragment() {
 	}
 
 	// Холмы: кусок 30 клеток, параллакс 0.45.
-	q = layer_uv(cam_x * 0.45 + px, above, 30.0, -4.0 - 30.0 * 104.0 / 1199.0, 30.0 * 452.0 / 1199.0, 3.0, 2.0, true, g);
+	q = layer_uv(cam_x * 0.45 + px, above, geo_hills.x, geo_hills.y, geo_hills.z, 3.0, 2.0, true, g);
 	dx = dFdx(g);
 	dy = dFdy(g);
 	if (q.w > 0.0) {
