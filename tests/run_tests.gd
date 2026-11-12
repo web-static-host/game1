@@ -110,6 +110,7 @@ func _initialize() -> void:
 	test_super_materials()
 	test_uranium()
 	test_ladder_straight()
+	test_ladder_down_from_mines()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -4838,6 +4839,27 @@ func test_ladder_straight() -> void:
 	check(colony.pathing.climbable(below_floor) and not colony.pathing.neighbors(below_floor).has(Vector2i(x + 1, s + 8)),
 		"с лестницы на пол шахты сбоку не прыгают (соседи %s)" % [colony.pathing.neighbors(below_floor)])
 	check(colony.pathing.neighbors(Vector2i(x, s + 8)).has(Vector2i(x + 1, s + 8)), "а с той же высоты в шахту шагают")
+
+
+## Шахты над горизонтальным лифтом (и над длинным ходом): из каждой — лестница вниз.
+## Раньше над лифтом лестниц не было вовсе, а над тоннелем — одна, к первой шахте.
+func test_ladder_down_from_mines() -> void:
+	var colony := _new_colony(36)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	for kind in [Project.Kind.LIFT, Project.Kind.TUNNEL]:
+		var y := s + (10 if kind == Project.Kind.LIFT else 20)
+		var base := _dug_project(colony, kind, Rect2i(x, y, 20, 2), 990 + kind)
+		_dug_project(colony, Project.Kind.MINE, Rect2i(x + 2, y - 3, 5, 3), 992 + kind * 2)
+		_dug_project(colony, Project.Kind.MINE, Rect2i(x + 12, y - 3, 5, 3), 993 + kind * 2)
+		colony._rebuild_climb()
+		colony.pathing.clear_cache()
+		var down := Vector2i(x + 5, base.rect.end.y - 1)
+		for mx in [x + 14, x + 4]:
+			var reach := colony.pathing.explore(Vector2i(mx, y - 1))
+			check(reach[1].has(down), "%s: из шахты над ним (x %d) можно спуститься вниз" % ["лифт" if kind == Project.Kind.LIFT else "тоннель", mx - x])
 
 
 ## Лифты встык одного вида соединяются в один.

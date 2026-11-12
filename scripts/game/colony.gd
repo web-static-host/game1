@@ -2906,17 +2906,21 @@ func _rebuild_climb() -> void:
 				if p.rect.size.y > p.rect.size.x or (p.kind == Project.Kind.LIFT and p.lift_vertical()):
 					for c in p.cells():
 						lad[c] = true
-				# Шахта (горизонтальный ход) прямо под другой выработкой: пока копали, туда
-				# вели леса; после — постоянная лестница, иначе внизу остались бы запертыми.
-				if p.kind != Project.Kind.LIFT and p.rect.size.x >= p.rect.size.y:
+				# Шахта (горизонтальный ход, горизонтальный лифт) прямо под другой выработкой: пока
+				# копали, туда вели леса; после — постоянная лестница, иначе наверху остались бы
+				# запертыми. По лестнице к каждой выработке сверху (раньше — одна на весь ход: над
+				# длинным тоннелем вторая шахта оставалась без спуска; и над лифтом — ни одной).
+				if (p.kind != Project.Kind.LIFT or not p.lift_vertical()) and p.rect.size.x >= p.rect.size.y:
 					var top := p.rect.position.y - 1
+					var done := {}
 					for x in range(p.rect.position.x, p.rect.end.x):
 						var a := Vector2i(x, top)
-						if interior.has(a) and interior[a] != p.id and not room_cells.has(a) and world.is_open(x, top):
+						if interior.has(a) and interior[a] != p.id and not room_cells.has(a) and world.is_open(x, top) \
+								and not done.has(interior[a]):
+							done[interior[a]] = true
 							lad[a] = true
 							for y in range(p.rect.position.y, p.rect.end.y):
 								lad[Vector2i(x, y)] = true
-							break
 			Project.Kind.ROOM:
 				for side in [-1, 1]:
 					if edge_ladder(p, side, site):
