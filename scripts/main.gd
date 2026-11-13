@@ -1834,6 +1834,25 @@ func _fit_text(u: Unit, task: int) -> String:
 		Genetics.STAT_NAMES[st[1]].to_lower(), roundi(u.stat(st[1]) * 100)]
 
 
+## Насколько быстро гаврик работает в роли (×1 — обычный новичок): шахтёр — порода и руда в
+## глубине, строитель — стройка и копка, подсобный — как раньше, характеристики.
+func _rates_text(u: Unit, prof: int, task: int) -> String:
+	var r := colony.role_rates(u)
+	match prof:
+		Unit.Prof.MINER:
+			var t := "копает ×%s" % _x(r["rock"])
+			if absf(r["ore"] - r["rock"]) > 0.05:
+				t += ", руда в глубине ×%s" % _x(r["ore"])
+			return t
+		Unit.Prof.BUILDER:
+			return "строит ×%s, копает ×%s" % [_x(r["build"]), _x(r["rock"])]
+	return _fit_text(u, task)
+
+
+static func _x(v: float) -> String:
+	return ("%.1f" % v).replace(".", ",")
+
+
 func _calling_text(u: Unit, task: int) -> String:
 	match colony.calling_of(u, task):
 		1:
@@ -2520,20 +2539,25 @@ func _pick_role(prof: int) -> void:
 	var skill := "build" if prof == Unit.Prof.BUILDER else ("dig" if prof == Unit.Prof.MINER else "gather")
 	var cands := colony.units.filter(func(o: Unit) -> bool:
 		return not o.child and not (o.workplace == 0 and o.profession == prof))
-	var score := func(o: Unit) -> float:
-		return colony.stat_fit(o, task) * o.speed(skill) * float(o.ability("work")) + (1.0 if colony.is_free(o) else 0.0)
+	# По настоящей скорости работы (характеристики, мутации, навык); при равной — свободные первыми.
+	var scores := {}
+	for o: Unit in cands:
+		scores[o] = colony.role_score(o, prof)
 	cands = cands.filter(func(o: Unit) -> bool: return _pick_pass(o, task))
-	cands.sort_custom(func(a: Unit, b: Unit) -> bool: return score.call(a) > score.call(b))
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool:
+		if absf(scores[a] - scores[b]) > 0.01:
+			return scores[a] > scores[b]
+		return colony.is_free(a) and not colony.is_free(b))
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
 		items.append({"looks": _looks(o), "open": _opener(o, func() -> void: _pick_role(prof)), "name": _name_sex(o),
-			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _fit_text(o, task),
+			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _rates_text(o, prof, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof, _finish_first)
 				_show_people()})
-	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "сначала свободные, лучшие — сверху",
+	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "кто быстрее работает — сверху (характеристики, мутации, навык)",
 		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)), _finish_control(func() -> void: _pick_role(prof)),
 			{"type": "people", "label": "Кого назначить:", "items": items,
 			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],

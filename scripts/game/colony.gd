@@ -5462,6 +5462,27 @@ func stat_fit(u: Unit, task: int) -> float:
 	return maxf(0.3, u.stat(st[0]) * (1.0 + 0.5 * (u.stat(st[1]) - 1.0)))
 
 
+## Настоящая скорость гаврика (1 — обычный новичок): копка породы, добыча руды в глубине и
+## стройка — с характеристиками, мутациями (рог, длинные руки, без глаз, меланист…) и навыком.
+func role_rates(u: Unit) -> Dictionary:
+	var work := float(u.ability("work"))
+	var dig := stat_fit(u, Unit.Task.DIG) * float(u.ability("dig")) * u.speed("dig")
+	return {"rock": dig * work, "ore": dig * maxf(work, 1.0) * float(u.ability("deep_mining")),
+		"build": stat_fit(u, Unit.Task.BUILD) * float(u.ability("build")) * work * u.speed("build")}
+
+
+## Насколько гаврик хорош в роли: шахтёр — копка породы и руда в глубине поровну, строитель —
+## стройка и копка поровну (строители копают тоннели и комнаты), подсобный — сила и скорость.
+func role_score(u: Unit, prof: int) -> float:
+	var r := role_rates(u)
+	match prof:
+		Unit.Prof.MINER:
+			return (r["rock"] + r["ore"]) * 0.5
+		Unit.Prof.BUILDER:
+			return (r["build"] + r["rock"]) * 0.5
+	return stat_fit(u, Unit.Task.HARVEST) * u.speed("gather") * float(u.ability("work"))
+
+
 ## Основная работа гаврика: место работы или роль (строитель, шахтёр, подсобный); -1 — нет.
 func job_task(u: Unit) -> int:
 	if u.workplace != 0:

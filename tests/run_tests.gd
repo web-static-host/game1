@@ -109,6 +109,7 @@ func _initialize() -> void:
 	test_materials_no_wood()
 	test_super_materials()
 	test_uranium()
+	test_role_rates()
 	test_ladder_straight()
 	test_ladder_down_from_mines()
 	test_lift_top_under_rock()
@@ -4785,6 +4786,41 @@ func test_finish_first() -> void:
 
 
 ## Уран: обогащают только на фабрике; облучённый живёт на 10% меньше, его дети — мутанты.
+## В списках «+ Шахтёр» и «+ Строитель» — настоящая скорость работы: мутации (рог, длинные руки,
+## без глаз) засчитываются, а не только характеристики.
+func test_role_rates() -> void:
+	var colony := _new_colony(38)
+	_start(colony, _find_solid_column(colony.world))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var base := Genetics.founder(rng)
+	base["personality"] = ""
+	var plain: Unit = colony.units[0]
+	plain.set_genome(base.duplicate(true))
+	var horned: Unit = colony.units[1]
+	var gh := base.duplicate(true)
+	Genetics.mutate(gh, rng, "horn")
+	horned.set_genome(gh)
+	var blind: Unit = colony.units[2]
+	var gb := base.duplicate(true)
+	Genetics.mutate(gb, rng, "blind")
+	blind.set_genome(gb)
+	var armed: Unit = colony.units[3]
+	var ga := base.duplicate(true)
+	Genetics.mutate(ga, rng, "long_arms")
+	armed.set_genome(ga)
+	for u in [plain, horned, blind, armed]:
+		u.skills = {}
+	var rp := colony.role_rates(plain)
+	var rh := colony.role_rates(horned)
+	var rb := colony.role_rates(blind)
+	check(rh["rock"] > rp["rock"] * 1.5, "рогатый копает быстрее (×%.2f против ×%.2f)" % [rh["rock"], rp["rock"]])
+	check(colony.role_score(horned, Unit.Prof.MINER) > colony.role_score(plain, Unit.Prof.MINER), "в шахтёры рогатый — выше обычного")
+	check(rb["ore"] > rp["ore"] * 1.8 and rb["rock"] < rp["rock"], "без глаз: руда в глубине вдвое быстрее, порода — медленнее")
+	check(colony.role_score(armed, Unit.Prof.BUILDER) > colony.role_score(plain, Unit.Prof.BUILDER), "в строители длинные руки — выше обычного")
+	check(colony.role_score(horned, Unit.Prof.BUILDER) > colony.role_score(plain, Unit.Prof.BUILDER), "строители тоже копают: рогатый строитель — выше обычного")
+
+
 func test_uranium() -> void:
 	check(not RoomType.FORGE_RECIPES.has("uranium") and RoomType.RECIPES[RoomType.ENRICHMENT][0].has("uranium_ore"),
 		"урановую руду обогащает только фабрика")
