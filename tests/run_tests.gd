@@ -5209,6 +5209,9 @@ func test_lifts() -> void:
 	# Грузовой: груз у верхнего конца едет вниз и сам выгружается в склад у нижнего.
 	var cl := _dug_project(colony, Project.Kind.LIFT, Rect2i(x + 40, s, 3, 16), 902)
 	cl.cargo = true
+	# Над шахтой — проход (иначе у верхней клетки не встать, и остановка — клеткой ниже).
+	for xx in range(x + 40, x + 43):
+		w.set_material(xx, s - 1, Mat.AIR)
 	var st := _dug_project(colony, Project.Kind.ROOM, Rect2i(x + 43, s + 13, 6, 3), 903)
 	st.purpose = RoomType.STORAGE
 	colony.assign_work(colony.units[1], st)
