@@ -2394,7 +2394,16 @@ func _lift_axis(p: Project, c: Vector2i) -> int:
 ## Ось концов шахты: [начало (верх/лево), конец (низ/право)].
 func _lift_ends(p: Project) -> Array:
 	if p.lift_vertical():
-		return [p.rect.position.y, p.rect.end.y - 1]
+		# Кабина — на рост гаврика (2 м) над полом остановки. Над шахтой порода (бур-лифт,
+		# шахта, начатая под землёй) — на верхней клетке не встать, и кабина уходила верхом в
+		# грунт: верхняя остановка — клеткой ниже.
+		var top := p.rect.position.y
+		var open_above := false
+		for x in range(p.rect.position.x, p.rect.end.x):
+			if world.is_open(x, top - 1):
+				open_above = true
+				break
+		return [top if open_above or p.rect.size.y < 3 else top + 1, p.rect.end.y - 1]
 	return [p.rect.position.x, p.rect.end.x - 1]
 
 
@@ -2443,6 +2452,8 @@ func _lifts_tick(dt: float) -> void:
 		var ends := _lift_ends(p)
 		if p.lift_pos == Project.LIFT_UNSET:
 			p.lift_pos = float(ends[1])
+		# Кабина из старого сохранения выше верхней остановки (в грунте) — опускаем.
+		p.lift_pos = clampf(p.lift_pos, float(ends[0]), float(ends[1]))
 		if p.cargo:
 			if check:
 				_cargo_autoload(p)
@@ -5111,7 +5122,8 @@ func _birth(mother: Unit) -> void:
 	mother.pregnancy = -1.0
 	var father := unit_by_id(mother.partner_id)
 	# Гены: по копии от мамы и от папы, иногда мутация.
-	var rad := mother.irradiated or (father != null and father.irradiated)
+	# Облучён один из родителей — у ребёнка одна мутация, оба — две.
+	var rad := (1 if mother.irradiated else 0) + (1 if father != null and father.irradiated else 0)
 	var genome := Genetics.child(mother.genome, father.genome if father != null else mother.genome, rng, rad)
 	var baby := _new_unit(Unit.Sex.MALE, mother.pos, genome)
 	baby.child = true
@@ -5220,7 +5232,7 @@ func irradiate(u: Unit) -> void:
 	u.irradiated = true
 	if u.lifespan > 0.0:
 		u.lifespan *= RADIATION_LIFE
-	_log("%s %s ураном — проживёт на 30%% меньше (около 7 лет вместо 10), дети будут мутантами" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning", u.cell())
+	_log("%s %s ураном — проживёт на 30%% меньше (около 7 лет вместо 10), дети будут мутантами (оба родителя облучены — по две мутации)" % [u.name, "облучена" if u.sex == Unit.Sex.FEMALE else "облучён"], "warning", u.cell())
 
 
 # --- Места работы: игрок ставит конкретных гавриков (как в Fallout Shelter) ---------------

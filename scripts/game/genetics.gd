@@ -47,6 +47,8 @@ const MUTATIONS := {
 	"glow": [3, 0.7], "shell": [3, 0.7], "albino": [3, 0.7], "melanist": [3, 0.7], "blind": [3, 0.7],
 }
 const RARITY_NAMES := ["обычная", "необычная", "редкая", "очень редкая"]
+## Мутации, что отменяют друг друга: вместе у ребёнка двух облучённых не выпадают.
+const OPPOSITE := {"giant": "tiny", "albino": "melanist", "eyes": "blind", "color": "bright"}
 ## Сколько раз мутация «гигант» или «кроха» может наложиться.
 const MAX_SIZE := 5
 const MAX_TINY := 3
@@ -124,9 +126,9 @@ static func _personality(rng: RandomNumberGenerator) -> String:
 
 
 ## Ребёнок двух родителей.
-## irradiated — кто-то из родителей облучён ураном: мутация у ребёнка всегда, любая
-## с одинаковой вероятностью (без учёта редкости).
-static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGenerator, irradiated := false) -> Dictionary:
+## irradiated — сколько родителей облучено ураном (0, 1 или 2): у ребёнка столько же мутаций
+## (облучён один — одна, оба — две разные), любые с одинаковой вероятностью (без учёта редкости).
+static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGenerator, irradiated := 0) -> Dictionary:
 	var g := {"mutations": []}
 	g["color"] = [_color_copy(mother, rng), _color_copy(father, rng)]
 	for gene in ["shape", "eyes", "fingers", "size", "pattern", "hair_color"] + DOMINANT + RECESSIVE:
@@ -142,9 +144,19 @@ static func child(mother: Dictionary, father: Dictionary, rng: RandomNumberGener
 	g["personality"] = _personality(rng)
 	# Узор (пятна, полосы) — цвета одного из родителей.
 	g["pattern_color"] = color_of(mother if rng.randf() < 0.5 else father)
-	if irradiated:
+	if irradiated > 0:
 		var kinds := MUTATIONS.keys()
-		mutate(g, rng, kinds[rng.randi() % kinds.size()])
+		var got: Array = []
+		for i in mini(irradiated, 2):
+			# Вторая — другая и не отменяющая первую (гигант и кроха, альбинос и меланист…).
+			var pool := kinds.filter(func(k: String) -> bool:
+				for m in got:
+					if k == m or OPPOSITE.get(k, "") == m or OPPOSITE.get(m, "") == k:
+						return false
+				return true)
+			var kind: String = pool[rng.randi() % pool.size()]
+			got.append(kind)
+			mutate(g, rng, kind)
 	elif rng.randf() < MUTATION_CHANCE:
 		mutate(g, rng)
 	return g

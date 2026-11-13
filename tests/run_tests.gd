@@ -111,6 +111,7 @@ func _initialize() -> void:
 	test_uranium()
 	test_ladder_straight()
 	test_ladder_down_from_mines()
+	test_lift_top_under_rock()
 	test_planet_balance()
 	test_food_and_output()
 	test_priority()
@@ -4800,10 +4801,19 @@ func test_uranium() -> void:
 	var kinds := {}
 	var all := true
 	for i in 400:
-		var g := Genetics.child(mom.genome, dad.genome, rng, true)
-		all = all and not (g["mutations"] as Array).is_empty()
+		var g := Genetics.child(mom.genome, dad.genome, rng, 1)
+		all = all and (g["mutations"] as Array).size() == 1
 		kinds[g["mutations"][-1]] = int(kinds.get(g["mutations"][-1], 0)) + 1
-	check(all, "у облучённых родителей у детей всегда мутация (бывает и узор)")
+	check(all, "облучён один родитель — у ребёнка всегда одна мутация (бывает и узор)")
+	var two := true
+	var opp := false
+	for i in 400:
+		var g := Genetics.child(mom.genome, dad.genome, rng, 2)
+		var ms: Array = g["mutations"]
+		two = two and ms.size() == 2 and ms[0] != ms[1]
+		if ms.size() == 2 and (Genetics.OPPOSITE.get(ms[0], "") == ms[1] or Genetics.OPPOSITE.get(ms[1], "") == ms[0]):
+			opp = true
+	check(two and not opp, "облучены оба — у ребёнка две разные мутации, не отменяющие друг друга")
 	check(kinds.size() == Genetics.MUTATIONS.size() and int(kinds.get("glow", 0)) > 8, "любая мутация с равной вероятностью, и самые редкие тоже (%d видов)" % kinds.size())
 	var u := Unit.from_dict(mom.to_dict())
 	check(u.irradiated, "облучение сохраняется")
@@ -4860,6 +4870,24 @@ func test_ladder_down_from_mines() -> void:
 		for mx in [x + 14, x + 4]:
 			var reach := colony.pathing.explore(Vector2i(mx, y - 1))
 			check(reach[1].has(down), "%s: из шахты над ним (x %d) можно спуститься вниз" % ["лифт" if kind == Project.Kind.LIFT else "тоннель", mx - x])
+
+
+## Над шахтой лифта порода (бур-лифт) — верхняя остановка клеткой ниже: кабина (2 м) не
+## уходит верхом в грунт.
+func test_lift_top_under_rock() -> void:
+	var colony := _new_colony(37)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var s := w.gen.surface_y(x)
+	var l := _dug_project(colony, Project.Kind.LIFT, Rect2i(x, s + 10, 2, 8), 996)
+	check(not w.is_open(x, s + 9) and colony._lift_ends(l)[0] == s + 11, "над шахтой порода — верхняя остановка клеткой ниже (%s)" % [colony._lift_ends(l)])
+	for xx in [x, x + 1]:
+		w.set_material(xx, s + 9, Mat.AIR)
+	check(colony._lift_ends(l)[0] == s + 10, "над шахтой проход — остановка у самого верха")
+	l.lift_pos = float(s + 9)
+	colony._lifts_tick(0.1)
+	check(l.lift_pos >= float(s + 10), "кабина выше верхней остановки опускается (%.1f)" % l.lift_pos)
 
 
 ## Лифты встык одного вида соединяются в один.
