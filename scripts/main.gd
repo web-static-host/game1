@@ -1665,7 +1665,7 @@ func _show_project(p: Project) -> void:
 					_show_project(p), "primary"])
 	if colony.is_workplace(p):
 		controls.push_front(_workers_list(p))
-		actions.push_front(["Назначить", func() -> void: _pick_worker(p), "primary"])
+		actions.push_front(["Назначить", func() -> void: _project_at = hud.panel_scroll(); _pick_worker(p), "primary"])
 	_info_target = ["project", p.id, preview["v"]]
 	var spec := _project_spec(p, preview["v"])
 	spec["actions"] = actions
@@ -1914,13 +1914,20 @@ func _pick_worker(p: Project) -> void:
 				var err := colony.assign_work(u, p, _finish_first)
 				if not err.is_empty():
 					hud.log_event(err, "warning")
-				_show_project(p)})
+				_show_project(p)
+				hud.set_panel_scroll(_project_at)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
 		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
 		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)), _finish_control(func() -> void: _pick_worker(p)),
 			{"type": "people", "label": "Лучшие для этой работы — сверху. Кто работает вместе или по соседству, быстрее становится парой:", "items": items,
 			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Все взрослые уже здесь."}],
-		"actions": [["Назад", func() -> void: _show_project(p)]]})
+		"actions": [["Назад", func() -> void:
+			_show_project(p)
+			hud.set_panel_scroll(_project_at)]]})
+
+
+## Где была прокручена карточка места работы перед списком «Назначить» — туда и вернуться.
+var _project_at := 0
 
 
 ## «· потом: ферма» — куда гаврик пойдёт, доделав своё.
@@ -2496,7 +2503,12 @@ func _people_spec() -> Dictionary:
 			{"type": "text", "text": "Шахтёры работают только в шахтах, строители — на остальных стройках (в шахтах — только если шахтёров нет); на работу идут ближайшие. Свободные помогают везде, где есть места («Рабочих» в карточке — это места для помощников): пока строитель далеко, работает ближайший свободный, а когда строитель дойдёт — уступает ему. Гаврик докапывает свою стройку, а не бежит на другую. Строитель и шахтёр сами берут дерево на укрепление полной ношей, только если его не принесли; добытое и материалы носят работники складов, подсобные и свободные — на любой склад, работник склада для этого не нужен."}]}
 
 
-func _show_people() -> void:
+## Где был прокручен список «Гаврики» — туда и вернуться, назначив кого-то из списка выбора
+## (раньше список после назначения открывался с самого верха).
+var _people_at := 0
+
+
+func _show_people(keep := false) -> void:
 	_select(null, null)
 	hud.close_overlays()
 	_info_target = ["people"]
@@ -2520,16 +2532,19 @@ func _show_people() -> void:
 				item["button"] = "Снять"
 				item["style"] = "danger"
 				item["pick"] = func() -> void:
+					_people_at = hud.panel_scroll()
 					colony.set_profession(u, Unit.Prof.ANY)
-					_show_people()
+					_show_people(true)
 			items.append(item)
 		if g[0] != "Дети" or not items.is_empty():
 			controls.append({"type": "people", "label": "%s — %d" % [g[0], items.size()], "items": items, "empty": "Никого."})
 	spec["controls"] = controls
-	spec["actions"] = [["+ Строитель", func() -> void: _pick_role(Unit.Prof.BUILDER), "primary"],
-		["+ Шахтёр", func() -> void: _pick_role(Unit.Prof.MINER), "primary"],
-		["+ Подсобный", func() -> void: _pick_role(Unit.Prof.HAULER), "primary"]]
+	spec["actions"] = [["+ Строитель", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.BUILDER), "primary"],
+		["+ Шахтёр", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.MINER), "primary"],
+		["+ Подсобный", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.HAULER), "primary"]]
 	hud.show_panel(spec)
+	if keep:
+		hud.set_panel_scroll(_people_at)
 
 
 ## Кого назначить строителем или подсобным: сначала свободные, лучшие — сверху.
@@ -2556,12 +2571,12 @@ func _pick_role(prof: int) -> void:
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				colony.set_profession(o, prof, _finish_first)
-				_show_people()})
+				_show_people(true)})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "кто быстрее работает — сверху (характеристики, мутации, навык)",
 		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)), _finish_control(func() -> void: _pick_role(prof)),
 			{"type": "people", "label": "Кого назначить:", "items": items,
 			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],
-		"actions": [["Назад", _show_people]]})
+		"actions": [["Назад", func() -> void: _show_people(true)]]})
 
 
 ## Наука: текущее исследование и дерево технологий.
