@@ -1914,8 +1914,8 @@ func _pick_worker(p: Project) -> void:
 				var err := colony.assign_work(u, p, _finish_first)
 				if not err.is_empty():
 					hud.log_event(err, "warning")
-				_show_project(p)
-				hud.set_panel_scroll(_project_at)})
+				# Остаёмся в том же списке и на том же месте — можно назначить следующего.
+				_pick_worker(p)})
 	hud.show_panel({"title": "Назначить: " + colony.workplace_name(p),
 		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
 		"controls": [_pick_filter_control(func() -> void: _pick_worker(p)), _finish_control(func() -> void: _pick_worker(p)),
@@ -2570,8 +2570,9 @@ func _pick_role(prof: int) -> void:
 			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _rates_text(o, prof, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
+				# Остаёмся в том же списке и на том же месте — можно назначить следующего.
 				colony.set_profession(o, prof, _finish_first)
-				_show_people(true)})
+				_pick_role(prof)})
 	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "кто быстрее работает — сверху (характеристики, мутации, навык)",
 		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)), _finish_control(func() -> void: _pick_role(prof)),
 			{"type": "people", "label": "Кого назначить:", "items": items,
