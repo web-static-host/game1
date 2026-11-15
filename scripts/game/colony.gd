@@ -2058,7 +2058,7 @@ func _drills_tick(dt: float) -> void:
 					for xx in range(row.position.x, row.end.x):
 						interior[Vector2i(xx, yy)] = bore.id
 		for c in solid:
-			_complete_dig(c, bore, null)
+			_complete_dig(c, bore, null, "Бур-лифт" if p.link_id != 0 else "Бур")
 		_machine_dug(solid)
 		p.rect.position += p.drill_dir
 		p.bore_done += 1
@@ -4635,7 +4635,8 @@ func _complete_harvest(x: int, u: Unit, room := 0) -> void:
 
 # --- Копка -----------------------------------------------------------------------
 
-func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
+## finder — кто нашёл, если копал не гаврик (бур): так и пишется в журнале.
+func _complete_dig(c: Vector2i, p: Project, u: Unit, finder := "") -> void:
 	_wake_waiting(p)
 	var m := world.get_mat(c.x, c.y)
 	dig_progress.erase(c)
@@ -4654,9 +4655,9 @@ func _complete_dig(c: Vector2i, p: Project, u: Unit) -> void:
 		if p != null and not RoomType.BULK.has(key):
 			p.found[key] = p.found.get(key, 0) + amount
 		if NOTABLE.has(key):
-			_log("%s %s: %s ×%d (глубина %s)" % [
-				u.name if u != null else "Гаврики", "нашла" if u != null and u.sex == Unit.Sex.FEMALE else "нашёл",
-				Mat.resource_name(key).to_lower(), amount, _depth_text(c)], "good", c)
+			var who := u.name if u != null else (finder if not finder.is_empty() else "Гаврики")
+			var verb := ("нашла" if u.sex == Unit.Sex.FEMALE else "нашёл") if u != null else ("нашёл" if not finder.is_empty() else "нашли")
+			_log("%s %s: %s ×%d (глубина %s)" % [who, verb, Mat.resource_name(key).to_lower(), amount, _depth_text(c)], "good", c)
 	_note_discovery(m, c)
 	# Дерево или валун над выкопанной клеткой падают.
 	if c.y == world.gen.surface_y(c.x) and world.feature_at(c.x) != WorldGen.FEATURE_NONE:

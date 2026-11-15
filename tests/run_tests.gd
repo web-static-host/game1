@@ -110,6 +110,7 @@ func _initialize() -> void:
 	test_super_materials()
 	test_uranium()
 	test_role_rates()
+	test_drill_finder_log()
 	test_ladder_straight()
 	test_ladder_down_from_mines()
 	test_lift_top_under_rock()
@@ -4786,6 +4787,27 @@ func test_finish_first() -> void:
 
 
 ## Уран: обогащают только на фабрике; облучённый живёт на 10% меньше, его дети — мутанты.
+## Ресурс нашёл бур — в журнале «Бур нашёл», а не «Гаврики».
+func test_drill_finder_log() -> void:
+	var colony := _new_colony(39)
+	var w := colony.world
+	var x := _find_solid_column(w, 60)
+	_start(colony, x - 25)
+	var c := Vector2i(x, w.gen.surface_y(x) + 20)
+	w.set_material(c.x, c.y, Mat.IRON_ORE)
+	var logs: Array[String] = []
+	colony.event_logged.connect(func(t: String, _k: String) -> void: logs.append(t))
+	colony._complete_dig(c, null, null, "Бур")
+	var found := logs.filter(func(t: String) -> bool: return "железная руда" in t)
+	check(found.size() == 1 and found[0].begins_with("Бур нашёл"), "в журнале — «Бур нашёл…» (%s)" % [found])
+	c += Vector2i(0, 1)
+	w.set_material(c.x, c.y, Mat.IRON_ORE)
+	logs.clear()
+	colony._complete_dig(c, null, null)
+	found = logs.filter(func(t: String) -> bool: return "железная руда" in t)
+	check(found.size() == 1 and found[0].begins_with("Гаврики нашли"), "без копавшего — «Гаврики нашли…» (%s)" % [found])
+
+
 ## В списках «+ Шахтёр» и «+ Строитель» — настоящая скорость работы: мутации (рог, длинные руки,
 ## без глаз) засчитываются, а не только характеристики.
 func test_role_rates() -> void:
