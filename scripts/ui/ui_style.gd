@@ -6,13 +6,18 @@ extends RefCounted
 ## с градиентом) и кэшируются.
 
 ## Цвета.
-const WINDOW_TOP := Color(0.12, 0.16, 0.27)
-const WINDOW_BOTTOM := Color(0.07, 0.1, 0.18)
-const WINDOW_EDGE := Color(0.3, 0.38, 0.56)
-const TILE := Color(0.17, 0.23, 0.38)
+const WINDOW_TOP := Color(0.08, 0.2, 0.25)
+const WINDOW_BOTTOM := Color(0.04, 0.11, 0.15)
+const WINDOW_EDGE := Color(0.2, 0.5, 0.55)
+const TILE := Color(0.11, 0.28, 0.34)
 const BLUE := Color(0.2, 0.45, 0.88)
 const ORANGE := Color(0.96, 0.6, 0.16)
-const INSET := Color(0.06, 0.08, 0.14, 0.85)
+const INSET := Color(0.03, 0.09, 0.12, 0.85)
+## Градиенты по диагонали (из левого верхнего угла в правый нижний).
+const TEAL_A := Color("14B8A6")
+const TEAL_B := Color("0891B2")
+const ORANGE_A := Color("FB923C")
+const ORANGE_B := Color("EA580C")
 
 static var _cache := {}
 
@@ -43,6 +48,19 @@ static func tile(col: Color, pressed := false, radius := 14, pad := 10.0) -> Sty
 static func banner(col: Color, radius := 16, pad := 12.0) -> StyleBoxTexture:
 	return _cached(["banner", col.to_html(), radius], func() -> Image:
 		return _paint(radius, col.lightened(0.18), col.darkened(0.22), Color(col.lightened(0.55), 0.9), 2, 0.22, 3, col.darkened(0.5)), radius, pad)
+
+
+## Плашка или кнопка с диагональным градиентом a → b (из левого верхнего угла в правый
+## нижний). Картинка большая — растягивается почти целиком, и градиент идёт через всю плашку.
+static func grad(a: Color, b: Color, radius := 16, pad := 12.0, pressed := false, wide := true) -> StyleBoxTexture:
+	var lip := 2 if pressed else 4
+	var tw := 512 if wide else 192
+	var th := 112 if wide else 160
+	var sb := _cached(["grad", a.to_html(), b.to_html(), radius, pressed, wide], func() -> Image:
+		return _paint(radius, a.darkened(0.08) if pressed else a, b.darkened(0.08) if pressed else b,
+			Color(a.lightened(0.5), 0.8), 2, 0.05 if pressed else 0.18, lip, b.darkened(0.45), tw, th, true), radius, pad)
+	sb.content_margin_bottom = pad + lip - 1
+	return sb
 
 
 ## Тёмная подложка раздела с каймой цвета раздела.
@@ -86,15 +104,18 @@ static func _cached(key: Array, paint: Callable, radius: int, pad: float) -> Sty
 
 ## Скруглённый прямоугольник: вертикальный градиент top→bottom, кайма edge толщиной bw,
 ## светлая полоска сверху внутри (shine — её яркость), снизу бортик lip пикселей цвета lip_col.
-static func _paint(radius: int, top: Color, bottom: Color, edge: Color, bw: int, shine: float, lip: int, lip_col: Color) -> Image:
-	var h := radius * 2 + 40
-	var w := radius * 2 + 24
+static func _paint(radius: int, top: Color, bottom: Color, edge: Color, bw: int, shine: float, lip: int, lip_col: Color,
+		pw := 0, ph := 0, diag := false) -> Image:
+	var h := ph if ph > 0 else radius * 2 + 40
+	var w := pw if pw > 0 else radius * 2 + 24
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	var r := float(radius)
 	for y in h:
 		var t := float(y) / (h - 1)
 		var base := top.lerp(bottom, t)
 		for x in w:
+			if diag:
+				base = top.lerp(bottom, clampf((float(x) / (w - 1) + t) * 0.5, 0.0, 1.0))
 			var d := _sdf(x + 0.5, y + 0.5, w, h, r)
 			if d > 0.5:
 				img.set_pixel(x, y, Color(0, 0, 0, 0))

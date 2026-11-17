@@ -83,12 +83,12 @@ const KIND_COLORS := {
 	"warning": Color(1.0, 0.8, 0.35),
 	"danger": Color(1.0, 0.4, 0.35),
 }
-const ACCENT := Color(0.96, 0.65, 0.16)
+const ACCENT := Color("FB923C")
 const MUTED := Color(0.78, 0.72, 0.68)
 const RED := Color(0.89, 0.36, 0.29)
 ## Оформление: тёплые тёмные панели, кнопки с «бортиком» снизу (тон того же цвета).
-const PANEL_BG := Color(0.1, 0.13, 0.22, 0.95)
-const TOP_BG := Color(0.08, 0.11, 0.19, 0.82)
+const PANEL_BG := Color(0.06, 0.16, 0.2, 0.95)
+const TOP_BG := Color(0.05, 0.13, 0.17, 0.82)
 const BTN := UiStyle.TILE
 const GREEN := Color(0.3, 0.72, 0.38)
 
@@ -225,6 +225,9 @@ static func _box_plain(col: Color, radius: int, pad: float) -> StyleBoxFlat:
 
 ## Кнопка — объёмная плитка цвета col (градиент, светлый кант, бортик снизу); pressed — вдавлена.
 static func btn_box(col: Color, pressed := false) -> StyleBox:
+	# Главные (оранжевые) кнопки — оранжевым градиентом по диагонали.
+	if col.is_equal_approx(ACCENT):
+		return UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 16, 10, pressed, false)
 	return UiStyle.tile(col, pressed)
 
 
@@ -288,10 +291,11 @@ func _build_top(column: VBoxContainer) -> void:
 	date_row.add_child(_weather)
 	date_row.add_child(_date)
 	right.add_child(date_row)
+	# Погода, высота и версия на верхней плашке не нужны — только дата (подписи остаются
+	# скрытыми: их обновляет игра).
 	for l in [_date, _status, version]:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		if l != _date:
-			right.add_child(l)
+	_status.visible = false
 
 
 static func _outlined(text: String, fs: int, col: Color) -> Label:
@@ -416,7 +420,7 @@ func set_date(text: String, weather := "") -> void:
 	if weather != _weather_name:
 		_weather_name = weather
 		_weather.texture = ResIcon.texture("weather_" + weather) if not weather.is_empty() else null
-		_weather.visible = _weather.texture != null
+		_weather.visible = false
 
 
 ## Высотомер (глубина или высота камеры).
@@ -452,7 +456,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	head.add_child(close)
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 8)
-	col.add_child(_section("build", "ПРОХОДЫ И ШАХТЫ", "Создавайте проходы, шахты и буровые конструкции", UiStyle.BLUE, tools))
+	col.add_child(_section("build", "ПРОХОДЫ И ШАХТЫ", "Создавайте проходы, шахты и буровые конструкции", UiStyle.TEAL_A, tools, UiStyle.TEAL_B))
 	for t in TOOLS:
 		var b := IconButton.make(t[1], t[2], 112, 60)
 		b.pressed.connect(func() -> void:
@@ -468,16 +472,16 @@ func _build_bottom(box: VBoxContainer) -> void:
 	_room_grid.columns = ROOM_COLS
 	_room_grid.add_theme_constant_override("h_separation", 8)
 	_room_grid.add_theme_constant_override("v_separation", 8)
-	col.add_child(_section("home", "КОМНАТЫ", "Стройте жилые, производственные и исследовательские комнаты", UiStyle.ORANGE, _room_grid))
+	col.add_child(_section("home", "КОМНАТЫ", "Стройте жилые, производственные и исследовательские комнаты", UiStyle.ORANGE_A, _room_grid, UiStyle.ORANGE_B))
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
 	_build_btn = IconButton.make("build", "Стройка")
 	_build_btn.toggle_mode = true
 	# Главная кнопка — оранжевая.
-	_build_btn.add_theme_stylebox_override("normal", btn_box(ACCENT))
-	_build_btn.add_theme_stylebox_override("hover", btn_box(ACCENT.lightened(0.08)))
-	_build_btn.add_theme_stylebox_override("pressed", btn_box(ACCENT.darkened(0.18), true))
+	_build_btn.add_theme_stylebox_override("normal", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 16, 10, false, false))
+	_build_btn.add_theme_stylebox_override("hover", UiStyle.grad(UiStyle.ORANGE_A.lightened(0.08), UiStyle.ORANGE_B.lightened(0.08), 16, 10, false, false))
+	_build_btn.add_theme_stylebox_override("pressed", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 16, 10, true, false))
 	_build_btn.toggled.connect(_on_build_toggled)
 	bar.add_child(_build_btn)
 	var fill := Control.new()
@@ -524,7 +528,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 		for st in ["normal", "hover", "disabled"]:
 			b.add_theme_stylebox_override(st, flat)
 		# Поля у нажатой — как у обычной: иначе «×20» не влезала и показывалась «×2».
-		var on := btn_box(ACCENT, true)
+		var on := UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 8, true, false)
 		on.content_margin_left = 6
 		on.content_margin_right = 6
 		for st in ["pressed", "hover_pressed"]:
@@ -543,11 +547,11 @@ func _build_bottom(box: VBoxContainer) -> void:
 
 ## Раздел окна: цветная плашка (значок, заголовок, черта, пояснение) над тёмной подложкой
 ## с каймой того же цвета, в ней — content.
-func _section(glyph: String, title: String, text: String, tint: Color, content: Control) -> Control:
+func _section(glyph: String, title: String, text: String, tint: Color, content: Control, tint_b := Color(0, 0, 0, 0)) -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", -6)
 	var bar := PanelContainer.new()
-	bar.add_theme_stylebox_override("panel", UiStyle.banner(tint, 16, 7))
+	bar.add_theme_stylebox_override("panel", UiStyle.grad(tint, tint_b, 16, 7) if tint_b.a > 0.0 else UiStyle.banner(tint, 16, 7))
 	bar.z_index = 1
 	box.add_child(bar)
 	var row := HBoxContainer.new()
@@ -901,7 +905,7 @@ func _build_panel() -> void:
 	v.add_child(head)
 	# Значок окна в цветной плитке слева от заголовка (как каска у «Строительства»).
 	_head_icon_bg = PanelContainer.new()
-	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.tile(ACCENT, false, 14, 4))
+	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 4, false, false))
 	_head_icon_bg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_head_icon_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(_head_icon_bg)
@@ -1059,7 +1063,8 @@ func _fill_header(spec: Dictionary) -> void:
 	_head_icon.glyph = glyph
 	_head_icon.queue_redraw()
 	var acc: Color = spec.get("accent", ACCENT)
-	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.tile(acc, false, 14, 4))
+	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 4, false, false)
+		if acc.is_equal_approx(ACCENT) else UiStyle.tile(acc, false, 14, 4))
 	_title.text = spec.get("title", "")
 	_subtitle.text = spec.get("subtitle", "")
 	_subtitle.visible = not _subtitle.text.is_empty()
@@ -2020,7 +2025,7 @@ func _build_tree_panel() -> void:
 	head.add_theme_constant_override("separation", 12)
 	v.add_child(head)
 	var ib := PanelContainer.new()
-	ib.add_theme_stylebox_override("panel", UiStyle.tile(ACCENT, false, 14, 4))
+	ib.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 4, false, false))
 	ib.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ib.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(ib)

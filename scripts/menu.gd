@@ -83,10 +83,10 @@ func _show() -> void:
 			_settings()
 
 
-## Заголовок окна — синяя плашка, как разделы окна «Строительство» (оранжевая — у главной кнопки).
+## Заголовок окна — бирюзовая плашка, как разделы окна «Строительство» (оранжевая — у главной кнопки).
 func _title(text: String) -> void:
 	var bar := PanelContainer.new()
-	bar.add_theme_stylebox_override("panel", UiStyle.banner(UiStyle.BLUE, 16, 8))
+	bar.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.TEAL_A, UiStyle.TEAL_B, 16, 8))
 	var t := Hud._label(text.to_upper(), 28, Color.WHITE)
 	t.add_theme_font_override("font", Fonts.black())
 	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.35))
