@@ -44,8 +44,12 @@ func _draw() -> void:
 	else:
 		ResIcon.draw_glyph(self, glyph, icon_c, minf(size.x, size.y) * (0.22 if has_caption else 0.3), col)
 	if has_caption:
+		# Длинная подпись («Грузовой лифт») — мельче, чтобы не вылезала за кнопку.
 		var fs := 15
 		var w := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		while w > size.x - 10 and fs > 11:
+			fs -= 1
+			w = font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(font, Vector2((size.x - w) * 0.5, size.y - 9), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 	if not badge.is_empty():
 		var bc := Vector2(size.x - 17, 17)

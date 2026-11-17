@@ -193,6 +193,16 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(r * 0.1, -r * 0.35), c + Vector2(r * 0.35, -r * 0.85), c + Vector2(r * 0.85, -r * 0.45),
 				c + Vector2(r * 0.55, -r * 0.05)]), col)
+		"helmet":
+			# Каска: купол, гребень посередине, поля.
+			var dome := PackedVector2Array()
+			for i in 17:
+				var a := PI + PI * i / 16.0
+				dome.append(c + Vector2(cos(a) * r * 0.72, r * 0.2 + sin(a) * r * 0.78))
+			ci.draw_colored_polygon(dome, col)
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.95, r * 0.18), Vector2(r * 1.9, r * 0.24)), col.darkened(0.15))
+			ci.draw_rect(Rect2(c + Vector2(-r * 0.1, -r * 0.6), Vector2(r * 0.2, r * 0.78)), col.lightened(0.25))
+			ci.draw_arc(c + Vector2(0, r * 0.2), r * 0.5, PI * 1.15, PI * 1.45, 8, Color(1, 1, 1, 0.45), maxf(1.5, r * 0.08))
 		"home":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(-r * 0.8, -r * 0.05), c + Vector2(0, -r * 0.8), c + Vector2(r * 0.8, -r * 0.05)]), col)

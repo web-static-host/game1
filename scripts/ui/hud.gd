@@ -87,9 +87,9 @@ const ACCENT := Color(0.96, 0.65, 0.16)
 const MUTED := Color(0.78, 0.72, 0.68)
 const RED := Color(0.89, 0.36, 0.29)
 ## Оформление: тёплые тёмные панели, кнопки с «бортиком» снизу (тон того же цвета).
-const PANEL_BG := Color(0.17, 0.13, 0.16, 0.93)
-const TOP_BG := Color(0.17, 0.13, 0.16, 0.8)
-const BTN := Color(0.36, 0.41, 0.52)
+const PANEL_BG := Color(0.1, 0.13, 0.22, 0.95)
+const TOP_BG := Color(0.08, 0.11, 0.19, 0.82)
+const BTN := UiStyle.TILE
 const GREEN := Color(0.3, 0.72, 0.38)
 
 var _status: Label
@@ -170,6 +170,9 @@ func _ready() -> void:
 	_log = VBoxContainer.new()
 	_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_log)
+	# Лента событий — под всеми окнами (стройка, карточки, меню): открытое окно её закрывает,
+	# а не она его.
+	move_child(_log, 0)
 	# Справа, под датой: слева — карточка и кнопка стройки.
 	_log.position = Vector2(size.x - SIDE - PANEL_WIDTH, TOP_H)
 	_log.size = Vector2(PANEL_WIDTH, 0)
@@ -183,8 +186,8 @@ static func make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font = Fonts.bold()
 	t.default_font_size = 20
-	t.set_stylebox("panel", "PanelContainer", _box(PANEL_BG, 18, 14))
-	for state in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+	t.set_stylebox("panel", "PanelContainer", UiStyle.window(22, 14))
+	for state in ["normal", "hover", "pressed", "disabled", "hover_pressed"]:
 		var sb := btn_box(BTN)
 		match state:
 			"hover":
@@ -193,10 +196,8 @@ static func make_theme() -> Theme:
 				sb = btn_box(ACCENT, true)
 			"disabled":
 				sb = btn_box(Color(BTN.darkened(0.3), 0.8))
-			"focus":
-				sb.draw_center = false
-				sb.set_border_width_all(0)
 		t.set_stylebox(state, "Button", sb)
+	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
 	t.set_color("font_color", "Button", Color.WHITE)
 	t.set_color("font_hover_color", "Button", Color.WHITE)
 	t.set_color("font_pressed_color", "Button", Color.WHITE)
@@ -205,7 +206,16 @@ static func make_theme() -> Theme:
 	return t
 
 
+## Окно (карточка, меню, верхние плашки) — тёмно-синее со светлой каймой.
+static func _win(radius := 22, pad := 14.0, alpha := 0.96) -> StyleBox:
+	return UiStyle.window(radius, pad, alpha)
+
+
 static func _box(col: Color, radius: int, pad: float) -> StyleBoxFlat:
+	return UiStyle.flat(col, radius, pad)
+
+
+static func _box_plain(col: Color, radius: int, pad: float) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = col
 	sb.set_corner_radius_all(radius)
@@ -213,15 +223,9 @@ static func _box(col: Color, radius: int, pad: float) -> StyleBoxFlat:
 	return sb
 
 
-## Кнопка: заливка, снизу — бортик темнее (объём), края тоном того же цвета.
-## pressed — бортик тоньше, будто кнопку вдавили.
-static func btn_box(col: Color, pressed := false) -> StyleBoxFlat:
-	var sb := _box(col, 16, 10)
-	sb.border_color = col.darkened(0.32)
-	sb.set_border_width_all(2)
-	sb.border_width_bottom = 3 if pressed else 6
-	sb.content_margin_bottom = 12
-	return sb
+## Кнопка — объёмная плитка цвета col (градиент, светлый кант, бортик снизу); pressed — вдавлена.
+static func btn_box(col: Color, pressed := false) -> StyleBox:
+	return UiStyle.tile(col, pressed)
 
 
 static func _label(text: String, fs := 20, col := Color.WHITE) -> Label:
@@ -241,7 +245,7 @@ func _build_top(column: VBoxContainer) -> void:
 	column.add_child(row)
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
+	panel.add_theme_stylebox_override("panel", _win(18, 10, 0.86))
 	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(panel)
 	_top_panel = panel
@@ -257,7 +261,7 @@ func _build_top(column: VBoxContainer) -> void:
 	row.add_child(fill)
 	var date_panel := PanelContainer.new()
 	date_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	date_panel.add_theme_stylebox_override("panel", _box(TOP_BG, 16, 10))
+	date_panel.add_theme_stylebox_override("panel", _win(18, 10, 0.86))
 	date_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(date_panel)
 	_date_panel = date_panel
@@ -423,9 +427,10 @@ func set_status(text: String) -> void:
 # --- Низ: карточка, подменю стройки, кнопки ------------------------------------------------
 
 func _build_bottom(box: VBoxContainer) -> void:
-	# Меню «Стройки»: проходы сверху, ниже — все виды комнат (недоступные — серые).
+	# Окно «Строительство»: шапка с каской и крестиком, ниже два раздела — проходы (синяя
+	# плашка) и комнаты (оранжевая); недоступное — серое.
 	_build_row = PanelContainer.new()
-	_build_row.add_theme_stylebox_override("panel", _box(Color(0.1, 0.11, 0.14, 0.94), 16, 12))
+	_build_row.add_theme_stylebox_override("panel", _win(24, 12))
 	_build_row.visible = false
 	add_child(_build_row)
 	_build_row.resized.connect(_place_build_row)
@@ -433,12 +438,23 @@ func _build_bottom(box: VBoxContainer) -> void:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
 	_build_row.add_child(col)
-	col.add_child(_label("Проходы", 16, MUTED))
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
+	col.add_child(head)
+	head.add_child(IconView.make("", 40, "helmet", ACCENT))
+	var title := _label("Строительство", 28, Color.WHITE)
+	title.add_theme_font_override("font", Fonts.black())
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(title)
+	var close := IconButton.make("close", "", 44, 44)
+	close.pressed.connect(func() -> void: _build_btn.button_pressed = false)
+	head.add_child(close)
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 8)
-	col.add_child(tools)
+	col.add_child(_section("build", "ПРОХОДЫ И ШАХТЫ", "Создавайте проходы, шахты и буровые конструкции", UiStyle.BLUE, tools))
 	for t in TOOLS:
-		var b := IconButton.make(t[1], t[2], 108, 76)
+		var b := IconButton.make(t[1], t[2], 112, 60)
 		b.pressed.connect(func() -> void:
 			var why: String = _tool_lock.get(t[0], "")
 			if not why.is_empty():
@@ -448,12 +464,11 @@ func _build_bottom(box: VBoxContainer) -> void:
 			_pick_tool(t[0], t[1], t[2]))
 		_tool_btns[t[0]] = b
 		tools.add_child(b)
-	col.add_child(_label("Комнаты — выберите, что построить (сразу обустроят). Серые — ещё не изучены:", 16, MUTED))
 	_room_grid = GridContainer.new()
 	_room_grid.columns = ROOM_COLS
 	_room_grid.add_theme_constant_override("h_separation", 8)
 	_room_grid.add_theme_constant_override("v_separation", 8)
-	col.add_child(_room_grid)
+	col.add_child(_section("home", "КОМНАТЫ", "Стройте жилые, производственные и исследовательские комнаты", UiStyle.ORANGE, _room_grid))
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
@@ -488,7 +503,7 @@ func _build_bottom(box: VBoxContainer) -> void:
 	bar.add_child(home)
 	# Скорость — переключатель в одной панели.
 	var seg := PanelContainer.new()
-	seg.add_theme_stylebox_override("panel", _box(TOP_BG, 18, 6))
+	seg.add_theme_stylebox_override("panel", _win(18, 6, 0.86))
 	seg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bar.add_child(seg)
 	var seg_row := HBoxContainer.new()
@@ -524,6 +539,42 @@ func _build_bottom(box: VBoxContainer) -> void:
 		close_overlays()
 		_menu_load.visible = not world_id.is_empty()
 		_menu.visible = open)
+
+
+## Раздел окна: цветная плашка (значок, заголовок, черта, пояснение) над тёмной подложкой
+## с каймой того же цвета, в ней — content.
+func _section(glyph: String, title: String, text: String, tint: Color, content: Control) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", -6)
+	var bar := PanelContainer.new()
+	bar.add_theme_stylebox_override("panel", UiStyle.banner(tint, 16, 7))
+	bar.z_index = 1
+	box.add_child(bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	bar.add_child(row)
+	row.add_child(IconView.make("", 30, glyph, Color.WHITE))
+	var t := _label(title, 24, Color.WHITE)
+	t.add_theme_font_override("font", Fonts.black())
+	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.35))
+	t.add_theme_constant_override("shadow_offset_y", 2)
+	row.add_child(t)
+	var line := ColorRect.new()
+	line.color = Color(1, 1, 1, 0.55)
+	line.custom_minimum_size = Vector2(2, 30)
+	line.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(line)
+	var d := _label(text, 17, Color(1, 1, 1, 0.92))
+	d.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(d)
+	var body := PanelContainer.new()
+	var sb := UiStyle.section(tint, 16, 8)
+	sb.content_margin_top = 13
+	body.add_theme_stylebox_override("panel", sb)
+	body.add_child(content)
+	box.add_child(body)
+	return box
 
 
 func _place_build_row() -> void:
@@ -581,9 +632,9 @@ func set_build_rooms(items: Array, locks: Dictionary = {}) -> void:
 	for it in items:
 		var ok: bool = it["ok"]
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(104, 104)
+		b.custom_minimum_size = Vector2(106, 88)
 		b.focus_mode = Control.FOCUS_NONE
-		b.add_theme_stylebox_override("normal", btn_box(Color(0.22, 0.24, 0.3) if ok else Color(0.15, 0.16, 0.19)))
+		b.add_theme_stylebox_override("normal", btn_box(BTN if ok else BTN.darkened(0.35)))
 		var v := VBoxContainer.new()
 		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
 		v.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -597,7 +648,7 @@ func set_build_rooms(items: Array, locks: Dictionary = {}) -> void:
 			tr.texture = load(path)
 			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			tr.custom_minimum_size = Vector2(88, 54)
+			tr.custom_minimum_size = Vector2(84, 40)
 			pic = tr
 		else:
 			pic = IconView.make("", 44, it.get("glyph", "room"), Color.WHITE)
@@ -605,7 +656,13 @@ func set_build_rooms(items: Array, locks: Dictionary = {}) -> void:
 		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		pic.modulate = Color.WHITE if ok else Color(0.4, 0.4, 0.45, 0.8)
 		v.add_child(pic)
-		var l := _label(it["name"], 14, Color.WHITE if ok else MUTED)
+		# Слово длиннее плитки («Обогатительная») — шрифт мельче, без переноса посреди слова.
+		var lfs := 13
+		for word in String(it["name"]).replace("-", "- ").split(" "):
+			while lfs > 10 and Fonts.bold().get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x > 96:
+				lfs -= 1
+		var l := _label(it["name"], lfs, Color.WHITE if ok else MUTED)
+		l.add_theme_constant_override("line_spacing", -4)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.custom_minimum_size = Vector2(96, 0)
@@ -742,7 +799,7 @@ const BUILD_INFO_W := 460
 func _show_build_info(card: Array) -> void:
 	if _build_info == null:
 		_build_info = PanelContainer.new()
-		_build_info.add_theme_stylebox_override("panel", _box(PANEL_BG, 16, 12))
+		_build_info.add_theme_stylebox_override("panel", _win(20, 12))
 		_build_info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_build_info)
 		_build_info_box = VBoxContainer.new()
@@ -776,7 +833,7 @@ func _build_hint() -> void:
 	box.visible = false
 	add_child(box)
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _box(PANEL_BG, 16, 10))
+	panel.add_theme_stylebox_override("panel", _win(20, 10))
 	box.add_child(panel)
 	_hint = _label("", 19, Color.WHITE)
 	panel.add_child(_hint)
@@ -840,7 +897,16 @@ func _build_panel() -> void:
 	v.add_theme_constant_override("separation", 10)
 	_info_panel.add_child(v)
 	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
 	v.add_child(head)
+	# Значок окна в цветной плитке слева от заголовка (как каска у «Строительства»).
+	_head_icon_bg = PanelContainer.new()
+	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.tile(ACCENT, false, 14, 4))
+	_head_icon_bg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_head_icon_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(_head_icon_bg)
+	_head_icon = IconView.make("", 38, "room", Color.WHITE)
+	_head_icon_bg.add_child(_head_icon)
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 0)
@@ -851,7 +917,7 @@ func _build_panel() -> void:
 	_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	# Ширина — сразу вся строка (без кнопки закрытия): иначе при коротком заголовке («Планеты»)
 	# подпись в первый расчёт переносилась по букве, карточка вытягивалась на весь экран и пустела.
-	_subtitle.custom_minimum_size = Vector2(PANEL_WIDTH - 40 - 64, 0)
+	_subtitle.custom_minimum_size = Vector2(PANEL_WIDTH - 40 - 64 - 66, 0)
 	titles.add_child(_title)
 	titles.add_child(_subtitle)
 	var close := IconButton.make("close", "", 52, 52)
@@ -973,7 +1039,27 @@ func _fit_scroll() -> void:
 	_info_panel.position = Vector2(SIDE, size.y - BAR_H - ph)
 
 
+## Значок окна по заголовку (если в spec нет "icon").
+const HEAD_ICONS := [["Гаврик", "people"], ["Работа", "people"], ["Назначить", "people"], ["Экипаж", "people"],
+	["Родословная", "people"], ["Постройк", "room"], ["Тип построек", "room"], ["Сдвинуть", "room"], ["Наука", "flask"],
+	["Планет", "planet"], ["Запуск", "rocket"], ["Груз", "room"]]
+var _head_icon: IconView
+var _head_icon_bg: PanelContainer
+
+
 func _fill_header(spec: Dictionary) -> void:
+	var t: String = spec.get("title", "")
+	var glyph: String = spec.get("icon", "")
+	if glyph.is_empty():
+		for hi in HEAD_ICONS:
+			if t.begins_with(hi[0]):
+				glyph = hi[1]
+				break
+	_head_icon_bg.visible = not glyph.is_empty()
+	_head_icon.glyph = glyph
+	_head_icon.queue_redraw()
+	var acc: Color = spec.get("accent", ACCENT)
+	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.tile(acc, false, 14, 4))
 	_title.text = spec.get("title", "")
 	_subtitle.text = spec.get("subtitle", "")
 	_subtitle.visible = not _subtitle.text.is_empty()
@@ -1605,6 +1691,11 @@ func _hold_tick(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	# Лента событий — только когда не открыто ни одно окно: окна она не перекрывает и сама
+	# из-под них не торчит.
+	if _log != null:
+		_log.visible = not (_info_panel.visible or _tree_panel.visible or _build_row.visible or _menu.visible \
+			or _sub.visible or _dialog.visible or (_build_info != null and _build_info.visible))
 	_hold_tick(delta)
 	if _inertia_region.is_empty():
 		return
@@ -1626,6 +1717,7 @@ const COL_GAP := 60.0
 const ROW_GAP := 12.0
 var _tree_panel: PanelContainer
 var _tree_title: Label
+var _tree_icon: IconView
 var _tree_sub: Label
 var _tree_rows: VBoxContainer
 var _tree_clip: Control
@@ -1659,6 +1751,8 @@ func show_family_tree(spec: Dictionary) -> void:
 	_tree_panel.visible = true
 	_tree_detail.visible = false
 	_tree_title.text = spec.get("title", "")
+	_tree_icon.glyph = "people" if _tree_title.text.begins_with("Родословная") else "flask"
+	_tree_icon.queue_redraw()
 	_tree_sub.text = spec.get("subtitle", "")
 	for c in _tree_rows.get_children():
 		_tree_rows.remove_child(c)
@@ -1793,7 +1887,7 @@ func _family_card(n: Dictionary, p: Vector2) -> Control:
 	card.size = Vector2(FAM_W, FAM_H)
 	card.custom_minimum_size = card.size
 	var border: Color = n.get("color", Color(0.45, 0.42, 0.45))
-	var sb := _box(Color(0.25, 0.21, 0.24), 12, 7)
+	var sb := _box_plain(Color(0.16, 0.2, 0.32), 12, 7)
 	sb.border_color = border
 	sb.set_border_width_all(5 if int(n["g"]) == 0 else 4)
 	card.add_theme_stylebox_override("panel", sb)
@@ -1913,7 +2007,7 @@ func _build_tree_panel() -> void:
 	_tree_panel = PanelContainer.new()
 	_tree_panel.visible = false
 	# Непрозрачный фон — карта под деревом не мешает читать.
-	var bg := _box(Color(PANEL_BG, 1.0), 18, 14)
+	var bg := _win(22, 14, 1.0)
 	_tree_panel.add_theme_stylebox_override("panel", bg)
 	add_child(_tree_panel)
 	_tree_panel.visibility_changed.connect(func() -> void:
@@ -1923,7 +2017,15 @@ func _build_tree_panel() -> void:
 	v.add_theme_constant_override("separation", 8)
 	_tree_panel.add_child(v)
 	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
 	v.add_child(head)
+	var ib := PanelContainer.new()
+	ib.add_theme_stylebox_override("panel", UiStyle.tile(ACCENT, false, 14, 4))
+	ib.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ib.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(ib)
+	_tree_icon = IconView.make("", 38, "flask", Color.WHITE)
+	ib.add_child(_tree_icon)
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 0)
@@ -1992,6 +2094,8 @@ func _layout_tree_panel() -> void:
 
 func _fill_tree(spec: Dictionary) -> void:
 	_tree_title.text = spec.get("title", "")
+	_tree_icon.glyph = "people" if _tree_title.text.begins_with("Родословная") else "flask"
+	_tree_icon.queue_redraw()
 	_tree_sub.text = spec.get("subtitle", "")
 	for c in _tree_rows.get_children():
 		_tree_rows.remove_child(c)
@@ -2205,7 +2309,7 @@ func _tree_node(it: Dictionary, p: Vector2) -> Control:
 		"available":
 			bg = Color(0.42, 0.31, 0.14)
 			fg = Color.WHITE
-	var sb := _box(bg, 12, 8)
+	var sb := _box_plain(bg, 12, 8)
 	if it["id"] == _tree_selected:
 		sb.border_color = ACCENT
 		sb.set_border_width_all(3)
@@ -2588,7 +2692,7 @@ func log_event(text: String, kind: String = "info", at: Variant = null) -> void:
 					or (e is InputEventScreenTouch and e.pressed):
 				l.accept_event()
 				log_pressed.emit(cell))
-	var sb := _box(Color(TOP_BG, 0.62), 10, 4)
+	var sb := _box_plain(Color(TOP_BG, 0.62), 10, 4)
 	sb.content_margin_left = 10
 	sb.content_margin_right = 10
 	l.add_theme_stylebox_override("panel", sb)
