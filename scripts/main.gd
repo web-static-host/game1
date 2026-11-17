@@ -261,6 +261,8 @@ func _build_scene() -> void:
 	add_child(ui_layer)
 	hud = Hud.new()
 	ui_layer.add_child(hud)
+	# Превью комнаты в карточке — тот же мир своей камерой.
+	hud.room_world = get_viewport().world_2d
 
 	camera.tapped.connect(_on_tap)
 	camera.painted.connect(_on_paint)
@@ -2414,7 +2416,51 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		accent = Color(1.0, 0.5, 0.4)
 	elif p.wear >= Colony.WEAR_WARN[0] and not p.repairing:
 		rows.append({"type": "warning", "text": "Постройка ветшает — отремонтируйте, иначе она рухнет."})
-	return {"title": p.title(), "subtitle": sub, "accent": accent, "rows": rows}
+	var spec := {"title": p.title(), "subtitle": sub, "accent": accent, "rows": rows}
+	if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE:
+		spec["room"] = _room_view(p)
+	return spec
+
+
+## Карточка готовой комнаты — широкая, по прототипу: размер, статус, превью, работники.
+func _room_view(p: Project) -> Dictionary:
+	var pic: String = ROOM_PICS.get(p.purpose, "")
+	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y],
+		"tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else ""}
+	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
+	if Project.SUPER.has(p.material) and not st.is_empty():
+		out["badge"] = "%s: %s" % [Project.MATERIALS[p.material][0], st]
+	var work := colony.is_workplace(p)
+	var full := colony.is_producer(p) and colony.output_held(p) >= Colony.PRODUCE_CAP
+	if p.paused:
+		out["status"] = ["Пауза", "bad"]
+	elif not p.blocked.is_empty() or full:
+		out["status"] = ["Работа остановлена", "bad"]
+	elif p.repairing:
+		out["status"] = ["Ремонт", "warn"]
+	elif work and colony.assigned_to(p).is_empty():
+		out["status"] = ["Нет работников", "warn"]
+	elif work:
+		out["status"] = ["Работает", "good"]
+	# Превью: прямоугольник комнаты в координатах мира (там, где его рисует WorldView).
+	var a := world_view.cell_to_local(p.rect.position)
+	var b := world_view.cell_to_local(p.rect.end)
+	out["preview"] = world_view.get_global_transform() * Rect2(a, b - a)
+	var workers := []
+	if work:
+		for u in colony.assigned_to(p):
+			var partner := colony.unit_by_id(u.partner_id) if u.partner_id != 0 else null
+			var here := u.state == Unit.State.WORK and u.project_id == p.id
+			workers.append({"name": u.name + ("  ♀" if u.sex == Unit.Sex.FEMALE else "  ♂"), "looks": _looks(u),
+				"sub": ("Мутант" if Genetics.is_mutant(u.genome) else "Обычный") + (" · Пара: " + partner.name if partner != null else ""),
+				"state": "Работает" if here else Unit.TASK_NAMES[u.task].capitalize(), "working": here,
+				"pct": roundi(colony.suitability(u, p) * 100), "open": _opener(u, func() -> void: _show_project(p))})
+		out["slots"] = colony.work_slots(p)
+		out["assign"] = func() -> void:
+			_project_at = hud.panel_scroll()
+			_pick_worker(p)
+	out["workers"] = workers
+	return out
 
 
 static func _years(y: float) -> String:

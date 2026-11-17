@@ -85,15 +85,24 @@ func _show() -> void:
 
 ## Заголовок окна — бирюзовая плашка, как разделы окна «Строительство» (оранжевая — у главной кнопки).
 func _title(text: String) -> void:
-	var bar := PanelContainer.new()
-	bar.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.TEAL_A, UiStyle.TEAL_B, 16, 8))
-	var t := Hud._label(text.to_upper(), 28, Color.WHITE)
+	# Просто заголовок окна — крупные белые буквы с тёмной обводкой и тонкая оранжевая черта
+	# под ними. Без плашки: плашка с градиентом выглядит как кнопка.
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	var t := Hud._label(text.to_upper(), 34, Color.WHITE)
 	t.add_theme_font_override("font", Fonts.black())
+	t.add_theme_color_override("font_outline_color", UiStyle.WINDOW_BOTTOM)
+	t.add_theme_constant_override("outline_size", 8)
 	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.35))
-	t.add_theme_constant_override("shadow_offset_y", 2)
+	t.add_theme_constant_override("shadow_offset_y", 3)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bar.add_child(t)
-	_content.add_child(bar)
+	box.add_child(t)
+	var line := ColorRect.new()
+	line.color = UiStyle.ORANGE_A
+	line.custom_minimum_size = Vector2(72, 4)
+	line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(line)
+	_content.add_child(box)
 
 
 func _button(parent: Control, text: String, cb: Callable, col := Hud.BTN) -> Button:

@@ -125,9 +125,21 @@ var _scroll: ScrollContainer
 var _objects_btn: IconButton
 ## Какое окно открыто в карточке (чтобы при перестройке того же окна не сбрасывать прокрутку).
 var _panel_id := ""
+## Ширина правой части карточки (в обычной карточке — вся карточка).
+var _pw := float(PANEL_WIDTH)
+## Карточка комнаты: широкое окно в два столбца (превью и показатели слева, работники справа).
+var _room_mode := false
+var _room_left: VBoxContainer
+var _head_chips: HBoxContainer
+var _head_tex: TextureRect
+var _preview_vp: SubViewport
+var _preview_cam: Camera2D
+var _preview_box: SubViewportContainer
+## Мир, из которого показывать превью комнаты (задаёт main: свой World2D).
+var room_world: World2D
 var _body: VBoxContainer
 var _controls: VBoxContainer
-var _actions: HBoxContainer
+var _actions: HFlowContainer
 var _hint: Label
 var _hint_cancel: Button
 ## Полоска выбора комнаты: размеры и материалы.
@@ -891,7 +903,6 @@ func _top_limit() -> float:
 func _build_panel() -> void:
 	_info_panel = PanelContainer.new()
 	_info_panel.visible = false
-	_info_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
 	add_child(_info_panel)
 	# Лента событий в том же углу — пока открыта карточка, прячем её.
 	_info_panel.visibility_changed.connect(func() -> void:
@@ -924,14 +935,37 @@ func _build_panel() -> void:
 	_subtitle.custom_minimum_size = Vector2(PANEL_WIDTH - 40 - 64 - 66, 0)
 	titles.add_child(_title)
 	titles.add_child(_subtitle)
+	# Карточка комнаты: картинка комнаты вместо значка и плашки в шапке (размер, золото, статус).
+	_head_tex = TextureRect.new()
+	_head_tex.custom_minimum_size = Vector2(64, 52)
+	_head_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_head_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_head_tex.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_head_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_head_tex.visible = false
+	head.add_child(_head_tex)
+	head.move_child(_head_tex, 1)
+	_head_chips = HBoxContainer.new()
+	_head_chips.add_theme_constant_override("separation", 10)
+	_head_chips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_head_chips.visible = false
+	head.add_child(_head_chips)
 	var close := IconButton.make("close", "", 52, 52)
 	close.pressed.connect(func() -> void:
 		hide_info()
 		info_closed.emit())
 	head.add_child(close)
+	var mid := HBoxContainer.new()
+	mid.add_theme_constant_override("separation", 14)
+	v.add_child(mid)
+	_room_left = VBoxContainer.new()
+	_room_left.add_theme_constant_override("separation", 10)
+	_room_left.visible = false
+	mid.add_child(_room_left)
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	v.add_child(_scroll)
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mid.add_child(_scroll)
 	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 10)
@@ -942,8 +976,10 @@ func _build_panel() -> void:
 	_controls = VBoxContainer.new()
 	_controls.add_theme_constant_override("separation", 8)
 	content.add_child(_controls)
-	_actions = HBoxContainer.new()
-	_actions.add_theme_constant_override("separation", 8)
+	# Кнопки — в строку, не влезают — переносятся (в карточке комнаты их много).
+	_actions = HFlowContainer.new()
+	_actions.add_theme_constant_override("h_separation", 8)
+	_actions.add_theme_constant_override("v_separation", 8)
 	v.add_child(_actions)
 
 
@@ -963,31 +999,28 @@ func show_panel(spec: Dictionary) -> void:
 	var pid := str(spec.get("id", spec.get("title", "")))
 	var same := _info_panel.visible and pid == _panel_id
 	_panel_id = pid
+	_set_room_mode(spec)
 	_fill_header(spec)
-	_fill_body(spec.get("rows", []))
+	_fill_rows(spec)
 	# Старое убираем сразу, а не в конце кадра — иначе карточка меряет себя вместе с ним.
 	for c in _controls.get_children():
 		_controls.remove_child(c)
 		c.queue_free()
+	if _room_mode:
+		_build_room_workers(spec["room"])
 	for st in spec.get("controls", []):
+		# Работников карточка комнаты показывает своим списком.
+		if _room_mode and st.get("type", "") == "people":
+			continue
 		_build_control(st)
-	_controls.visible = not spec.get("controls", []).is_empty()
+	_controls.visible = _controls.get_child_count() > 0
 	# Переключатели можно поставить над описанием, чтобы не прятались под прокруткой.
 	_body.get_parent().move_child(_controls, 0 if spec.get("controls_first", false) else 1)
 	for c in _actions.get_children():
 		_actions.remove_child(c)
 		c.queue_free()
 	for a in spec.get("actions", []):
-		var b := Button.new()
-		b.text = a[0]
-		b.custom_minimum_size = Vector2(0, 58)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.focus_mode = Control.FOCUS_NONE
-		var style: String = a[2] if a.size() > 2 else ""
-		if style == "danger":
-			b.add_theme_stylebox_override("normal", btn_box(RED))
-		elif style == "primary":
-			b.add_theme_stylebox_override("normal", btn_box(ACCENT))
+		var b := _action_button(a)
 		var cb: Callable = a[1]
 		b.pressed.connect(cb)
 		_actions.add_child(b)
@@ -1021,8 +1054,16 @@ func refresh_panel(spec: Dictionary) -> void:
 	if _scrolling():
 		return
 	var keep := _scroll.scroll_vertical
+	_set_room_mode(spec)
 	_fill_header(spec)
-	_fill_body(spec.get("rows", []))
+	_fill_rows(spec)
+	if _room_mode:
+		# Список работников обновляется вместе с текстом (состояние, «работает»/«отдыхает»).
+		for c in _controls.get_children():
+			if c.has_meta("room_workers"):
+				_controls.remove_child(c)
+				c.queue_free()
+		_build_room_workers(spec["room"])
 	_fit_scroll.call_deferred()
 	_scroll.set_deferred("scroll_vertical", keep)
 
@@ -1039,7 +1080,12 @@ func _fit_scroll() -> void:
 	var avail := size.y - BAR_H - _top_limit() - 4.0
 	_scroll.custom_minimum_size = Vector2(0, clampf(h, 0.0, maxf(100.0, avail - overhead)))
 	var ph := _info_panel.get_combined_minimum_size().y
-	_info_panel.size = Vector2(PANEL_WIDTH, ph)
+	if _room_mode:
+		# Карточка комнаты — во всю ширину и до верхней строки, справа — прокрутка.
+		ph = maxf(ph, avail)
+		_scroll.custom_minimum_size = Vector2(0, maxf(100.0, avail - overhead))
+		ph = _info_panel.get_combined_minimum_size().y
+	_info_panel.size = Vector2(size.x - SIDE * 2.0 if _room_mode else float(PANEL_WIDTH), ph)
 	_info_panel.position = Vector2(SIDE, size.y - BAR_H - ph)
 
 
@@ -1051,6 +1097,16 @@ var _head_icon: IconView
 var _head_icon_bg: PanelContainer
 
 
+func _head_chip(text: String, sb: StyleBox, col: Color) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := _label(text, 18, col)
+	l.add_theme_font_override("font", Fonts.black())
+	p.add_child(l)
+	return p
+
+
 func _fill_header(spec: Dictionary) -> void:
 	var t: String = spec.get("title", "")
 	var glyph: String = spec.get("icon", "")
@@ -1059,8 +1115,28 @@ func _fill_header(spec: Dictionary) -> void:
 			if t.begins_with(hi[0]):
 				glyph = hi[1]
 				break
-	_head_icon_bg.visible = not glyph.is_empty()
+	_head_icon_bg.visible = not glyph.is_empty() and not spec.has("room")
 	_head_icon.glyph = glyph
+	var room: Dictionary = spec.get("room", {})
+	var tex_path: String = room.get("tex", "")
+	_head_tex.texture = load(tex_path) if not tex_path.is_empty() and ResourceLoader.exists(tex_path) else null
+	_head_tex.visible = _head_tex.texture != null
+	if not room.is_empty() and _head_tex.texture == null:
+		_head_icon_bg.visible = true
+	for c in _head_chips.get_children():
+		_head_chips.remove_child(c)
+		c.queue_free()
+	if not room.is_empty():
+		_head_chips.add_child(_head_chip(room.get("size", ""), UiStyle.flat(Color(1, 1, 1, 0.1), 12, 6), Color.WHITE))
+		if not str(room.get("badge", "")).is_empty():
+			var gold := UiStyle.flat(Color(0.35, 0.27, 0.05, 0.9), 12, 6)
+			gold.border_color = Color(0.95, 0.75, 0.25)
+			gold.set_border_width_all(2)
+			_head_chips.add_child(_head_chip(room["badge"], gold, Color(1, 0.9, 0.55)))
+		var status: Array = room.get("status", [])
+		if not status.is_empty():
+			var col: Color = {"bad": RED, "good": GREEN, "warn": ACCENT}.get(status[1], BTN)
+			_head_chips.add_child(_head_chip(status[0], btn_box(col), Color.WHITE))
 	_head_icon.queue_redraw()
 	var acc: Color = spec.get("accent", ACCENT)
 	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 4, false, false)
@@ -1068,7 +1144,337 @@ func _fill_header(spec: Dictionary) -> void:
 	_title.text = spec.get("title", "")
 	_subtitle.text = spec.get("subtitle", "")
 	_subtitle.visible = not _subtitle.text.is_empty()
+	if not room.is_empty():
+		# Размер — плашкой рядом, статус — плашкой: в заголовке и подписи не повторяем.
+		_title.text = _title.text.replace(" " + str(room.get("size", "")), "")
+		_subtitle.visible = false
 	_subtitle.add_theme_color_override("font_color", spec.get("accent", ACCENT))
+
+
+# --- Карточка комнаты (широкая, по прототипу) ---------------------------------------------
+
+## Ширина левой части карточки комнаты (превью, показатели, условия).
+const ROOM_LEFT_W := 690.0
+
+
+func _set_room_mode(spec: Dictionary) -> void:
+	_room_mode = spec.has("room")
+	_room_left.visible = _room_mode
+	_head_chips.visible = _room_mode
+	var total := size.x - SIDE * 2.0 - 28.0
+	_pw = (total - ROOM_LEFT_W - 14.0) if _room_mode else float(PANEL_WIDTH)
+	_room_left.custom_minimum_size = Vector2(ROOM_LEFT_W, 0)
+	_subtitle.custom_minimum_size = Vector2(0 if _room_mode else PANEL_WIDTH - 40 - 64 - 66, 0)
+	if _preview_vp != null:
+		_preview_vp.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE if _room_mode else SubViewport.UPDATE_DISABLED
+
+
+## Строки карточки: в карточке комнаты главное — в показатели слева, остальное — справа.
+func _fill_rows(spec: Dictionary) -> void:
+	var rows: Array = spec.get("rows", [])
+	if not _room_mode:
+		_fill_body(rows)
+		return
+	var room: Dictionary = spec["room"]
+	var warn := {}
+	var hero := {}
+	var tiles := []
+	var conds := []
+	var rest := []
+	for row: Dictionary in rows:
+		var t: String = row.get("type", "text")
+		if t == "warning" and warn.is_empty():
+			warn = row
+		elif t == "progress" and row.get("label", "") == "Износ":
+			tiles.append(["repair", "Износ", row])
+		elif t == "progress" and row.get("label", "") == "Нагрузка":
+			tiles.append(["room", "Нагрузка", row])
+		elif t == "progress" and row.get("label", "") == "Готовое в ящиках":
+			tiles.push_front(["store", "Склад", row])
+		elif t == "progress" and hero.is_empty():
+			hero = row
+		elif t == "chips" and not row.has("label") and conds.is_empty():
+			conds = row["items"]
+		elif t == "text" and str(row.get("text", "")).begins_with("Условия: "):
+			for part in str(row["text"]).trim_prefix("Условия: ").split(" · "):
+				conds.push_front(["", part])
+		else:
+			rest.append(row)
+	if room.get("slots", 0) > 0:
+		tiles.append(["people", "Работники", {"value": float(room["workers"].size()) / maxf(1.0, room["slots"]),
+			"text": "%d / %d" % [room["workers"].size(), room["slots"]], "segments": room["slots"]}])
+	_fill_body(rest)
+	_build_room_left(room, warn, hero, tiles, conds)
+
+
+func _build_room_left(room: Dictionary, warn: Dictionary, hero: Dictionary, tiles: Array, conds: Array) -> void:
+	for c in _room_left.get_children():
+		if c == _preview_box:
+			continue
+		_room_left.remove_child(c)
+		c.queue_free()
+	# Верх: превью комнаты и справа от него — тревога и главный прогресс.
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	_room_left.add_child(top)
+	_ensure_preview()
+	if _preview_box.get_parent() != null:
+		_preview_box.get_parent().remove_child(_preview_box)
+	var pframe := PanelContainer.new()
+	pframe.add_theme_stylebox_override("panel", UiStyle.section(UiStyle.TEAL_A, 14, 4))
+	pframe.add_child(_preview_box)
+	top.add_child(pframe)
+	_aim_preview(room.get("preview", Rect2()))
+	var side := VBoxContainer.new()
+	side.add_theme_constant_override("separation", 10)
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(side)
+	if not warn.is_empty():
+		var wp := PanelContainer.new()
+		wp.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 10, false))
+		var wh := HBoxContainer.new()
+		wh.add_theme_constant_override("separation", 10)
+		wp.add_child(wh)
+		wh.add_child(IconView.make("", 34, "warning", Color(1, 0.95, 0.4)))
+		var wl := _label(warn["text"], 16, Color.WHITE)
+		wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		wl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wl.custom_minimum_size = Vector2(ROOM_LEFT_W - 300 - 90, 0)
+		wh.add_child(wl)
+		side.add_child(wp)
+	if not hero.is_empty():
+		var hp := PanelContainer.new()
+		hp.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.05), 14, 10))
+		var hv := VBoxContainer.new()
+		hv.add_theme_constant_override("separation", 6)
+		hp.add_child(hv)
+		var hl := _label(hero["label"], 20, Color.WHITE)
+		hl.add_theme_font_override("font", Fonts.black())
+		hv.add_child(hl)
+		var bar := BarView.make(hero["value"], hero.get("color", Color(0.98, 0.6, 0.2)), hero.get("text", ""))
+		bar.custom_minimum_size = Vector2(0, 26)
+		hv.add_child(bar)
+		side.add_child(hp)
+	# Плитки показателей.
+	if not tiles.is_empty():
+		var tr := HBoxContainer.new()
+		tr.add_theme_constant_override("separation", 10)
+		_room_left.add_child(tr)
+		for t in tiles:
+			tr.add_child(_room_tile(t[0], t[1], t[2]))
+	# Условия в комнате.
+	if not conds.is_empty():
+		var cp := PanelContainer.new()
+		cp.add_theme_stylebox_override("panel", _box(Color(1, 1, 1, 0.04), 14, 10))
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 6)
+		cp.add_child(cv)
+		cv.add_child(_label("Условия в комнате", 17, Color.WHITE))
+		var flow := HFlowContainer.new()
+		flow.add_theme_constant_override("h_separation", 6)
+		flow.add_theme_constant_override("v_separation", 6)
+		cv.add_child(flow)
+		for it in conds:
+			# Длинную плашку делим по « · », иначе она распирает колонку.
+			var parts := str(it[1]).split(" · ") if str(it[1]).length() > 34 else PackedStringArray([str(it[1])])
+			for i in parts.size():
+				var c: Array = it.duplicate()
+				c[0] = it[0] if i == 0 else ""
+				c[1] = parts[i]
+				flow.add_child(_chip(c, false))
+		# Всегда рядом с превью: так левая колонка ниже и карточка не лезет на верхнюю строку.
+		side.add_child(cp)
+
+
+## Плитка показателя: значок, подпись, значение, полоска.
+func _room_tile(glyph: String, title: String, row: Dictionary) -> Control:
+	var p := PanelContainer.new()
+	var full: bool = float(row.get("value", 0.0)) >= 0.999 and title == "Склад"
+	p.add_theme_stylebox_override("panel", UiStyle.flat(Color(0.55, 0.18, 0.12, 0.85) if full else Color(1, 1, 1, 0.06), 14, 8))
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	p.add_child(v)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	v.add_child(h)
+	h.add_child(IconView.make("", 24, "room" if glyph == "store" else glyph, Color(0.75, 0.95, 0.95)))
+	h.add_child(_label(title, 16, Color.WHITE))
+	var val := _label(str(row.get("text", "")).split(" · ")[0], 18, Color.WHITE)
+	val.add_theme_font_override("font", Fonts.black())
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(val)
+	var bar := BarView.make(float(row.get("value", 0.0)), row.get("color", Color(0.3, 0.85, 0.45)), "")
+	bar.custom_minimum_size = Vector2(0, 12)
+	v.add_child(bar)
+	return p
+
+
+## Живое превью комнаты: тот же мир, своя камера (рисуется, пока открыта карточка).
+func _ensure_preview() -> void:
+	if _preview_box != null:
+		return
+	_preview_box = SubViewportContainer.new()
+	_preview_box.stretch = true
+	_preview_box.custom_minimum_size = Vector2(290, 150)
+	_preview_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_preview_vp = SubViewport.new()
+	_preview_vp.size = Vector2i(290, 150)
+	_preview_vp.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	_preview_vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_preview_box.add_child(_preview_vp)
+	_preview_cam = Camera2D.new()
+	_preview_vp.add_child(_preview_cam)
+	_preview_cam.make_current()
+
+
+func _aim_preview(r: Rect2) -> void:
+	if room_world != null and _preview_vp.world_2d != room_world:
+		_preview_vp.world_2d = room_world
+	if r.size.x <= 0.0:
+		return
+	_preview_cam.position = r.get_center()
+	var z := minf(290.0 / (r.size.x * 1.08), 150.0 / (r.size.y * 1.15))
+	_preview_cam.zoom = Vector2(z, z)
+
+
+## Справа в карточке комнаты: «Работники N / M», список, свободные места.
+func _build_room_workers(room: Dictionary) -> void:
+	var slots: int = room.get("slots", 0)
+	if slots <= 0:
+		return
+	var box := VBoxContainer.new()
+	box.set_meta("room_workers", true)
+	box.add_theme_constant_override("separation", 6)
+	var head := PanelContainer.new()
+	head.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.TEAL_A, UiStyle.TEAL_B, 14, 8))
+	var hh := HBoxContainer.new()
+	hh.add_theme_constant_override("separation", 10)
+	head.add_child(hh)
+	hh.add_child(IconView.make("", 28, "people", Color.WHITE))
+	var ht := _label("Работники   %d / %d" % [room["workers"].size(), slots], 20, Color.WHITE)
+	ht.add_theme_font_override("font", Fonts.black())
+	hh.add_child(ht)
+	box.add_child(head)
+	for w: Dictionary in room["workers"]:
+		box.add_child(_room_worker(w))
+	for i in maxi(0, slots - room["workers"].size()):
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 62)
+		b.add_theme_stylebox_override("normal", UiStyle.flat(Color(1, 1, 1, 0.04), 12, 6))
+		b.add_theme_stylebox_override("hover", UiStyle.flat(Color(1, 1, 1, 0.08), 12, 6))
+		b.add_theme_stylebox_override("pressed", UiStyle.flat(Color(1, 1, 1, 0.1), 12, 6))
+		var h := HBoxContainer.new()
+		h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 8)
+		h.add_theme_constant_override("separation", 12)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(h)
+		var plus := _label("+", 30, Color(1, 1, 1, 0.8))
+		plus.custom_minimum_size = Vector2(46, 0)
+		plus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		h.add_child(plus)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(tv)
+		tv.add_child(_label("Свободно", 18, Color.WHITE))
+		tv.add_child(_label("Назначьте гаврика", 14, MUTED))
+		var cb: Callable = room.get("assign", Callable())
+		if cb.is_valid():
+			b.pressed.connect(cb)
+		box.add_child(b)
+	_controls.add_child(box)
+	_controls.move_child(box, 0)
+
+
+func _room_worker(w: Dictionary) -> Control:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(0, 66)
+	b.add_theme_stylebox_override("normal", UiStyle.flat(Color(1, 1, 1, 0.07), 12, 6))
+	b.add_theme_stylebox_override("hover", UiStyle.flat(Color(1, 1, 1, 0.1), 12, 6))
+	b.add_theme_stylebox_override("pressed", UiStyle.flat(Color(1, 1, 1, 0.12), 12, 6))
+	var h := HBoxContainer.new()
+	h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 4)
+	h.add_theme_constant_override("separation", 10)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(h)
+	h.add_child(PortraitView.make(w.get("looks", {}), 58, 34))
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", -2)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(tv)
+	var nm := _label(w["name"], 19, Color.WHITE)
+	nm.add_theme_font_override("font", Fonts.black())
+	tv.add_child(nm)
+	var sub := _label(w.get("sub", ""), 14, MUTED)
+	sub.clip_text = true
+	sub.custom_minimum_size = Vector2(_pw - 260, 0)
+	tv.add_child(sub)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 2)
+	rv.alignment = BoxContainer.ALIGNMENT_CENTER
+	rv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(rv)
+	var st := PanelContainer.new()
+	var working: bool = w.get("working", false)
+	st.add_theme_stylebox_override("panel", UiStyle.flat(Color(0.18, 0.62, 0.3) if working else Color(0.35, 0.42, 0.5), 10, 4))
+	st.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sl := _label(w.get("state", ""), 14, Color.WHITE)
+	sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	st.add_child(sl)
+	rv.add_child(st)
+	var pct := _label("⚡ %d%%" % int(w.get("pct", 100)), 16, Color(1, 0.85, 0.35))
+	pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	rv.add_child(pct)
+	var cb: Callable = w.get("open", Callable())
+	if cb.is_valid():
+		b.pressed.connect(cb)
+	return b
+
+
+## Кнопка действия карточки: значок по смыслу, цвет — зелёный «Назначить», красный «Снести»…
+const ACTION_ICONS := [["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
+	["Включить свет", "power"], ["Выключить свет", "power"], ["Перестроить", "room"], ["Снести", "close"], ["Ремонт", "repair"],
+	["Пауза", "speed"], ["Продолжить", "speed"], ["Приоритет", "warning"], ["Собрать ракету", "rocket"], ["Запустить", "rocket"]]
+func _action_button(a: Array) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 58)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.focus_mode = Control.FOCUS_NONE
+	var text: String = a[0]
+	var style: String = a[2] if a.size() > 2 else ""
+	if style == "danger" or text == "Снести":
+		b.add_theme_stylebox_override("normal", btn_box(RED))
+		b.add_theme_stylebox_override("hover", btn_box(RED.lightened(0.08)))
+	elif text == "Назначить":
+		b.add_theme_stylebox_override("normal", btn_box(GREEN))
+		b.add_theme_stylebox_override("hover", btn_box(GREEN.lightened(0.08)))
+	elif style == "primary":
+		b.add_theme_stylebox_override("normal", btn_box(ACCENT))
+		b.add_theme_stylebox_override("hover", btn_box(ACCENT))
+	var glyph := ""
+	if _room_mode:
+		for ai in ACTION_ICONS:
+			if text.begins_with(ai[0]):
+				glyph = ai[1]
+				break
+	if glyph.is_empty():
+		b.text = text
+		return b
+	var h := HBoxContainer.new()
+	h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	h.alignment = BoxContainer.ALIGNMENT_CENTER
+	h.add_theme_constant_override("separation", 8)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(h)
+	# Помельче, чтобы все кнопки комнаты встали в один ряд.
+	h.add_child(IconView.make("", 22, glyph, Color.WHITE))
+	h.add_child(_label(text, 16, Color.WHITE))
+	b.custom_minimum_size = Vector2(Fonts.bold().get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 50, 56)
+	return b
 
 
 func _fill_body(rows: Array) -> void:
@@ -1089,7 +1495,7 @@ func _row(row: Dictionary) -> Control:
 		"text":
 			var l := _label(row["text"], 17, row.get("color", MUTED))
 			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			l.custom_minimum_size = Vector2(PANEL_WIDTH - 40, 0)
+			l.custom_minimum_size = Vector2(_pw - 40, 0)
 			return l
 		"warning":
 			var p := PanelContainer.new()
@@ -1101,7 +1507,7 @@ func _row(row: Dictionary) -> Control:
 			var l := _label(row["text"], 17, Color(1, 0.92, 0.8))
 			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			l.custom_minimum_size = Vector2(PANEL_WIDTH - 90, 0)
+			l.custom_minimum_size = Vector2(_pw - 90, 0)
 			h.add_child(l)
 			return p
 		"progress":
@@ -1124,7 +1530,7 @@ func _row(row: Dictionary) -> Control:
 			for tag in row.get("tags", []):
 				var l := _label(tag[0], 17, tag[1] if tag.size() > 1 else Color.WHITE)
 				l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				l.custom_minimum_size = Vector2(PANEL_WIDTH - 220, 0)
+				l.custom_minimum_size = Vector2(_pw - 220, 0)
 				col.add_child(l)
 			return h
 		"stats":
@@ -1293,7 +1699,7 @@ func _build_people(st: Dictionary) -> void:
 		col.add_child(_label(item["name"], 19, Color.WHITE))
 		var info := _label(item.get("info", ""), 15, MUTED)
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		info.custom_minimum_size = Vector2(PANEL_WIDTH - 300, 0)
+		info.custom_minimum_size = Vector2(_pw - 300, 0)
 		col.add_child(info)
 		if not item.has("button") or str(item["button"]).is_empty():
 			continue
@@ -1334,7 +1740,7 @@ func _build_techs(st: Dictionary) -> void:
 		col.add_child(title)
 		var desc := _label(item["desc"], 16, MUTED)
 		desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		desc.custom_minimum_size = Vector2(PANEL_WIDTH - 220, 0)
+		desc.custom_minimum_size = Vector2(_pw - 220, 0)
 		col.add_child(desc)
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
@@ -1378,7 +1784,9 @@ func _build_targets(st: Dictionary) -> void:
 ##  {"type": "store", "label", "items": [{"key", "on", "held", "limit", "cap", "target" (-1 — не добывают)}],
 ##   "toggled": Callable(ключ, вкл), "limit": Callable(ключ, n), "target": Callable(ключ, n)}
 func _build_store(st: Dictionary) -> void:
-	_controls.add_child(_label(st["label"], 16, MUTED))
+	var head := _label(st["label"], 16, MUTED)
+	head.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_controls.add_child(head)
 	for item in st["items"]:
 		var key: String = item["key"]
 		var on: bool = item["on"]
@@ -1422,7 +1830,12 @@ func _build_store(st: Dictionary) -> void:
 			row.add_child(_label("не хранить", 16, MUTED))
 			continue
 		var cap: int = item["cap"]
-		row.add_child(_label("сейчас %s из %s" % [Fmt.int_spaced(item["held"]), Fmt.int_spaced(cap)], 17, Color.WHITE))
+		var now := _label("сейчас %s из %s" % [Fmt.int_spaced(item["held"]), Fmt.int_spaced(cap)], 17, Color.WHITE)
+		# Переносится, если колонка узкая (карточка комнаты).
+		now.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		now.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		now.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(now)
 		var set_target := Callable()
 		var lim_row := _store_line(col, "Хранить не больше")
 		_stepper_widgets(lim_row, int(item["limit"]), 0, cap, 10, [], func(v: int) -> void:
@@ -1443,7 +1856,9 @@ func _store_line(col: VBoxContainer, text: String) -> HBoxContainer:
 	col.add_child(row)
 	var l := _label(text, 16, MUTED)
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.add_child(l)
 	return row
 
