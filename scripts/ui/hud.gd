@@ -1032,7 +1032,16 @@ func show_panel(spec: Dictionary) -> void:
 	for c in _actions.get_children():
 		_actions.remove_child(c)
 		c.queue_free()
-	for a in spec.get("actions", []):
+	var acts: Array = spec.get("actions", []).duplicate()
+	if _room_mode:
+		# Назначают из списка справа («Свободно»); «Ремонт» и «Снести» — справа в ряду.
+		if int(spec["room"].get("slots", 0)) > 0:
+			acts = acts.filter(func(a: Array) -> bool: return a[0] != "Назначить")
+		var tail := acts.filter(func(a: Array) -> bool: return a[0] == "Ремонт" or a[0] == "Снести")
+		acts = acts.filter(func(a: Array) -> bool: return not tail.has(a))
+		tail.sort_custom(func(a: Array, _b: Array) -> bool: return a[0] == "Ремонт")
+		acts.append_array(tail)
+	for a in acts:
 		var b := _action_button(a)
 		var cb: Callable = a[1]
 		b.pressed.connect(cb)
@@ -1212,8 +1221,8 @@ func _fill_rows(spec: Dictionary) -> void:
 	for row: Dictionary in rows:
 		var t: String = row.get("type", "text")
 		var label: String = row.get("label", "")
-		if row.get("super", false):
-			continue   # супер-материал — в блоке «Материал стен»
+		if row.get("super", false) or label == "Найдено":
+			continue   # супер-материал — в блоке «Материал стен»; находки в карточке не нужны
 		if t == "warning" and warn.is_empty():
 			warn = row
 		elif t == "progress" and label == "Износ":
@@ -2298,7 +2307,7 @@ func _process(delta: float) -> void:
 	# из-под них не торчит.
 	if _log != null:
 		_log.visible = not (_info_panel.visible or _tree_panel.visible or _build_row.visible or _menu.visible \
-			or _sub.visible or _dialog.visible or _choice != null or (_build_info != null and _build_info.visible))
+			or _sub.visible or _dialog.visible or _choice != null or tool_open() or (_build_info != null and _build_info.visible))
 	_hold_tick(delta)
 	if _inertia_region.is_empty():
 		return
@@ -3285,6 +3294,116 @@ var _choice_scroll: ScrollContainer
 ## "tex"? (картинка), "sub"? (строка под названием), "cost"? ([ключ, есть, нужно, хватает]),
 ## "error"? (почему нельзя — красным), "current"? (выбрано сейчас)}]. Нажал — on_pick(номер).
 func show_choice(title: String, options: Array, on_pick: Callable) -> void:
+	var v := _overlay(title)
+	var cell_w := CHOICE_W
+	var cols := clampi(int((size.x - 160.0) / (cell_w + 10.0)), 2, 5)
+	cols = mini(cols, maxi(1, options.size()))
+	var grid := GridContainer.new()
+	grid.columns = cols
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	_choice_scroll = ScrollContainer.new()
+	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_choice_scroll.add_child(grid)
+	v.add_child(_choice_scroll)
+	for i in options.size():
+		grid.add_child(_choice_option(options[i], cell_w, func() -> void:
+			close_choice()
+			on_pick.call(i)))
+	# Высота — по содержимому (перенос текста считается не сразу — следим), но не выше
+	# экрана: дальше — прокрутка.
+	var sc := _choice_scroll
+	var fit := func() -> void:
+		if is_instance_valid(sc):
+			sc.custom_minimum_size = Vector2(cols * cell_w + (cols - 1) * 10.0,
+				minf(grid.get_combined_minimum_size().y, size.y - 190.0))
+	grid.minimum_size_changed.connect(fit)
+	fit.call()
+
+
+## Окно выбора гаврика поверх карточки (карточка под ним остаётся открытой).
+## spec: {"title", "subtitle", "checks": [[ключ, подпись, вкл]], "toggled": Callable(ключ, вкл),
+## "items": [{"looks", "name", "info", "button", "style", "pick"}], "empty"}. Повторный вызов
+## с тем же заголовком — обновление: прокрутка остаётся на месте.
+func show_people_pick(spec: Dictionary) -> void:
+	var keep := 0
+	if _choice != null and _choice.get_meta("title", "") == spec["title"] and is_instance_valid(_choice_scroll):
+		keep = _choice_scroll.scroll_vertical
+	var v := _overlay(spec["title"], spec.get("subtitle", ""))
+	var w := minf(size.x - 140.0, 920.0)
+	var checks: Array = spec.get("checks", [])
+	if not checks.is_empty():
+		var cr := HFlowContainer.new()
+		cr.add_theme_constant_override("h_separation", 8)
+		cr.add_theme_constant_override("v_separation", 8)
+		v.add_child(cr)
+		for ck in checks:
+			var key: String = ck[0]
+			var on: bool = ck[2]
+			var b := Button.new()
+			b.focus_mode = Control.FOCUS_NONE
+			b.toggle_mode = true
+			b.button_pressed = on
+			b.custom_minimum_size = Vector2(0, 46)
+			b.add_theme_font_size_override("font_size", 17)
+			b.text = str(ck[1])
+			b.add_theme_stylebox_override("normal", btn_box(ACCENT) if on else UiStyle.flat(Color(1, 1, 1, 0.08), 12, 8))
+			b.add_theme_stylebox_override("pressed", btn_box(ACCENT))
+			b.add_theme_stylebox_override("hover", btn_box(ACCENT) if on else UiStyle.flat(Color(1, 1, 1, 0.12), 12, 8))
+			var tg: Callable = spec["toggled"]
+			b.toggled.connect(func(x: bool) -> void: tg.call(key, x))
+			cr.add_child(b)
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_choice_scroll = ScrollContainer.new()
+	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_choice_scroll.custom_minimum_size = Vector2(w, maxf(200.0, size.y - 300.0))
+	_choice_scroll.add_child(list)
+	v.add_child(_choice_scroll)
+	var items: Array = spec.get("items", [])
+	if items.is_empty():
+		list.add_child(_label(spec.get("empty", ""), 17, MUTED))
+	for it: Dictionary in items:
+		var p := PanelContainer.new()
+		p.add_theme_stylebox_override("panel", UiStyle.flat(Color(1, 1, 1, 0.06), 12, 8))
+		list.add_child(p)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		p.add_child(row)
+		row.add_child(PortraitView.make(it.get("looks", {}), 60, 34))
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(col)
+		var nm := _label(it["name"], 19, Color.WHITE)
+		nm.add_theme_font_override("font", Fonts.black())
+		col.add_child(nm)
+		var info := _label(it.get("info", ""), 15, MUTED)
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info.custom_minimum_size = Vector2(w - 260.0, 0)
+		col.add_child(info)
+		var b := Button.new()
+		b.text = it.get("button", "Назначить")
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(150, 52)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.add_theme_font_size_override("font_size", 18)
+		b.add_theme_stylebox_override("normal", btn_box(RED if it.get("style", "") == "danger" else GREEN))
+		b.add_theme_stylebox_override("hover", btn_box((RED if it.get("style", "") == "danger" else GREEN).lightened(0.08)))
+		b.pressed.connect(it["pick"])
+		row.add_child(b)
+	_choice.set_meta("title", spec["title"])
+	if keep > 0:
+		var sc := _choice_scroll
+		await get_tree().process_frame
+		if is_instance_valid(sc):
+			sc.scroll_vertical = keep
+
+
+## Затемнение и окно по центру поверх всего: заголовок (и подпись), крестик. Возвращает, куда
+## класть содержимое.
+func _overlay(title: String, subtitle := "") -> VBoxContainer:
 	if _choice != null:
 		_choice.queue_free()
 	_choice = Control.new()
@@ -3319,30 +3438,170 @@ func show_choice(title: String, options: Array, on_pick: Callable) -> void:
 	var close := IconButton.make("close", "", 48, 48)
 	close.pressed.connect(close_choice)
 	head.add_child(close)
-	var cell_w := CHOICE_W
-	var cols := clampi(int((size.x - 160.0) / (cell_w + 10.0)), 2, 5)
-	cols = mini(cols, maxi(1, options.size()))
-	var grid := GridContainer.new()
-	grid.columns = cols
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
-	_choice_scroll = ScrollContainer.new()
-	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_choice_scroll.add_child(grid)
-	v.add_child(_choice_scroll)
-	for i in options.size():
-		grid.add_child(_choice_option(options[i], cell_w, func() -> void:
-			close_choice()
-			on_pick.call(i)))
-	# Высота — по содержимому (перенос текста считается не сразу — следим), но не выше
-	# экрана: дальше — прокрутка.
-	var sc := _choice_scroll
-	var fit := func() -> void:
-		if is_instance_valid(sc):
-			sc.custom_minimum_size = Vector2(cols * cell_w + (cols - 1) * 10.0,
-				minf(grid.get_combined_minimum_size().y, size.y - 190.0))
-	grid.minimum_size_changed.connect(fit)
-	fit.call()
+	if not subtitle.is_empty():
+		var st := _label(subtitle, 16, ACCENT)
+		st.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		st.custom_minimum_size = Vector2(minf(size.x - 160.0, 900.0), 0)
+		v.add_child(st)
+	return v
+
+
+# --- Мини-меню действия на карте (сдвиг комнаты, продление, бур) -------------------------
+var _tool: PanelContainer
+
+
+## Небольшая панель внизу по центру, карта над ней видна: рамка нового места — на карте.
+## spec: {"title", "icon", "dirs": [подписи], "dir": номер, "on_dir": Callable(номер),
+## "len", "len_min", "len_max", "on_len": Callable(n), "cost": [[ключ, есть, нужно, хватает]],
+## "info", "warn", "ok", "on_ok": Callable, "on_cancel": Callable}
+func show_tool(spec: Dictionary) -> void:
+	if _tool == null:
+		_tool = PanelContainer.new()
+		_tool.add_theme_stylebox_override("panel", _win())
+		_tool.mouse_filter = Control.MOUSE_FILTER_STOP
+		add_child(_tool)
+	for c in _tool.get_children():
+		_tool.remove_child(c)
+		c.queue_free()
+	var w := minf(size.x - 2.0 * SIDE, 860.0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	_tool.add_child(v)
+	# Шапка: значок, название, крестик.
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	v.add_child(head)
+	var ib := PanelContainer.new()
+	ib.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 12, 4, false, false))
+	ib.add_child(IconView.make("", 28, spec.get("icon", "room"), Color.WHITE))
+	head.add_child(ib)
+	var t := _label(spec["title"], 22, Color.WHITE)
+	t.add_theme_font_override("font", Fonts.black())
+	t.clip_text = true
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(t)
+	var close := IconButton.make("close", "", 46, 46)
+	close.pressed.connect(spec["on_cancel"])
+	head.add_child(close)
+	# Куда и на сколько.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	v.add_child(row)
+	var dirs: Array = spec.get("dirs", [])
+	if dirs.size() > 0:
+		var dv := VBoxContainer.new()
+		dv.add_theme_constant_override("separation", 4)
+		row.add_child(dv)
+		dv.add_child(_label("Куда", 14, MUTED))
+		var dh := HBoxContainer.new()
+		dh.add_theme_constant_override("separation", 6)
+		dv.add_child(dh)
+		for i in dirs.size():
+			var b := Button.new()
+			b.text = dirs[i]
+			b.focus_mode = Control.FOCUS_NONE
+			b.custom_minimum_size = Vector2(58, 52)
+			b.add_theme_font_size_override("font_size", 26)
+			var on: bool = i == int(spec.get("dir", 0))
+			b.add_theme_stylebox_override("normal", btn_box(ACCENT) if on else btn_box(BTN))
+			b.add_theme_stylebox_override("hover", btn_box(ACCENT) if on else btn_box(BTN.lightened(0.08)))
+			var cb: Callable = spec["on_dir"]
+			b.pressed.connect(func() -> void: cb.call(i))
+			dh.add_child(b)
+	if spec.has("len"):
+		var lv := VBoxContainer.new()
+		lv.add_theme_constant_override("separation", 4)
+		row.add_child(lv)
+		lv.add_child(_label("На сколько", 14, MUTED))
+		var lh := HBoxContainer.new()
+		lh.add_theme_constant_override("separation", 6)
+		lv.add_child(lh)
+		var n: int = spec["len"]
+		var lo: int = spec.get("len_min", 1)
+		var hi: int = maxi(lo, int(spec.get("len_max", 1)))
+		var on_len: Callable = spec["on_len"]
+		for k in [-1, 1]:
+			var b := Button.new()
+			b.text = "−" if k < 0 else "+"
+			b.focus_mode = Control.FOCUS_NONE
+			b.custom_minimum_size = Vector2(52, 52)
+			b.add_theme_font_size_override("font_size", 26)
+			b.disabled = (n <= lo) if k < 0 else (n >= hi)
+			b.pressed.connect(func() -> void: on_len.call(clampi(n + k, lo, hi)))
+			lh.add_child(b)
+			if k < 0:
+				var val := _label("%d м" % n, 24, Color.WHITE)
+				val.add_theme_font_override("font", Fonts.black())
+				val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				val.custom_minimum_size = Vector2(80, 0)
+				val.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+				lh.add_child(val)
+	# Цена.
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 4)
+	cv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(cv)
+	cv.add_child(_label("Нужно", 14, MUTED))
+	var cf := HFlowContainer.new()
+	cf.add_theme_constant_override("h_separation", 6)
+	cf.add_theme_constant_override("v_separation", 6)
+	cv.add_child(cf)
+	var cost: Array = spec.get("cost", [])
+	for it in cost:
+		cf.add_child(_chip(it, true))
+	if cost.is_empty():
+		cf.add_child(_label("материалов не нужно", 17, Color.WHITE))
+	# Пояснение или почему нельзя.
+	var warn: String = spec.get("warn", "")
+	var blocked: bool = spec.get("blocked", not warn.is_empty())
+	var txt := _label(warn if not warn.is_empty() else str(spec.get("info", "")), 16,
+		(Color(1, 0.5, 0.45) if blocked else Color(1, 0.8, 0.45)) if not warn.is_empty() else MUTED)
+	txt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	txt.custom_minimum_size = Vector2(w - 30.0, 0)
+	txt.visible = not txt.text.is_empty()
+	v.add_child(txt)
+	# Кнопки.
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 10)
+	v.add_child(br)
+	var cancel := Button.new()
+	cancel.text = "Отмена"
+	cancel.focus_mode = Control.FOCUS_NONE
+	cancel.custom_minimum_size = Vector2(0, 54)
+	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cancel.add_theme_font_size_override("font_size", 20)
+	cancel.pressed.connect(spec["on_cancel"])
+	br.add_child(cancel)
+	var ok := Button.new()
+	ok.text = spec.get("ok", "Готово")
+	ok.focus_mode = Control.FOCUS_NONE
+	ok.custom_minimum_size = Vector2(0, 54)
+	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ok.add_theme_font_size_override("font_size", 20)
+	ok.add_theme_stylebox_override("normal", btn_box(BTN if blocked else ACCENT))
+	ok.add_theme_stylebox_override("hover", btn_box(BTN if blocked else ACCENT))
+	ok.pressed.connect(spec["on_ok"])
+	br.add_child(ok)
+	_tool.visible = true
+	_tool.custom_minimum_size = Vector2(w, 0)
+	_place_tool.call_deferred()
+
+
+func _place_tool() -> void:
+	if _tool == null:
+		return
+	_tool.size = _tool.get_combined_minimum_size()
+	_tool.position = Vector2((size.x - _tool.size.x) * 0.5, size.y - BAR_H - _tool.size.y)
+
+
+func hide_tool() -> void:
+	if _tool != null:
+		_tool.visible = false
+
+
+func tool_open() -> bool:
+	return _tool != null and _tool.visible
 
 
 func close_choice() -> void:
@@ -3353,8 +3612,8 @@ func close_choice() -> void:
 
 ## Карточка варианта — все одного размера, всё по центру: картинка, название (до двух строк),
 ## цена одной строкой, внизу — пометка («сейчас», супер-свойство или почему нельзя).
-const CHOICE_W := 214.0
-const CHOICE_H := 176.0
+const CHOICE_W := 236.0
+const CHOICE_H := 212.0
 
 
 func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
@@ -3402,26 +3661,26 @@ func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
 	else:
 		pic.add_child(IconView.make("", 40, "room", Color(0.75, 0.95, 0.95)))
 	# Название — до двух строк, место под него всегда одинаковое.
-	var nm := _label(o["text"], 16, Color.WHITE)
+	var nm := _label(o["text"], 18, Color.WHITE)
 	nm.add_theme_font_override("font", Fonts.black())
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	nm.max_lines_visible = 2
-	nm.custom_minimum_size = Vector2(w - 16.0, 40)
+	nm.custom_minimum_size = Vector2(w - 16.0, 46)
 	v.add_child(nm)
 	# Цена — одной строкой по центру.
 	var cost_row := HBoxContainer.new()
 	cost_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	cost_row.add_theme_constant_override("separation", 4)
-	cost_row.custom_minimum_size = Vector2(0, 28)
+	cost_row.custom_minimum_size = Vector2(0, 32)
 	cost_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(cost_row)
 	var cost: Array = o.get("cost", [])
 	for it in cost:
 		cost_row.add_child(_mini_chip(it))
 	if cost.is_empty() and not cur:
-		cost_row.add_child(_label("бесплатно", 14, MUTED))
+		cost_row.add_child(_label("бесплатно", 15, MUTED))
 	# Пометка внизу.
 	var note: String = o.get("error", "")
 	var note_col := Color(1, 0.55, 0.5)
@@ -3432,10 +3691,13 @@ func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
 		if not sub.is_empty():
 			note = sub
 			note_col = Color(1, 0.88, 0.45)
-	var nl := _label(note, 13, note_col)
+	# Пометка — до двух строк, переносится, не обрезается.
+	var nl := _label(note, 15, note_col)
 	nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	nl.clip_text = true
-	nl.custom_minimum_size = Vector2(w - 16.0, 18)
+	nl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nl.max_lines_visible = 2
+	nl.custom_minimum_size = Vector2(w - 16.0, 40)
 	v.add_child(nl)
 	return b
 
@@ -3450,8 +3712,8 @@ func _mini_chip(item: Array) -> Control:
 	h.add_theme_constant_override("separation", 3)
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(h)
-	h.add_child(IconView.make(item[0], 18))
-	h.add_child(_label(str(item[2]) if ok else "%s/%s" % [Fmt.int_spaced(item[1]), Fmt.int_spaced(item[2])], 14, Color.WHITE))
+	h.add_child(IconView.make(item[0], 22))
+	h.add_child(_label(str(item[2]) if ok else "%s/%s" % [Fmt.int_spaced(item[1]), Fmt.int_spaced(item[2])], 16, Color.WHITE))
 	return p
 
 

@@ -992,6 +992,7 @@ func _feature_near(c: Vector2i) -> Variant:
 
 func _select(u: Unit, p: Project) -> void:
 	_card_back = []
+	_tool_close()
 	# Бур-лифт — одна постройка: касание по его лифту открывает бур-лифт.
 	if p != null and p.kind == Project.Kind.LIFT and p.link_id != 0 and colony.project_by_id(p.link_id) != null:
 		p = colony.project_by_id(p.link_id)
@@ -1355,52 +1356,195 @@ func _unit_spec(u: Unit) -> Dictionary:
 	return {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
 
 
-## Сдвиг комнаты: куда и на сколько; рамка нового места — на карте.
-func _show_move(p: Project) -> void:
-	var dir: Vector2i = MOVE_DIRS[_move_dir_i]
-	_move_len = clampi(_move_len, 1, Colony.move_max(p, dir))
-	var nr := Rect2i(p.rect.position + dir * _move_len, p.rect.size)
-	var check: Array = colony.move_check(p, dir, _move_len)
+# --- Мини-меню на карте: сдвиг комнаты, продление, бур ------------------------------------
+## Карточка закрывается, камера — на постройку, внизу — маленькое меню, рамка нового места —
+## на карте (зелёная — можно, красная — нельзя).
+var _tool_on := false
+
+
+func _tool_start(p: Project) -> void:
+	hud.hide_info()
+	_info_target = []
+	_tool_on = true
+	_tool_fresh = true
+
+
+func _tool_close() -> void:
+	if not _tool_on:
+		return
+	_tool_on = false
+	hud.hide_tool()
+	world_view.structures.preview = Rect2i()
+
+
+func _tool_back(p: Project) -> void:
+	_tool_close()
+	if colony.projects.has(p):
+		_select(null, p)
+
+
+func _tool_preview(r: Rect2i, ok: bool, text: String, base: Rect2i) -> void:
 	var s := world_view.structures
-	s.preview = nr
-	s.preview_ok = (check[0] as String).is_empty()
-	s.preview_text = "→ %d м" % _move_len
-	var rows := []
-	rows.append({"type": "text", "text": "Комнату сдвигают за раз вбок до её ширины (%d м), вверх и вниз — до 3 м. Работают строители, нужны материалы; порода на новом месте выкапывается. Всё внутри едет вместе с комнатой." % p.rect.size.x})
-	rows.append({"type": "resources", "label": "Материалы", "items": _cost_items(colony.move_cost(p))})
-	if not (check[0] as String).is_empty():
-		rows.append({"type": "warning", "text": check[0]})
-	elif not (check[1] as String).is_empty():
-		rows.append({"type": "warning", "text": check[1]})
-	var controls := [
-		{"label": "Куда", "value": _move_dir_i, "min": 0, "max": 3, "options": ["← влево", "→ вправо", "↑ вверх", "↓ вниз"],
-			"changed": func(v: int) -> void:
-				_move_dir_i = v
-				_show_move(p)},
-		{"label": "На, м", "value": _move_len, "min": 1, "max": Colony.move_max(p, dir),
-			"changed": func(v: int) -> void:
-				_move_len = v
-				_show_move(p)},
-	]
+	s.preview = r
+	s.preview_ok = ok
+	s.preview_text = text
+	_tool_focus(r.merge(base), _tool_fresh)
+	_tool_fresh = false
+
+
+var _tool_fresh := false
+## Свободная от меню часть экрана по высоте (сверху — строка ресурсов, снизу — мини-меню).
+const TOOL_FREE := Vector2(80.0, 330.0)
+
+
+## Камера так, чтобы постройка и рамка нового места были над мини-меню; не влезают —
+## отдаляем. Без force двигаем, только если рамка ушла из видимой части.
+func _tool_focus(r: Rect2i, force: bool) -> void:
+	var cam := world_view.camera
+	var vp := get_viewport().get_visible_rect().size
+	var free_h := vp.y * (TOOL_FREE.y / 720.0) - TOOL_FREE.x * (vp.y / 720.0)
+	var a := world_view.cell_to_local(r.position)
+	var b := world_view.cell_to_local(r.end)
+	var need := (b - a)
+	var z := cam.zoom.x
+	if need.y * z > free_h * 0.9 or need.x * z > vp.x * 0.9:
+		z = maxf(0.3, minf(free_h * 0.9 / maxf(1.0, need.y), vp.x * 0.9 / maxf(1.0, need.x)))
+	var top := TOOL_FREE.x * (vp.y / 720.0)
+	var target_y := top + free_h * 0.5
+	if not force and is_equal_approx(z, cam.zoom.x):
+		var sa := (a - cam.position) * z + vp * 0.5
+		var sb := (b - cam.position) * z + vp * 0.5
+		if sa.x >= 0.0 and sb.x <= vp.x and sa.y >= top and sb.y <= top + free_h:
+			return
+	cam.zoom = Vector2(z, z)
+	var mid := (a + b) * 0.5
+	cam.position = Vector2(mid.x, mid.y + (vp.y * 0.5 - target_y) / z)
+
+
+const DIR_ARROWS := {Vector2i.LEFT: "←", Vector2i.RIGHT: "→", Vector2i.UP: "↑", Vector2i.DOWN: "↓"}
+
+
+func _move_tool(p: Project) -> void:
+	_tool_start(p)
+	_move_tool_show(p)
+
+
+func _move_tool_show(p: Project) -> void:
+	var dir: Vector2i = MOVE_DIRS[_move_dir_i]
+	var mx := maxi(1, Colony.move_max(p, dir))
+	_move_len = clampi(_move_len, 1, mx)
+	var check: Array = colony.move_check(p, dir, _move_len)
+	_tool_preview(Rect2i(p.rect.position + dir * _move_len, p.rect.size), (check[0] as String).is_empty(), "%s %d м" % [DIR_ARROWS[dir], _move_len], p.rect)
 	var go := func() -> void:
 		var err := colony.start_move(p, dir, _move_len)
 		if not err.is_empty():
 			hud.log_event(err, "warning")
-		world_view.structures.preview = Rect2i()
-		_show_project(p)
-	var actions := [["Сдвинуть", func() -> void:
-		var c: Array = colony.move_check(p, dir, _move_len)
-		if not (c[0] as String).is_empty():
-			hud.log_event(c[0], "warning")
-		elif not (c[1] as String).is_empty():
-			hud.ask("Сдвиг комнаты", c[1], "Продолжить", go)
-		else:
-			go.call(), "primary"],
-		["Назад", func() -> void:
-			world_view.structures.preview = Rect2i()
-			_show_project(p)]]
-	hud.show_panel({"title": "Сдвинуть: %s" % p.title(), "subtitle": "", "rows": rows, "controls": controls,
-		"controls_first": true, "actions": actions})
+		_tool_back(p)
+	hud.show_tool({"title": "Сдвинуть: " + p.title(), "icon": "bridge",
+		"dirs": MOVE_DIRS.map(func(d: Vector2i) -> String: return DIR_ARROWS[d]), "dir": _move_dir_i,
+		"on_dir": func(i: int) -> void:
+			_move_dir_i = i
+			_move_tool_show(p),
+		"len": _move_len, "len_min": 1, "len_max": mx,
+		"on_len": func(n: int) -> void:
+			_move_len = n
+			_move_tool_show(p),
+		"cost": _cost_items(colony.move_cost(p)),
+		"info": "Вбок — до %d м за раз, вверх и вниз — до 3 м. Всё внутри едет вместе с комнатой." % p.rect.size.x,
+		"warn": check[0] if not (check[0] as String).is_empty() else check[1],
+		"blocked": not (check[0] as String).is_empty(),
+		"ok": "Сдвинуть",
+		"on_ok": func() -> void:
+			var c: Array = colony.move_check(p, dir, _move_len)
+			if not (c[0] as String).is_empty():
+				hud.log_event(c[0], "warning")
+			elif not (c[1] as String).is_empty():
+				hud.ask("Сдвиг комнаты", c[1], "Продолжить", go)
+			else:
+				go.call(),
+		"on_cancel": func() -> void: _tool_back(p)})
+
+
+var _ext_dir_i := 0
+
+
+func _extend_tool(p: Project) -> void:
+	_tool_start(p)
+	_extend_tool_show(p)
+
+
+func _extend_tool_show(p: Project) -> void:
+	var dirs := Colony.extend_dirs(p)
+	if dirs.is_empty():
+		_tool_back(p)
+		return
+	_ext_dir_i = clampi(_ext_dir_i, 0, dirs.size() - 1)
+	var d: Vector2i = dirs[_ext_dir_i]
+	var n := clampi(p.order_len, 1, Colony.EXTEND_MAX)
+	var err := colony.extend_error(p, d, n)
+	_tool_preview(Colony.extend_rect(p, d, n), err.is_empty(), "+%d м" % n, p.rect)
+	_taken = {}
+	var cost := _extend_cost(p, d, n)
+	hud.show_tool({"title": "Продлить: " + p.title(), "icon": "build",
+		"dirs": dirs.map(func(x: Vector2i) -> String: return DIR_ARROWS[x]), "dir": _ext_dir_i,
+		"on_dir": func(i: int) -> void:
+			_ext_dir_i = i
+			_extend_tool_show(p),
+		"len": n, "len_min": 1, "len_max": Colony.EXTEND_MAX,
+		"on_len": func(v: int) -> void:
+			p.order_len = v
+			_extend_len = v
+			_extend_tool_show(p),
+		"cost": _cost_items(cost, true),
+		"info": "Продолжение копают и укрепляют, потом оно сливается с этой постройкой." if not cost.is_empty() else "Там пусто — копать и укреплять нечего.",
+		"warn": err, "blocked": not err.is_empty(), "ok": "Продлить",
+		"on_ok": func() -> void:
+			var e := colony.extend_error(p, d, n)
+			if not e.is_empty():
+				hud.log_event(e, "warning")
+				return
+			var q := colony.extend_project(p, d, n)
+			_tool_close()
+			_select(null, q if q != null else p),
+		"on_cancel": func() -> void: _tool_back(p)})
+
+
+var _drill_dir_i := 0
+
+
+func _drill_tool(p: Project) -> void:
+	_tool_start(p)
+	_drill_tool_show(p)
+
+
+func _drill_tool_show(p: Project) -> void:
+	# Бур-лифт — только в свою сторону: лифт идёт следом.
+	var dirs: Array = [p.drill_lift_dir()] if p.link_id != 0 else MOVE_DIRS.duplicate()
+	_drill_dir_i = clampi(_drill_dir_i, 0, dirs.size() - 1)
+	var d: Vector2i = dirs[_drill_dir_i]
+	var n := clampi(p.order_len, 1, Colony.DRILL_MAX)
+	var err := colony.drill_error(p, d, n)
+	_tool_preview(Colony.drill_path(p, d, n), err.is_empty(), "%s %d м" % [DIR_ARROWS[d], n], p.rect)
+	hud.show_tool({"title": "Сверлить: " + p.title(), "icon": "build",
+		"dirs": dirs.map(func(x: Vector2i) -> String: return DIR_ARROWS[x]), "dir": _drill_dir_i,
+		"on_dir": func(i: int) -> void:
+			_drill_dir_i = i
+			_drill_tool_show(p),
+		"len": n, "len_min": 1, "len_max": Colony.DRILL_MAX,
+		"on_len": func(v: int) -> void:
+			p.order_len = v
+			_drill_len = v
+			_drill_tool_show(p),
+		"cost": _cost_items({"iron": Colony.drill_casing(n)}),
+		"info": "Железо — на обсадку хода: 1 на %d м." % Colony.DRILL_CASING_M,
+		"warn": err, "blocked": not err.is_empty(), "ok": "Сверлить",
+		"on_ok": func() -> void:
+			var e := colony.start_drill(p, d, n)
+			if not e.is_empty():
+				hud.log_event(e, "warning")
+				return
+			_tool_back(p),
+		"on_cancel": func() -> void: _tool_back(p)})
 
 
 func _show_project(p: Project) -> void:
@@ -1441,7 +1585,7 @@ func _show_project(p: Project) -> void:
 			_show_project(p)])
 	if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE and not p.repairing \
 			and p.purpose != RoomType.SHIP and p.purpose != RoomType.LAUNCHPAD:
-		actions.append(["Сдвинуть", func() -> void: _show_move(p)])
+		actions.append(["Сдвинуть", func() -> void: _move_tool(p)])
 	if p.phase == Project.Phase.DONE:
 		if p.repairing:
 			controls.append(_workers_stepper(p.workers, func(v: int) -> void: p.workers = v))
@@ -1483,23 +1627,10 @@ func _show_project(p: Project) -> void:
 					colony.stop_drill(p)
 					_show_project(p), "danger"])
 			else:
-				# Сколько сверлить — своё у каждого бура (запоминается и сохраняется).
+				# Куда и сколько сверлить — в мини-меню на карте (рамка хода видна).
 				if p.order_len <= 0:
 					p.order_len = _drill_len
-				controls.append({"label": "Сверлить, м · железо: 1 на %d м (есть %d)" % [Colony.DRILL_CASING_M, int(colony.inventory.get("iron", 0))],
-					"value": p.order_len, "min": 1, "max": Colony.DRILL_MAX,
-					"changed": func(v: int) -> void:
-						p.order_len = v
-						_drill_len = v
-						hud.refresh_panel(_project_spec(p))})
-				# Бур-лифт — только вниз: лифт идёт следом.
-				for d: Vector2i in ([p.drill_lift_dir()] if p.link_id != 0 else [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP, Vector2i.LEFT]):
-					var label: String = {Vector2i.LEFT: "← Влево", Vector2i.DOWN: "↓ Вниз", Vector2i.UP: "↑ Вверх", Vector2i.RIGHT: "Вправо →"}[d]
-					actions.push_front([label, func() -> void:
-						var err := colony.start_drill(p, d, p.order_len)
-						if not err.is_empty():
-							hud.log_event(err, "warning")
-						_show_project(p), "primary"])
+				actions.push_front(["Сверлить", func() -> void: _drill_tool(p), "primary"])
 		# Шахту, тоннель и лифт продлевают: продолжение копают и сливают с этой постройкой.
 		var dirs := Colony.extend_dirs(p)
 		if not dirs.is_empty() and not p.repairing:
@@ -1507,25 +1638,10 @@ func _show_project(p: Project) -> void:
 			if ext != null:
 				actions.append(["К продолжению", func() -> void: _select(null, ext)])
 			else:
+				# Куда и на сколько — в мини-меню на карте (рамка продолжения видна).
 				if p.order_len <= 0:
 					p.order_len = _extend_len
-				controls.append({"label": "Продлить на, м", "value": p.order_len, "min": 1, "max": Colony.EXTEND_MAX,
-					"changed": func(v: int) -> void:
-						p.order_len = v
-						_extend_len = v
-						hud.refresh_panel(_project_spec(p))})
-				# push_front переворачивает порядок: идём справа налево, чтобы «← Продлить» встал слева.
-				dirs.reverse()
-				for d: Vector2i in dirs:
-					var label: String = {Vector2i.LEFT: "← Продлить", Vector2i.DOWN: "Продлить ↓", Vector2i.RIGHT: "Продлить →"}[d]
-					actions.push_front([label, func() -> void:
-						var err := colony.extend_error(p, d, p.order_len)
-						if not err.is_empty():
-							hud.log_event(err, "warning")
-							return
-						var q := colony.extend_project(p, d, p.order_len)
-						if q != null:
-							_select(null, q), "primary"])
+				actions.push_front(["Продлить", func() -> void: _extend_tool(p), "primary"])
 		# Тоннелю и шахте можно сменить крепь, лифту и буру — материал (обычный или супер).
 		if p.kind != Project.Kind.ROOM and Colony.changeable_material(p) and p.phase == Project.Phase.DONE and not p.repairing:
 			var tmats := colony.materials_for(p.kind)
@@ -1931,6 +2047,48 @@ func _pick_worker(p: Project) -> void:
 			hud.set_panel_scroll(_project_at)]]})
 
 
+## Выбор гаврика поверх карточки комнаты: карточка остаётся открытой и обновляется.
+func _pick_worker_over(p: Project) -> void:
+	var cands := colony.units.filter(func(u: Unit) -> bool: return not u.child and u.workplace != p.id)
+	cands.sort_custom(func(a: Unit, b: Unit) -> bool:
+		if colony.is_free(a) != colony.is_free(b):
+			return colony.is_free(a)
+		return colony.suitability(a, p) > colony.suitability(b, p))
+	var task := colony.work_task(p)
+	cands = cands.filter(func(u: Unit) -> bool: return _pick_pass(u, task))
+	var items := []
+	for u: Unit in cands:
+		var info := "подходит на %d%% · %s · навык %d%s" % [roundi(colony.suitability(u, p) * 100),
+			_fit_text(u, task), u.level(colony.work_skill(p)), _calling_text(u, task)]
+		var busy := not colony.is_free(u)
+		if busy:
+			info = "ЗАНЯТ: %s · %s" % [colony.role_name(u).to_lower(), info]
+		items.append({"looks": _looks(u), "name": _name_sex(u), "info": _family_text(u) + " · " + info,
+			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "",
+			"pick": func() -> void:
+				var err := colony.assign_work(u, p, _finish_first)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+				_show_project(p)
+				# Мест не осталось — окно закрываем, иначе остаёмся: можно назначить следующего.
+				if colony.assigned_to(p).size() >= colony.work_slots(p):
+					hud.close_choice()
+				else:
+					_pick_worker_over(p)})
+	hud.show_people_pick({"title": "Назначить: " + colony.workplace_name(p),
+		"subtitle": "мест %d/%d · важно: %s" % [colony.assigned_to(p).size(), colony.work_slots(p), _job_stats_text(task)],
+		"checks": [["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]],
+			["mutant", "мутанты", _pick_filters["mutant"]], ["finish", "занятый сначала доделает своё", _finish_first]],
+		"toggled": func(k: String, on: bool) -> void:
+			if k == "finish":
+				_finish_first = on
+			else:
+				_pick_filters[k] = on
+			_pick_worker_over(p),
+		"items": items,
+		"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Все взрослые уже здесь."})
+
+
 ## Где была прокручена карточка места работы перед списком «Назначить» — туда и вернуться.
 var _project_at := 0
 
@@ -2094,7 +2252,6 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 		rows.append({"type": "resources", "label": "Материалы", "items": supply})
 	if p.plan_purpose > 0 and p.phase != Project.Phase.DONE:
 		rows.append({"type": "text", "text": "После постройки сразу обустроят: %s" % RoomType.purpose_name(p.plan_purpose)})
-	_extend_rows(p, rows)
 	if Project.SUPER.has(p.material):
 		var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
 		if not st.is_empty():
@@ -2466,9 +2623,7 @@ func _room_view(p: Project) -> Dictionary:
 				"state": "Работает" if here else Unit.TASK_NAMES[u.task].capitalize(), "working": here,
 				"pct": roundi(colony.suitability(u, p) * 100), "open": _opener(u, func() -> void: _show_project(p))})
 		out["slots"] = colony.work_slots(p)
-		out["assign"] = func() -> void:
-			_project_at = hud.panel_scroll()
-			_pick_worker(p)
+		out["assign"] = func() -> void: _pick_worker_over(p)
 	out["workers"] = workers
 	return out
 
@@ -3089,29 +3244,6 @@ func _pending_spec() -> Dictionary:
 	if kind == Project.Kind.ROOM or tp.material != "wood":
 		title += " · " + Project.MATERIALS[tp.material][0].to_lower()
 	return {"title": title, "rows": rows}
-
-
-## Готовую шахту, тоннель или лифт продлевают на выбранное число метров, бур сверлит —
-## сколько чего на это уйдёт (точно, по направлениям: в разную сторону — разная порода).
-func _extend_rows(p: Project, rows: Array) -> void:
-	if p.phase != Project.Phase.DONE or p.repairing:
-		return
-	if p.kind == Project.Kind.DRILL and not colony.drilling(p) and p.order_len > 0:
-		rows.append({"type": "resources", "label": "Сверлить %d м — железо на обсадку:" % p.order_len,
-			"items": _cost_items({"iron": Colony.drill_casing(p.order_len)})})
-		return
-	var dirs := Colony.extend_dirs(p)
-	if dirs.is_empty() or colony.extension_of(p) != null or p.order_len <= 0:
-		return
-	for d: Vector2i in dirs:
-		# Стороны — на выбор (одна или другая): каждая — со всего свободного запаса.
-		_taken = {}
-		var cost := _extend_cost(p, d, p.order_len)
-		var label: String = {Vector2i.LEFT: "←", Vector2i.DOWN: "↓", Vector2i.RIGHT: "→", Vector2i.UP: "↑"}.get(d, "")
-		rows.append({"type": "resources", "label": "Продлить %s на %d м:" % [label, p.order_len],
-			"items": _cost_items(cost, true) if not cost.is_empty() else []})
-		if cost.is_empty():
-			rows[-1] = {"type": "text", "text": "Продлить %s на %d м: материалов не нужно (там пусто — копать и укреплять нечего)" % [label, p.order_len]}
 
 
 ## Материалы на продолжение p в сторону d на n м: сама постройка (у лифта — рельсы и провода)

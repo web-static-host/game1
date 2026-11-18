@@ -301,10 +301,10 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 			var d := Vector2(1, -1).normalized()
 			ci.draw_line(c - d * r * 0.55, c + d * r * 0.45, col, w * 1.9)
 			for s in [1.0, -1.0]:
-				var head: Vector2 = c + d * r * 0.62 * s
-				ci.draw_circle(head, r * 0.36, col)
-				# Зев — вырез в головке, смотрит наружу.
-				ci.draw_circle(head + d * r * 0.26 * s, r * 0.2, Color(0.08, 0.07, 0.06))
+				# Головка — дуга, открытая наружу (зев), без тёмных кружков-вырезов.
+				var head: Vector2 = c + d * r * 0.6 * s
+				var a0: float = (d * s).angle()
+				ci.draw_arc(head, r * 0.27, a0 + 0.95, a0 + TAU - 0.95, 18, col, w * 1.6, true)
 		"warning":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -r * 0.85), c + Vector2(r * 0.9, r * 0.75), c + Vector2(-r * 0.9, r * 0.75)]), col)
