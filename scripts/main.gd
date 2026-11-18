@@ -1991,17 +1991,59 @@ func _show_project(p: Project) -> void:
 	hud.show_panel(spec)
 
 
+const KIND_GLYPHS := {Project.Kind.TUNNEL: "tunnel", Project.Kind.MINE: "mine", Project.Kind.LIFT: "lift",
+	Project.Kind.DRILL: "drill", Project.Kind.BRIDGE: "bridge", Project.Kind.PIER: "bridge", Project.Kind.PROBE: "drill",
+	Project.Kind.ROOM: "room"}
+
+
+## Карточка стройки (копка, стройка, обустройство) — в стиле карточки комнаты: этап в шапке,
+## превью, плитки хода работ, кто работает — справа.
+func _site_view(p: Project) -> Dictionary:
+	var target := p.equip_target if p.phase == Project.Phase.EQUIP else p.plan_purpose
+	var pic: String = ROOM_PICS.get(target, "") if p.kind == Project.Kind.ROOM and target > 0 else ""
+	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "",
+		"glyph": KIND_GLYPHS.get(p.kind, "build"), "site": true, "context": p.kind != Project.Kind.ROOM,
+		"conds_title": "Условия", "workers": [], "side_title": "Работают",
+		"side_empty": "Сейчас никого: придут свободные строители (шахтёры — в шахту)."}
+	var ph := p.phase_name()
+	if p.paused:
+		out["status"] = ["Пауза", "bad"]
+	elif not p.blocked.is_empty():
+		out["status"] = ["Стоит", "bad"]
+	else:
+		out["status"] = [ph.left(1).to_upper() + ph.substr(1), "warn"]
+	if p.kind == Project.Kind.ROOM and target > 0:
+		out["desc"] = "После постройки: %s — %s" % [RoomType.purpose_name(target), RoomType.purpose_hint(target)]
+	var a := world_view.cell_to_local(p.rect.position)
+	var b := world_view.cell_to_local(p.rect.end)
+	out["preview"] = world_view.get_global_transform() * Rect2(a, b - a)
+	# Кто здесь сейчас работает.
+	for u in colony.units:
+		if u.project_id != p.id or u.child:
+			continue
+		out["workers"].append({"name": u.name + ("  ♀" if u.sex == Unit.Sex.FEMALE else "  ♂"), "looks": _looks(u),
+			"sub": colony.role_name(u), "state": Unit.TASK_NAMES[u.task].capitalize(),
+			"working": u.state == Unit.State.WORK, "open": _opener(u, func() -> void: _show_project(p))})
+	return out
+
+
 ## Карточка готовой шахты или тоннеля — как у комнаты: превью, плитки, крепь, описание.
 func _passage_view(p: Project) -> Dictionary:
 	var tunnel := p.kind == Project.Kind.TUNNEL
-	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "", "glyph": "tunnel" if tunnel else "mine",
-		"material": Project.MATERIALS[p.material][0], "mat_key": p.material, "mat_label": "Крепь",
+	var passage := tunnel or p.kind == Project.Kind.MINE
+	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "", "glyph": KIND_GLYPHS.get(p.kind, "build"),
+		"material": Project.MATERIALS[p.material][0], "mat_key": p.material, "mat_label": "Крепь" if passage else "Материал",
 		"context": true, "conds_title": "Условия"}
 	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
 	if Project.SUPER.has(p.material) and not st.is_empty():
 		out["bonus"] = st
-	out["desc"] = "Вертикальный ход: по нему спускаются и поднимаются по лестнице, от него копают шахты вбок." if tunnel \
-		else "Горизонтальный ход высотой 3 м: в нём ставят комнаты, лифты и копают дальше."
+	out["desc"] = {Project.Kind.TUNNEL: "Вертикальный ход: по нему спускаются и поднимаются по лестнице, от него копают шахты вбок.",
+		Project.Kind.MINE: "Горизонтальный ход высотой 3 м: в нём ставят комнаты, лифты и копают дальше.",
+		Project.Kind.LIFT: "Кабина возит гавриков и грузы вверх и вниз по шахте лифта.",
+		Project.Kind.DRILL: "Машина сама сверлит ход на энергии; добытое уносят гаврики или везёт лифт.",
+		Project.Kind.PROBE: "Геоскважина: зонд открывает породу полосой, ничего не копая.",
+		Project.Kind.BRIDGE: "Мост через воду: по нему ходят, с него ловят рыбу.",
+		Project.Kind.PIER: "Пристань: с неё ловят рыбу."}.get(p.kind, "")
 	if p.paused:
 		out["status"] = ["Пауза", "bad"]
 	elif p.repairing:
@@ -2012,9 +2054,12 @@ func _passage_view(p: Project) -> Dictionary:
 	# Длина и глубина — плитками рядом с износом.
 	var surf := world.gen.surface_y(p.rect.get_center().x)
 	var top := p.rect.position.y - surf
-	var len_m := p.rect.size.y if tunnel else p.rect.size.x
-	out["tiles"] = [["bridge", "Длина", {"text": "%d м" % len_m, "value": -1.0}],
-		["build", "Глубина", {"text": ("%d–%d м" % [maxi(0, top), maxi(0, top + p.rect.size.y)]) if tunnel else "%d м" % maxi(0, top), "value": -1.0}]]
+	var tall := p.rect.size.y > p.rect.size.x
+	var len_m := p.rect.size.y if tall else p.rect.size.x
+	out["tiles"] = [["bridge", "Высота" if p.kind == Project.Kind.LIFT else "Длина", {"text": "%d м" % len_m, "value": -1.0}],
+		["build", "Глубина", {"text": ("%d–%d м" % [maxi(0, top), maxi(0, top + p.rect.size.y)]) if tall else "%d м" % maxi(0, top), "value": -1.0}]]
+	if p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE:
+		out["tiles"] = [out["tiles"][1]]
 	out["workers"] = []
 	return out
 
@@ -2891,8 +2936,10 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	var spec := {"title": p.title(), "subtitle": sub, "accent": accent, "rows": rows}
 	if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE:
 		spec["room"] = _room_view(p)
-	elif (p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE) and p.phase == Project.Phase.DONE:
+	elif p.phase == Project.Phase.DONE:
 		spec["room"] = _passage_view(p)
+	elif p.phase != Project.Phase.DONE:
+		spec["room"] = _site_view(p)
 	return spec
 
 

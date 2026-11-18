@@ -1192,6 +1192,9 @@ func _fill_header(spec: Dictionary) -> void:
 	if not room.is_empty():
 		# Размер — плашкой рядом, статус — плашкой: в заголовке и подписи не повторяем.
 		_title.text = _title.text.replace(" " + str(room.get("size", "")), "")
+		# «Лифт 8 м» — метры тоже в плитках.
+		var rx := RegEx.create_from_string(" \\d+ м$")
+		_title.text = rx.sub(_title.text, "")
 		_subtitle.visible = false
 	_subtitle.add_theme_color_override("font_color", spec.get("accent", ACCENT))
 
@@ -1351,6 +1354,9 @@ func _fill_rows(spec: Dictionary) -> void:
 			continue   # супер-материал — в блоке «Материал стен»; находки в карточке не нужны
 		if t == "warning":
 			warns.append(row)
+		elif t == "progress" and room.get("site", false):
+			# Стройка: весь ход работ — плитками (копка, укрепление, стройка).
+			tiles.append([{"Копка": "mine", "Укрепление": "repair"}.get(label, "build"), label, row])
 		elif t == "text" and not row.get("info", false) and not str(row.get("text", "")).begins_with("Условия: "):
 			desc.append(str(row["text"]))   # справка — в окно «Описание»
 		elif t == "progress" and label == "Износ":
@@ -1706,7 +1712,10 @@ func _build_room_workers(room: Dictionary) -> void:
 		for w: Dictionary in room["workers"]:
 			_workers_list.add_child(_room_worker(w))
 		if room["workers"].is_empty():
-			_workers_list.add_child(_label("Пока никого.", 17, MUTED))
+			var el := _label(room.get("side_empty", "Пока никого."), 17, MUTED)
+			el.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			el.custom_minimum_size = Vector2(_room_right.custom_minimum_size.x - 10.0, 0)
+			_workers_list.add_child(el)
 		return
 	if slots <= 0:
 		return
@@ -1809,7 +1818,8 @@ func _fit_actions_row() -> void:
 
 ## Кнопка действия карточки: значок по смыслу, цвет — зелёный «Назначить», красный «Снести»…
 const ACCENT_DOT := Color(1.0, 0.62, 0.2)
-const ACTION_ICONS := [["Изменить", "build"], ["Отправить", "look"], ["Работа", "build"], ["Родословная", "people"], ["Гаврики", "people"], ["Продлить", "bridge"], ["Сверлить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
+const ACTION_ICONS := [["Изменить", "build"], ["Отменить", "close"], ["Остановить", "close"], ["Пауза", "speed"],
+	["Продолжить", "speed"], ["Снять приоритет", "warning"], ["Разобрать завал", "mine"], ["Отправить", "look"], ["Работа", "build"], ["Родословная", "people"], ["Гаврики", "people"], ["Продлить", "bridge"], ["Сверлить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
 	["Включить свет", "power"], ["Выключить свет", "power"], ["Перестроить", "room"], ["Снести", "close"], ["Ремонт", "repair"],
 	["Пауза", "speed"], ["Продолжить", "speed"], ["Приоритет", "warning"], ["Собрать ракету", "rocket"], ["Запустить", "rocket"]]
 func _action_button(a: Array) -> Button:
@@ -2275,7 +2285,8 @@ func _build_room_stepper(st: Dictionary) -> void:
 		_controls.move_child(line, 0)
 	var cell := VBoxContainer.new()
 	cell.add_theme_constant_override("separation", 2)
-	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Ячейка постоянной ширины: «−», значение, «+» рядом, а не по краям середины.
+	cell.custom_minimum_size = Vector2(240, 0)
 	line.add_child(cell)
 	var l := _label(st["label"], 14, MUTED)
 	l.clip_text = true
