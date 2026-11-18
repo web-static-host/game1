@@ -1369,6 +1369,14 @@ func _unit_view(u: Unit, rows: Array) -> Dictionary:
 	out["status"] = [task.capitalize(), "bad" if bad else ("good" if u.state == Unit.State.WORK else "warn")]
 	# Черты — плашками слева.
 	var conds := []
+	# Занятие — первой плашкой (по призванию — зелёным, не по душе — оранжевым).
+	var job := colony.role_name(u) + _pending_text(u)
+	if u.calling > 0:
+		conds.append(["build", job + " · по призванию", Color(0.6, 0.95, 0.6)])
+	elif u.calling < 0:
+		conds.append(["build", job + " · не по душе", Color(1.0, 0.7, 0.45)])
+	else:
+		conds.append(["build", job])
 	conds.append(["", "♂ мужчина" if u.sex == Unit.Sex.MALE else "♀ женщина"])
 	conds.append(["", "%d-е поколение" % u.generation])
 	if Genetics.is_super(g):
@@ -1384,21 +1392,11 @@ func _unit_view(u: Unit, rows: Array) -> Dictionary:
 		conds.append(["", "облучён", Color(0.6, 1.0, 0.35)])
 	if u.pregnancy >= 0.0:
 		conds.append(["", "ждёт ребёнка", Color(1.0, 0.7, 0.8)])
-	conds.append(["home", "кровать есть" if u.bed_room != 0 else "нет кровати"])
+	if not u.child:
+		conds.append(["home", "своя кровать" if u.bed_room != 0 else "без кровати"])
 	out["conds"] = conds
-	# Потребности — плитками.
-	out["tiles"] = [["food", "Сытость", _need_bar("Сытость", u.satiety)], ["people", "Настроение", _need_bar("Настроение", u.mood())],
-		["repair", "Здоровье", _need_bar("Здоровье", u.health)]]
-	# Занятие — блоком вместо материала стен.
-	out["mat_label"] = "Занятие"
-	out["material"] = colony.role_name(u) + _pending_text(u)
-	out["mat_glyph"] = "build"
-	if u.calling > 0:
-		out["bonus"] = "по призванию"
-	elif u.calling < 0:
-		out["mat_hint"] = "работа не по душе"
-	else:
-		out["mat_hint"] = ""
+	# Потребности — справа от портрета.
+	out["needs"] = [_need_bar("Сытость", u.satiety), _need_bar("Настроение", u.mood()), _need_bar("Здоровье", u.health)]
 	# Семья — список справа.
 	var fam := []
 	var add := func(o: Unit, role: String) -> void:
@@ -1457,8 +1455,10 @@ func _unit_view(u: Unit, rows: Array) -> Dictionary:
 		warns.append("Голодает — нужна еда на складе или в столовой.")
 	if colony.elements.temperature(u.cell()) < Colony.cold_limit(u):
 		warns.append("Мёрзнет — поставьте рядом очаг.")
-	if u.bed_room == 0 and not u.child:
-		warns.append("Нет кровати — поставьте жилую комнату.")
+	# Без кровати настроение на 20 ниже; тревожно, только когда из-за этого не заводит пару
+	# (настроение ниже 45) — иначе это лишь плашка в чертах.
+	if u.bed_room == 0 and not u.child and u.mood() < 45.0:
+		warns.append("Нет кровати — настроение низкое, пару не заведёт.")
 	var wp := colony.project_by_id(u.workplace) if u.workplace != 0 else null
 	if wp != null and wp.purpose == RoomType.FARM and not colony.farm_warm(wp):
 		warns.append("Ферма холодная (%d °C) — грибы не растут, фермер ждёт. Поставьте рядом очаг." % roundi(colony.room_temp(wp)))

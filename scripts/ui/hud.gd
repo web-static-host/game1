@@ -1375,8 +1375,13 @@ func _fill_rows(spec: Dictionary) -> void:
 	# Материал стен — своим блоком, поэтому из условий его убираем.
 	conds = conds.filter(func(it: Array) -> bool: return not str(it[1]).begins_with("стены:"))
 	_fill_body(rest)
-	_build_room_left(room, conds)
-	_build_room_top(room, warns, tiles)
+	if room.has("portrait"):
+		# Гаврик: проблемы — под портретом слева, середина — только характеристики.
+		_build_room_left(room, conds, warns)
+		_build_room_top(room, [], [])
+	else:
+		_build_room_left(room, conds)
+		_build_room_top(room, warns, tiles)
 	_room_desc = desc
 	_room_desc_title = _title.text
 	_room_desc_sections = room.get("desc_sections", [])
@@ -1399,23 +1404,60 @@ func _clip_panel(sb: StyleBox, child: Control, pad := 10.0) -> Panel:
 
 
 ## Слева: превью комнаты и под ним условия.
-func _build_room_left(room: Dictionary, conds: Array) -> void:
+func _build_room_left(room: Dictionary, conds: Array, warns: Array = []) -> void:
 	_ensure_preview()
 	for c in _room_left.get_children():
 		if c != _preview_frame:
 			_room_left.remove_child(c)
 			c.queue_free()
 	if room.has("portrait"):
-		# Гаврик: крупный портрет вместо превью.
+		# Гаврик: квадратный портрет слева, справа от него — сытость, настроение, здоровье;
+		# под ними — проблемы.
 		_preview_frame.visible = false
+		var top := HBoxContainer.new()
+		top.add_theme_constant_override("separation", 12)
+		_room_left.add_child(top)
+		_room_left.move_child(top, 0)
 		var pp := PanelContainer.new()
-		pp.add_theme_stylebox_override("panel", UiStyle.section(UiStyle.TEAL_A, 14, 6))
-		var pc := CenterContainer.new()
-		pp.add_child(pc)
-		var ps := floorf(_room_left.custom_minimum_size.x / 3.0)
-		pc.add_child(PortraitView.make(room["portrait"], ps, ps * 0.6))
-		_room_left.add_child(pp)
-		_room_left.move_child(pp, 0)
+		pp.add_theme_stylebox_override("panel", UiStyle.section(UiStyle.TEAL_A, 14, 4))
+		pp.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		var ps := floorf(_room_left.custom_minimum_size.x * 0.4)
+		pp.add_child(PortraitView.make(room["portrait"], ps, ps * 0.6))
+		top.add_child(pp)
+		var nv := VBoxContainer.new()
+		nv.add_theme_constant_override("separation", 6)
+		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nv.alignment = BoxContainer.ALIGNMENT_CENTER
+		top.add_child(nv)
+		for n: Dictionary in room.get("needs", []):
+			var lh := HBoxContainer.new()
+			nv.add_child(lh)
+			var ln := _label(n["label"], 16, Color.WHITE)
+			ln.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lh.add_child(ln)
+			var lv := _label(n["text"], 16, Color.WHITE)
+			lv.add_theme_font_override("font", Fonts.black())
+			lh.add_child(lv)
+			var bar := BarView.make(float(n["value"]), n["color"], "")
+			bar.custom_minimum_size = Vector2(0, 12)
+			nv.add_child(bar)
+		var at := 1
+		for w: Dictionary in warns:
+			var wp := PanelContainer.new()
+			wp.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 12, 6, false))
+			var wh := HBoxContainer.new()
+			wh.add_theme_constant_override("separation", 8)
+			wp.add_child(wh)
+			wh.add_child(IconView.make("", 24, "warning", Color(1, 0.95, 0.4)))
+			var wl := _label(w["text"], 14, Color.WHITE)
+			wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			wl.max_lines_visible = 2
+			wl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			wl.custom_minimum_size = Vector2(_room_left.custom_minimum_size.x - 60.0, 0)
+			wh.add_child(wl)
+			_room_left.add_child(wp)
+			_room_left.move_child(wp, at)
+			at += 1
 	else:
 		_preview_frame.visible = true
 	# Превью — по пропорциям комнаты (без пустых полос): во всю ширину колонки, но не выше
@@ -1883,7 +1925,8 @@ func _row(row: Dictionary) -> Control:
 				cell.add_theme_constant_override("separation", 6)
 				cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				var l := _label(item[0], 15, MUTED)
-				l.custom_minimum_size = Vector2(118, 0)
+				l.custom_minimum_size = Vector2(134, 0)
+				l.clip_text = true
 				cell.add_child(l)
 				var v: float = item[1]
 				var good: bool = item[2]
@@ -1891,7 +1934,9 @@ func _row(row: Dictionary) -> Control:
 				if absf(v - 1.0) < 0.01:
 					c = Color(0.55, 0.6, 0.7)
 				var bar := BarView.make(v / 2.0, c, "%d%%" % roundi(v * 100.0))
-				bar.custom_minimum_size = Vector2(130, 22)
+				# Полоска тянется на остаток ячейки (в узкой колонке не распирает карточку).
+				bar.custom_minimum_size = Vector2(70, 22)
+				bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				cell.add_child(bar)
 				grid.add_child(cell)
 			return grid
