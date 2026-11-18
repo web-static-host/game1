@@ -2371,7 +2371,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 			chips.append(["people", "рыбаков %d/%d" % [colony.workers_on(p), p.fish_slots()]])
 			chips.append(["", "рыбы ~%d" % int(colony.fish_left(p))])
 			if not colony.can_fish_from(p):
-				rows.append({"type": "text", "text": "Зима: озеро подо льдом — ловить можно только с пристани."})
+				rows.append({"type": "warning", "text": "Зима: озеро подо льдом — ловить можно только с пристани."})
 			elif colony.is_winter():
 				chips.append(["", "зимой улов вдвое медленнее"])
 	if p.phase == Project.Phase.DONE and p.kind == Project.Kind.ROOM:
@@ -2428,17 +2428,17 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					Fmt.int_spaced(roundi(RoomType.CAPACITY_PER_CELL * RoomType.usable_width(p) * (1.5 if colony.research.has("shelving") else 1.0))),
 					"виду еды" if p.purpose == RoomType.GRANARY else "ресурсу"]])
 				if colony.assigned_to(p).is_empty():
-					rows.append({"type": "text", "text": "Нет работника — добытое сюда носят свободные и подсобные, а добывать до нормы некому. Назначьте работника (кнопка «Работа» у гаврика)."})
+					rows.append({"type": "warning", "text": "Нет работника — добывать до нормы некому. Назначьте гаврика на свободное место."})
 				if not colony.drops_note.is_empty():
 					rows.append({"type": "warning", "text": colony.drops_note})
 				var lacking := colony.storage_deficit(p)
 				if not colony.assigned_to(p).is_empty() and not lacking.is_empty():
 					var names := lacking.map(func(k: String) -> String: return Mat.resource_name(k).to_lower())
-					rows.append({"type": "text", "text": "Добывают до нормы: " + ", ".join(names)})
+					rows.append({"type": "text", "text": "Добывают до нормы: " + ", ".join(names), "info": true})
 			RoomType.FARM:
 				chips.append(["people", "фермеров %d/%d" % [colony.workers_on(p), RoomType.farm_slots(p)]])
 				if not colony.farm_warm(p):
-					rows.append({"type": "text", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужен очаг рядом (греет от стен на 6–10 м) или генератор." \
+					rows.append({"type": "warning", "text": "Холодно (%d °C) — грибы растут от %d °C. Нужен очаг рядом (греет от стен на 6–10 м) или генератор." \
 						% [roundi(colony.room_temp(p)), roundi(Colony.FARM_MIN_TEMP)]})
 			RoomType.DINING:
 				chips.append(["", "еда сытнее, настроение лучше"])
@@ -2478,10 +2478,10 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 					minds += w.stat("intellect") * w.speed("science")
 				chips.append(["", "скорость науки %d%% (интеллект учёных)" % roundi(minds * 100.0)])
 				if colony.assigned_to(p).is_empty():
-					rows.append({"type": "warning", "text": "Нет учёных — назначьте гаврика («Назначить»): исследуют только назначенные, быстрее — умные."})
+					rows.append({"type": "warning", "text": "Нет учёных — назначьте гаврика на свободное место: исследуют только назначенные, быстрее — умные."})
 				var cur := colony.research.current
 				if cur.is_empty():
-					rows.append({"type": "text", "text": "Нечего изучать — выберите исследование («Наука»)."})
+					rows.append({"type": "warning", "text": "Нечего изучать — выберите исследование («Наука»)."})
 				else:
 					rows.append(_progress(Research.tech_name(cur), colony.research.progress / colony.research.cost(cur)))
 			RoomType.LAUNCHPAD:
@@ -2585,6 +2585,7 @@ func _room_view(p: Project) -> Dictionary:
 		"tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else ""}
 	# Материал стен и что он даёт (супер-материал по назначению — бонус).
 	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
+	out["desc"] = RoomType.purpose_hint(p.purpose)
 	out["material"] = Project.MATERIALS[p.material][0]
 	out["mat_key"] = p.material
 	if Project.SUPER.has(p.material) and not st.is_empty():

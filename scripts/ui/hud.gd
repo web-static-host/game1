@@ -928,13 +928,33 @@ func _build_panel() -> void:
 	head.add_child(titles)
 	_title = _label("", 26, Color.WHITE)
 	_title.add_theme_font_override("font", Fonts.black())
-	_title.clip_text = true
 	_subtitle = _label("", 18, ACCENT)
 	_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	# Ширина — сразу вся строка (без кнопки закрытия): иначе при коротком заголовке («Планеты»)
 	# подпись в первый расчёт переносилась по букве, карточка вытягивалась на весь экран и пустела.
 	_subtitle.custom_minimum_size = Vector2(PANEL_WIDTH - 40 - 64 - 66, 0)
-	titles.add_child(_title)
+	# Название и рядом кнопка «Описание» (у карточки комнаты): длинное описание — отдельным окном.
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 14)
+	titles.add_child(title_row)
+	title_row.add_child(_title)
+	_desc_btn = Button.new()
+	_desc_btn.text = "Описание"
+	_desc_btn.focus_mode = Control.FOCUS_NONE
+	_desc_btn.custom_minimum_size = Vector2(0, 40)
+	_desc_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_desc_btn.add_theme_font_size_override("font_size", 17)
+	var dsb := UiStyle.flat(Color(1, 1, 1, 0.08), 12, 8)
+	dsb.content_margin_left = 16
+	dsb.content_margin_right = 16
+	dsb.border_color = Color(UiStyle.TEAL_A, 0.8)
+	dsb.set_border_width_all(2)
+	_desc_btn.add_theme_stylebox_override("normal", dsb)
+	_desc_btn.add_theme_stylebox_override("hover", dsb)
+	_desc_btn.add_theme_stylebox_override("pressed", UiStyle.flat(Color(1, 1, 1, 0.16), 12, 8))
+	_desc_btn.visible = false
+	_desc_btn.pressed.connect(_show_room_desc)
+	title_row.add_child(_desc_btn)
 	titles.add_child(_subtitle)
 	# Карточка комнаты: картинка комнаты вместо значка и плашки в шапке (размер, золото, статус).
 	_head_tex = TextureRect.new()
@@ -1162,6 +1182,7 @@ func _fill_header(spec: Dictionary) -> void:
 	_head_icon_bg.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 4, false, false)
 		if acc.is_equal_approx(ACCENT) else UiStyle.tile(acc, false, 14, 4))
 	_title.text = spec.get("title", "")
+	_desc_btn.visible = false
 	_subtitle.text = spec.get("subtitle", "")
 	_subtitle.visible = not _subtitle.text.is_empty()
 	if not room.is_empty():
@@ -1169,6 +1190,93 @@ func _fill_header(spec: Dictionary) -> void:
 		_title.text = _title.text.replace(" " + str(room.get("size", "")), "")
 		_subtitle.visible = false
 	_subtitle.add_theme_color_override("font_color", spec.get("accent", ACCENT))
+
+
+## Описание комнаты (справка) — по кнопке «Описание» в шапке.
+var _desc_btn: Button
+var _room_desc: Array = []
+var _room_desc_title := ""
+
+
+## Описание — по разделам, внутри — пунктами по предложению (не сплошной текст).
+const DESC_SECTIONS := [["Назначение", "room"], ["Как работает", "build"], ["Свет", "power"], ["Материал стен", "store"]]
+
+
+func _desc_section(t: String, first: bool) -> String:
+	if first:
+		return "Назначение"
+	if t.begins_with("Свет:"):
+		return "Свет"
+	if t.contains("подходит для") or t.contains("супер-постройк"):
+		return "Материал стен"
+	return "Как работает"
+
+
+## Текст на пункты: по концу предложения, если дальше — заглавная буква или «.
+static func _sentences(t: String) -> Array:
+	var re := RegEx.create_from_string("(?<=[.!?])\\s+(?=[А-ЯЁA-Z«])")
+	var out := []
+	var at := 0
+	for m in re.search_all(t):
+		out.append(t.substr(at, m.get_start() - at).strip_edges())
+		at = m.get_end()
+	out.append(t.substr(at).strip_edges())
+	return out.filter(func(x: String) -> bool: return not x.is_empty())
+
+
+func _show_room_desc() -> void:
+	var v := _overlay(_room_desc_title + " — описание")
+	var w := minf(size.x - 160.0, 820.0)
+	var groups := {}
+	for i in _room_desc.size():
+		var t: String = _room_desc[i]
+		var sec := _desc_section(t, i == 0)
+		if not groups.has(sec):
+			groups[sec] = []
+		for line: String in _sentences(t):
+			groups[sec].append(line.left(1).to_upper() + line.substr(1))
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	for sd in DESC_SECTIONS:
+		if not groups.has(sd[0]):
+			continue
+		var sec := VBoxContainer.new()
+		sec.add_theme_constant_override("separation", 6)
+		box.add_child(sec)
+		var hh := HBoxContainer.new()
+		hh.add_theme_constant_override("separation", 8)
+		sec.add_child(hh)
+		hh.add_child(IconView.make("", 22, sd[1], UiStyle.TEAL_A))
+		var hl := _label(sd[0], 19, UiStyle.TEAL_A)
+		hl.add_theme_font_override("font", Fonts.black())
+		hh.add_child(hl)
+		for line: String in groups[sd[0]]:
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 10)
+			sec.add_child(row)
+			var dot := Panel.new()
+			dot.add_theme_stylebox_override("panel", UiStyle.flat(Color(ACCENT, 0.9), 4, 0))
+			dot.custom_minimum_size = Vector2(8, 8)
+			dot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			var dw := MarginContainer.new()
+			dw.add_theme_constant_override("margin_top", 9)
+			dw.add_theme_constant_override("margin_left", 6)
+			dw.add_child(dot)
+			row.add_child(dw)
+			var l := _label(line, 17, Color(0.9, 0.93, 0.96))
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(w - 50.0, 0)
+			row.add_child(l)
+	_choice_scroll = ScrollContainer.new()
+	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_choice_scroll.add_child(box)
+	v.add_child(_choice_scroll)
+	var sc := _choice_scroll
+	var fit := func() -> void:
+		if is_instance_valid(sc):
+			sc.custom_minimum_size = Vector2(w, minf(box.get_combined_minimum_size().y, size.y - 200.0))
+	box.minimum_size_changed.connect(fit)
+	fit.call()
 
 
 # --- Карточка комнаты (широкая, по прототипу) ---------------------------------------------
@@ -1219,17 +1327,22 @@ func _fill_rows(spec: Dictionary) -> void:
 		_fill_body(rows)
 		return
 	var room: Dictionary = spec["room"]
-	var warn := {}
+	var warns := []
 	var tiles := []
 	var conds := []
 	var rest := []
+	var desc := []
+	if not str(room.get("desc", "")).is_empty():
+		desc.append(str(room["desc"]))
 	for row: Dictionary in rows:
 		var t: String = row.get("type", "text")
 		var label: String = row.get("label", "")
 		if row.get("super", false) or label == "Найдено":
 			continue   # супер-материал — в блоке «Материал стен»; находки в карточке не нужны
-		if t == "warning" and warn.is_empty():
-			warn = row
+		if t == "warning":
+			warns.append(row)
+		elif t == "text" and not row.get("info", false) and not str(row.get("text", "")).begins_with("Условия: "):
+			desc.append(str(row["text"]))   # справка — в окно «Описание»
 		elif t == "progress" and label == "Износ":
 			tiles.append(["repair", "Износ", row])
 		elif t == "progress" and label == "Нагрузка":
@@ -1249,7 +1362,10 @@ func _fill_rows(spec: Dictionary) -> void:
 	conds = conds.filter(func(it: Array) -> bool: return not str(it[1]).begins_with("стены:"))
 	_fill_body(rest)
 	_build_room_left(room, conds)
-	_build_room_top(room, warn, tiles)
+	_build_room_top(room, warns, tiles)
+	_room_desc = desc
+	_room_desc_title = _title.text
+	_desc_btn.visible = not desc.is_empty()
 
 
 ## Панель постоянного размера: содержимое не растягивает её, лишнее обрезается снизу.
@@ -1310,11 +1426,12 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 
 
 ## Середина сверху: тревога, плитки показателей, материал стен.
-func _build_room_top(room: Dictionary, warn: Dictionary, tiles: Array) -> void:
+func _build_room_top(room: Dictionary, warns: Array, tiles: Array) -> void:
 	for c in _room_top.get_children():
 		_room_top.remove_child(c)
 		c.queue_free()
-	if not warn.is_empty():
+	# Все проблемы — сразу на виду, оранжевыми плашками.
+	for warn: Dictionary in warns:
 		var wp := PanelContainer.new()
 		wp.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 14, 8, false))
 		var wh := HBoxContainer.new()
