@@ -1644,22 +1644,7 @@ func _show_project(p: Project) -> void:
 			if not tmats.has(p.material):
 				tmats.push_front(p.material)
 			if tmats.size() > 1:
-				var tunnel := p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE
-				var cur_t: String = _wall_choice.get(p.id, p.material)
-				controls.append({"label": "Укрепление" if tunnel else "Материал", "value": maxi(0, tmats.find(cur_t)), "min": 0, "max": tmats.size() - 1,
-					"options": tmats.map(func(m: String) -> String: return Project.MATERIALS[m][0] if m != "wood" or tunnel else "Обычный"),
-					"changed": func(i: int) -> void:
-						_wall_choice[p.id] = tmats[i]
-						hud.refresh_panel(_project_spec(p)),
-				})
-				actions.append(["Сменить укрепление" if tunnel else "Сменить материал", func() -> void:
-					var m: String = _wall_choice.get(p.id, p.material)
-					var err := colony.material_error(p, m)
-					if not err.is_empty():
-						hud.log_event(err if m != p.material else "Выберите другой материал (переключатель выше)", "warning")
-					elif colony.change_material(p, m):
-						_wall_choice.erase(p.id)
-						_show_project(p)])
+				actions.append(["Изменить", func() -> void: _change_material_window(p, tmats)])
 		if not colony.drilling(p):
 			actions.append(["Снести", func() -> void:
 				var err := colony.demolish_error(p)
@@ -1749,6 +1734,34 @@ func _show_project(p: Project) -> void:
 	hud.show_panel(spec)
 
 
+## Карточка готовой шахты или тоннеля — как у комнаты: превью, плитки, крепь, описание.
+func _passage_view(p: Project) -> Dictionary:
+	var tunnel := p.kind == Project.Kind.TUNNEL
+	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "", "glyph": "bridge" if not tunnel else "build",
+		"material": Project.MATERIALS[p.material][0], "mat_key": p.material, "mat_label": "Крепь",
+		"context": true, "conds_title": "Условия"}
+	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
+	if Project.SUPER.has(p.material) and not st.is_empty():
+		out["bonus"] = st
+	out["desc"] = "Вертикальный ход: по нему спускаются и поднимаются по лестнице, от него копают шахты вбок." if tunnel \
+		else "Горизонтальный ход высотой 3 м: в нём ставят комнаты, лифты и копают дальше."
+	if p.paused:
+		out["status"] = ["Пауза", "bad"]
+	elif p.repairing:
+		out["status"] = ["Ремонт", "warn"]
+	var a := world_view.cell_to_local(p.rect.position)
+	var b := world_view.cell_to_local(p.rect.end)
+	out["preview"] = world_view.get_global_transform() * Rect2(a, b - a)
+	# Длина и глубина — плитками рядом с износом.
+	var surf := world.gen.surface_y(p.rect.get_center().x)
+	var top := p.rect.position.y - surf
+	var len_m := p.rect.size.y if tunnel else p.rect.size.x
+	out["tiles"] = [["bridge", "Длина", {"text": "%d м" % len_m, "value": -1.0}],
+		["build", "Глубина", {"text": ("%d–%d м" % [maxi(0, top), maxi(0, top + p.rect.size.y)]) if tunnel else "%d м" % maxi(0, top), "value": -1.0}]]
+	out["workers"] = []
+	return out
+
+
 ## Улучшения комнаты (без смены назначения): [назначение, что даёт]. Сейчас — печи очага.
 func _room_upgrades(p: Project) -> Array:
 	var out := []
@@ -1757,6 +1770,30 @@ func _room_upgrades(p: Project) -> Array:
 	if colony.is_hearth_upgrade(p, RoomType.HEARTH_GAS) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
 		out.append([RoomType.HEARTH_GAS, "Котлы жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше. Метан кончился — топят углём и дровами."])
 	return out
+
+
+## Окно «Изменить» шахты, тоннеля, лифта, бура: материал (крепь).
+func _change_material_window(p: Project, tmats: Array) -> void:
+	var tunnel := p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE
+	var opts := []
+	for m: String in tmats:
+		var st := BuildInfo.super_text(p.kind, m, p.purpose) if Project.SUPER.has(m) else ""
+		opts.append({"text": Project.MATERIALS[m][0] if m != "wood" or tunnel else "Обычный", "icon": m, "current": m == p.material,
+			"sub": "супер: " + st if not st.is_empty() else "",
+			"cost": [] if m == p.material else _cost_items(RoomType.material_cost(p, m)),
+			"error": "" if m == p.material else colony.material_error(p, m)})
+	hud.show_tabs("Изменить: " + p.title(), [{"name": "Крепь" if tunnel else "Материал", "options": opts,
+		"hint": "Из чего крепь: прочнее — дольше служит и держит больше груза сверху. Пока меняют, по ходу ходить можно." if tunnel
+			else "Из чего сделано: супер-материал усиливает постройку.",
+		"on_pick": func(i: int) -> void:
+			var m: String = tmats[i]
+			if m == p.material:
+				return
+			var err := colony.material_error(p, m)
+			if not err.is_empty():
+				hud.log_event(err, "warning")
+			elif colony.change_material(p, m):
+				_show_project(p)}], 0)
 
 
 ## Окно «Изменить» комнату: вкладки «Назначение», «Стены», «Улучшения».
@@ -2597,6 +2634,8 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	var spec := {"title": p.title(), "subtitle": sub, "accent": accent, "rows": rows}
 	if p.kind == Project.Kind.ROOM and p.phase == Project.Phase.DONE:
 		spec["room"] = _room_view(p)
+	elif (p.kind == Project.Kind.TUNNEL or p.kind == Project.Kind.MINE) and p.phase == Project.Phase.DONE:
+		spec["room"] = _passage_view(p)
 	return spec
 
 

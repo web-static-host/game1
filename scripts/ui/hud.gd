@@ -1170,6 +1170,8 @@ func _fill_header(spec: Dictionary) -> void:
 	_head_tex.visible = _head_tex.texture != null
 	if not room.is_empty() and _head_tex.texture == null:
 		_head_icon_bg.visible = true
+		if room.has("glyph"):
+			_head_icon.glyph = room["glyph"]
 	for c in _head_chips.get_children():
 		_head_chips.remove_child(c)
 		c.queue_free()
@@ -1360,6 +1362,9 @@ func _fill_rows(spec: Dictionary) -> void:
 				conds.push_front(["", part])
 		else:
 			rest.append(row)
+	# Свои плитки постройки (у шахт и тоннелей — длина, глубина) — первыми.
+	var extra: Array = room.get("tiles", [])
+	tiles = extra + tiles
 	# Материал стен — своим блоком, поэтому из условий его убираем.
 	conds = conds.filter(func(it: Array) -> bool: return not str(it[1]).begins_with("стены:"))
 	_fill_body(rest)
@@ -1396,7 +1401,15 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 	# 0,6 ширины; узкая высокая комната — уже по ширине, по центру.
 	var r: Rect2 = room.get("preview", Rect2())
 	var colw := _room_left.custom_minimum_size.x
-	if r.size.x > 0.0 and r.size.y > 0.0:
+	if room.get("context", false) and r.size.x > 0.0 and r.size.y > 0.0:
+		# Шахта, тоннель: превью во всю колонку (вертикальному — выше), вокруг видно породу.
+		_pv = Vector2(colw, floorf(colw * (0.6 if r.size.y > r.size.x else 1.0 / 3.0)))
+		var want := _pv.x / _pv.y
+		if r.size.x / r.size.y < want:
+			r = r.grow_individual((r.size.y * want - r.size.x) * 0.5, 0, (r.size.y * want - r.size.x) * 0.5, 0)
+		else:
+			r = r.grow_individual(0, (r.size.x / want - r.size.y) * 0.5, 0, (r.size.x / want - r.size.y) * 0.5)
+	elif r.size.x > 0.0 and r.size.y > 0.0:
 		# Высота у всех комнат одна (как у широкой 9×3), ширина — по пропорциям комнаты.
 		var asp := r.size.x / r.size.y
 		var h := floorf(colw / 3.0)
@@ -1411,7 +1424,7 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 		return
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 6)
-	cv.add_child(_label("Условия в комнате", 17, Color.WHITE))
+	cv.add_child(_label(room.get("conds_title", "Условия в комнате"), 17, Color.WHITE))
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", 6)
 	flow.add_theme_constant_override("v_separation", 6)
@@ -1476,7 +1489,7 @@ func _room_material(room: Dictionary) -> Control:
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", -2)
 	h.add_child(tv)
-	tv.add_child(_label("Материал стен", 14, MUTED))
+	tv.add_child(_label(room.get("mat_label", "Материал стен"), 14, MUTED))
 	var nm := _label(room["material"], 19, Color.WHITE)
 	nm.add_theme_font_override("font", Fonts.black())
 	tv.add_child(nm)
@@ -1527,9 +1540,10 @@ func _room_tile(glyph: String, title: String, row: Dictionary) -> Control:
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	val.clip_text = true
 	v.add_child(val)
-	var bar := BarView.make(float(row.get("value", 0.0)), row.get("color", Color(0.3, 0.85, 0.45)), "")
-	bar.custom_minimum_size = Vector2(0, 12)
-	v.add_child(bar)
+	if float(row.get("value", 0.0)) >= 0.0:
+		var bar := BarView.make(float(row.get("value", 0.0)), row.get("color", Color(0.3, 0.85, 0.45)), "")
+		bar.custom_minimum_size = Vector2(0, 12)
+		v.add_child(bar)
 	return p
 
 
@@ -1722,7 +1736,7 @@ func _fit_actions_row() -> void:
 
 ## Кнопка действия карточки: значок по смыслу, цвет — зелёный «Назначить», красный «Снести»…
 const ACCENT_DOT := Color(1.0, 0.62, 0.2)
-const ACTION_ICONS := [["Изменить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
+const ACTION_ICONS := [["Изменить", "build"], ["Продлить", "bridge"], ["Сверлить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
 	["Включить свет", "power"], ["Выключить свет", "power"], ["Перестроить", "room"], ["Снести", "close"], ["Ремонт", "repair"],
 	["Пауза", "speed"], ["Продолжить", "speed"], ["Приоритет", "warning"], ["Собрать ракету", "rocket"], ["Запустить", "rocket"]]
 func _action_button(a: Array) -> Button:
