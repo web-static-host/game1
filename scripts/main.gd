@@ -1481,6 +1481,8 @@ var _tool_on := false
 func _tool_start(p: Project) -> void:
 	hud.hide_info()
 	_info_target = []
+	# Постройка, которую двигают или продлевают, остаётся выделенной.
+	world_view.structures.selected_project = p.id
 	_tool_on = true
 	_tool_fresh = true
 
@@ -1512,8 +1514,8 @@ func _tool_set(ctx: Dictionary, spec: Dictionary) -> void:
 	if _tool_pick:
 		for i in ctx["dirs"].size():
 			var d: Vector2i = ctx["dirs"][i]
-			var on: bool = i == int(ctx["dir_i"])
-			arrows.append([_arrow_area(ctx["reach"] if on else ctx["base"], d), d, on])
+			# Стрелки — от самой постройки (тянут от начала, а не от конца рамки).
+			arrows.append([_arrow_area(ctx["base"], d), d, i == int(ctx["dir_i"])])
 	world_view.structures.tool_arrows = arrows
 	spec["pick"] = _tool_pick
 	spec["on_pick"] = func() -> void:
@@ -1558,11 +1560,10 @@ func _grab_test(pos: Vector2) -> bool:
 			if i < 0:
 				continue
 			_grab_dir_i = i
-			var start: int = int(_tool_ctx["n"]) if a[2] else 1
-			_grab_off = start - _cells_from(_tool_ctx["base"], a[1], c)
+			_grab_off = 0
 			_tool_dragging = true
-			if not a[2]:
-				_tool_ctx["apply"].call(i, start)
+			# Длина — сколько клеток от края постройки до пальца: зажал у края — 1 м, тянешь дальше.
+			_tool_ctx["apply"].call(i, clampi(_cells_from(_tool_ctx["base"], a[1], c), 1, maxi(1, int(_tool_ctx["max"]))))
 			return true
 	return false
 

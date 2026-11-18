@@ -310,6 +310,11 @@ func _draw_live(shown: Array[Project]) -> void:
 			_draw_probe(p, _rect_px(p.rect), 1.0)
 		else:
 			_draw_done(p)
+		# Бур и зонд рисуются поверх — выделение у них тоже поверх, иначе его не видно.
+		if (p.kind == Project.Kind.DRILL or p.kind == Project.Kind.PROBE) and p.id == selected_project:
+			var r := _rect_px(p.rect)
+			_c.draw_rect(r.grow(3), Color(0, 0, 0, 0.55), false, 6.0)
+			_c.draw_rect(r.grow(3), Color(1, 1, 1, 0.95), false, 3.0)
 	_draw_dig_progress()
 	# Падающая порода.
 	for f in colony.physics.fx:
@@ -421,7 +426,9 @@ func _draw_done(p: Project) -> void:
 		_dashed_rect(r, Color(0.4, 0.7, 1.0), 2.5)
 	# Бур-лифт выделяется целиком: и бур, и его лифт.
 	if p.id == selected_project or (p.link_id != 0 and p.link_id == selected_project):
-		_c.draw_rect(r.grow(2), Color.WHITE, false, 2.0)
+		# Выделение: тёмная подложка и яркая белая рамка — видно и на буре, и на светлой породе.
+		_c.draw_rect(r.grow(3), Color(0, 0, 0, 0.55), false, 6.0)
+		_c.draw_rect(r.grow(3), Color(1, 1, 1, 0.95), false, 3.0)
 
 
 ## Корабль: койки в два яруса, пульт, иллюминаторы; снаружи — нос, стабилизаторы, опоры.
