@@ -3657,6 +3657,215 @@ func _tabs_open(ti: int) -> void:
 	_choice_scroll.scroll_vertical = 0
 
 
+# --- Окно-список («Гаврики», «Постройки»): вкладки сверху, ряды карточек двумя столбцами ---
+var _list_spec := {}
+var _list_tab := 0
+var _list_grid: GridContainer
+
+
+## spec: {"title", "subtitle", "desc": [[раздел, значок, [строки]]], "tabs": [{"name", "items",
+## "empty", "filters"?: [[ключ, подпись, вкл]], "on_filter"?: Callable(ключ, вкл)}],
+## "actions": [[текст, Callable, стиль]]}. Ряд: {"looks"|"glyph"|"tex", "name", "info",
+## "warn"?: красным, "button"?, "style"?, "pick"?, "open"}.
+func show_list(spec: Dictionary, start_tab := -1) -> void:
+	var keep := 0
+	if _choice != null and _choice.get_meta("list", "") == spec["title"] and is_instance_valid(_choice_scroll):
+		keep = _choice_scroll.scroll_vertical
+	_list_spec = spec
+	if start_tab >= 0:
+		_list_tab = start_tab
+	_list_tab = clampi(_list_tab, 0, spec["tabs"].size() - 1)
+	var v := _overlay(spec["title"], spec.get("subtitle", ""))
+	_choice.set_meta("list", spec["title"])
+	var w := minf(size.x - 120.0, 1240.0)
+	# «Описание» — справка (если есть).
+	var desc: Array = spec.get("desc", [])
+	if not desc.is_empty():
+		var db := Button.new()
+		db.text = "Описание"
+		db.focus_mode = Control.FOCUS_NONE
+		db.custom_minimum_size = Vector2(0, 40)
+		db.add_theme_font_size_override("font_size", 17)
+		db.add_theme_stylebox_override("normal", _desc_btn.get_theme_stylebox("normal"))
+		db.add_theme_stylebox_override("hover", _desc_btn.get_theme_stylebox("hover"))
+		db.pressed.connect(func() -> void:
+			_room_desc = []
+			_room_desc_sections = desc
+			_room_desc_title = spec["title"]
+			_show_room_desc())
+		var head: HBoxContainer = v.get_child(0)
+		head.add_child(db)
+		head.move_child(db, 1)
+	# Вкладки.
+	var bar := HFlowContainer.new()
+	bar.add_theme_constant_override("h_separation", 8)
+	bar.add_theme_constant_override("v_separation", 8)
+	v.add_child(bar)
+	for i in spec["tabs"].size():
+		var t: Dictionary = spec["tabs"][i]
+		var b := Button.new()
+		b.text = "%s  %d" % [t["name"], t["items"].size()] if not t.get("no_count", false) else t["name"]
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 46)
+		b.add_theme_font_size_override("font_size", 17)
+		var on: bool = i == _list_tab
+		var nsb := btn_box(ACCENT) if on else UiStyle.flat(Color(1, 1, 1, 0.08), 12, 8)
+		nsb.content_margin_left = 16
+		nsb.content_margin_right = 16
+		b.add_theme_stylebox_override("normal", nsb)
+		b.add_theme_stylebox_override("hover", nsb)
+		b.add_theme_stylebox_override("pressed", btn_box(ACCENT))
+		var k: int = i
+		b.pressed.connect(func() -> void:
+			if _list_spec.has("on_tab"):
+				_list_spec["on_tab"].call(k)
+			show_list(_list_spec, k))
+		bar.add_child(b)
+	var tab: Dictionary = spec["tabs"][_list_tab]
+	# Фильтры вкладки — переключателями.
+	var filters: Array = tab.get("filters", [])
+	if not filters.is_empty():
+		var fr := HFlowContainer.new()
+		fr.add_theme_constant_override("h_separation", 6)
+		fr.add_theme_constant_override("v_separation", 6)
+		v.add_child(fr)
+		fr.add_child(_label("Показать:", 16, MUTED))
+		for f in filters:
+			var fb := Button.new()
+			fb.text = f[1]
+			fb.toggle_mode = true
+			fb.button_pressed = f[2]
+			fb.focus_mode = Control.FOCUS_NONE
+			fb.custom_minimum_size = Vector2(0, 40)
+			fb.add_theme_font_size_override("font_size", 15)
+			var fsb := UiStyle.flat(Color(0.98, 0.57, 0.24, 0.35) if f[2] else Color(1, 1, 1, 0.06), 10, 6)
+			fsb.content_margin_left = 12
+			fsb.content_margin_right = 12
+			if f[2]:
+				fsb.border_color = ACCENT
+				fsb.set_border_width_all(2)
+			fb.add_theme_stylebox_override("normal", fsb)
+			fb.add_theme_stylebox_override("hover", fsb)
+			fb.add_theme_stylebox_override("pressed", fsb)
+			var key: String = f[0]
+			var cb: Callable = tab["on_filter"]
+			fb.toggled.connect(func(x: bool) -> void: cb.call(key, x))
+			fr.add_child(fb)
+	# Ряды.
+	var cols := 2 if w > 900.0 else 1
+	var cw := (w - 10.0 * (cols - 1)) / cols
+	_list_grid = GridContainer.new()
+	_list_grid.columns = cols
+	_list_grid.add_theme_constant_override("h_separation", 10)
+	_list_grid.add_theme_constant_override("v_separation", 8)
+	var items: Array = tab["items"]
+	for it: Dictionary in items:
+		_list_grid.add_child(_list_row(it, cw))
+	if items.is_empty():
+		_list_grid.add_child(_label(tab.get("empty", "Пусто."), 17, MUTED))
+	_choice_scroll = ScrollContainer.new()
+	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_choice_scroll.add_child(_list_grid)
+	_choice_scroll.custom_minimum_size = Vector2(w, maxf(160.0, size.y - 330.0 - (50.0 if not filters.is_empty() else 0.0)))
+	v.add_child(_choice_scroll)
+	# Кнопки внизу.
+	var acts: Array = spec.get("actions", [])
+	if not acts.is_empty():
+		var ar := HBoxContainer.new()
+		ar.add_theme_constant_override("separation", 8)
+		v.add_child(ar)
+		for a in acts:
+			var b := _action_button(a)
+			b.pressed.connect(a[1])
+			ar.add_child(b)
+	if keep > 0:
+		var sc := _choice_scroll
+		await get_tree().process_frame
+		if is_instance_valid(sc):
+			sc.scroll_vertical = keep
+
+
+func _list_row(it: Dictionary, w: float) -> Control:
+	var p := PanelContainer.new()
+	var warn: bool = not str(it.get("warn", "")).is_empty()
+	var sb := UiStyle.flat(Color(1, 1, 1, 0.06), 12, 8)
+	if warn:
+		sb.border_color = Color(1, 0.45, 0.35, 0.8)
+		sb.set_border_width_all(2)
+	p.add_theme_stylebox_override("panel", sb)
+	p.custom_minimum_size = Vector2(w, 76)
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
+	if it.has("open"):
+		var open: Callable = it["open"]
+		var press := {"at": Vector2.INF}
+		p.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
+				if ev.pressed:
+					press["at"] = ev.global_position
+				elif press["at"] != Vector2.INF and ev.global_position.distance_to(press["at"]) < DRAG_DEADZONE:
+					press["at"] = Vector2.INF
+					open.call())
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	h.mouse_filter = Control.MOUSE_FILTER_PASS
+	p.add_child(h)
+	if it.has("looks"):
+		h.add_child(PortraitView.make(it["looks"], 58, 34))
+	else:
+		var ib := PanelContainer.new()
+		ib.add_theme_stylebox_override("panel", UiStyle.flat(Color(1, 1, 1, 0.06), 10, 4))
+		ib.custom_minimum_size = Vector2(58, 58)
+		ib.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var cc := CenterContainer.new()
+		ib.add_child(cc)
+		var tex: String = it.get("tex", "")
+		if not tex.is_empty() and ResourceLoader.exists(tex):
+			var tr := TextureRect.new()
+			tr.texture = load(tex)
+			tr.custom_minimum_size = Vector2(48, 40)
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			cc.add_child(tr)
+		else:
+			cc.add_child(IconView.make("", 34, it.get("glyph", "room"), Color(0.75, 0.95, 0.95)))
+		h.add_child(ib)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.mouse_filter = Control.MOUSE_FILTER_PASS
+	h.add_child(col)
+	var nm := _label(it["name"], 18, Color.WHITE)
+	nm.add_theme_font_override("font", Fonts.black())
+	nm.clip_text = true
+	col.add_child(nm)
+	if warn:
+		var wl := _label(it["warn"], 14, Color(1, 0.6, 0.5))
+		wl.clip_text = true
+		col.add_child(wl)
+	var info := _label(it.get("info", ""), 14, MUTED)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.max_lines_visible = 1 if warn else 2
+	info.custom_minimum_size = Vector2(w - 260.0 if it.has("button") else w - 110.0, 0)
+	col.add_child(info)
+	if it.has("button") and not str(it["button"]).is_empty():
+		var b := Button.new()
+		b.text = it["button"]
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(130, 48)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.add_theme_font_size_override("font_size", 16)
+		match it.get("style", ""):
+			"danger":
+				b.add_theme_stylebox_override("normal", btn_box(RED))
+			"primary":
+				b.add_theme_stylebox_override("normal", btn_box(GREEN))
+		b.pressed.connect(it["pick"])
+		h.add_child(b)
+	return p
+
+
 ## Окно выбора гаврика поверх карточки (карточка под ним остаётся открытой).
 ## spec: {"title", "subtitle", "checks": [[ключ, подпись, вкл]], "toggled": Callable(ключ, вкл),
 ## "items": [{"looks", "name", "info", "button", "style", "pick"}], "empty"}. Повторный вызов
@@ -3665,7 +3874,7 @@ func show_people_pick(spec: Dictionary) -> void:
 	var keep := 0
 	if _choice != null and _choice.get_meta("title", "") == spec["title"] and is_instance_valid(_choice_scroll):
 		keep = _choice_scroll.scroll_vertical
-	var v := _overlay(spec["title"], spec.get("subtitle", ""))
+	var v := _overlay(spec["title"], spec.get("subtitle", ""), spec.get("back", Callable()))
 	var w := minf(size.x - 140.0, 920.0)
 	var checks: Array = spec.get("checks", [])
 	if not checks.is_empty():
@@ -3739,7 +3948,7 @@ func show_people_pick(spec: Dictionary) -> void:
 
 ## Затемнение и окно по центру поверх всего: заголовок (и подпись), крестик. Возвращает, куда
 ## класть содержимое.
-func _overlay(title: String, subtitle := "") -> VBoxContainer:
+func _overlay(title: String, subtitle := "", on_close := Callable()) -> VBoxContainer:
 	if _choice != null:
 		_choice.queue_free()
 	_choice = Control.new()
@@ -3772,7 +3981,7 @@ func _overlay(title: String, subtitle := "") -> VBoxContainer:
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(t)
 	var close := IconButton.make("close", "", 48, 48)
-	close.pressed.connect(close_choice)
+	close.pressed.connect(on_close if on_close.is_valid() else close_choice)
 	head.add_child(close)
 	if not subtitle.is_empty():
 		var st := _label(subtitle, 16, ACCENT)

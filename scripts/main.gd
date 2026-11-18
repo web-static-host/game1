@@ -996,6 +996,7 @@ func _feature_near(c: Vector2i) -> Variant:
 func _select(u: Unit, p: Project) -> void:
 	_card_back = []
 	_tool_close()
+	hud.close_choice()
 	# Бур-лифт — одна постройка: касание по его лифту открывает бур-лифт.
 	if p != null and p.kind == Project.Kind.LIFT and p.link_id != 0 and colony.project_by_id(p.link_id) != null:
 		p = colony.project_by_id(p.link_id)
@@ -1184,8 +1185,6 @@ func _show_objects() -> void:
 	if not types.has(_obj_type):
 		_obj_type = ""
 	var shown := colony.projects.filter(func(p: Project) -> bool:
-		if not _obj_type.is_empty() and _obj_type_of(p) != _obj_type:
-			return false
 		var any_on := false
 		for f in OBJ_FLAGS:
 			if _obj_flags.get(f[0], false):
@@ -1220,16 +1219,20 @@ func _show_objects() -> void:
 			bits.append("износ %d%%" % roundi(p.wear * 100))
 		bits.append("глубина " + colony._depth_text(p.rect.get_center()))
 		var open := func() -> void:
-			var at := hud.panel_scroll()
 			_select(null, p)
 			world_view.focus_cell(p.rect.get_center())
-			_card_back = [["project", p.id], func() -> void:
-				_show_objects()
-				hud.set_panel_scroll(at)]
-		items.append({"name": p.title(), "info": " · ".join(bits), "button": "Открыть", "pick": open, "open": open})
-	var checks := []
-	for f in OBJ_FLAGS:
-		checks.append([f[0], f[1], bool(_obj_flags.get(f[0], false))])
+			_card_back = [["project", p.id], func() -> void: _show_objects()]
+		var warn: PackedStringArray = []
+		for f in [["repair", "требует ремонта"], ["blocked", "завал"], ["noworker", "нет работников"]]:
+			if _obj_flag(p, f[0]):
+				warn.append(f[1])
+		# Тревоги — красной строкой, в описании их не повторяем.
+		bits = PackedStringArray(Array(bits).filter(func(b: String) -> bool:
+			return b != "ТРЕБУЕТ РЕМОНТА" and b != "ЗАВАЛ" and b != "НЕТ РАБОТНИКОВ"))
+		var pic: String = ROOM_PICS.get(p.purpose, "") if p.kind == Project.Kind.ROOM else ""
+		items.append({"name": p.title(), "info": " · ".join(bits), "open": open, "warn": ", ".join(warn),
+			"tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else "", "glyph": KIND_GLYPHS.get(p.kind, "room"),
+			"type": _obj_type_of(p)})
 	var to_fix := colony.projects.filter(func(p: Project) -> bool: return colony.needs_repair(p)).size()
 	var actions := []
 	if to_fix > 0:
@@ -1238,15 +1241,26 @@ func _show_objects() -> void:
 			hud.log_event("Ремонт начат: %d" % n, "info")
 			_update_repair_badge()
 			_show_objects(), "primary"])
-	hud.show_panel({"title": "Постройки", "subtitle": "всего %d · показано %d · требуют ремонта %d" % [colony.projects.size(), shown.size(), to_fix],
-		"controls": [
-			{"type": "select", "label": "Тип:", "text": "Все" if _obj_type.is_empty() else _obj_type_name(_obj_type),
-				"pressed": func() -> void: _pick_obj_type(keys)},
-			{"type": "checks", "label": "Показать (любое из отмеченных):", "items": checks, "toggled": func(k: String, on: bool) -> void:
-				_obj_flags[k] = on
-				_show_objects()},
-			{"type": "people", "label": "Постройки (нажмите — карточка):", "items": items, "empty": "Ничего не подходит под фильтр."}],
-		"actions": actions})
+	# Вкладки — типы построек, фильтры состояния — переключателями над списком.
+	var filters := []
+	for f in OBJ_FLAGS:
+		filters.append([f[0], f[1], bool(_obj_flags.get(f[0], false))])
+	var on_filter := func(key: String, on: bool) -> void:
+		_obj_flags[key] = on
+		_show_objects()
+	var tabs := [{"name": "Все", "type": "", "items": [], "filters": filters, "on_filter": on_filter, "empty": "Ничего не подходит под фильтр."}]
+	for key in keys:
+		tabs.append({"name": _obj_type_name(key), "type": key, "items": [], "filters": filters, "on_filter": on_filter,
+			"empty": "Ничего не подходит под фильтр."})
+	for t: Dictionary in tabs:
+		var ty: String = t["type"]
+		t["items"] = items.filter(func(it: Dictionary) -> bool: return ty.is_empty() or it["type"] == ty)
+	var start := 0
+	for ti in tabs.size():
+		if tabs[ti]["type"] == _obj_type:
+			start = ti
+	hud.show_list({"title": "Постройки", "subtitle": "всего %d · требуют ремонта %d" % [colony.projects.size(), to_fix],
+		"tabs": tabs, "actions": actions, "on_tab": func(ti: int) -> void: _obj_type = tabs[ti]["type"]}, start)
 
 
 ## Выбор типа построек: все типы, что есть в колонии (сколько каждого).
@@ -3119,43 +3133,61 @@ func _people_spec() -> Dictionary:
 var _people_at := 0
 
 
-func _show_people(keep := false) -> void:
+func _show_people(keep := false, tab := -1) -> void:
 	_select(null, null)
 	hud.close_overlays()
-	_info_target = ["people"]
-	var spec := _people_spec()
-	var groups := [["Строители", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.BUILDER],
-		["Шахтёры", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.MINER],
-		["Подсобные рабочие", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.HAULER],
-		["На местах работы", func(u: Unit) -> bool: return not u.child and u.workplace != 0],
+	_info_target = []
+	var groups := [["Все", func(u: Unit) -> bool: return true],
+		["Строители", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.BUILDER and not u.child],
+		["Шахтёры", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.MINER and not u.child],
+		["Подсобные", func(u: Unit) -> bool: return u.workplace == 0 and u.profession == Unit.Prof.HAULER and not u.child],
+		["На местах", func(u: Unit) -> bool: return not u.child and u.workplace != 0],
 		["Свободные", func(u: Unit) -> bool: return colony.is_free(u)],
 		["Дети", func(u: Unit) -> bool: return u.child]]
-	var controls := []
+	var tabs := []
 	for g in groups:
-		var members := colony.units.filter(g[1])
 		var items := []
-		for u: Unit in members:
-			var item := {"looks": _looks(u), "open": _opener(u, _show_people), "name": _name_sex(u), "info": (_family_text(u) + " · " if not u.child else "") + _doing(u),
-				"button": "Карточка", "pick": func() -> void: _select(u, null)}
-			if u.workplace != 0:
-				item["info"] = colony.role_name(u) + " · " + _doing(u)
-			elif not u.child and not colony.is_free(u):
+		for u: Unit in colony.units.filter(g[1]):
+			var item := {"looks": _looks(u), "open": _opener(u, func() -> void: _show_people(true, _people_tab)), "name": _name_sex(u),
+				"info": colony.role_name(u) + " · " + _doing(u)}
+			if u.satiety < 25.0:
+				item["warn"] = "голодает"
+			elif u.health < 50.0:
+				item["warn"] = "здоровье %d%%" % roundi(u.health)
+			if not u.child and u.workplace == 0 and not colony.is_free(u) and g[0] != "Все":
 				item["button"] = "Снять"
 				item["style"] = "danger"
 				item["pick"] = func() -> void:
-					_people_at = hud.panel_scroll()
 					colony.set_profession(u, Unit.Prof.ANY)
-					_show_people(true)
+					_show_people(true, _people_tab)
 			items.append(item)
-		if g[0] != "Дети" or not items.is_empty():
-			controls.append({"type": "people", "label": "%s — %d" % [g[0], items.size()], "items": items, "empty": "Никого."})
-	spec["controls"] = controls
-	spec["actions"] = [["+ Строитель", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.BUILDER), "primary"],
-		["+ Шахтёр", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.MINER), "primary"],
-		["+ Подсобный", func() -> void: _people_at = hud.panel_scroll(); _pick_role(Unit.Prof.HAULER), "primary"]]
-	hud.show_panel(spec)
-	if keep:
-		hud.set_panel_scroll(_people_at)
+		tabs.append({"name": g[0], "items": items, "empty": "Никого."})
+	var counts := {}
+	var adults := 0
+	for u in colony.units:
+		if not u.child:
+			adults += 1
+			var d: String = Unit.TASK_NAMES[u.task]
+			counts[d] = counts.get(d, 0) + 1
+	var now: PackedStringArray = []
+	for d in counts:
+		now.append("%s %d" % [d.to_lower(), counts[d]])
+	if tab >= 0:
+		_people_tab = tab
+	hud.show_list({"title": "Гаврики", "subtitle": "взрослых %d · детей %d · сейчас: %s" % [adults, colony.units.size() - adults, ", ".join(now)],
+		"desc": [["Кто чем занят", "people", [
+			"Шахтёры работают только в шахтах, строители — на остальных стройках (в шахтах — только если шахтёров нет); на работу идут ближайшие.",
+			"Свободные помогают везде, где есть места («Рабочих» в карточке стройки): пока строитель далеко, работает ближайший свободный, а когда строитель дойдёт — уступает ему.",
+			"Гаврик докапывает свою стройку, а не бежит на другую.",
+			"Строитель и шахтёр сами берут дерево на укрепление полной ношей, только если его не принесли.",
+			"Добытое и материалы носят работники складов, подсобные и свободные — на любой склад."]]],
+		"tabs": tabs,
+		"actions": [["+ Строитель", func() -> void: _pick_role(Unit.Prof.BUILDER), "primary"],
+			["+ Шахтёр", func() -> void: _pick_role(Unit.Prof.MINER), "primary"],
+			["+ Подсобный", func() -> void: _pick_role(Unit.Prof.HAULER), "primary"]]}, _people_tab)
+
+
+var _people_tab := 0
 
 
 ## Кого назначить строителем или подсобным: сначала свободные, лучшие — сверху.
@@ -3177,18 +3209,26 @@ func _pick_role(prof: int) -> void:
 	var items := []
 	for o: Unit in cands:
 		var busy := not colony.is_free(o)
-		items.append({"looks": _looks(o), "open": _opener(o, func() -> void: _pick_role(prof)), "name": _name_sex(o),
+		items.append({"looks": _looks(o), "name": _name_sex(o),
 			"info": "%s%s · %s · %s · навык %d%s" % ["ЗАНЯТ: " if busy else "", _family_text(o), colony.role_name(o).to_lower(), _rates_text(o, prof, task),
 				o.level(skill), _calling_text(o, task)],
 			"button": "Забрать" if busy else "Назначить", "style": "danger" if busy else "", "pick": func() -> void:
 				# Остаёмся в том же списке и на том же месте — можно назначить следующего.
 				colony.set_profession(o, prof, _finish_first)
 				_pick_role(prof)})
-	hud.show_panel({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(), "subtitle": "кто быстрее работает — сверху (характеристики, мутации, навык)",
-		"controls": [_pick_filter_control(func() -> void: _pick_role(prof)), _finish_control(func() -> void: _pick_role(prof)),
-			{"type": "people", "label": "Кого назначить:", "items": items,
-			"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."}],
-		"actions": [["Назад", func() -> void: _show_people(true)]]})
+	hud.show_people_pick({"title": "Назначить: " + Unit.PROF_NAMES[prof].to_lower(),
+		"subtitle": "кто быстрее работает — сверху (характеристики, мутации, навык)",
+		"checks": [["single", "без пары", _pick_filters["single"]], ["calling", "по призванию", _pick_filters["calling"]],
+			["mutant", "мутанты", _pick_filters["mutant"]], ["finish", "занятый сначала доделает своё", _finish_first]],
+		"toggled": func(k: String, on: bool) -> void:
+			if k == "finish":
+				_finish_first = on
+			else:
+				_pick_filters[k] = on
+			_pick_role(prof),
+		"back": func() -> void: _show_people(true, _people_tab),
+		"items": items,
+		"empty": "Никто не подходит под фильтр." if _pick_filters.values().has(true) else "Некого назначить."})
 
 
 ## Наука: текущее исследование и дерево технологий.
