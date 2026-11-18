@@ -3848,6 +3848,18 @@ func show_tool(spec: Dictionary) -> void:
 				var cb: Callable = spec["on_dir"]
 				b.pressed.connect(func() -> void: cb.call(idx))
 				grid.add_child(b)
+	# «Выбрать на карте»: вокруг постройки — стрелки, их тянут пальцем.
+	if spec.has("on_pick"):
+		var pk := Button.new()
+		pk.text = "Выбрать на карте"
+		pk.focus_mode = Control.FOCUS_NONE
+		pk.custom_minimum_size = Vector2(0, 46)
+		pk.add_theme_font_size_override("font_size", 17)
+		var pon: bool = spec.get("pick", false)
+		pk.add_theme_stylebox_override("normal", btn_box(GREEN) if pon else btn_box(BTN))
+		pk.add_theme_stylebox_override("hover", btn_box(GREEN) if pon else btn_box(BTN.lightened(0.08)))
+		pk.pressed.connect(spec["on_pick"])
+		v.add_child(pk)
 	# На сколько.
 	if spec.has("len"):
 		var lh := HBoxContainer.new()

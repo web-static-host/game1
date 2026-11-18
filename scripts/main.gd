@@ -265,6 +265,9 @@ func _build_scene() -> void:
 	hud.room_world = get_viewport().world_2d
 
 	camera.tapped.connect(_on_tap)
+	camera.grab_test = _grab_test
+	camera.grab_moved.connect(_grab_moved)
+	camera.grab_ended.connect(_grab_ended)
 	camera.painted.connect(_on_paint)
 	camera.paint_ended.connect(_on_paint_end)
 	camera.paint_cancelled.connect(_clear_preview)
@@ -1486,8 +1489,96 @@ func _tool_close() -> void:
 	if not _tool_on:
 		return
 	_tool_on = false
+	_tool_ctx = {}
 	hud.hide_tool()
 	world_view.structures.preview = Rect2i()
+	world_view.structures.tool_arrows = []
+
+
+# --- «Выбрать на карте»: стрелки вокруг постройки тянут пальцем -----------------------------
+## Включено ли (запоминается между мини-меню).
+var _tool_pick := false
+## Текущее мини-меню: {"dirs", "dir_i", "n", "max", "base", "reach", "apply": Callable(номер, n)}.
+var _tool_ctx := {}
+var _grab_dir_i := -1
+var _grab_off := 0
+var _tool_dragging := false
+
+
+## Запоминает, что сейчас настраивают, и ставит стрелки (у выбранной стороны — за концом рамки).
+func _tool_set(ctx: Dictionary, spec: Dictionary) -> void:
+	_tool_ctx = ctx
+	var arrows := []
+	if _tool_pick:
+		for i in ctx["dirs"].size():
+			var d: Vector2i = ctx["dirs"][i]
+			var on: bool = i == int(ctx["dir_i"])
+			arrows.append([_arrow_area(ctx["reach"] if on else ctx["base"], d), d, on])
+	world_view.structures.tool_arrows = arrows
+	spec["pick"] = _tool_pick
+	spec["on_pick"] = func() -> void:
+		_tool_pick = not _tool_pick
+		var c: Dictionary = _tool_ctx
+		if not c.is_empty():
+			c["apply"].call(int(c["dir_i"]), int(c["n"]))
+	hud.show_tool(spec)
+
+
+## Клетки стрелки: полоса в клетку шириной вдоль стороны r в сторону d.
+static func _arrow_area(r: Rect2i, d: Vector2i) -> Rect2i:
+	match d:
+		Vector2i.RIGHT:
+			return Rect2i(r.end.x, r.position.y, 1, r.size.y)
+		Vector2i.LEFT:
+			return Rect2i(r.position.x - 1, r.position.y, 1, r.size.y)
+		Vector2i.DOWN:
+			return Rect2i(r.position.x, r.end.y, r.size.x, 1)
+	return Rect2i(r.position.x, r.position.y - 1, r.size.x, 1)
+
+
+## На сколько клеток от стороны постройки палец (вдоль направления).
+static func _cells_from(base: Rect2i, d: Vector2i, c: Vector2i) -> int:
+	match d:
+		Vector2i.RIGHT:
+			return c.x - base.end.x + 1
+		Vector2i.LEFT:
+			return base.position.x - c.x
+		Vector2i.DOWN:
+			return c.y - base.end.y + 1
+	return base.position.y - c.y
+
+
+func _grab_test(pos: Vector2) -> bool:
+	if not _tool_on or not _tool_pick or _tool_ctx.is_empty():
+		return false
+	var c := world_view.screen_to_cell(pos)
+	for a: Array in world_view.structures.tool_arrows:
+		if (a[0] as Rect2i).grow(1).has_point(c):
+			var i: int = _tool_ctx["dirs"].find(a[1])
+			if i < 0:
+				continue
+			_grab_dir_i = i
+			var start: int = int(_tool_ctx["n"]) if a[2] else 1
+			_grab_off = start - _cells_from(_tool_ctx["base"], a[1], c)
+			_tool_dragging = true
+			if not a[2]:
+				_tool_ctx["apply"].call(i, start)
+			return true
+	return false
+
+
+func _grab_moved(pos: Vector2) -> void:
+	if _grab_dir_i < 0 or _tool_ctx.is_empty():
+		return
+	var d: Vector2i = _tool_ctx["dirs"][_grab_dir_i]
+	var n := clampi(_cells_from(_tool_ctx["base"], d, world_view.screen_to_cell(pos)) + _grab_off, 1, maxi(1, int(_tool_ctx["max"])))
+	if n != int(_tool_ctx["n"]) or _grab_dir_i != int(_tool_ctx["dir_i"]):
+		_tool_ctx["apply"].call(_grab_dir_i, n)
+
+
+func _grab_ended(_pos: Vector2) -> void:
+	_grab_dir_i = -1
+	_tool_dragging = false
 
 
 func _tool_back(p: Project) -> void:
@@ -1501,7 +1592,9 @@ func _tool_preview(r: Rect2i, ok: bool, text: String, base: Rect2i) -> void:
 	s.preview = r
 	s.preview_ok = ok
 	s.preview_text = text
-	_tool_focus(r.merge(base), _tool_fresh)
+	# Пока тянут стрелку — камеру не дёргаем.
+	if not _tool_dragging:
+		_tool_focus(r.merge(base), _tool_fresh)
 	_tool_fresh = false
 
 
@@ -1549,7 +1642,12 @@ func _move_tool_show(p: Project) -> void:
 		if not err.is_empty():
 			hud.log_event(err, "warning")
 		_tool_back(p)
-	hud.show_tool({"title": "Сдвинуть: " + p.title(), "icon": "bridge",
+	_tool_set({"dirs": MOVE_DIRS.duplicate(), "dir_i": _move_dir_i, "n": _move_len, "max": mx, "base": p.rect,
+		"reach": p.rect.merge(Rect2i(p.rect.position + dir * _move_len, p.rect.size)),
+		"apply": func(i: int, n: int) -> void:
+			_move_dir_i = i
+			_move_len = n
+			_move_tool_show(p)}, {"title": "Сдвинуть: " + p.title(), "icon": "bridge",
 		"dir_vecs": MOVE_DIRS.duplicate(), "dir": _move_dir_i,
 		"on_dir": func(i: int) -> void:
 			_move_dir_i = i
@@ -1594,7 +1692,13 @@ func _extend_tool_show(p: Project) -> void:
 	_tool_preview(Colony.extend_rect(p, d, n), err.is_empty(), "+%d м" % n, p.rect)
 	_taken = {}
 	var cost := _extend_cost(p, d, n)
-	hud.show_tool({"title": "Продлить: " + p.title(), "icon": "build",
+	_tool_set({"dirs": Array(dirs), "dir_i": _ext_dir_i, "n": n, "max": Colony.EXTEND_MAX, "base": p.rect,
+		"reach": p.rect.merge(Colony.extend_rect(p, d, n)),
+		"apply": func(i: int, v: int) -> void:
+			_ext_dir_i = i
+			p.order_len = v
+			_extend_len = v
+			_extend_tool_show(p)}, {"title": "Продлить: " + p.title(), "icon": "build",
 		"dir_vecs": Array(dirs), "dir": _ext_dir_i,
 		"on_dir": func(i: int) -> void:
 			_ext_dir_i = i
@@ -1634,7 +1738,13 @@ func _drill_tool_show(p: Project) -> void:
 	var n := clampi(p.order_len, 1, Colony.DRILL_MAX)
 	var err := colony.drill_error(p, d, n)
 	_tool_preview(Colony.drill_path(p, d, n), err.is_empty(), "%s %d м" % [DIR_ARROWS[d], n], p.rect)
-	hud.show_tool({"title": "Сверлить: " + p.title(), "icon": "build",
+	_tool_set({"dirs": dirs.duplicate(), "dir_i": _drill_dir_i, "n": n, "max": Colony.DRILL_MAX, "base": p.rect,
+		"reach": p.rect.merge(Colony.drill_path(p, d, n)),
+		"apply": func(i: int, v: int) -> void:
+			_drill_dir_i = i
+			p.order_len = v
+			_drill_len = v
+			_drill_tool_show(p)}, {"title": "Сверлить: " + p.title(), "icon": "build",
 		"dir_vecs": dirs.duplicate(), "dir": _drill_dir_i,
 		"on_dir": func(i: int) -> void:
 			_drill_dir_i = i

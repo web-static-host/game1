@@ -35,6 +35,8 @@ var preview := Rect2i()
 var landing: Array[Rect2i] = []
 var preview_ok := false
 var preview_text := ""
+## Стрелки «протянуть» вокруг постройки в мини-меню: [[область клеток, направление, выбрана]].
+var tool_arrows: Array = []
 var selected_project := 0
 
 
@@ -93,7 +95,7 @@ func _process(delta: float) -> void:
 	_watch_launches()
 	_static_t -= delta
 	var sel := colony.project_by_id(selected_project) if colony != null and selected_project != 0 else null
-	var sig := [selected_project, preview, preview_ok, preview_text, colony.projects.size() if colony != null else 0, view.origin,
+	var sig := [selected_project, preview, preview_ok, preview_text, str(tool_arrows), colony.projects.size() if colony != null else 0, view.origin,
 		sel.order_len if sel != null else 0, _drills_sig(), landing.size(), view.camera.zoom.x if not landing.is_empty() else 0.0]
 	var vis := _vis_rect().grow(-VIS_MARGIN + 2)
 	if _static_t <= 0.0 or sig != _drawn_sig or not _drawn_vis.encloses(vis):
@@ -255,8 +257,8 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 		if p.rect.intersects(_vis):
 			_draw_supply(p, font)
 	_draw_zone(colony.project_by_id(selected_project) if selected_project != 0 else null)
-	_draw_extend(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
-	_draw_drill_plan(colony.project_by_id(selected_project) if selected_project != 0 else null, font)
+	# Куда продлить и сверлить — показывает мини-меню (рамка нового места), а не выбор постройки.
+	_draw_drill_plan(null, font)
 	_draw_landing(font)
 	if preview.size != Vector2i.ZERO:
 		var r := _rect_px(preview)
@@ -264,6 +266,38 @@ func _draw_static(shown: Array[Project], font: Font) -> void:
 		_c.draw_rect(r, Color(col, 0.18))
 		_c.draw_rect(r, col, false, 3.0)
 		_label(font, r.position + Vector2(4, -8), preview_text, col)
+	_draw_tool_arrows()
+
+
+## Зелёные треугольные стрелки: основание — вдоль стороны постройки, остриё — на клетку дальше.
+func _draw_tool_arrows() -> void:
+	for a: Array in tool_arrows:
+		var r := _rect_px(a[0])
+		var d: Vector2i = a[1]
+		var base_a: Vector2
+		var base_b: Vector2
+		var tip: Vector2
+		match d:
+			Vector2i.RIGHT:
+				base_a = r.position
+				base_b = Vector2(r.position.x, r.end.y)
+				tip = Vector2(r.end.x, r.get_center().y)
+			Vector2i.LEFT:
+				base_a = Vector2(r.end.x, r.position.y)
+				base_b = r.end
+				tip = Vector2(r.position.x, r.get_center().y)
+			Vector2i.DOWN:
+				base_a = r.position
+				base_b = Vector2(r.end.x, r.position.y)
+				tip = Vector2(r.get_center().x, r.end.y)
+			_:
+				base_a = Vector2(r.position.x, r.end.y)
+				base_b = r.end
+				tip = Vector2(r.get_center().x, r.position.y)
+		var col := Color(0.35, 0.95, 0.45) if a[2] else Color(0.35, 0.95, 0.45, 0.75)
+		var pts := PackedVector2Array([base_a, base_b, tip])
+		_c.draw_colored_polygon(pts, Color(col, 0.55 if a[2] else 0.4))
+		_c.draw_polyline(PackedVector2Array([base_a, base_b, tip, base_a]), Color(1, 1, 1, 0.9), 3.0)
 
 
 ## Живой слой: движущиеся постройки, трещины копки, падающая порода, лампы на стройках.
@@ -3013,25 +3047,6 @@ func _draw_drill_plan(sel: Project, font: Font) -> void:
 				_dashed_rect(r, Color(col, 0.95), 3.0)
 				var at := r.position + Vector2(4, -8) if d != Vector2i.DOWN else Vector2(r.position.x + 4, r.end.y + 22)
 				_label(font, at, "%d м" % p.order_len, col)
-
-
-## Выбранная готовая шахта, тоннель или лифт: пунктиром — докуда дойдёт продление на выбранные
-## метры в каждую сторону (зелёным — можно, красным — нельзя).
-func _draw_extend(p: Project, font: Font) -> void:
-	if p == null or p.phase != Project.Phase.DONE or p.repairing or p.order_len <= 0:
-		return
-	var dirs := Colony.extend_dirs(p)
-	if dirs.is_empty() or colony.extension_of(p) != null:
-		return
-	for d: Vector2i in dirs:
-		var er := Colony.extend_rect(p, d, p.order_len)
-		var ok := colony.extend_error(p, d, p.order_len).is_empty()
-		var col := Color(0.45, 1.0, 0.5) if ok else Color(1.0, 0.4, 0.35)
-		var r := _rect_px(er)
-		_c.draw_rect(r, Color(col, 0.1))
-		_dashed_rect(r, Color(col, 0.95), 3.0)
-		var at := r.position + Vector2(4, -8) if d != Vector2i.DOWN else Vector2(r.position.x + 4, r.end.y + 22)
-		_label(font, at, "+%d м" % p.order_len, col)
 
 
 func _draw_site(p: Project, font: Font) -> void:

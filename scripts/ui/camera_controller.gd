@@ -7,6 +7,9 @@ signal tapped(screen_pos: Vector2)
 signal painted(screen_pos: Vector2, first: bool)
 signal paint_ended(screen_pos: Vector2)
 signal paint_cancelled
+## Палец прижат к ручке на карте (стрелка «протянуть») — тянется она, а не карта.
+signal grab_moved(screen_pos: Vector2)
+signal grab_ended(screen_pos: Vector2)
 
 const MIN_ZOOM := 0.3
 const MAX_ZOOM := 3.0
@@ -15,6 +18,9 @@ const TAP_TIME_MS := 450
 
 ## Если true, одиночный палец рисует (рамку стройки), а камера двигается двумя пальцами.
 var paint_mode := false
+## Проверка «палец на ручке?» (Callable(screen_pos) -> bool); пусто — ручек нет.
+var grab_test := Callable()
+var _grab := false
 
 var _touches := {}
 var _press_pos := Vector2.ZERO
@@ -49,15 +55,28 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_press_time = Time.get_ticks_msec()
 			_moved = false
 			_multi = false
+			_grab = grab_test.is_valid() and grab_test.call(e.position)
+			if _grab:
+				grab_moved.emit(e.position)
+				get_viewport().set_input_as_handled()
+				return
 			if paint_mode:
 				painted.emit(e.position, true)
 		else:
 			if paint_mode and not _multi:
 				paint_cancelled.emit()
+			if _grab:
+				_grab = false
+				grab_ended.emit(e.position)
 			_multi = true
 			_start_pinch()
 	else:
 		_touches.erase(e.index)
+		if _grab:
+			_grab = false
+			grab_ended.emit(e.position)
+			get_viewport().set_input_as_handled()
+			return
 		if _touches.is_empty():
 			var quick := Time.get_ticks_msec() - _press_time < TAP_TIME_MS
 			if paint_mode and not _multi:
@@ -71,6 +90,10 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 
 func _on_drag(e: InputEventScreenDrag) -> void:
 	_touches[e.index] = e.position
+	if _grab and _touches.size() == 1:
+		grab_moved.emit(e.position)
+		get_viewport().set_input_as_handled()
+		return
 	if e.position.distance_to(_press_pos) > TAP_DISTANCE:
 		_moved = true
 	if _touches.size() >= 2:
