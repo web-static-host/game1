@@ -1019,12 +1019,50 @@ func _show_unit(u: Unit) -> void:
 			_set_mode(Hud.Mode.SEND)
 			hud.hide_info()
 			hud.set_hint("Нажмите на карте, куда отправить: %s" % u.name), "primary"],
-			["Работа", func() -> void: _pick_workplace(u)],
+			["Работа", func() -> void: _work_window(u)],
 			["Родословная", func() -> void: _show_lineage(colony.unit_uid(u), 2, func() -> void: _show_unit(u))],
 			["Гаврики", _show_people]]
 	else:
 		spec["actions"] = [["Родословная", func() -> void: _show_lineage(colony.unit_uid(u), 2, func() -> void: _show_unit(u))]]
 	hud.show_panel(spec)
+
+
+## «Работа» — окно поверх карточки гаврика: вкладки «Роль» и «Место работы».
+func _work_window(u: Unit, start := 0) -> void:
+	var tabs := []
+	var roles := [[Unit.Prof.BUILDER, "helmet", "Идёт на стройки: копает, строит, обустраивает, чинит."],
+		[Unit.Prof.MINER, "mine", "Сначала шахты: копает и укрепляет."],
+		[Unit.Prof.HAULER, "room", "Носит материалы на стройки, сырьё в мастерские, добычу на склад."],
+		[Unit.Prof.ANY, "people", "Стройка, если есть место, иначе переноска."]]
+	var ropts := []
+	for r: Array in roles:
+		ropts.append({"text": Unit.PROF_NAMES[r[0]], "desc": r[2], "glyph": r[1], "no_cost": true,
+			"current": u.workplace == 0 and u.profession == r[0]})
+	tabs.append({"name": "Роль", "options": ropts,
+		"hint": "Общая работа без своего места: гаврик сам берёт ближайшее дело своей роли.",
+		"on_pick": func(i: int) -> void:
+			colony.set_profession(u, roles[i][0], _finish_first)
+			_show_unit(u)})
+	var places := colony.projects.filter(func(p: Project) -> bool: return colony.is_workplace(p))
+	places.sort_custom(func(a: Project, b: Project) -> bool: return colony.suitability(u, a) > colony.suitability(u, b))
+	var popts := []
+	for p: Project in places:
+		var task := colony.work_task(p)
+		var taken := colony.assigned_to(p).size()
+		var slots := colony.work_slots(p)
+		popts.append({"text": colony.workplace_name(p), "current": u.workplace == p.id,
+			"tex": "res://assets/furniture/%s.png" % ROOM_PICS[p.purpose] if ROOM_PICS.has(p.purpose) and not str(ROOM_PICS[p.purpose]).is_empty() else "",
+			"sub": "подходит на %d%% · мест %d/%d" % [roundi(colony.suitability(u, p) * 100), taken, slots], "no_cost": true,
+			"error": "мест нет" if taken >= slots and u.workplace != p.id else ""})
+	tabs.append({"name": "Место работы", "options": popts,
+		"hint": "Своё место — гаврик работает только там. Сверху — где он лучше всего.",
+		"empty": "Нет комнат для работы: ферма, лаборатория, печь, кузница, склад, пристань.",
+		"on_pick": func(i: int) -> void:
+			var err := colony.assign_work(u, places[i], _finish_first)
+			if not err.is_empty():
+				hud.log_event(err, "warning")
+			_show_unit(u)})
+	hud.show_tabs("Работа: " + u.name, tabs, start)
 
 
 ## Выбор места работы для гаврика: где есть места и насколько он там хорош.

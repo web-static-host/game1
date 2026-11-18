@@ -4028,6 +4028,8 @@ func _choice_option(o: Dictionary, w: float, cb: Callable, h := CHOICE_H) -> Pan
 		pic.add_child(tr)
 	elif not str(o.get("icon", "")).is_empty():
 		pic.add_child(IconView.make(o["icon"], 46))
+	elif not str(o.get("glyph", "")).is_empty():
+		pic.add_child(IconView.make("", 42, o["glyph"], Color(0.75, 0.95, 0.95)))
 	else:
 		pic.add_child(IconView.make("", 40, "room", Color(0.75, 0.95, 0.95)))
 	# Название — до двух строк, место под него всегда одинаковое.
@@ -4058,8 +4060,9 @@ func _choice_option(o: Dictionary, w: float, cb: Callable, h := CHOICE_H) -> Pan
 	var cost: Array = o.get("cost", [])
 	for it in cost:
 		cost_row.add_child(_mini_chip(it))
-	if cost.is_empty() and not cur:
+	if cost.is_empty() and not cur and not o.get("no_cost", false):
 		cost_row.add_child(_label("бесплатно", 15, MUTED))
+	cost_row.visible = not (cost.is_empty() and o.get("no_cost", false))
 	# Пометка внизу.
 	var note: String = o.get("error", "")
 	var note_col := Color(1, 0.55, 0.5)
