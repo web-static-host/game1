@@ -1353,7 +1353,120 @@ func _unit_spec(u: Unit) -> Dictionary:
 	if colony.elements.temperature(u.cell()) < cold:
 		extra.append(["", "мёрзнет", Color(0.6, 0.8, 1.0)])
 	rows.append({"type": "chips", "items": extra})
-	return {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
+	var spec := {"title": u.name, "subtitle": "%s · %s" % [who, task], "rows": rows}
+	spec["room"] = _unit_view(u, rows)
+	return spec
+
+
+## Широкая карточка гаврика (как у комнаты): слева портрет и черты, в середине — проблемы,
+## потребности, занятие, характеристики и навыки, справа — семья списком; подробности — «Описание».
+func _unit_view(u: Unit, rows: Array) -> Dictionary:
+	var g := u.genome
+	var out := {"size": u.age_text(), "tex": "", "glyph": "people", "portrait": _looks(u), "conds_title": "Черты"}
+	# Статус в шапке.
+	var task: String = Unit.TASK_NAMES[u.task]
+	var bad := u.satiety < 25.0 or u.health < 50.0
+	out["status"] = [task.capitalize(), "bad" if bad else ("good" if u.state == Unit.State.WORK else "warn")]
+	# Черты — плашками слева.
+	var conds := []
+	conds.append(["", "♂ мужчина" if u.sex == Unit.Sex.MALE else "♀ женщина"])
+	conds.append(["", "%d-е поколение" % u.generation])
+	if Genetics.is_super(g):
+		conds.append(["", "Супер-Гаврик", Color(0.3, 0.9, 0.85)])
+	elif Genetics.is_mutant(g):
+		conds.append(["", "Мутант", Color(0.8, 0.6, 1.0)])
+	var pers: String = g.get("personality", "")
+	if not pers.is_empty():
+		conds.append(["", pers])
+	if u.is_elder():
+		conds.append(["", "пожилой", Color(1.0, 0.75, 0.5)])
+	if u.irradiated:
+		conds.append(["", "облучён", Color(0.6, 1.0, 0.35)])
+	if u.pregnancy >= 0.0:
+		conds.append(["", "ждёт ребёнка", Color(1.0, 0.7, 0.8)])
+	conds.append(["home", "кровать есть" if u.bed_room != 0 else "нет кровати"])
+	out["conds"] = conds
+	# Потребности — плитками.
+	out["tiles"] = [["food", "Сытость", _need_bar("Сытость", u.satiety)], ["people", "Настроение", _need_bar("Настроение", u.mood())],
+		["repair", "Здоровье", _need_bar("Здоровье", u.health)]]
+	# Занятие — блоком вместо материала стен.
+	out["mat_label"] = "Занятие"
+	out["material"] = colony.role_name(u) + _pending_text(u)
+	out["mat_glyph"] = "build"
+	if u.calling > 0:
+		out["bonus"] = "по призванию"
+	elif u.calling < 0:
+		out["mat_hint"] = "работа не по душе"
+	else:
+		out["mat_hint"] = ""
+	# Семья — список справа.
+	var fam := []
+	var add := func(o: Unit, role: String) -> void:
+		fam.append({"name": o.name + ("  ♀" if o.sex == Unit.Sex.FEMALE else "  ♂"), "looks": _looks(o), "sub": role,
+			"state": Unit.TASK_NAMES[o.task].capitalize(), "working": o.state == Unit.State.WORK,
+			"open": _opener(o, func() -> void: _show_unit(u))})
+	if u.partner_id != 0 and colony.unit_by_id(u.partner_id) != null:
+		add.call(colony.unit_by_id(u.partner_id), "пара")
+	for pid in [u.mother_id, u.father_id]:
+		var par := colony.unit_by_id(pid) if pid != 0 else null
+		if par != null:
+			add.call(par, "мама" if par.sex == Unit.Sex.FEMALE else "папа")
+	for o in colony.units:
+		if o.mother_id == u.id or o.father_id == u.id:
+			add.call(o, "дочь" if o.sex == Unit.Sex.FEMALE else "сын")
+	out["workers"] = fam
+	out["side_title"] = "Семья"
+	# Описание: гены, мутации и что они дают, умения, знакомые.
+	var secs := []
+	var gl := []
+	var mt := Genetics.mutation_text(g)
+	if not mt.is_empty():
+		gl.append(mt)
+	for line in Genetics.mutation_effects(g):
+		gl.append(line)
+	if Genetics.is_super(g):
+		gl.append("Супер-Гаврик: все характеристики ×1,5, неуязвим — умирает только от старости.")
+	if u.irradiated:
+		gl.append("Облучён ураном: живёт на 30% меньше, дети будут мутантами.")
+	if not gl.is_empty():
+		secs.append(["Гены и мутации", "flask", gl])
+	var ab := Genetics.ability_text(g)
+	if not ab.is_empty():
+		secs.append(["Умеет", "build", [ab]])
+	var friends := []
+	if not u.child:
+		for f in colony.best_friends(u):
+			friends.append("%s — знакомы на %d%%" % [f[0].name, roundi(minf(1.0, f[1] / Colony.ACQUAINT_PAIR) * 100)])
+	if not friends.is_empty():
+		secs.append(["Знакомые", "people", friends])
+	var mother_father := []
+	for n in [u.mother_name, u.father_name]:
+		if not n.is_empty():
+			mother_father.append(n)
+	if not mother_father.is_empty():
+		secs.append(["Родители", "people", [" и ".join(mother_father)]])
+	out["desc_sections"] = secs
+	# В середине — только характеристики, навыки и что несёт: остальное разложено выше.
+	var keep := rows.filter(func(r: Dictionary) -> bool:
+		return r.get("type", "") == "stats" or r.get("type", "") == "section" or r.get("label", "") == "Навыки" or r.get("label", "") == "Несёт")
+	# Проблемы — оранжевыми плашками сверху.
+	var warns := []
+	if not u.stuck_note.is_empty():
+		warns.append("Не может работать: %s — проложите путь (лестница, тоннель)." % u.stuck_note)
+	if u.satiety < 25.0:
+		warns.append("Голодает — нужна еда на складе или в столовой.")
+	if colony.elements.temperature(u.cell()) < Colony.cold_limit(u):
+		warns.append("Мёрзнет — поставьте рядом очаг.")
+	if u.bed_room == 0 and not u.child:
+		warns.append("Нет кровати — поставьте жилую комнату.")
+	var wp := colony.project_by_id(u.workplace) if u.workplace != 0 else null
+	if wp != null and wp.purpose == RoomType.FARM and not colony.farm_warm(wp):
+		warns.append("Ферма холодная (%d °C) — грибы не растут, фермер ждёт. Поставьте рядом очаг." % roundi(colony.room_temp(wp)))
+	rows.clear()
+	for w in warns:
+		rows.append({"type": "warning", "text": w})
+	rows.append_array(keep)
+	return out
 
 
 # --- Мини-меню на карте: сдвиг комнаты, продление, бур ------------------------------------
@@ -1737,7 +1850,7 @@ func _show_project(p: Project) -> void:
 ## Карточка готовой шахты или тоннеля — как у комнаты: превью, плитки, крепь, описание.
 func _passage_view(p: Project) -> Dictionary:
 	var tunnel := p.kind == Project.Kind.TUNNEL
-	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "", "glyph": "bridge" if not tunnel else "build",
+	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y], "tex": "", "glyph": "tunnel" if tunnel else "mine",
 		"material": Project.MATERIALS[p.material][0], "mat_key": p.material, "mat_label": "Крепь",
 		"context": true, "conds_title": "Условия"}
 	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)

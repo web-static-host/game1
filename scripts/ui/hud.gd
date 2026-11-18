@@ -1200,6 +1200,8 @@ func _fill_header(spec: Dictionary) -> void:
 var _desc_btn: Button
 var _room_desc: Array = []
 var _room_desc_title := ""
+## Готовые разделы описания [заголовок, значок, [строки]] (у гаврика).
+var _room_desc_sections: Array = []
 
 
 ## Описание — по разделам, внутри — пунктами по предложению (не сплошной текст).
@@ -1232,6 +1234,10 @@ func _show_room_desc() -> void:
 	var v := _overlay(_room_desc_title + " — описание")
 	var w := minf(size.x - 160.0, 820.0)
 	var groups := {}
+	var order := DESC_SECTIONS.duplicate()
+	for sd: Array in _room_desc_sections:
+		order.append([sd[0], sd[1]])
+		groups[sd[0]] = sd[2]
 	for i in _room_desc.size():
 		var t: String = _room_desc[i]
 		var sec := _desc_section(t, i == 0)
@@ -1241,7 +1247,7 @@ func _show_room_desc() -> void:
 			groups[sec].append(line.left(1).to_upper() + line.substr(1))
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
-	for sd in DESC_SECTIONS:
+	for sd in order:
 		if not groups.has(sd[0]):
 			continue
 		var sec := VBoxContainer.new()
@@ -1313,7 +1319,7 @@ func _set_room_mode(spec: Dictionary) -> void:
 	_room_left.visible = _room_mode
 	_room_top.visible = _room_mode
 	_head_chips.visible = _room_mode
-	_room_right.visible = _room_mode and int(room.get("slots", 0)) > 0
+	_room_right.visible = _room_mode and (int(room.get("slots", 0)) > 0 or not room.get("side_title", "").is_empty())
 	var cols := _room_cols(true)
 	_pw = (float(cols[2]) - 18.0) if _room_mode else float(PANEL_WIDTH)
 	_room_left.custom_minimum_size = Vector2(cols[0], 0)
@@ -1365,6 +1371,7 @@ func _fill_rows(spec: Dictionary) -> void:
 	# Свои плитки постройки (у шахт и тоннелей — длина, глубина) — первыми.
 	var extra: Array = room.get("tiles", [])
 	tiles = extra + tiles
+	conds = room.get("conds", []) + conds
 	# Материал стен — своим блоком, поэтому из условий его убираем.
 	conds = conds.filter(func(it: Array) -> bool: return not str(it[1]).begins_with("стены:"))
 	_fill_body(rest)
@@ -1372,7 +1379,8 @@ func _fill_rows(spec: Dictionary) -> void:
 	_build_room_top(room, warns, tiles)
 	_room_desc = desc
 	_room_desc_title = _title.text
-	_desc_btn.visible = not desc.is_empty()
+	_room_desc_sections = room.get("desc_sections", [])
+	_desc_btn.visible = not desc.is_empty() or not _room_desc_sections.is_empty()
 
 
 ## Панель постоянного размера: содержимое не растягивает её, лишнее обрезается снизу.
@@ -1397,6 +1405,19 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 		if c != _preview_frame:
 			_room_left.remove_child(c)
 			c.queue_free()
+	if room.has("portrait"):
+		# Гаврик: крупный портрет вместо превью.
+		_preview_frame.visible = false
+		var pp := PanelContainer.new()
+		pp.add_theme_stylebox_override("panel", UiStyle.section(UiStyle.TEAL_A, 14, 6))
+		var pc := CenterContainer.new()
+		pp.add_child(pc)
+		var ps := floorf(_room_left.custom_minimum_size.x / 3.0)
+		pc.add_child(PortraitView.make(room["portrait"], ps, ps * 0.6))
+		_room_left.add_child(pp)
+		_room_left.move_child(pp, 0)
+	else:
+		_preview_frame.visible = true
 	# Превью — по пропорциям комнаты (без пустых полос): во всю ширину колонки, но не выше
 	# 0,6 ширины; узкая высокая комната — уже по ширине, по центру.
 	var r: Rect2 = room.get("preview", Rect2())
@@ -1485,7 +1506,7 @@ func _room_material(room: Dictionary) -> Control:
 	h.add_theme_constant_override("separation", 10)
 	p.add_child(h)
 	var key: String = room.get("mat_key", "")
-	h.add_child(IconView.make(key, 34) if ResIcon.texture(key) != null else IconView.make("", 30, "room", Color(0.75, 0.95, 0.95)))
+	h.add_child(IconView.make(key, 34) if ResIcon.texture(key) != null else IconView.make("", 30, room.get("mat_glyph", "room"), Color(0.75, 0.95, 0.95)))
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", -2)
 	h.add_child(tv)
@@ -1636,6 +1657,15 @@ func _build_room_workers(room: Dictionary) -> void:
 		_workers_list.remove_child(c)
 		c.queue_free()
 	var slots: int = room.get("slots", 0)
+	var side: String = room.get("side_title", "")
+	if not side.is_empty():
+		# Свой список (у гаврика — семья) без свободных мест.
+		_workers_head.text = "%s   %d" % [side, room["workers"].size()]
+		for w: Dictionary in room["workers"]:
+			_workers_list.add_child(_room_worker(w))
+		if room["workers"].is_empty():
+			_workers_list.add_child(_label("Пока никого.", 17, MUTED))
+		return
 	if slots <= 0:
 		return
 	_workers_head.text = "Работники   %d / %d" % [room["workers"].size(), slots]
@@ -1707,9 +1737,10 @@ func _room_worker(w: Dictionary) -> Control:
 	sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	st.add_child(sl)
 	rv.add_child(st)
-	var pct := _label("⚡ %d%%" % int(w.get("pct", 100)), 16, Color(1, 0.85, 0.35))
-	pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	rv.add_child(pct)
+	if w.has("pct"):
+		var pct := _label("⚡ %d%%" % int(w["pct"]), 16, Color(1, 0.85, 0.35))
+		pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		rv.add_child(pct)
 	var cb: Callable = w.get("open", Callable())
 	if cb.is_valid():
 		b.pressed.connect(cb)
@@ -1736,7 +1767,7 @@ func _fit_actions_row() -> void:
 
 ## Кнопка действия карточки: значок по смыслу, цвет — зелёный «Назначить», красный «Снести»…
 const ACCENT_DOT := Color(1.0, 0.62, 0.2)
-const ACTION_ICONS := [["Изменить", "build"], ["Продлить", "bridge"], ["Сверлить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
+const ACTION_ICONS := [["Изменить", "build"], ["Отправить", "look"], ["Работа", "build"], ["Родословная", "people"], ["Гаврики", "people"], ["Продлить", "bridge"], ["Сверлить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
 	["Включить свет", "power"], ["Выключить свет", "power"], ["Перестроить", "room"], ["Снести", "close"], ["Ремонт", "repair"],
 	["Пауза", "speed"], ["Продолжить", "speed"], ["Приоритет", "warning"], ["Собрать ракету", "rocket"], ["Запустить", "rocket"]]
 func _action_button(a: Array) -> Button:
