@@ -3295,10 +3295,9 @@ func _build_dialog() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 14)
 	_dialog.add_child(v)
-	_dialog_title = _label("", 28, Color.WHITE)
-	_dialog_title.add_theme_font_override("font", Fonts.black())
-	_dialog_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(_dialog_title)
+	var dt := _window_title("")
+	_dialog_title = dt.get_child(0)
+	v.add_child(dt)
 	_dialog_text = _label("", 20, Color(0.9, 0.92, 0.96))
 	_dialog_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_dialog_text.custom_minimum_size = Vector2(520, 0)
@@ -3316,9 +3315,7 @@ func _build_menu(center: CenterContainer) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	_menu.add_child(v)
-	var title := _label("Меню", 28, Color.WHITE)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title)
+	v.add_child(_window_title("Меню"))
 	var resume := _menu_button(v, "Продолжить")
 	resume.pressed.connect(func() -> void: _menu.visible = false)
 	var save := _menu_button(v, "Сохранить")
@@ -3349,12 +3346,15 @@ func _open_sub(title: String, body: Control, buttons: Array) -> void:
 	for c in _sub_box.get_children():
 		_sub_box.remove_child(c)
 		c.queue_free()
-	var t := _label(title, 28, Color.WHITE)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_sub_box.add_child(t)
+	_sub_box.add_child(_window_title(title))
 	if body != null:
 		var sc := ScrollContainer.new()
-		sc.custom_minimum_size = Vector2(0, minf(340.0, size.y - 250.0))
+		# Высота — по содержимому (короткий вопрос — без пустого места), не выше 340.
+		var cap := minf(340.0, size.y - 250.0)
+		sc.custom_minimum_size = Vector2(0, minf(cap, body.get_combined_minimum_size().y))
+		body.minimum_size_changed.connect(func() -> void:
+			if is_instance_valid(sc) and is_instance_valid(body):
+				sc.custom_minimum_size.y = minf(cap, body.get_combined_minimum_size().y))
 		# Листается пальцем так же, как карточка (см. _input).
 		_sub_scroll = sc
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -3538,13 +3538,49 @@ func menu_open() -> bool:
 	return _menu.visible or _sub.visible
 
 
+## Значки кнопок меню и окон из него.
+const MENU_ICONS := {"Продолжить": "speed", "Сохранить": "check", "Загрузить": "menu", "Настройки": "build",
+	"Ресурсы: где искать": "look", "Сохранение в файл": "room", "Выйти в меню": "close", "Назад": "close",
+	"Отмена": "close", "Новое сохранение": "check", "Отлично": "check"}
+
+
+## Кнопка меню: значок слева от текста (если есть), текст по центру.
 func _menu_button(parent: Control, text: String) -> Button:
 	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(0, 64)
+	b.custom_minimum_size = Vector2(0, 60)
 	b.focus_mode = Control.FOCUS_NONE
+	var glyph: String = MENU_ICONS.get(text, "")
+	if glyph.is_empty():
+		b.text = text
+	else:
+		var h := HBoxContainer.new()
+		h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		h.alignment = BoxContainer.ALIGNMENT_CENTER
+		h.add_theme_constant_override("separation", 10)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(h)
+		h.add_child(IconView.make("", 24, glyph, Color.WHITE))
+		var l := _label(text, 20, Color.WHITE)
+		h.add_child(l)
+		b.set_meta("label", l)
 	parent.add_child(b)
 	return b
+
+
+## Заголовок окна (меню, сохранения, сообщение): крупные буквы и оранжевая черта под ними.
+func _window_title(text: String) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	var t := _label(text, 26, Color.WHITE)
+	t.add_theme_font_override("font", Fonts.black())
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(t)
+	var line := ColorRect.new()
+	line.color = UiStyle.ORANGE_A
+	line.custom_minimum_size = Vector2(56, 4)
+	line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(line)
+	return box
 
 
 # --- Мини-окно выбора (назначение комнаты, материал стен) ---------------------------------
