@@ -1066,6 +1066,8 @@ func show_panel(spec: Dictionary) -> void:
 		var cb: Callable = a[1]
 		b.pressed.connect(cb)
 		_actions.add_child(b)
+	if _room_mode:
+		_fit_actions_row()
 	_actions.visible = not spec.get("actions", []).is_empty()
 	if _tree_panel != null:
 		_tree_panel.visible = false
@@ -1700,8 +1702,27 @@ func _room_worker(w: Dictionary) -> Control:
 	return b
 
 
+## Карточка комнаты: все кнопки — в один ряд. Не влезают — ужимаем (и шрифт помельче).
+func _fit_actions_row() -> void:
+	var avail := size.x - SIDE * 2.0 - 28.0
+	if _room_mode and not _room_right.visible:
+		avail -= float(_room_cols(true)[1]) + 14.0
+	var bs := _actions.get_children()
+	var sum := 8.0 * maxf(0.0, bs.size() - 1.0)
+	for b: Control in bs:
+		sum += b.custom_minimum_size.x
+	if sum <= avail:
+		return
+	var k := (avail - 8.0 * (bs.size() - 1)) / (sum - 8.0 * (bs.size() - 1))
+	for b: Control in bs:
+		b.custom_minimum_size.x = floorf(b.custom_minimum_size.x * k)
+		for l in b.find_children("*", "Label", true, false):
+			l.add_theme_font_size_override("font_size", 14)
+
+
 ## Кнопка действия карточки: значок по смыслу, цвет — зелёный «Назначить», красный «Снести»…
-const ACTION_ICONS := [["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
+const ACCENT_DOT := Color(1.0, 0.62, 0.2)
+const ACTION_ICONS := [["Изменить", "build"], ["Назначить", "people"], ["Обустроить", "build"], ["Сдвинуть", "bridge"], ["Свет", "power"],
 	["Включить свет", "power"], ["Выключить свет", "power"], ["Перестроить", "room"], ["Снести", "close"], ["Ремонт", "repair"],
 	["Пауза", "speed"], ["Продолжить", "speed"], ["Приоритет", "warning"], ["Собрать ракету", "rocket"], ["Запустить", "rocket"]]
 func _action_button(a: Array) -> Button:
@@ -1738,6 +1759,14 @@ func _action_button(a: Array) -> Button:
 	# Помельче, чтобы все кнопки комнаты встали в один ряд.
 	h.add_child(IconView.make("", 22, glyph, Color.WHITE))
 	h.add_child(_label(text, 16, Color.WHITE))
+	if a.size() > 3 and a[3] == "dot":
+		# Есть что улучшить — оранжевая точка на кнопке.
+		var dot := Panel.new()
+		dot.add_theme_stylebox_override("panel", UiStyle.flat(ACCENT_DOT, 6, 0))
+		dot.custom_minimum_size = Vector2(12, 12)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(dot)
 	b.custom_minimum_size = Vector2(Fonts.bold().get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 50, 56)
 	return b
 
@@ -3453,6 +3482,80 @@ func show_choice(title: String, options: Array, on_pick: Callable) -> void:
 	fit.call()
 
 
+## Окно с вкладками («Изменить»: назначение, стены, улучшения). tabs: [{"name", "hint",
+## "options" (как у show_choice), "on_pick": Callable(номер), "wide": карточки шире, с описанием}].
+var _tabs: Array = []
+var _tabs_bar: HBoxContainer
+var _tabs_hint: Label
+var _tabs_grid: GridContainer
+
+
+func show_tabs(title: String, tabs: Array, start := 0) -> void:
+	_tabs = tabs
+	var v := _overlay(title)
+	_tabs_bar = HBoxContainer.new()
+	_tabs_bar.add_theme_constant_override("separation", 8)
+	v.add_child(_tabs_bar)
+	_tabs_hint = _label("", 16, MUTED)
+	_tabs_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_tabs_hint)
+	_tabs_grid = GridContainer.new()
+	_tabs_grid.add_theme_constant_override("h_separation", 10)
+	_tabs_grid.add_theme_constant_override("v_separation", 10)
+	_choice_scroll = ScrollContainer.new()
+	_choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_choice_scroll.add_child(_tabs_grid)
+	v.add_child(_choice_scroll)
+	var sc := _choice_scroll
+	var grid := _tabs_grid
+	grid.minimum_size_changed.connect(func() -> void:
+		if is_instance_valid(sc):
+			sc.custom_minimum_size.y = minf(grid.get_combined_minimum_size().y, size.y - 260.0))
+	_tabs_open(clampi(start, 0, tabs.size() - 1))
+
+
+func _tabs_open(ti: int) -> void:
+	var w := minf(size.x - 160.0, 5.0 * (CHOICE_W + 10.0) - 10.0)
+	for c in _tabs_bar.get_children():
+		_tabs_bar.remove_child(c)
+		c.queue_free()
+	for i in _tabs.size():
+		var b := Button.new()
+		b.text = _tabs[i]["name"]
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(170, 48)
+		b.add_theme_font_size_override("font_size", 19)
+		var on := i == ti
+		b.add_theme_stylebox_override("normal", btn_box(ACCENT) if on else UiStyle.flat(Color(1, 1, 1, 0.08), 12, 8))
+		b.add_theme_stylebox_override("hover", btn_box(ACCENT) if on else UiStyle.flat(Color(1, 1, 1, 0.13), 12, 8))
+		b.add_theme_stylebox_override("pressed", btn_box(ACCENT))
+		var k := i
+		b.pressed.connect(func() -> void: _tabs_open(k))
+		_tabs_bar.add_child(b)
+	var tab: Dictionary = _tabs[ti]
+	_tabs_hint.text = tab.get("hint", "")
+	_tabs_hint.custom_minimum_size = Vector2(w, 0)
+	_tabs_hint.visible = not _tabs_hint.text.is_empty()
+	for c in _tabs_grid.get_children():
+		_tabs_grid.remove_child(c)
+		c.queue_free()
+	var wide: bool = tab.get("wide", false)
+	var cw := (w - 10.0) * 0.5 if wide else CHOICE_W
+	var cols := maxi(1, int((w + 10.0) / (cw + 10.0)))
+	_tabs_grid.columns = cols
+	var opts: Array = tab["options"]
+	var pick: Callable = tab["on_pick"]
+	for i in opts.size():
+		var k := i
+		_tabs_grid.add_child(_choice_option(opts[i], cw, func() -> void:
+			close_choice()
+			pick.call(k), CHOICE_H + (60.0 if wide else 0.0)))
+	if opts.is_empty():
+		_tabs_grid.add_child(_label(tab.get("empty", "Здесь пока нечего выбрать."), 17, MUTED))
+	_choice_scroll.custom_minimum_size = Vector2(w, minf(_tabs_grid.get_combined_minimum_size().y, size.y - 260.0))
+	_choice_scroll.scroll_vertical = 0
+
+
 ## Окно выбора гаврика поверх карточки (карточка под ним остаётся открытой).
 ## spec: {"title", "subtitle", "checks": [[ключ, подпись, вкл]], "toggled": Callable(ключ, вкл),
 ## "items": [{"looks", "name", "info", "button", "style", "pick"}], "empty"}. Повторный вызов
@@ -3769,7 +3872,7 @@ const CHOICE_W := 236.0
 const CHOICE_H := 212.0
 
 
-func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
+func _choice_option(o: Dictionary, w: float, cb: Callable, h := CHOICE_H) -> PanelContainer:
 	var b := PanelContainer.new()
 	var cur: bool = o.get("current", false)
 	var normal: StyleBox
@@ -3780,7 +3883,7 @@ func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
 	else:
 		normal = UiStyle.flat(Color(1, 1, 1, 0.07), 16, 8)
 	b.add_theme_stylebox_override("panel", normal)
-	b.custom_minimum_size = Vector2(w, CHOICE_H)
+	b.custom_minimum_size = Vector2(w, h)
 	b.clip_contents = true
 	b.mouse_filter = Control.MOUSE_FILTER_STOP
 	b.gui_input.connect(func(e: InputEvent) -> void:
@@ -3822,6 +3925,15 @@ func _choice_option(o: Dictionary, w: float, cb: Callable) -> PanelContainer:
 	nm.max_lines_visible = 2
 	nm.custom_minimum_size = Vector2(w - 16.0, 46)
 	v.add_child(nm)
+	# Что даёт (у улучшений) — несколько строк под названием.
+	var desc: String = o.get("desc", "")
+	if not desc.is_empty():
+		var dl := _label(desc, 15, Color(0.85, 0.9, 0.94))
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dl.max_lines_visible = 4
+		dl.custom_minimum_size = Vector2(w - 16.0, 84)
+		v.add_child(dl)
 	# Цена — одной строкой по центру.
 	var cost_row := HBoxContainer.new()
 	cost_row.alignment = BoxContainer.ALIGNMENT_CENTER

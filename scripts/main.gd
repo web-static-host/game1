@@ -1718,19 +1718,6 @@ func _show_project(p: Project) -> void:
 			# Газовый очаг — сразу (кирпичные печи с котлами) или котлами на готовый очаг.
 			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
 				purposes.append(RoomType.HEARTH_GAS)
-		# Назначение выбирают в мини-окне по кнопке «Обустроить»: плитка — назначение и цена.
-		actions.push_front(["Обустроить", func() -> void:
-			var cur := RoomType.current_purpose(p)
-			var opts := []
-			for t: int in purposes:
-				opts.append({"text": RoomType.purpose_name(t), "current": t == cur,
-					"tex": "res://assets/furniture/%s.png" % ROOM_PICS[t] if ROOM_PICS.has(t) else "",
-					"cost": [] if t == cur else _cost_items(RoomType.equip_cost(t, p))})
-			hud.show_choice("Назначение комнаты", opts, func(i: int) -> void:
-				if purposes[i] == cur:
-					return
-				if colony.set_purpose(p, purposes[i]):
-					_show_project(p))])
 		# Космодром: собрать ракету, запустить готовую.
 		if p.purpose == RoomType.LAUNCHPAD:
 			if not p.rocket.is_empty():
@@ -1747,39 +1734,9 @@ func _show_project(p: Project) -> void:
 					if not err.is_empty():
 						hud.log_event(err, "warning")
 					_show_project(p), "primary"])
-		# Стены можно перестроить из другого материала (дерево → камень и т. п.); супер-материал —
-		# только тот, что подходит назначению (кузнице — алмаз, спальне — золото…).
-		var mats := colony.available_materials().filter(func(m: String) -> bool:
-			return not Project.SUPER.has(m) or RoomType.SUPER_MAT.get(p.purpose, "") == m)
-		# Материал выбирают в мини-окне по кнопке: плитка — материал, что даёт, цена.
-		if mats.size() > 1:
-			actions.append(["Перестроить стены", func() -> void:
-				var opts := []
-				for m: String in mats:
-					var st := BuildInfo.super_text(p.kind, m, p.purpose) if Project.SUPER.has(m) else ""
-					opts.append({"text": Project.MATERIALS[m][0], "icon": m, "current": m == p.material,
-						"sub": "супер: " + st if not st.is_empty() else "",
-						"cost": [] if m == p.material else _cost_items(RoomType.material_cost(p, m)),
-						"error": "" if m == p.material else colony.material_error(p, m)})
-				hud.show_choice("Перестроить стены", opts, func(i: int) -> void:
-					var m: String = mats[i]
-					if m == p.material:
-						return
-					var err := colony.material_error(p, m)
-					if not err.is_empty():
-						hud.log_event(err, "warning")
-					elif colony.change_material(p, m):
-						_show_project(p))])
-		# Каменный очаг можно переложить кирпичом.
-		if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
-			actions.push_front(["Кирпичные печи", func() -> void:
-				if colony.set_purpose(p, RoomType.HEARTH_BRICK):
-					_show_project(p), "primary"])
-		# На очаг можно поставить кирпичные газовые котлы.
-		if colony.is_hearth_upgrade(p, RoomType.HEARTH_GAS) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
-			actions.push_front(["Газовые котлы", func() -> void:
-				if colony.set_purpose(p, RoomType.HEARTH_GAS):
-					_show_project(p), "primary"])
+		# «Изменить» — одно окно с вкладками: назначение, стены, улучшения.
+		var ups := _room_upgrades(p)
+		actions.push_front(["Изменить", func() -> void: _change_window(p, purposes, 0), "", "dot" if not ups.is_empty() else ""])
 	if colony.is_workplace(p):
 		controls.push_front(_workers_list(p))
 		actions.push_front(["Назначить", func() -> void: _project_at = hud.panel_scroll(); _pick_worker(p), "primary"])
@@ -1790,6 +1747,71 @@ func _show_project(p: Project) -> void:
 	spec["controls_first"] = RoomType.is_store(p.purpose) and p.phase == Project.Phase.DONE
 	_info_shape = _project_shape(p)
 	hud.show_panel(spec)
+
+
+## Улучшения комнаты (без смены назначения): [назначение, что даёт]. Сейчас — печи очага.
+func _room_upgrades(p: Project) -> Array:
+	var out := []
+	if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
+		out.append([RoomType.HEARTH_BRICK, "Дров в 1,5 раза меньше, греют в 1,5 раза дальше, служат вдвое дольше и топятся углём."])
+	if colony.is_hearth_upgrade(p, RoomType.HEARTH_GAS) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
+		out.append([RoomType.HEARTH_GAS, "Котлы жгут метан от дегазации (1 метан — как 3 дерева) и греют на 1–2 м дальше. Метан кончился — топят углём и дровами."])
+	return out
+
+
+## Окно «Изменить» комнату: вкладки «Назначение», «Стены», «Улучшения».
+func _change_window(p: Project, purposes: Array, start: int) -> void:
+	var tabs := []
+	var cur := RoomType.current_purpose(p)
+	# Назначение. Улучшения очага — на своей вкладке, здесь их не повторяем.
+	var ups := _room_upgrades(p)
+	var up_ids := ups.map(func(u: Array) -> int: return u[0])
+	var pl := purposes.filter(func(t: int) -> bool: return not up_ids.has(t))
+	var popts := []
+	for t: int in pl:
+		popts.append({"text": RoomType.purpose_name(t), "current": t == cur,
+			"tex": "res://assets/furniture/%s.png" % ROOM_PICS[t] if ROOM_PICS.has(t) else "",
+			"cost": [] if t == cur else _cost_items(RoomType.equip_cost(t, p))})
+	tabs.append({"name": "Назначение", "options": popts,
+		"hint": "Что будет в комнате. Новую мебель ставят строители из материалов на складе; работники и вещи остаются.",
+		"on_pick": func(i: int) -> void:
+			if pl[i] != cur and colony.set_purpose(p, pl[i]):
+				_show_project(p)})
+	# Стены: материал (супер-материал — только подходящий назначению).
+	var mats := colony.available_materials().filter(func(m: String) -> bool:
+		return not Project.SUPER.has(m) or RoomType.SUPER_MAT.get(p.purpose, "") == m)
+	if mats.size() > 1:
+		var mopts := []
+		for m: String in mats:
+			var st := BuildInfo.super_text(p.kind, m, p.purpose) if Project.SUPER.has(m) else ""
+			mopts.append({"text": Project.MATERIALS[m][0], "icon": m, "current": m == p.material,
+				"sub": "супер: " + st if not st.is_empty() else "",
+				"cost": [] if m == p.material else _cost_items(RoomType.material_cost(p, m)),
+				"error": "" if m == p.material else colony.material_error(p, m)})
+		tabs.append({"name": "Стены", "options": mopts,
+			"hint": "Из чего стены: прочнее — дольше служат и держат больше груза сверху. Супер-материал, подходящий назначению, усиливает комнату. Пока перестраивают, комната не работает.",
+			"on_pick": func(i: int) -> void:
+				var m: String = mats[i]
+				if m == p.material:
+					return
+				var err := colony.material_error(p, m)
+				if not err.is_empty():
+					hud.log_event(err, "warning")
+				elif colony.change_material(p, m):
+					_show_project(p)})
+	# Улучшения.
+	if not ups.is_empty():
+		var uopts := []
+		for u: Array in ups:
+			uopts.append({"text": RoomType.purpose_name(u[0]), "desc": u[1],
+				"tex": "res://assets/furniture/%s.png" % ROOM_PICS[u[0]] if ROOM_PICS.has(u[0]) else "",
+				"cost": _cost_items(RoomType.equip_cost(u[0], p))})
+		tabs.append({"name": "Улучшения", "options": uopts, "wide": true,
+			"hint": "Комната остаётся той же, но работает лучше.",
+			"on_pick": func(i: int) -> void:
+				if colony.set_purpose(p, ups[i][0]):
+					_show_project(p)})
+	hud.show_tabs("Изменить: " + RoomType.purpose_name(p.purpose), tabs, start)
 
 
 ## От чего зависят кнопки карточки постройки. Раз в секунду карточка обновляет только текст;
