@@ -1606,19 +1606,19 @@ func _show_project(p: Project) -> void:
 			# Газовый очаг — сразу (кирпичные печи с котлами) или котлами на готовый очаг.
 			if t == RoomType.HEARTH and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_GAS]):
 				purposes.append(RoomType.HEARTH_GAS)
-		controls.append({
-			"label": "Назначение", "value": maxi(0, purposes.find(preview["v"])), "min": 0, "max": purposes.size() - 1,
-			"options": purposes.map(func(t: int) -> String: return RoomType.purpose_name(t)),
-			"changed": func(i: int) -> void:
-				preview["v"] = purposes[i]
-				_info_target = ["project", p.id, purposes[i]]
-				hud.refresh_panel(_project_spec(p, purposes[i])),
-		})
+		# Назначение выбирают в мини-окне по кнопке «Обустроить»: плитка — назначение и цена.
 		actions.push_front(["Обустроить", func() -> void:
-			if colony.set_purpose(p, preview["v"]):
-				_show_project(p)
-			else:
-				hud.log_event("Комната уже так обустроена", "info")])
+			var cur := RoomType.current_purpose(p)
+			var opts := []
+			for t: int in purposes:
+				opts.append({"text": RoomType.purpose_name(t), "current": t == cur,
+					"tex": "res://assets/furniture/%s.png" % ROOM_PICS[t] if ROOM_PICS.has(t) else "",
+					"cost": [] if t == cur else _cost_items(RoomType.equip_cost(t, p))})
+			hud.show_choice("Назначение комнаты", opts, func(i: int) -> void:
+				if purposes[i] == cur:
+					return
+				if colony.set_purpose(p, purposes[i]):
+					_show_project(p))])
 		# Космодром: собрать ракету, запустить готовую.
 		if p.purpose == RoomType.LAUNCHPAD:
 			if not p.rocket.is_empty():
@@ -1639,22 +1639,25 @@ func _show_project(p: Project) -> void:
 		# только тот, что подходит назначению (кузнице — алмаз, спальне — золото…).
 		var mats := colony.available_materials().filter(func(m: String) -> bool:
 			return not Project.SUPER.has(m) or RoomType.SUPER_MAT.get(p.purpose, "") == m)
+		# Материал выбирают в мини-окне по кнопке: плитка — материал, что даёт, цена.
 		if mats.size() > 1:
-			var cur_mat: String = _wall_choice.get(p.id, p.material)
-			controls.append({"label": "Стены", "value": maxi(0, mats.find(cur_mat)), "min": 0, "max": mats.size() - 1,
-				"options": mats.map(func(m: String) -> String: return Project.MATERIALS[m][0]),
-				"changed": func(i: int) -> void:
-					_wall_choice[p.id] = mats[i]
-					hud.refresh_panel(_project_spec(p, preview["v"])),
-			})
 			actions.append(["Перестроить стены", func() -> void:
-				var m: String = _wall_choice.get(p.id, p.material)
-				var err := colony.material_error(p, m)
-				if not err.is_empty():
-					hud.log_event(err if m != p.material else "Выберите другой материал стен (переключатель «Стены»)", "warning")
-				elif colony.change_material(p, m):
-					_wall_choice.erase(p.id)
-					_show_project(p)])
+				var opts := []
+				for m: String in mats:
+					var st := BuildInfo.super_text(p.kind, m, p.purpose) if Project.SUPER.has(m) else ""
+					opts.append({"text": Project.MATERIALS[m][0], "icon": m, "current": m == p.material,
+						"sub": "супер: " + st if not st.is_empty() else "",
+						"cost": [] if m == p.material else _cost_items(RoomType.material_cost(p, m)),
+						"error": "" if m == p.material else colony.material_error(p, m)})
+				hud.show_choice("Перестроить стены", opts, func(i: int) -> void:
+					var m: String = mats[i]
+					if m == p.material:
+						return
+					var err := colony.material_error(p, m)
+					if not err.is_empty():
+						hud.log_event(err, "warning")
+					elif colony.change_material(p, m):
+						_show_project(p))])
 		# Каменный очаг можно переложить кирпичом.
 		if colony.is_hearth_upgrade(p, RoomType.HEARTH_BRICK) and colony.research.has(RoomType.REQUIRES[RoomType.HEARTH_BRICK]):
 			actions.push_front(["Кирпичные печи", func() -> void:
@@ -2095,7 +2098,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 	if Project.SUPER.has(p.material):
 		var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
 		if not st.is_empty():
-			rows.append({"type": "text", "text": "%s — супер-постройка: %s" % [Project.MATERIALS[p.material][0], st]})
+			rows.append({"type": "text", "text": "%s — супер-постройка: %s" % [Project.MATERIALS[p.material][0], st], "super": true})
 		elif p.kind == Project.Kind.ROOM:
 			var need: String = RoomType.SUPER_MAT.get(p.purpose, "")
 			rows.append({"type": "text", "text": "%s подходит для: %s.%s" % [Project.MATERIALS[p.material][0], BuildInfo.super_purposes(p.material),
@@ -2427,9 +2430,16 @@ func _room_view(p: Project) -> Dictionary:
 	var pic: String = ROOM_PICS.get(p.purpose, "")
 	var out := {"size": "%d×%d" % [p.rect.size.x, p.rect.size.y],
 		"tex": "res://assets/furniture/%s.png" % pic if not pic.is_empty() else ""}
+	# Материал стен и что он даёт (супер-материал по назначению — бонус).
 	var st := BuildInfo.super_text(p.kind, p.material, p.purpose)
+	out["material"] = Project.MATERIALS[p.material][0]
+	out["mat_key"] = p.material
 	if Project.SUPER.has(p.material) and not st.is_empty():
-		out["badge"] = "%s: %s" % [Project.MATERIALS[p.material][0], st]
+		out["bonus"] = st
+	else:
+		var need: String = RoomType.SUPER_MAT.get(p.purpose, "")
+		if not need.is_empty():
+			out["mat_hint"] = "супер-постройка — из: %s" % Project.MATERIALS[need][0].to_lower()
 	var work := colony.is_workplace(p)
 	var full := colony.is_producer(p) and colony.output_held(p) >= Colony.PRODUCE_CAP
 	if p.paused:

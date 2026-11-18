@@ -134,7 +134,6 @@ func _scroll() -> VBoxContainer:
 # --- Экраны ------------------------------------------------------------------------------
 
 func _root() -> void:
-	_title("Гаврики")
 	var last := Worlds.latest()
 	if not last.is_empty():
 		_button(_content, "Продолжить", func() -> void:
