@@ -521,30 +521,53 @@ func _switch_world(planet: String) -> void:
 	hud.log_event("%s: гавриков %d" % [Planet.planet_name(planet), colony.units.size()], "info")
 
 
+## Картинка планеты для списков — её горы с неба (у Земли — свои).
+static func _planet_tex(id: String) -> String:
+	var p := "res://assets/background/%s/mountains.png" % id
+	return p if ResourceLoader.exists(p) else "res://assets/background/mountains_1.png"
+
+
+## Описание планеты — первое предложение (дальше — в «Описании»).
+static func _first_sentence(t: String) -> String:
+	var i := t.find(". ")
+	return t.substr(0, i + 1) if i > 0 else t
+
+
 ## «Планеты»: где колонии и сколько в них гавриков, какие ракеты летят и когда сядут.
 func _show_worlds() -> void:
+	_select(null, null)
+	hud.close_overlays()
 	_info_target = []
-	var items := []
+	var cols := []
+	var descs := []
 	for e in universe.worlds:
 		var c: Colony = e["colony"]
 		var p: String = e["planet"]
 		var here: bool = p == _planet
 		var kids := c.units.filter(func(u: Unit) -> bool: return u.child).size()
-		items.append({"name": Planet.planet_name(p) + (" — вы здесь" if here else ""),
-			"info": "гавриков %d%s · %s" % [c.units.size(), (" (детей %d)" % kids) if kids > 0 else "",
-				Planet.data(p)["desc"]],
-			"button": "" if here else "Перейти", "pick": func() -> void:
-				_switch_world(p)})
+		var row := {"name": Planet.planet_name(p) + (" — вы здесь" if here else ""), "tex": _planet_tex(p),
+			"info": "гавриков %d%s · %s" % [c.units.size(), (" (детей %d)" % kids) if kids > 0 else "", _first_sentence(Planet.data(p)["desc"])]}
+		if not here:
+			row["button"] = "Перейти"
+			row["style"] = "primary"
+			row["pick"] = func() -> void:
+				hud.close_choice()
+				_switch_world(p)
+		cols.append(row)
+		descs.append("%s: %s" % [Planet.planet_name(p), Planet.data(p)["desc"]])
+	var flights := []
 	for f in universe.flights:
 		var cargo := 0
 		for k in f["cargo"]:
 			cargo += int(f["cargo"][k])
-		items.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]),
+		flights.append({"name": "Летит: %s" % Planet.planet_name(f["planet"]), "glyph": "rocket", "tex": _planet_tex(f["planet"]),
 			"info": "гавриков %d, груза %d · садится" % [f["crew"].size(), cargo]})
-	hud.show_panel({"title": "Планеты", "subtitle": "время идёт на всех планетах сразу",
-		"rows": [{"type": "text", "text": "Ракеты собирают на космодроме (технология «Ракета»): до 10 гавриков и 200 груза, на ядерном двигателе — 15 и 300. Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных). Ошибётесь — колония может погибнуть, тогда нужна новая ракета."}],
-		"controls": [{"type": "people", "label": "Колонии и полёты:", "items": items, "empty": ""}],
-		"actions": [["Закрыть", func() -> void: hud.hide_info()]]})
+	hud.show_list({"title": "Планеты", "subtitle": "время идёт на всех планетах сразу",
+		"desc": [["Ракеты", "rocket", ["Ракеты собирают на космодроме (технология «Ракета»): до 10 гавриков и 200 груза, на ядерном двигателе — 15 и 300.",
+			"Подбирайте экипаж под планету: на холодные — стойких к холоду (синих), на жаркие — к жаре (красных).",
+			"Ошибётесь — колония может погибнуть, тогда нужна новая ракета."]], ["Колонии", "planet", descs]],
+		"tabs": [{"name": "Колонии", "items": cols, "empty": "Колоний нет."},
+			{"name": "Полёты", "items": flights, "empty": "Сейчас никто не летит."}]}, 0)
 
 
 ## Космодром: что нужно на ракету и что есть.
@@ -607,21 +630,30 @@ func _launch_pick_planet(pad: Project) -> void:
 	if _launch.is_empty() or _launch["pad"] != pad:
 		_launch = {"pad": pad, "planet": "", "crew": [], "cargo": {}}
 	var items := []
+	var descs := []
 	for id in Colony.flight_targets(_planet):
 		var d := Planet.data(id)
 		var ok := Colony.rocket_reaches(pad.rocket, id)
 		var col := universe.entry(id)
-		var info := "%s%s%s" % [d["desc"], (" " + Planet.absent_text(id)) if not Planet.absent_text(id).is_empty() else "",
-			(" · там колония: гавриков %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else ""]
-		if not ok:
-			info = "Нужен %s двигатель · %s" % [Planet.engine_name(d["engine"]), info]
-		items.append({"name": d["name"], "info": info, "button": "Сюда" if ok else "", "pick": func() -> void:
-			_launch["planet"] = id
-			_launch_save()
-			_launch_crew()})
-	hud.show_panel({"title": "Запуск: куда лететь?", "subtitle": "ракета: %s двигатель" % Planet.engine_name(pad.rocket),
-		"controls": [{"type": "people", "label": "Планеты:", "items": items, "empty": ""}],
-		"actions": [["Назад", func() -> void: _show_project(pad)]]})
+		var row := {"name": d["name"], "tex": _planet_tex(id),
+			"info": _first_sentence(d["desc"]) + ((" · там колония: гавриков %d" % (col["colony"] as Colony).units.size()) if not col.is_empty() else "")}
+		if ok:
+			row["button"] = "Сюда"
+			row["style"] = "primary"
+			row["pick"] = func() -> void:
+				_launch["planet"] = id
+				_launch_save()
+				_launch_crew()
+		else:
+			row["warn"] = "нужен %s двигатель" % Planet.engine_name(d["engine"])
+		items.append(row)
+		descs.append("%s: %s%s" % [d["name"], d["desc"], (" " + Planet.absent_text(id)) if not Planet.absent_text(id).is_empty() else ""])
+	hud.show_list({"title": "Запуск: куда лететь?", "subtitle": "ракета: %s двигатель · шаг 1 из 3" % Planet.engine_name(pad.rocket),
+		"desc": [["Планеты", "planet", descs]],
+		"tabs": [{"name": "Планеты", "items": items, "empty": "", "no_count": true}],
+		"actions": [["Назад", func() -> void:
+			hud.close_choice()
+			_show_project(pad)]]}, 0)
 
 
 ## Запуск, шаг 2: экипаж (до 10).
@@ -677,10 +709,11 @@ func _launch_crew() -> void:
 		elif not colony.partner_away(u).is_empty():
 			pair_text = ("♥ летит к своей паре (%s)! · " % u.partner_name) if colony.partner_away(u) == planet \
 				else "♥ пара на планете %s · " % Planet.planet_name(colony.partner_away(u))
-		items.append({"looks": _looks(u), "open": _opener(u, _launch_crew), "name": ("♥ " if invite.has(u) else "") + _name_sex(u),
-			"info": "%sшанс выжить %d%% · %s%s%s" % [pair_text, chance, _family_text(u),
+		items.append({"looks": _looks(u), "open": _opener(u, _launch_crew), "name": ("♥ " if invite.has(u) else "") + _name_sex(u) + ("  ✓ летит" if on else ""),
+			"warn": "шанс выжить %d%%" % chance if chance < 60 else "",
+			"info": "%s%s%s%s%s" % [pair_text, ("шанс выжить %d%% · " % chance) if chance >= 60 else "", _family_text(u),
 				busy_text if busy else " · " + colony.role_name(u).to_lower(), " · СУПЕР-ГАВРИК" if u.invulnerable() else ""],
-			"button": "Убрать" if on else "Взять", "style": "danger" if on else ("primary" if invite.has(u) else ""), "pick": func() -> void:
+			"button": "Убрать" if on else "Взять", "style": "danger" if on else "primary", "pick": func() -> void:
 				if crew.has(u):
 					crew.erase(u)
 				elif crew.size() < _launch_beds():
@@ -689,34 +722,51 @@ func _launch_crew() -> void:
 					hud.log_event("В ракете — до %d гавриков" % _launch_beds(), "warning")
 				_launch_save()
 				_launch_crew()})
-	hud.show_panel({"id": "crew", "title": "Экипаж на %s: %d из %d" % [Planet.planet_name(planet), crew.size(), _launch_beds()],
-		"subtitle": Planet.data(planet)["desc"],
-		"controls": [{"type": "people", "label": "Кто летит (сверху — у кого больше шанс выжить):",
-			"items": items, "empty": "Нет взрослых гавриков."}],
-		"actions": [["Дальше: груз", _launch_cargo, "primary"], ["Назад", func() -> void: _launch_pick_planet(_launch["pad"])]]})
+	hud.show_list({"title": "Запуск: экипаж на %s" % Planet.planet_name(planet),
+		"subtitle": "летят %d из %d · шаг 2 из 3 · сверху — у кого больше шанс выжить" % [crew.size(), _launch_beds()],
+		"desc": [[Planet.planet_name(planet), "planet", _sentences_of(Planet.data(planet)["desc"])]],
+		"tabs": [{"name": "Все", "items": items, "empty": "Нет взрослых гавриков."},
+			{"name": "Летят", "items": items.filter(func(it: Dictionary) -> bool: return it["button"] == "Убрать"), "empty": "Пока никого."}],
+		"actions": [["Назад", func() -> void: _launch_pick_planet(_launch["pad"])], ["Дальше: груз", _launch_cargo, "primary"]]})
 
 
 ## Запуск, шаг 3: груз (до 200) — и старт.
 func _launch_cargo() -> void:
 	_info_target = []
 	var cargo: Dictionary = _launch["cargo"]
-	var controls := []
+	var total := 0
+	for k in cargo:
+		total += int(cargo[k])
+	var items := []
 	var keys: Array = colony.inventory.keys()
 	keys.sort()
 	for k in keys:
 		var have: int = colony.inventory[k]
 		if have <= 0 or RoomType.BULK.has(k):
 			continue
-		controls.append({"label": "%s (есть %d)" % [Mat.resource_name(k), have], "value": int(cargo.get(k, 0)), "min": 0,
-			"max": mini(have, _launch_hold()), "step": 10, "changed": func(v: int) -> void:
-				cargo[k] = v
-				_launch_save()
-				hud.refresh_panel(_launch_cargo_spec())})
-	var spec := _launch_cargo_spec()
-	spec["controls"] = controls
-	spec["controls_first"] = true
-	spec["actions"] = [["Старт!", _do_launch, "primary"], ["Назад", _launch_crew]]
-	hud.show_panel(spec)
+		var cur := int(cargo.get(k, 0))
+		var room := _launch_hold() - total
+		var set_to := func(v: int) -> void:
+			cargo[k] = clampi(v, 0, mini(have, cur + maxi(0, _launch_hold() - total)))
+			_launch_save()
+			_launch_cargo()
+		items.append({"name": "%s: %d" % [Mat.resource_name(k), cur], "glyph": "room", "icon_key": k,
+			"info": "есть %d" % have,
+			"buttons": [["−10", func() -> void: set_to.call(cur - 10), "off" if cur <= 0 else ""],
+				["+10", func() -> void: set_to.call(cur + 10), "off" if cur >= have or room <= 0 else ""]]})
+	var landing := "Домой: корабль сядет рядом с колонией на Земле, гаврики и груз — в нём." if _launch["planet"] == "earth" else \
+		"Растений и озёр там нет: еды хватит только привезённой и с ферм (на грядки нужно дерево). Для тепла — дерево или уголь для очагов. Корабль — жильё на 10, с воздухом, теплом и светом; копайте вниз прямо из него."
+	hud.show_list({"title": "Запуск: груз на %s" % Planet.planet_name(_launch["planet"]),
+		"subtitle": "груз %d из %d · экипаж %d · шаг 3 из 3" % [total, _launch_hold(), _launch["crew"].size()],
+		"desc": [["Что взять", "room", _sentences_of(landing)], ["Посадка", "rocket", _sentences_of(LANDING_TEXT)]],
+		"tabs": [{"name": "Груз", "items": items, "empty": "На складе пусто.", "no_count": true}],
+		"actions": [["Назад", _launch_crew], ["Старт!", func() -> void:
+			hud.close_choice()
+			_do_launch(), "primary"]]}, 0)
+
+
+static func _sentences_of(t: String) -> Array:
+	return Array(Hud._sentences(t))
 
 
 func _launch_cargo_spec() -> Dictionary:

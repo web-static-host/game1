@@ -3855,10 +3855,12 @@ func _list_row(it: Dictionary, w: float) -> Control:
 		var cc := CenterContainer.new()
 		ib.add_child(cc)
 		var tex: String = it.get("tex", "")
-		if not tex.is_empty() and ResourceLoader.exists(tex):
+		if not str(it.get("icon_key", "")).is_empty():
+			cc.add_child(IconView.make(it["icon_key"], 40))
+		elif not tex.is_empty() and ResourceLoader.exists(tex):
 			var tr := TextureRect.new()
 			tr.texture = load(tex)
-			tr.custom_minimum_size = Vector2(48, 40)
+			tr.custom_minimum_size = Vector2(52, 52)
 			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -3883,8 +3885,19 @@ func _list_row(it: Dictionary, w: float) -> Control:
 	var info := _label(it.get("info", ""), 14, MUTED)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.max_lines_visible = 1 if warn else 2
-	info.custom_minimum_size = Vector2(w - 260.0 if it.has("button") else w - 110.0, 0)
+	info.custom_minimum_size = Vector2(w - 110.0 - (150.0 if it.has("button") else 0.0) - 78.0 * it.get("buttons", []).size(), 0)
 	col.add_child(info)
+	# Несколько кнопок в ряду (груз: «−10», «+10»).
+	for bt in it.get("buttons", []):
+		var bb := Button.new()
+		bb.text = bt[0]
+		bb.focus_mode = Control.FOCUS_NONE
+		bb.custom_minimum_size = Vector2(70, 48)
+		bb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		bb.add_theme_font_size_override("font_size", 18)
+		bb.disabled = bt.size() > 2 and bt[2] == "off"
+		bb.pressed.connect(bt[1])
+		h.add_child(bb)
 	if it.has("button") and not str(it["button"]).is_empty():
 		var b := Button.new()
 		b.text = it["button"]
