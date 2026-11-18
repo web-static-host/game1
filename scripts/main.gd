@@ -2545,7 +2545,7 @@ func _project_spec(p: Project, preview_purpose := -1) -> Dictionary:
 				("не хватает" if colony.powered() else "нет"))])
 		if colony.is_workplace(p) and colony.assigned_to(p).is_empty() \
 				and p.purpose not in [RoomType.STORAGE, RoomType.GRANARY, RoomType.LAB]:
-			rows.append({"type": "warning", "text": "Никто не работает — назначьте работника («Назначить»): здесь работают только назначенные."})
+			rows.append({"type": "warning", "text": "Никто не работает — назначьте гаврика на свободное место: здесь работают только назначенные."})
 		if colony.lightable(p) and colony.research.has("electricity"):
 			var n := RoomType.blocks(p)
 			var state := "горит" if p.lit else ("выключен" if p.light == 0 else ("не хватает энергии" if colony.powered() else "нет генератора"))

@@ -297,15 +297,35 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 				ci.draw_polyline(PackedVector2Array([c + Vector2(-r * 0.45, 0), c + Vector2(-r * 0.1, r * 0.4),
 					c + Vector2(r * 0.55, -r * 0.45)]), col, w * 1.3)
 		"repair":
-			# Гаечный ключ: ручка по диагонали, на концах — головки с зевом.
-			# Ручка по диагонали снизу-слева, наверху — одна головка с зевом (как у рожкового
-			# ключа), внизу — скруглённый конец.
-			var d := Vector2(1, -1).normalized()
-			ci.draw_line(c - d * r * 0.8, c + d * r * 0.25, col, w * 2.0)
-			ci.draw_circle(c - d * r * 0.8, w * 1.0, col)
-			var head: Vector2 = c + d * r * 0.5
-			var a0: float = d.angle()
-			ci.draw_arc(head, r * 0.3, a0 + 0.8, a0 + TAU - 0.8, 20, col, w * 2.0, true)
+			# Гаечный ключ одним силуэтом: ручка со скруглённым концом, головка-круг с зевом.
+			# Рисуем вдоль оси x, потом поворачиваем головкой вправо-вверх.
+			var pts := PackedVector2Array()
+			var hr := 0.36    # радиус головки
+			var hc := 0.46    # центр головки по оси
+			var hw := 0.13    # полуширина ручки
+			var jw := 0.12    # полуширина зева
+			var a_join := PI - asin(hw / hr)
+			var a_jaw := asin(jw / hr)
+			pts.append(Vector2(-0.82, hw))
+			for k in 9:
+				var t := lerpf(a_join, a_jaw, k / 8.0)
+				pts.append(Vector2(hc + hr * cos(t), hr * sin(t)))
+			pts.append(Vector2(hc + 0.08, jw))
+			pts.append(Vector2(hc + 0.08, -jw))
+			for k in 9:
+				var t := lerpf(-a_jaw, -a_join, k / 8.0)
+				pts.append(Vector2(hc + hr * cos(t), hr * sin(t)))
+			pts.append(Vector2(-0.82, -hw))
+			for k in range(1, 8):
+				var t := -PI * 0.5 - PI * k / 8.0
+				pts.append(Vector2(-0.82 + hw * cos(t), hw * sin(t)))
+			var rot := -PI * 0.25
+			for k in pts.size():
+				pts[k] = c + pts[k].rotated(rot) * r * 1.05
+			ci.draw_colored_polygon(pts, col)
+			var outline := pts.duplicate()
+			outline.append(pts[0])
+			ci.draw_polyline(outline, col, 1.0, true)
 		"warning":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -r * 0.85), c + Vector2(r * 0.9, r * 0.75), c + Vector2(-r * 0.9, r * 0.75)]), col)

@@ -1106,7 +1106,11 @@ func _fit_scroll() -> void:
 		var over := _info_panel.get_combined_minimum_size().y - _mid.get_combined_minimum_size().y
 		_mid.custom_minimum_size = Vector2(0, maxf(220.0, avail - over))
 		ph = _info_panel.get_combined_minimum_size().y
-	_info_panel.size = Vector2(size.x - SIDE * 2.0 if _room_mode else float(PANEL_WIDTH), ph)
+	var pw := size.x - SIDE * 2.0
+	if _room_mode and not _room_right.visible:
+		# Без работников — карточка уже на ширину их колонки, середина не растягивается.
+		pw -= float(_room_cols(true)[1]) + 14.0
+	_info_panel.size = Vector2(pw if _room_mode else float(PANEL_WIDTH), ph)
 	_info_panel.position = Vector2(SIDE, size.y - BAR_H - ph)
 
 
@@ -1198,7 +1202,7 @@ func _set_room_mode(spec: Dictionary) -> void:
 	_room_top.visible = _room_mode
 	_head_chips.visible = _room_mode
 	_room_right.visible = _room_mode and int(room.get("slots", 0)) > 0
-	var cols := _room_cols(_room_right.visible)
+	var cols := _room_cols(true)
 	_pw = (float(cols[2]) - 18.0) if _room_mode else float(PANEL_WIDTH)
 	_room_left.custom_minimum_size = Vector2(cols[0], 0)
 	_room_right.custom_minimum_size = Vector2(cols[1], 0)
@@ -1275,10 +1279,12 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 	var r: Rect2 = room.get("preview", Rect2())
 	var colw := _room_left.custom_minimum_size.x
 	if r.size.x > 0.0 and r.size.y > 0.0:
+		# Высота у всех комнат одна (как у широкой 9×3), ширина — по пропорциям комнаты.
 		var asp := r.size.x / r.size.y
-		_pv = Vector2(colw, floorf(colw / asp))
-		if _pv.y > colw * 0.6:
-			_pv = Vector2(floorf(colw * 0.6 * asp), floorf(colw * 0.6))
+		var h := floorf(colw / 3.0)
+		_pv = Vector2(minf(colw, floorf(h * asp)), h)
+		if _pv.x >= colw - 0.5:
+			_pv.y = floorf(colw / asp)
 	_preview_frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_preview_box.custom_minimum_size = _pv
 	_preview_vp.size = Vector2i(_pv)
