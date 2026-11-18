@@ -3890,6 +3890,7 @@ func show_tool(spec: Dictionary) -> void:
 	var cf := HFlowContainer.new()
 	cf.add_theme_constant_override("h_separation", 6)
 	cf.add_theme_constant_override("v_separation", 6)
+	cf.visible = not spec.get("no_cost", false)
 	v.add_child(cf)
 	cf.add_child(_label("Нужно:", 16, MUTED))
 	var cost: Array = spec.get("cost", [])

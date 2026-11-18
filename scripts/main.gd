@@ -1483,6 +1483,8 @@ func _tool_start(p: Project) -> void:
 	_info_target = []
 	# Постройка, которую двигают или продлевают, остаётся выделенной.
 	world_view.structures.selected_project = p.id
+	_pick_fresh = _tool_pick
+	_manual_pick = []
 	_tool_on = true
 	_tool_fresh = true
 
@@ -1510,20 +1512,50 @@ var _tool_dragging := false
 ## Запоминает, что сейчас настраивают, и ставит стрелки (у выбранной стороны — за концом рамки).
 func _tool_set(ctx: Dictionary, spec: Dictionary) -> void:
 	_tool_ctx = ctx
+	var fresh := _tool_pick and _pick_fresh
+	if fresh and _manual_pick.is_empty():
+		_manual_pick = [int(ctx["dir_i"]), int(ctx["n"])]
 	var arrows := []
 	if _tool_pick:
 		for i in ctx["dirs"].size():
 			var d: Vector2i = ctx["dirs"][i]
 			# Стрелки — от самой постройки (тянут от начала, а не от конца рамки).
-			arrows.append([_arrow_area(ctx["base"], d), d, i == int(ctx["dir_i"])])
+			arrows.append([_arrow_area(ctx["base"], d), d, not fresh and i == int(ctx["dir_i"])])
 	world_view.structures.tool_arrows = arrows
+	if fresh:
+		# Режим «на карте» только включили — прежний выбор не показываем: рамка появится,
+		# когда потянут стрелку.
+		world_view.structures.preview = Rect2i()
+		spec["dir"] = -1
+		spec.erase("len")
+		spec["cost"] = []
+		spec["no_cost"] = true
+		spec["warn"] = ""
+		spec["blocked"] = true
+		spec["info"] = "Зажмите зелёную стрелку у постройки и тяните: куда и на сколько — покажет рамка."
+		spec["on_ok"] = func() -> void: pass
 	spec["pick"] = _tool_pick
 	spec["on_pick"] = func() -> void:
-		_tool_pick = not _tool_pick
 		var c: Dictionary = _tool_ctx
-		if not c.is_empty():
+		_tool_pick = not _tool_pick
+		_pick_fresh = _tool_pick
+		if c.is_empty():
+			return
+		if _tool_pick:
+			# Запоминаем ручной выбор — выключат «на карте», он вернётся.
+			_manual_pick = [int(c["dir_i"]), int(c["n"])]
+			c["apply"].call(int(c["dir_i"]), int(c["n"]))
+		elif not _manual_pick.is_empty():
+			c["apply"].call(_manual_pick[0], _manual_pick[1])
+		else:
 			c["apply"].call(int(c["dir_i"]), int(c["n"]))
 	hud.show_tool(spec)
+
+
+## «На карте» включено, а стрелку ещё не тянули — выбора нет (начинаем с нуля).
+var _pick_fresh := false
+## Ручной выбор (сторона, длина) до включения «на карте» — возвращается при выключении.
+var _manual_pick: Array = []
 
 
 ## Клетки стрелки: полоса в клетку шириной вдоль стороны r в сторону d.
@@ -1562,6 +1594,7 @@ func _grab_test(pos: Vector2) -> bool:
 			_grab_dir_i = i
 			_grab_off = 0
 			_tool_dragging = true
+			_pick_fresh = false
 			# Длина — сколько клеток от края постройки до пальца: зажал у края — 1 м, тянешь дальше.
 			_tool_ctx["apply"].call(i, clampi(_cells_from(_tool_ctx["base"], a[1], c), 1, maxi(1, int(_tool_ctx["max"]))))
 			return true
