@@ -298,13 +298,14 @@ static func draw_glyph(ci: CanvasItem, name: String, c: Vector2, r: float, col: 
 					c + Vector2(r * 0.55, -r * 0.45)]), col, w * 1.3)
 		"repair":
 			# Гаечный ключ: ручка по диагонали, на концах — головки с зевом.
+			# Ручка по диагонали снизу-слева, наверху — одна головка с зевом (как у рожкового
+			# ключа), внизу — скруглённый конец.
 			var d := Vector2(1, -1).normalized()
-			ci.draw_line(c - d * r * 0.55, c + d * r * 0.45, col, w * 1.9)
-			for s in [1.0, -1.0]:
-				# Головка — дуга, открытая наружу (зев), без тёмных кружков-вырезов.
-				var head: Vector2 = c + d * r * 0.6 * s
-				var a0: float = (d * s).angle()
-				ci.draw_arc(head, r * 0.27, a0 + 0.95, a0 + TAU - 0.95, 18, col, w * 1.6, true)
+			ci.draw_line(c - d * r * 0.8, c + d * r * 0.25, col, w * 2.0)
+			ci.draw_circle(c - d * r * 0.8, w * 1.0, col)
+			var head: Vector2 = c + d * r * 0.5
+			var a0: float = d.angle()
+			ci.draw_arc(head, r * 0.3, a0 + 0.8, a0 + TAU - 0.8, 20, col, w * 2.0, true)
 		"warning":
 			ci.draw_colored_polygon(PackedVector2Array([
 				c + Vector2(0, -r * 0.85), c + Vector2(r * 0.9, r * 0.75), c + Vector2(-r * 0.9, r * 0.75)]), col)

@@ -1178,6 +1178,7 @@ var _workers_list: VBoxContainer
 var _preview_frame: PanelContainer
 var _preview_mask: Control
 var _preview_hole := Rect2()
+const PREVIEW_R := 12
 ## Размер превью комнаты (от ширины левой колонки).
 var _pv := Vector2(290, 150)
 
@@ -1272,7 +1273,7 @@ func _build_room_left(room: Dictionary, conds: Array) -> void:
 	# Превью — по пропорциям комнаты (без пустых полос): во всю ширину колонки, но не выше
 	# 0,6 ширины; узкая высокая комната — уже по ширине, по центру.
 	var r: Rect2 = room.get("preview", Rect2())
-	var colw := _room_left.custom_minimum_size.x - 8.0
+	var colw := _room_left.custom_minimum_size.x
 	if r.size.x > 0.0 and r.size.y > 0.0:
 		var asp := r.size.x / r.size.y
 		_pv = Vector2(colw, floorf(colw / asp))
@@ -1423,21 +1424,25 @@ func _ensure_preview() -> void:
 	_preview_cam = Camera2D.new()
 	_preview_vp.add_child(_preview_cam)
 	_preview_cam.make_current()
+	# Видна только сама комната, углы скруглены (шейдер), обводка — по тем же скруглённым
+	# углам поверх картинки: ничего не торчит из-под рамки.
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/round_preview.gdshader")
+	_preview_box.material = mat
 	_preview_frame = PanelContainer.new()
-	_preview_frame.add_theme_stylebox_override("panel", UiStyle.section(UiStyle.TEAL_A, 14, 4))
+	_preview_frame.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	_preview_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_preview_frame.add_child(_preview_box)
-	# Маска поверх превью: видна только сама комната, соседние клетки закрыты.
 	_preview_mask = Control.new()
 	_preview_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var border := StyleBoxFlat.new()
+	border.draw_center = false
+	border.border_color = Color(UiStyle.TEAL_A, 0.85)
+	border.set_border_width_all(2)
+	border.set_corner_radius_all(PREVIEW_R)
+	border.anti_aliasing = true
 	_preview_mask.draw.connect(func() -> void:
-		var sz := _preview_mask.size
-		var r := _preview_hole
-		var col := Color(0.03, 0.09, 0.12)
-		_preview_mask.draw_rect(Rect2(0, 0, sz.x, r.position.y), col)
-		_preview_mask.draw_rect(Rect2(0, r.end.y, sz.x, sz.y - r.end.y), col)
-		_preview_mask.draw_rect(Rect2(0, r.position.y, r.position.x, r.size.y), col)
-		_preview_mask.draw_rect(Rect2(r.end.x, r.position.y, sz.x - r.end.x, r.size.y), col))
+		_preview_mask.draw_style_box(border, _preview_hole))
 	_preview_frame.add_child(_preview_mask)
 	_room_left.add_child(_preview_frame)
 
@@ -1451,8 +1456,12 @@ func _aim_preview(r: Rect2) -> void:
 	# Комната — на всё превью (с маленьким полем), вокруг — маска.
 	var z := minf(_pv.x / r.size.x, _pv.y / r.size.y)
 	_preview_cam.zoom = Vector2(z, z)
-	var hs := r.size * z
-	_preview_hole = Rect2((_pv - hs) * 0.5, hs).grow(1.0)
+	var hs := (r.size * z).min(_pv)
+	_preview_hole = Rect2((_pv - hs) * 0.5, hs)
+	var mat := _preview_box.material as ShaderMaterial
+	mat.set_shader_parameter("box_size", _pv)
+	mat.set_shader_parameter("hole", Vector4(_preview_hole.position.x, _preview_hole.position.y, _preview_hole.size.x, _preview_hole.size.y))
+	mat.set_shader_parameter("radius", float(PREVIEW_R))
 	_preview_mask.queue_redraw()
 
 
@@ -3463,60 +3472,72 @@ func show_tool(spec: Dictionary) -> void:
 	for c in _tool.get_children():
 		_tool.remove_child(c)
 		c.queue_free()
-	var w := minf(size.x - 2.0 * SIDE, 860.0)
+	var w := TOOL_W - 28.0
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
+	v.add_theme_constant_override("separation", 8)
 	_tool.add_child(v)
 	# Шапка: значок, название, крестик.
 	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 10)
+	head.add_theme_constant_override("separation", 8)
 	v.add_child(head)
 	var ib := PanelContainer.new()
 	ib.add_theme_stylebox_override("panel", UiStyle.grad(UiStyle.ORANGE_A, UiStyle.ORANGE_B, 12, 4, false, false))
-	ib.add_child(IconView.make("", 28, spec.get("icon", "room"), Color.WHITE))
+	ib.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ib.add_child(IconView.make("", 26, spec.get("icon", "room"), Color.WHITE))
 	head.add_child(ib)
-	var t := _label(spec["title"], 22, Color.WHITE)
+	var t := _label(spec["title"], 19, Color.WHITE)
 	t.add_theme_font_override("font", Fonts.black())
-	t.clip_text = true
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.custom_minimum_size = Vector2(w - 110.0, 0)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(t)
-	var close := IconButton.make("close", "", 46, 46)
+	var close := IconButton.make("close", "", 44, 44)
+	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	close.pressed.connect(spec["on_cancel"])
 	head.add_child(close)
-	# Куда и на сколько.
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 18)
-	v.add_child(row)
-	var dirs: Array = spec.get("dirs", [])
-	if dirs.size() > 0:
-		var dv := VBoxContainer.new()
-		dv.add_theme_constant_override("separation", 4)
-		row.add_child(dv)
-		dv.add_child(_label("Куда", 14, MUTED))
-		var dh := HBoxContainer.new()
-		dh.add_theme_constant_override("separation", 6)
-		dv.add_child(dh)
-		for i in dirs.size():
-			var b := Button.new()
-			b.text = dirs[i]
-			b.focus_mode = Control.FOCUS_NONE
-			b.custom_minimum_size = Vector2(58, 52)
-			b.add_theme_font_size_override("font_size", 26)
-			var on: bool = i == int(spec.get("dir", 0))
-			b.add_theme_stylebox_override("normal", btn_box(ACCENT) if on else btn_box(BTN))
-			b.add_theme_stylebox_override("hover", btn_box(ACCENT) if on else btn_box(BTN.lightened(0.08)))
-			var cb: Callable = spec["on_dir"]
-			b.pressed.connect(func() -> void: cb.call(i))
-			dh.add_child(b)
+	# Направление — ромбом: вверх сверху, влево и вправо по бокам, вниз снизу.
+	var vecs: Array = spec.get("dir_vecs", [])
+	if not vecs.is_empty():
+		var gc := CenterContainer.new()
+		v.add_child(gc)
+		var grid := GridContainer.new()
+		grid.columns = 3
+		grid.add_theme_constant_override("h_separation", 4)
+		grid.add_theme_constant_override("v_separation", 2)
+		gc.add_child(grid)
+		var cells := {Vector2i(1, 0): Vector2i.UP, Vector2i(0, 1): Vector2i.LEFT, Vector2i(2, 1): Vector2i.RIGHT, Vector2i(1, 2): Vector2i.DOWN}
+		for y in 3:
+			for x in 3:
+				var cell := Vector2i(x, y)
+				if not cells.has(cell):
+					var gap := Control.new()
+					gap.custom_minimum_size = Vector2(56, 46)
+					gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					grid.add_child(gap)
+					continue
+				var dv: Vector2i = cells[cell]
+				var idx := vecs.find(dv)
+				var b := Button.new()
+				b.text = {Vector2i.UP: "↑", Vector2i.LEFT: "←", Vector2i.RIGHT: "→", Vector2i.DOWN: "↓"}[dv]
+				b.focus_mode = Control.FOCUS_NONE
+				b.custom_minimum_size = Vector2(56, 46)
+				b.add_theme_font_size_override("font_size", 26)
+				var on: bool = idx >= 0 and idx == int(spec.get("dir", 0))
+				b.add_theme_stylebox_override("normal", btn_box(ACCENT) if on else btn_box(BTN))
+				b.add_theme_stylebox_override("hover", btn_box(ACCENT) if on else btn_box(BTN.lightened(0.08)))
+				b.disabled = idx < 0
+				if idx < 0:
+					b.modulate = Color(1, 1, 1, 0.3)
+				var cb: Callable = spec["on_dir"]
+				b.pressed.connect(func() -> void: cb.call(idx))
+				grid.add_child(b)
+	# На сколько.
 	if spec.has("len"):
-		var lv := VBoxContainer.new()
-		lv.add_theme_constant_override("separation", 4)
-		row.add_child(lv)
-		lv.add_child(_label("На сколько", 14, MUTED))
 		var lh := HBoxContainer.new()
 		lh.add_theme_constant_override("separation", 6)
-		lv.add_child(lh)
+		lh.alignment = BoxContainer.ALIGNMENT_CENTER
+		v.add_child(lh)
 		var n: int = spec["len"]
 		var lo: int = spec.get("len_min", 1)
 		var hi: int = maxi(lo, int(spec.get("len_max", 1)))
@@ -3525,8 +3546,8 @@ func show_tool(spec: Dictionary) -> void:
 			var b := Button.new()
 			b.text = "−" if k < 0 else "+"
 			b.focus_mode = Control.FOCUS_NONE
-			b.custom_minimum_size = Vector2(52, 52)
-			b.add_theme_font_size_override("font_size", 26)
+			b.custom_minimum_size = Vector2(52, 46)
+			b.add_theme_font_size_override("font_size", 24)
 			b.disabled = (n <= lo) if k < 0 else (n >= hi)
 			b.pressed.connect(func() -> void: on_len.call(clampi(n + k, lo, hi)))
 			lh.add_child(b)
@@ -3534,65 +3555,74 @@ func show_tool(spec: Dictionary) -> void:
 				var val := _label("%d м" % n, 24, Color.WHITE)
 				val.add_theme_font_override("font", Fonts.black())
 				val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-				val.custom_minimum_size = Vector2(80, 0)
+				val.custom_minimum_size = Vector2(90, 0)
 				val.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 				lh.add_child(val)
 	# Цена.
-	var cv := VBoxContainer.new()
-	cv.add_theme_constant_override("separation", 4)
-	cv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(cv)
-	cv.add_child(_label("Нужно", 14, MUTED))
 	var cf := HFlowContainer.new()
 	cf.add_theme_constant_override("h_separation", 6)
 	cf.add_theme_constant_override("v_separation", 6)
-	cv.add_child(cf)
+	v.add_child(cf)
+	cf.add_child(_label("Нужно:", 16, MUTED))
 	var cost: Array = spec.get("cost", [])
 	for it in cost:
 		cf.add_child(_chip(it, true))
 	if cost.is_empty():
-		cf.add_child(_label("материалов не нужно", 17, Color.WHITE))
+		cf.add_child(_label("ничего", 16, Color.WHITE))
 	# Пояснение или почему нельзя.
 	var warn: String = spec.get("warn", "")
 	var blocked: bool = spec.get("blocked", not warn.is_empty())
-	var txt := _label(warn if not warn.is_empty() else str(spec.get("info", "")), 16,
+	var txt := _label(warn if not warn.is_empty() else str(spec.get("info", "")), 14,
 		(Color(1, 0.5, 0.45) if blocked else Color(1, 0.8, 0.45)) if not warn.is_empty() else MUTED)
 	txt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	txt.custom_minimum_size = Vector2(w - 30.0, 0)
+	txt.custom_minimum_size = Vector2(w, 0)
 	txt.visible = not txt.text.is_empty()
 	v.add_child(txt)
-	# Кнопки.
+	# Кнопки — в ряд: «Отмена» и главная.
 	var br := HBoxContainer.new()
-	br.add_theme_constant_override("separation", 10)
+	br.add_theme_constant_override("separation", 8)
 	v.add_child(br)
 	var cancel := Button.new()
 	cancel.text = "Отмена"
 	cancel.focus_mode = Control.FOCUS_NONE
-	cancel.custom_minimum_size = Vector2(0, 54)
+	cancel.custom_minimum_size = Vector2(0, 50)
 	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cancel.add_theme_font_size_override("font_size", 20)
+	cancel.add_theme_font_size_override("font_size", 18)
 	cancel.pressed.connect(spec["on_cancel"])
 	br.add_child(cancel)
 	var ok := Button.new()
 	ok.text = spec.get("ok", "Готово")
 	ok.focus_mode = Control.FOCUS_NONE
-	ok.custom_minimum_size = Vector2(0, 54)
+	ok.custom_minimum_size = Vector2(0, 50)
 	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ok.add_theme_font_size_override("font_size", 20)
+	ok.add_theme_font_size_override("font_size", 18)
 	ok.add_theme_stylebox_override("normal", btn_box(BTN if blocked else ACCENT))
 	ok.add_theme_stylebox_override("hover", btn_box(BTN if blocked else ACCENT))
 	ok.pressed.connect(spec["on_ok"])
 	br.add_child(ok)
 	_tool.visible = true
-	_tool.custom_minimum_size = Vector2(w, 0)
+	_tool.custom_minimum_size = Vector2(TOOL_W, 0)
 	_place_tool.call_deferred()
+
+
+## Ширина мини-меню справа.
+const TOOL_W := 320.0
 
 
 func _place_tool() -> void:
 	if _tool == null:
 		return
 	_tool.size = _tool.get_combined_minimum_size()
-	_tool.position = Vector2((size.x - _tool.size.x) * 0.5, size.y - BAR_H - _tool.size.y)
+	var top := _top_limit()
+	var bottom := size.y - BAR_H - 6.0
+	# По центру между верхней строкой и нижним меню; не влезает — прижато к верху.
+	_tool.position = Vector2(size.x - SIDE - _tool.size.x, clampf((top + bottom - _tool.size.y) * 0.5, top, maxf(top, bottom - _tool.size.y)))
+
+
+## Часть экрана, свободная от мини-меню (слева от него, между верхней строкой и нижним меню).
+func tool_free_rect() -> Rect2:
+	var top := _top_limit()
+	return Rect2(0.0, top, size.x - TOOL_W - SIDE * 2.0, size.y - BAR_H - top)
 
 
 func hide_tool() -> void:

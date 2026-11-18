@@ -1393,32 +1393,28 @@ func _tool_preview(r: Rect2i, ok: bool, text: String, base: Rect2i) -> void:
 
 
 var _tool_fresh := false
-## Свободная от меню часть экрана по высоте (сверху — строка ресурсов, снизу — мини-меню).
-const TOOL_FREE := Vector2(80.0, 330.0)
 
 
-## Камера так, чтобы постройка и рамка нового места были над мини-меню; не влезают —
-## отдаляем. Без force двигаем, только если рамка ушла из видимой части.
+## Камера — на постройку и рамку нового места по центру свободной части экрана (без мини-меню
+## справа); не влезают — отдаляем. Без force двигаем, только если рамка ушла из этой части.
 func _tool_focus(r: Rect2i, force: bool) -> void:
 	var cam := world_view.camera
 	var vp := get_viewport().get_visible_rect().size
-	var free_h := vp.y * (TOOL_FREE.y / 720.0) - TOOL_FREE.x * (vp.y / 720.0)
+	var free := hud.tool_free_rect()
 	var a := world_view.cell_to_local(r.position)
 	var b := world_view.cell_to_local(r.end)
-	var need := (b - a)
+	var need := b - a
 	var z := cam.zoom.x
-	if need.y * z > free_h * 0.9 or need.x * z > vp.x * 0.9:
-		z = maxf(0.3, minf(free_h * 0.9 / maxf(1.0, need.y), vp.x * 0.9 / maxf(1.0, need.x)))
-	var top := TOOL_FREE.x * (vp.y / 720.0)
-	var target_y := top + free_h * 0.5
+	if need.y * z > free.size.y * 0.85 or need.x * z > free.size.x * 0.85:
+		z = maxf(0.3, minf(free.size.y * 0.85 / maxf(1.0, need.y), free.size.x * 0.85 / maxf(1.0, need.x)))
 	if not force and is_equal_approx(z, cam.zoom.x):
 		var sa := (a - cam.position) * z + vp * 0.5
 		var sb := (b - cam.position) * z + vp * 0.5
-		if sa.x >= 0.0 and sb.x <= vp.x and sa.y >= top and sb.y <= top + free_h:
+		if free.has_point(sa) and free.has_point(sb):
 			return
 	cam.zoom = Vector2(z, z)
-	var mid := (a + b) * 0.5
-	cam.position = Vector2(mid.x, mid.y + (vp.y * 0.5 - target_y) / z)
+	# Середина рамки — в середину свободной части.
+	cam.position = (a + b) * 0.5 - (free.get_center() - vp * 0.5) / z
 
 
 const DIR_ARROWS := {Vector2i.LEFT: "←", Vector2i.RIGHT: "→", Vector2i.UP: "↑", Vector2i.DOWN: "↓"}
@@ -1441,7 +1437,7 @@ func _move_tool_show(p: Project) -> void:
 			hud.log_event(err, "warning")
 		_tool_back(p)
 	hud.show_tool({"title": "Сдвинуть: " + p.title(), "icon": "bridge",
-		"dirs": MOVE_DIRS.map(func(d: Vector2i) -> String: return DIR_ARROWS[d]), "dir": _move_dir_i,
+		"dir_vecs": MOVE_DIRS.duplicate(), "dir": _move_dir_i,
 		"on_dir": func(i: int) -> void:
 			_move_dir_i = i
 			_move_tool_show(p),
@@ -1486,7 +1482,7 @@ func _extend_tool_show(p: Project) -> void:
 	_taken = {}
 	var cost := _extend_cost(p, d, n)
 	hud.show_tool({"title": "Продлить: " + p.title(), "icon": "build",
-		"dirs": dirs.map(func(x: Vector2i) -> String: return DIR_ARROWS[x]), "dir": _ext_dir_i,
+		"dir_vecs": Array(dirs), "dir": _ext_dir_i,
 		"on_dir": func(i: int) -> void:
 			_ext_dir_i = i
 			_extend_tool_show(p),
@@ -1526,7 +1522,7 @@ func _drill_tool_show(p: Project) -> void:
 	var err := colony.drill_error(p, d, n)
 	_tool_preview(Colony.drill_path(p, d, n), err.is_empty(), "%s %d м" % [DIR_ARROWS[d], n], p.rect)
 	hud.show_tool({"title": "Сверлить: " + p.title(), "icon": "build",
-		"dirs": dirs.map(func(x: Vector2i) -> String: return DIR_ARROWS[x]), "dir": _drill_dir_i,
+		"dir_vecs": dirs.duplicate(), "dir": _drill_dir_i,
 		"on_dir": func(i: int) -> void:
 			_drill_dir_i = i
 			_drill_tool_show(p),
