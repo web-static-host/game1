@@ -77,15 +77,22 @@ def body_sdf(px, py, pz):
         # Рука — трубка из бока чуть выше уровня глаза, висит вниз и немного в сторону.
         arm = capsule(px, py, pz, (s * 0.66, 0.0, 1.86), (s * 0.98, -0.03, 1.3), 0.08)
         # Кисть: ладонь, четыре пальца веером вниз и большой палец вперёд-внутрь.
-        palm = ellipsoid(px, py, pz, (s * 1.02, -0.04, 1.15), (0.15, 0.1, 0.14))
+        # Кисть висит ладонью к телу: ладонь плоская по x, четыре пальца рядом друг с другом
+        # (спереди назад), чуть согнуты; большой палец смотрит вперёд.
+        palm = ellipsoid(px, py, pz, (s * 1.02, -0.03, 1.16), (0.08, 0.125, 0.12))
         limbs = smin(arm, palm, 0.05)
-        for k, ang in enumerate((-30, -10, 10, 30)):
-            a = math.radians(ang)
-            base = (s * (1.02 + 0.08 * math.sin(a)), -0.04, 1.06)
-            tip = (s * (1.02 + 0.2 * math.sin(a) + 0.02), -0.05, 1.06 - 0.13 * math.cos(a))
-            limbs = smin(limbs, capsule(px, py, pz, base, tip, 0.05 if k < 3 else 0.045), 0.02)
-        thumb = capsule(px, py, pz, (s * 0.92, -0.08, 1.17), (s * 0.82, -0.16, 1.1), 0.05)
-        limbs = smin(limbs, thumb, 0.02)
+        # Пальцы — пухлые, чуть врозь веером вниз; хорошо видны и спереди, и сбоку.
+        for k, (fy, ln) in enumerate(((-0.1, 0.13), (-0.035, 0.155), (0.03, 0.15), (0.088, 0.12))):
+            base = (s * 1.03, fy, 1.08)
+            spread = (fy + 0.005) * 0.55
+            mid = (s * 1.05, fy + spread * 0.5, 1.08 - ln * 0.55)
+            tip = (s * 1.045, fy + spread, 1.08 - ln)
+            r = 0.043 if k < 3 else 0.038
+            f = smin(capsule(px, py, pz, base, mid, r), capsule(px, py, pz, mid, tip, r * 0.92), 0.012)
+            limbs = smin(limbs, f, 0.01)
+        thumb = smin(capsule(px, py, pz, (s * 0.99, -0.12, 1.16), (s * 0.97, -0.21, 1.12), 0.045),
+            capsule(px, py, pz, (s * 0.97, -0.21, 1.12), (s * 0.96, -0.26, 1.06), 0.04), 0.012)
+        limbs = smin(limbs, thumb, 0.012)
         d = smin(d, smin(leg, foot, 0.08), 0.06)
         d = smin(d, limbs, 0.07)
     return d
@@ -219,7 +226,28 @@ def build(color_hex):
         cu.data.materials.append(m)
         return cu
     # Бровь — толстая дуга над глазом.
-    tube('Brow', [surface(x, EZ + 0.33 + 0.07 * (1 - (x / 0.26) ** 2))[0] + np.array([0, -0.06, 0]) for x in (-0.26, 0.0, 0.26)], 0.05, m_brow)
+    # Бровь — толстая дуга над глазом, концы скруглены.
+    bpts = [surface(x, EZ + 0.43 + 0.07 * (1 - (x / 0.26) ** 2))[0] + np.array([0, -0.06, 0]) for x in (-0.26, 0.0, 0.26)]
+    tube('Brow', bpts, 0.05, m_brow)
+    for e in (bpts[0], bpts[-1]):
+        blob('BrowEnd', e, (0.05, 0.05, 0.05), m_brow)
+    # Ресницы по верхнему краю глаза: у мальчиков — маленькие, у девочек — длинные, загнутые.
+    girl = os.environ.get('SEX', 'm') == 'f'
+    lash_n = 5 if girl else 3
+    lash_len = 0.11 if girl else 0.045
+    eye_c = p + nv * 0.02
+    lash_len = 0.085 if girl else 0.05
+    for k in range(lash_n):
+        t = (k / (lash_n - 1) - 0.5) * (1.7 if girl else 1.2)
+        # Корень — на самом краю белка (на шаре глаза), ресница — наружу и вверх.
+        root = eye_c + np.array([0.3 * 0.97 * math.sin(t), -0.05, 0.31 * 0.97 * math.cos(t)])
+        out = np.array([math.sin(t) * 1.4, -0.35, math.cos(t)])
+        out /= np.linalg.norm(out)
+        mid = root + out * lash_len * 0.55
+        tip = root + out * lash_len + np.array([math.sin(t) * 0.025, 0, 0.03 if girl else 0.005])
+        r = 0.017 if girl else 0.016
+        tube('Lash', [root - out * 0.04, mid, tip], r, m_brow)
+        blob('LashEnd', tip, (r, r, r), m_brow)
     # Рот — открытый, овальный, сверху один большой зуб, внизу язык.
     mp, mn = surface(0.0, 1.33)
     mq = facing(mn)
@@ -276,16 +304,16 @@ def build(color_hex):
     return body
 
 
-def shoot(path, yaw, res=(900, 1000), dist=7.2, height=1.35, lens=55):
+def shoot(path, yaw, res=(900, 1000), dist=7.2, height=1.35, lens=55, tx=0.0):
     sc = bpy.context.scene
     cam_d = bpy.data.cameras.new('Cam')
     cam_d.lens = lens
     cam = bpy.data.objects.new('Cam', cam_d)
     sc.collection.objects.link(cam)
     a = math.radians(yaw)
-    cam.location = (math.sin(a) * dist, -math.cos(a) * dist, height + 0.6)
+    cam.location = (tx + math.sin(a) * dist, -math.cos(a) * dist, height + 0.6 * dist / 7.2)
     tgt = bpy.data.objects.new('T', None)
-    tgt.location = (0, 0, height)
+    tgt.location = (tx, 0, height)
     sc.collection.objects.link(tgt)
     con = cam.constraints.new('TRACK_TO')
     con.target = tgt
@@ -301,6 +329,9 @@ if __name__ == '__main__':
     colors = os.environ.get('COLORS', '#3b6fe0').split(',')
     for col in colors:
         build(col)
-        tag = col.lstrip('#')
+        tag = col.lstrip('#') + os.environ.get('SEX', 'm')
         for yaw in [int(v) for v in os.environ.get('YAWS', '-28').split(',')]:
             shoot(os.path.join(OUT, 'tri_%s_%d.png' % (tag, yaw)), yaw)
+        if os.environ.get('CLOSE'):
+            shoot(os.path.join(OUT, 'tri_%s_face.png' % tag), -20, (700, 700), 2.4, 1.78, 60)
+            shoot(os.path.join(OUT, 'tri_%s_hand.png' % tag), -40, (700, 700), 1.3, 1.08, 60, -1.03)
