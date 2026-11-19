@@ -18,8 +18,7 @@ os.makedirs(OUT, exist_ok=True)
 # --- Форма тела (SDF) ---------------------------------------------------------------------
 TRI = np.array([[-0.7, 2.12], [0.7, 2.12], [0.0, 0.82]])   # треугольник до скругления (x, z)
 R2D = 0.1       # скругление контура
-HALF = 0.07     # полутолщина плоской части (перед — ровная «подушка»)
-ROUND = 0.17    # скругление краёв подушки
+ROUND = 0.2     # скругление краёв подушки
 STEP = 0.011
 
 
@@ -65,33 +64,34 @@ def smin(a, b, k):
 
 
 def body_sdf(px, py, pz):
+    # Толстая «подушка»: к середине толще (выпуклый перед и зад), у края — мягко скруглена.
     d2 = sd_poly(px, pz, TRI) - R2D
-    qy = np.abs(py) - HALF
+    # Толщина плавно растёт к середине (купол без складок), края — широкое скругление.
+    dome = np.clip(1 - (px / 0.95) ** 2 - ((pz - 1.62) / 0.95) ** 2, 0, 1)
+    hy = 0.17 + 0.09 * dome
+    qy = np.abs(py) - hy
     d = np.sqrt(np.maximum(d2, 0) ** 2 + np.maximum(qy, 0) ** 2) + np.minimum(np.maximum(d2, qy), 0) - ROUND
     for s in (-1, 1):
         # Ножки — короткие трубки, ступни — округлые «ботинки» носком вперёд.
-        leg = capsule(px, py, pz, (s * 0.12, 0.0, 0.66), (s * 0.15, -0.01, 0.2), 0.085)
+        leg = capsule(px, py, pz, (s * 0.12, 0.0, 0.66), (s * 0.15, -0.01, 0.2), 0.095)
         foot = ellipsoid(px, py, pz, (s * 0.18, -0.08, 0.12), (0.19, 0.27, 0.13))
         foot = np.maximum(foot, -pz)
         # Ручки — короткие, из боков, вниз и чуть вперёд; кисть — варежка с большим пальцем.
-        # Рука — трубка из бока чуть выше уровня глаза, висит вниз и немного в сторону.
-        arm = capsule(px, py, pz, (s * 0.66, 0.0, 1.86), (s * 0.98, -0.03, 1.3), 0.08)
-        # Кисть: ладонь, четыре пальца веером вниз и большой палец вперёд-внутрь.
-        # Кисть висит ладонью к телу: ладонь плоская по x, четыре пальца рядом друг с другом
-        # (спереди назад), чуть согнуты; большой палец смотрит вперёд.
-        palm = ellipsoid(px, py, pz, (s * 1.02, -0.03, 1.16), (0.08, 0.125, 0.12))
-        limbs = smin(arm, palm, 0.05)
-        # Пальцы — пухлые, чуть врозь веером вниз; хорошо видны и спереди, и сбоку.
-        for k, (fy, ln) in enumerate(((-0.1, 0.13), (-0.035, 0.155), (0.03, 0.15), (0.088, 0.12))):
-            base = (s * 1.03, fy, 1.08)
-            spread = (fy + 0.005) * 0.55
-            mid = (s * 1.05, fy + spread * 0.5, 1.08 - ln * 0.55)
-            tip = (s * 1.045, fy + spread, 1.08 - ln)
-            r = 0.043 if k < 3 else 0.038
-            f = smin(capsule(px, py, pz, base, mid, r), capsule(px, py, pz, mid, tip, r * 0.92), 0.012)
-            limbs = smin(limbs, f, 0.01)
-        thumb = smin(capsule(px, py, pz, (s * 0.99, -0.12, 1.16), (s * 0.97, -0.21, 1.12), 0.045),
-            capsule(px, py, pz, (s * 0.97, -0.21, 1.12), (s * 0.96, -0.26, 1.06), 0.04), 0.012)
+        # Рука — толстая трубка из бока (чуть выше, чем на «Складе»), с локтем.
+        sh, el, wr = (s * 0.66, 0.0, 1.8), (s * 0.98, -0.05, 1.5), (s * 1.08, -0.09, 1.2)
+        arm = smin(capsule(px, py, pz, sh, el, 0.115), capsule(px, py, pz, el, wr, 0.105), 0.03)
+        # Кисть — раскрытая ладонь к зрителю: четыре длинных пальца врозь, большой — к телу.
+        hc = np.array([s * 1.1, -0.1, 1.05])
+        palm = ellipsoid(px, py, pz, tuple(hc), (0.15, 0.08, 0.14))
+        limbs = smin(arm, palm, 0.04)
+        for k, ang in enumerate((-34, -12, 10, 32)):
+            a = math.radians(ang) * s
+            ln = (0.15, 0.18, 0.17, 0.13)[k]
+            base = hc + np.array([math.sin(a) * 0.08, 0.0, -math.cos(a) * 0.08])
+            tip = base + np.array([math.sin(a) * ln, -0.02, -math.cos(a) * ln])
+            limbs = smin(limbs, capsule(px, py, pz, tuple(base), tuple(tip), 0.055), 0.015)
+        tb = hc + np.array([-s * 0.09, -0.01, 0.0])
+        thumb = capsule(px, py, pz, tuple(tb), tuple(tb + np.array([-s * 0.07, -0.03, 0.03])), 0.055)
         limbs = smin(limbs, thumb, 0.012)
         d = smin(d, smin(leg, foot, 0.08), 0.06)
         d = smin(d, limbs, 0.07)
@@ -199,16 +199,27 @@ def build(color_hex):
     body.data.materials.append(m_body)
 
     # Глаз — большой выпуклый шар в верхней трети, зрачок чуть в сторону (как на «Складе»).
-    EZ = 1.74
-    p, n = surface(0.0, EZ)
+    EZ = 1.7
+    EX = 0.08
+    p, n = surface(EX, EZ)
     q = facing(n)
     nv = np.array(n)
-    blob('EyeWhite', p + nv * 0.02, (0.3, 0.2, 0.31), m_white, q)
-    look = np.array([0.07, 0.0, -0.02])
-    blob('IrisRing', p + nv * 0.205 + look, (0.13, 0.03, 0.13), m_ring, q)
-    blob('Iris', p + nv * 0.212 + look, (0.112, 0.03, 0.112), m_iris, q)
-    blob('Pupil', p + nv * 0.232 + look, (0.058, 0.016, 0.058), m_pupil, q)
-    blob('Glint', p + nv * 0.245 + look + np.array([0.035, 0, 0.04]), (0.026, 0.008, 0.026), m_glint, q)
+    p = p + nv * -0.1
+    # Глаз — шар, утоплен в тело на треть; радужка крупная, у края (смотрит вбок).
+    ER = 0.34
+    blob('EyeWhite', p, (ER, ER, ER), m_white, q)
+    from mathutils import Vector
+    def on_eye(dx, dz, extra=0.0):
+        v = np.array([dx, -math.sqrt(max(0.0, 1 - dx * dx - dz * dz)), dz])
+        return p + v * (ER + extra), facing(v)
+    ip, iq = on_eye(0.16, -0.2, 0.0)
+    blob('IrisRing', ip, (0.19, 0.035, 0.19), m_ring, iq)
+    ip, iq = on_eye(0.16, -0.2, 0.012)
+    blob('Iris', ip, (0.165, 0.03, 0.165), m_iris, iq)
+    ip, iq = on_eye(0.18, -0.19, 0.03)
+    blob('Pupil', ip, (0.085, 0.016, 0.085), m_pupil, iq)
+    ip, iq = on_eye(0.25, -0.09, 0.045)
+    blob('Glint', ip, (0.03, 0.008, 0.03), m_glint, iq)
 
     def tube(name, pts, r, m):
         bpy.ops.curve.primitive_bezier_curve_add()
@@ -227,37 +238,38 @@ def build(color_hex):
         return cu
     # Бровь — толстая дуга над глазом.
     # Бровь — толстая дуга над глазом, концы скруглены.
-    bpts = [surface(x, EZ + 0.43 + 0.07 * (1 - (x / 0.26) ** 2))[0] + np.array([0, -0.06, 0]) for x in (-0.26, 0.0, 0.26)]
-    tube('Brow', bpts, 0.05, m_brow)
+    bpts = [surface(EX + x, EZ + 0.42 + 0.1 * (1 - (x / 0.3) ** 2) + 0.03 * x / 0.3)[0] + np.array([0, -0.05, 0]) for x in (-0.3, 0.0, 0.3)]
+    tube('Brow', bpts, 0.058, m_brow)
     for e in (bpts[0], bpts[-1]):
-        blob('BrowEnd', e, (0.05, 0.05, 0.05), m_brow)
+        blob('BrowEnd', e, (0.058, 0.058, 0.058), m_brow)
     # Ресницы по верхнему краю глаза: у мальчиков — маленькие, у девочек — длинные, загнутые.
     girl = os.environ.get('SEX', 'm') == 'f'
     lash_n = 5 if girl else 3
     lash_len = 0.11 if girl else 0.045
-    eye_c = p + nv * 0.02
-    lash_len = 0.085 if girl else 0.05
+    eye_c = p
+    # Ресницы — короткие толстые загнутые штрихи по верхнему краю глаза.
+    lash_len = 0.055 if girl else 0.03
     for k in range(lash_n):
-        t = (k / (lash_n - 1) - 0.5) * (1.7 if girl else 1.2)
+        t = (k / (lash_n - 1) - 0.5) * (1.5 if girl else 1.0)
         # Корень — на самом краю белка (на шаре глаза), ресница — наружу и вверх.
-        root = eye_c + np.array([0.3 * 0.97 * math.sin(t), -0.05, 0.31 * 0.97 * math.cos(t)])
-        out = np.array([math.sin(t) * 1.4, -0.35, math.cos(t)])
+        root = eye_c + np.array([ER * 0.96 * math.sin(t), -0.08, ER * 0.96 * math.cos(t)])
+        out = np.array([math.sin(t) * 1.8, -0.6, math.cos(t)])
         out /= np.linalg.norm(out)
         mid = root + out * lash_len * 0.55
         tip = root + out * lash_len + np.array([math.sin(t) * 0.025, 0, 0.03 if girl else 0.005])
-        r = 0.017 if girl else 0.016
+        r = 0.022 if girl else 0.02
         tube('Lash', [root - out * 0.04, mid, tip], r, m_brow)
         blob('LashEnd', tip, (r, r, r), m_brow)
     # Рот — открытый, овальный, сверху один большой зуб, внизу язык.
-    mp, mn = surface(0.0, 1.33)
+    mp, mn = surface(0.02, 1.3)
     mq = facing(mn)
     mnv = np.array(mn)
-    blob('Mouth', mp + mnv * -0.025, (0.17, 0.05, 0.12), m_mouth, mq)
-    blob('Tongue', mp + mnv * 0.0 + np.array([0, 0, -0.065]), (0.11, 0.03, 0.05), m_tongue, mq)
-    bpy.ops.mesh.primitive_cube_add(location=mp + mnv * 0.01 + np.array([0, 0, 0.055]))
+    blob('Mouth', mp + mnv * -0.03, (0.19, 0.06, 0.15), m_mouth, mq)
+    blob('Tongue', mp + mnv * 0.0 + np.array([0, 0, -0.085]), (0.13, 0.03, 0.06), m_tongue, mq)
+    bpy.ops.mesh.primitive_cube_add(location=mp + mnv * 0.015 + np.array([0, 0, 0.075]))
     tooth = bpy.context.object
     tooth.name = 'Tooth'
-    tooth.scale = (0.06, 0.02, 0.055)
+    tooth.scale = (0.07, 0.02, 0.06)
     tooth.rotation_mode = 'QUATERNION'
     tooth.rotation_quaternion = mq
     bv = tooth.modifiers.new('Bevel', 'BEVEL')
@@ -266,8 +278,8 @@ def build(color_hex):
     tooth.data.materials.append(m_tooth)
     # Румянец — крупные круги под глазом по бокам.
     for s_ in (-1, 1):
-        cp, cn = surface(s_ * 0.43, EZ - 0.3)
-        blob('Cheek', cp, (0.11, 0.012, 0.1), m_cheek, facing(cn))
+        cp, cn = surface(s_ * 0.42 + 0.03, 1.4)
+        blob('Cheek', cp, (0.12, 0.014, 0.11), m_cheek, facing(cn))
 
     # Свет: тёплый ключевой сверху-слева, холодная заливка справа, контровой сзади.
     def light(name, kind, loc, energy, col, size=2.0):
