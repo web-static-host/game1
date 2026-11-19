@@ -247,18 +247,32 @@ def build(color_hex):
     lash_n = 5 if girl else 3
     lash_len = 0.11 if girl else 0.045
     eye_c = p
-    # Ресницы — короткие толстые загнутые штрихи по верхнему краю глаза.
-    lash_len = 0.055 if girl else 0.03
-    for k in range(lash_n):
-        t = (k / (lash_n - 1) - 0.5) * (1.5 if girl else 1.0)
-        # Корень — на самом краю белка (на шаре глаза), ресница — наружу и вверх.
-        root = eye_c + np.array([ER * 0.96 * math.sin(t), -0.08, ER * 0.96 * math.cos(t)])
-        out = np.array([math.sin(t) * 1.8, -0.6, math.cos(t)])
+    # Верхнее веко — тонкая тёмная дуга по верхнему краю глаза, вплотную к белку; ресницы
+    # растут из неё: у мальчика — 3 совсем коротких у наружного края, у девочки — 5 подлиннее.
+    fwd = nv / np.linalg.norm(nv)
+    up = np.array([0.0, 0.0, 1.0]) - fwd * fwd[2]
+    up /= np.linalg.norm(up)
+    right = np.cross(up, fwd)
+    phi = math.radians(64)
+    def rim(t, extra=0.0):
+        d = fwd * math.cos(phi) + (right * math.sin(t) + up * math.cos(t)) * math.sin(phi)
+        return p + d * (ER + extra), d
+    lid = [rim(math.radians(a), 0.004)[0] for a in range(-85, 71, 13)]
+    tube('Lid', lid, 0.02, m_brow)
+    for e in (lid[0], lid[-1]):
+        blob('LidEnd', e, (0.02, 0.02, 0.02), m_brow)
+    angs = (-80, -58, -36, -14, 8) if girl else (-78, -58, -38)
+    lash_len = 0.07 if girl else 0.04
+    for a in angs:
+        t = math.radians(a)
+        root, d = rim(t, 0.004)
+        out = d * 0.5 + (right * math.sin(t) + up * math.cos(t)) * 0.9
         out /= np.linalg.norm(out)
-        mid = root + out * lash_len * 0.55
-        tip = root + out * lash_len + np.array([math.sin(t) * 0.025, 0, 0.03 if girl else 0.005])
-        r = 0.022 if girl else 0.02
-        tube('Lash', [root - out * 0.04, mid, tip], r, m_brow)
+        side = right * math.cos(t) - up * math.sin(t)
+        mid = root + out * lash_len * 0.6
+        tip = root + out * lash_len - side * lash_len * 0.35
+        r = 0.013 if girl else 0.011
+        tube('Lash', [root, mid, tip], r, m_brow)
         blob('LashEnd', tip, (r, r, r), m_brow)
     # Рот — открытый, овальный, сверху один большой зуб, внизу язык.
     mp, mn = surface(0.02, 1.3)
