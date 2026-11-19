@@ -225,12 +225,114 @@ bm.to_mesh(me)
 bm.free()
 print('removed tail faces:', len(kill), 'small parts:', len(small))
 
+# Тело — клином, как на листе ракурсов: спина уходит назад тем дальше, чем выше (у нижнего угла
+# толщина прежняя). Сначала спину ровняем (срезает бугорок от хвостика), потом сдвигаем.
+# Руки и ноги не трогаем: только то, что внутри треугольника тела.
+THICK = float(os.environ.get('THICK', '0.3'))
+co = np.array([vv.co[:] for vv in me.vertices])
+back0 = float(np.percentile(co[co[:, 2] > 1.6, 1], 99.5))
+mid = back0 - 0.35   # отсюда к спине сдвиг растёт от 0 до полного
+
+
+def body_w(z):
+    return np.clip((z - 0.95) * 0.73, 0.0, 0.96)
+
+
+# Вес сдвига — по расстоянию до контура треугольника тела (внутри — полный, к краю плавно
+# меньше): спина становится «подушкой» без рёбер.
+TRI_B = np.array([[-0.97, 2.36], [0.97, 2.36], [0.0, 0.92]])
+
+
+def tri_sd(x, z):
+    d = np.full(x.shape, np.inf)
+    sgn = np.ones(x.shape)
+    for i in range(3):
+        a, b = TRI_B[i], TRI_B[i - 1]
+        ex, ez = a[0] - b[0], a[1] - b[1]
+        wx, wz = x - b[0], z - b[1]
+        t = np.clip((wx * ex + wz * ez) / (ex * ex + ez * ez), 0, 1)
+        d = np.minimum(d, (wx - ex * t) ** 2 + (wz - ez * t) ** 2)
+        c1, c2, c3 = z >= b[1], z < a[1], ex * wz > ez * wx
+        sgn = np.where((c1 & c2 & c3) | (~c1 & ~c2 & ~c3), -sgn, sgn)
+    return sgn * np.sqrt(d)
+
+
+din = -tri_sd(co[:, 0], co[:, 2])
+inside = np.clip((din + 0.05) / 0.4, 0, 1)
+inside = inside * inside * (3 - 2 * inside)
+co[:, 1] = np.where(inside > 0, np.minimum(co[:, 1], back0), co[:, 1])
+
+wy = np.clip((co[:, 1] - mid) / (back0 - mid), 0, 1)
+wy = wy * wy * (3 - 2 * wy)
+extra = THICK * np.clip((co[:, 2] - 0.95) / 1.35, 0, 1) ** 1.2
+co[:, 1] += extra * wy * inside
+for i, vv in enumerate(me.vertices):
+    vv.co = co[i]
+# Место, где был хвостик, — сгладить (заплатка становится ровной частью спины).
+vg = ob.vertex_groups.new(name='stub')
+rr2 = np.hypot(co[:, 0], co[:, 2] - 0.98)
+for i in np.where((rr2 < 0.28) & (co[:, 1] > 0.03))[0]:
+    vg.add([int(i)], float(np.clip(1.5 - rr2[i] / 0.28 * 1.5, 0, 1)), 'REPLACE')
+sm = ob.modifiers.new('Smooth', 'SMOOTH')
+sm.vertex_group = 'stub'
+sm.factor = 1.0
+sm.iterations = 120
+bpy.context.view_layer.objects.active = ob
+bpy.ops.object.modifier_apply(modifier='Smooth')
+print('thickened: back', round(back0, 3), 'mid', round(mid, 3))
+
 # Децимация.
 dec = ob.modifiers.new('Dec', 'DECIMATE')
 dec.ratio = float(os.environ.get('RATIO', '0.15'))
 bpy.ops.object.modifier_apply(modifier='Dec')
 for p in me.polygons:
     p.use_smooth = True
+# Верхнее веко — тёмная тонкая дуга точно по стыку глаза и тела (без ресниц).
+from mathutils.bvhtree import BVHTree
+bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
+lid = []
+for a in np.linspace(-1.75, 1.75, 29):
+    best = None
+    for k in range(80):
+        r = EYE_R * (0.85 + k * 0.004)
+        o = mathutils.Vector((EYE_C[0] + r * math.sin(a), -3.0, EYE_C[1] + r * math.cos(a)))
+        hit = bvh.ray_cast(o, mathutils.Vector((0, 1, 0)))
+        if hit[0] is None:
+            continue
+        if hit[2] is not None and hit[3] is not None:
+            m_i = me.polygons[hit[2]].material_index
+            if CLASSES[m_i] != 'white':
+                best = hit[0]
+                break
+    if best is not None:
+        lid.append(best + mathutils.Vector((0, -0.012, 0)))
+cu = bpy.data.curves.new('Lid', 'CURVE')
+cu.dimensions = '3D'
+sp = cu.splines.new('POLY')
+sp.points.add(len(lid) - 1)
+for pt, c in zip(sp.points, lid):
+    pt.co = (c.x, c.y, c.z, 1)
+cu.bevel_depth = 0.018
+cu.bevel_resolution = 4
+cu.use_fill_caps = True
+lid_ob = bpy.data.objects.new('Lid', cu)
+bpy.context.scene.collection.objects.link(lid_ob)
+lm = bpy.data.materials.new('lid')
+lm.use_nodes = True
+lm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.06, 0.03, 0.02, 1)
+cu.materials.append(lm)
+bpy.ops.object.select_all(action='DESELECT')
+lid_ob.select_set(True)
+bpy.context.view_layer.objects.active = lid_ob
+bpy.ops.object.convert(target='MESH')
+for p in lid_ob.data.polygons:
+    p.use_smooth = True
+lid_ob.select_set(True)
+ob.select_set(True)
+bpy.context.view_layer.objects.active = ob
+bpy.ops.object.join()
+print('lid points', len(lid))
+
 # UV и текстуры больше не нужны.
 while me.uv_layers:
     me.uv_layers.remove(me.uv_layers[0])
@@ -239,7 +341,8 @@ for im in list(bpy.data.images):
 print('faces:', len(me.polygons))
 cnt = {}
 for p in me.polygons:
-    cnt[CLASSES[p.material_index]] = cnt.get(CLASSES[p.material_index], 0) + 1
+    nm = me.materials[p.material_index].name
+    cnt[nm] = cnt.get(nm, 0) + 1
 print('classes', cnt)
 bpy.ops.export_scene.gltf(filepath=DST, export_format='GLB', use_selection=False)
 import json
