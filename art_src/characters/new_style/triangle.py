@@ -86,9 +86,9 @@ def smin(a, b, k):
 ## Рука — плавная дуга (кривая Безье), без углов: из боковой грани вниз и наружу; толщина
 ## растёт к запястью. Кисть — варежка: плотная ладонь, три толстых пальца вниз вплотную
 ## (наружный короче, средний длиннее), большой палец — к телу и вниз.
-ARM = dict(sh=(0.64, 0.0, 1.76), ctl=(0.9, -0.04, 1.52), wr=(0.97, -0.07, 1.18), r0=0.105, r1=0.11,
-           palm=(0.93, -0.075, 1.02), palm_r=(0.175, 0.115, 0.12),
-           fingers=((0.128, 0.19), (0.0, 0.24), (-0.128, 0.22)), fr=0.072, thumb=(0.15, 0.17, 0.066))
+ARM = dict(sh=(0.64, -0.02, 1.76), ctl=(0.85, -0.1, 1.47), wr=(0.95, -0.15, 1.15), r0=0.105, r1=0.1,
+           palm=(0.9, -0.155, 0.98), palm_r=(0.21, 0.15, 0.13), turn=25,
+           fingers=((0.16, 0.12), (0.01, 0.21), (-0.145, 0.2)), fr=0.08, thumb=(0.17, 0.11, 0.074))
 
 
 def arm_sdf(px, py, pz, s):
@@ -105,17 +105,25 @@ def arm_sdf(px, py, pz, s):
         seg = round_cone(px, py, pz, pts[k], pts[k + 1], ra, rb)
         d = seg if d is None else np.minimum(d, seg)
     hc = np.array(A['palm']) * [s, 1, 1]
-    d = smin(d, ellipsoid(px, py, pz, tuple(hc), A['palm_r']), 0.08)
+    d = smin(d, ellipsoid(px, py, pz, tuple(hc), A['palm_r']), 0.13)
     fr = A['fr']
-    top = hc[2] - 0.05
+    # Кисть развёрнута на turn° вокруг вертикали (пальцы веером и вбок, и вперёд) — видна и
+    # спереди, и сбоку, как на листе ракурсов.
+    a = math.radians(A['turn'])
+    u = np.array([s * math.cos(a), -math.sin(a), 0.0])
+    top = hc[2] - 0.08
+    # Пальцы между собой — с бороздками (почти без сглаживания), с ладонью — плавно.
+    fing = None
     for fx, ln in A['fingers']:
-        b = np.array([hc[0] + s * fx, hc[1] - 0.005, top])
-        e = b + np.array([0, -0.01, -ln])
-        d = smin(d, capsule(px, py, pz, tuple(b), tuple(e), fr), 0.006)
+        b = np.array([hc[0], hc[1], top]) + u * fx * 0.95
+        e = b + u * fx * 0.25 + np.array([0, -0.01, -ln])
+        f = round_cone(px, py, pz, b, e, fr * 0.92, fr * 1.08)
+        fing = f if fing is None else smin(fing, f, 0.004)
+    d = smin(d, fing, 0.05)
     tx, tl, tr = A['thumb']
-    tb = np.array([hc[0] - s * tx, hc[1] - 0.01, hc[2] - 0.03])
-    te = tb + np.array([-s * 0.09, -0.015, -tl])
-    d = smin(d, capsule(px, py, pz, tuple(tb), tuple(te), tr), 0.02)
+    tb = np.array([hc[0], hc[1] - 0.01, hc[2] - 0.055]) - u * tx
+    te = tb - u * 0.11 + np.array([0, -0.03, -tl])
+    d = smin(d, round_cone(px, py, pz, tb, te, tr * 0.95, tr * 1.05), 0.03)
     return d
 
 
