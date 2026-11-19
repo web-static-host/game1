@@ -70,7 +70,7 @@ def classify(rgb, c, front, recessed):
             return 'iris'
         return 'white'
     # Бровь — валик над глазом: выступает вперёд из плоскости лица.
-    if z > EYE_C[1] + EYE_R * 0.8 and abs(x - EYE_C[0]) < 0.48 and y < brow_surf(z) - 0.025:
+    if z > EYE_C[1] + EYE_R * 0.8 and abs(x - EYE_C[0]) < 0.48 and y < brow_surf(z) - 0.025 and er > EYE_R * 1.06:
         return 'brow'
     # Рот — по глубине: всё утопленное в нём — тёмная полость, кроме зубов и языка.
     if abs(x) < 0.15 and 1.2 < z < 1.36 and s < 0.25 and val > 0.5:
@@ -291,7 +291,7 @@ for p in me.polygons:
 from mathutils.bvhtree import BVHTree
 bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
 lid = []
-for a in np.linspace(-1.75, 1.75, 29):
+for a in np.linspace(-1.2, 1.2, 25):
     best = None
     for k in range(80):
         r = EYE_R * (0.85 + k * 0.004)
@@ -305,14 +305,22 @@ for a in np.linspace(-1.75, 1.75, 29):
                 best = hit[0]
                 break
     if best is not None:
-        lid.append(best + mathutils.Vector((0, -0.012, 0)))
+        lid.append((a, math.hypot(best.x - EYE_C[0], best.z - EYE_C[1]), best.y))
+# Ровная дуга: радиус — средний по стыку, глубина — сглаженная.
+la = np.array([q[0] for q in lid])
+lr = float(np.median([q[1] for q in lid]))
+ly = np.array([q[2] for q in lid])
+ly = np.convolve(np.pad(ly, 3, mode='edge'), np.ones(7) / 7, mode='valid')
+lid = [mathutils.Vector((EYE_C[0] + lr * math.sin(a), y - 0.012, EYE_C[1] + lr * math.cos(a))) for a, y in zip(la, ly)]
 cu = bpy.data.curves.new('Lid', 'CURVE')
 cu.dimensions = '3D'
-sp = cu.splines.new('POLY')
+sp = cu.splines.new('NURBS')
+sp.use_endpoint_u = True
+sp.order_u = 4
 sp.points.add(len(lid) - 1)
 for pt, c in zip(sp.points, lid):
     pt.co = (c.x, c.y, c.z, 1)
-cu.bevel_depth = 0.018
+cu.bevel_depth = 0.016
 cu.bevel_resolution = 4
 cu.use_fill_caps = True
 lid_ob = bpy.data.objects.new('Lid', cu)
