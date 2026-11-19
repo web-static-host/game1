@@ -186,8 +186,8 @@ def build(color_hex):
     sc = bpy.context.scene
     body_col = srgb(color_hex)
     # Матовые, как мягкий пластилин/софт-тач: блики широкие и слабые.
-    m_body = mat('Body', body_col, rough=0.78, sss=0.05)
-    m_body.node_tree.nodes['Principled BSDF'].inputs['Specular IOR Level'].default_value = 0.25
+    m_body = mat('Body', body_col, rough=0.6, sss=0.12)
+    m_body.node_tree.nodes['Principled BSDF'].inputs['Specular IOR Level'].default_value = 0.35
     dark = srgb('#2a1a17')
     m_brow = mat('Brow', dark, rough=0.7)
     m_white = mat('White', (0.95, 0.95, 0.94), rough=0.35, coat=0.3)
@@ -322,23 +322,33 @@ def build(color_hex):
         con = ob.constraints.new('TRACK_TO')
         con.target = body
         return ob
-    light('Key', 'AREA', (-3.0, -4.0, 4.5), 420, (1.0, 0.95, 0.88), 3.0)
-    light('Fill', 'AREA', (3.5, -3.0, 2.0), 130, (0.85, 0.9, 1.0), 4.0)
-    light('Rim', 'AREA', (1.5, 3.5, 3.5), 450, (1.0, 1.0, 1.0), 2.0)
+    # Свет как в студии у мультяшных рендеров: один большой мягкий ключевой сверху-слева
+    # (даёт плавный переход в тень — объём), слабая холодная заливка справа, контровой сзади
+    # (светлый край силуэта), снизу — отражённый от пола тёплый свет.
+    light('Key', 'AREA', (-3.2, -3.6, 5.0), float(os.environ.get('KEY', '330')), (1.0, 0.96, 0.9), 4.5)
+    light('Fill', 'AREA', (4.0, -2.5, 1.8), float(os.environ.get('FILL', '35')), (0.8, 0.88, 1.0), 5.0)
+    light('Rim', 'AREA', (2.5, 4.0, 4.0), 700, (1.0, 0.98, 0.95), 2.5)
+    light('Rim2', 'AREA', (-2.8, 3.5, 2.5), 300, (0.9, 0.95, 1.0), 2.5)
+    light('Bounce', 'AREA', (0.0, -2.5, -0.6), 60, (1.0, 0.92, 0.8), 4.0)
     w = bpy.data.worlds.new('W')
     sc.world = w
     w.use_nodes = True
-    w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.9, 0.9, 0.9, 1)
-    w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.5
+    w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.6, 0.65, 0.72, 1)
+    w.node_tree.nodes['Background'].inputs['Strength'].default_value = float(os.environ.get('AMB', '0.12'))
     # Пол и задник — светлые, мягкая тень.
     bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, 0))
     bpy.context.object.is_shadow_catcher = True
     sc.render.engine = 'CYCLES'
     sc.cycles.device = 'CPU'
-    sc.cycles.samples = 48
+    sc.cycles.samples = 128
     sc.cycles.use_denoising = True
     sc.render.film_transparent = True
-    sc.view_settings.view_transform = 'Standard'
+    # Обычная цветопередача (цвет насыщенный), объём — от контрастного света: сильный ключевой,
+    # слабые заливка и окружение.
+    sc.view_settings.view_transform = os.environ.get('VT', 'Standard')
+    if os.environ.get('LOOK'):
+        sc.view_settings.look = os.environ['LOOK']
+    sc.view_settings.exposure = float(os.environ.get('EXPO', '0'))
     return body
 
 
@@ -356,6 +366,13 @@ def shoot(path, yaw, res=(900, 1000), dist=7.2, height=1.35, lens=55, tx=0.0):
     con = cam.constraints.new('TRACK_TO')
     con.target = tgt
     sc.camera = cam
+    # Свет поворачивается вместе с камерой: с любого ракурса освещён одинаково (как на листе).
+    for ob in sc.objects:
+        if ob.type == 'LIGHT':
+            if 'base' not in ob:
+                ob['base'] = list(ob.location)
+            bx, by, bz = ob['base']
+            ob.location = (bx * math.cos(a) - by * math.sin(a), bx * math.sin(a) + by * math.cos(a), bz)
     sc.render.resolution_x, sc.render.resolution_y = res
     sc.render.filepath = path
     bpy.ops.render.render(write_still=True)
@@ -364,7 +381,7 @@ def shoot(path, yaw, res=(900, 1000), dist=7.2, height=1.35, lens=55, tx=0.0):
 
 
 if __name__ == '__main__':
-    colors = os.environ.get('COLORS', '#3b6fe0').split(',')
+    colors = os.environ.get('COLORS', '#f5bd00').split(',')
     for col in colors:
         build(col)
         tag = col.lstrip('#') + os.environ.get('SEX', 'm')
