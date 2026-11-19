@@ -83,6 +83,42 @@ def smin(a, b, k):
     return b + (a - b) * h - k * h * (1 - h)
 
 
+## Рука — плавная дуга (кривая Безье), без углов: из боковой грани вниз и наружу; толщина
+## растёт к запястью. Кисть — варежка: плотная ладонь, три толстых пальца вниз вплотную
+## (наружный короче, средний длиннее), большой палец — к телу и вниз.
+ARM = dict(sh=(0.64, 0.0, 1.76), ctl=(0.9, -0.04, 1.52), wr=(0.97, -0.07, 1.18), r0=0.105, r1=0.11,
+           palm=(0.93, -0.075, 1.02), palm_r=(0.175, 0.115, 0.12),
+           fingers=((0.128, 0.19), (0.0, 0.24), (-0.128, 0.22)), fr=0.072, thumb=(0.15, 0.17, 0.066))
+
+
+def arm_sdf(px, py, pz, s):
+    A = ARM
+    p0 = np.array(A['sh']) * [s, 1, 1]
+    p1 = np.array(A['ctl']) * [s, 1, 1]
+    p2 = np.array(A['wr']) * [s, 1, 1]
+    n = 10
+    pts = [(1 - t) ** 2 * p0 + 2 * (1 - t) * t * p1 + t * t * p2 for t in np.linspace(0, 1, n + 1)]
+    d = None
+    for k in range(n):
+        ra = A['r0'] + (A['r1'] - A['r0']) * k / n
+        rb = A['r0'] + (A['r1'] - A['r0']) * (k + 1) / n
+        seg = round_cone(px, py, pz, pts[k], pts[k + 1], ra, rb)
+        d = seg if d is None else np.minimum(d, seg)
+    hc = np.array(A['palm']) * [s, 1, 1]
+    d = smin(d, ellipsoid(px, py, pz, tuple(hc), A['palm_r']), 0.08)
+    fr = A['fr']
+    top = hc[2] - 0.05
+    for fx, ln in A['fingers']:
+        b = np.array([hc[0] + s * fx, hc[1] - 0.005, top])
+        e = b + np.array([0, -0.01, -ln])
+        d = smin(d, capsule(px, py, pz, tuple(b), tuple(e), fr), 0.006)
+    tx, tl, tr = A['thumb']
+    tb = np.array([hc[0] - s * tx, hc[1] - 0.01, hc[2] - 0.03])
+    te = tb + np.array([-s * 0.09, -0.015, -tl])
+    d = smin(d, capsule(px, py, pz, tuple(tb), tuple(te), tr), 0.02)
+    return d
+
+
 ## На сколько тело опущено к земле (ножки короткие, как на листе ракурсов).
 LIFT = 0.2
 
@@ -103,24 +139,7 @@ def body_sdf(px, py, pz0):
         # Ручки — короткие, из боков, вниз и чуть вперёд; кисть — варежка с большим пальцем.
         # Рука — ровная гладкая трубка из бока у верхнего угла, прямо вниз и чуть в сторону,
         # к запястью немного толще (как на листе ракурсов), без локтя.
-        # Рука (по листу ракурсов): выходит из боковой грани на трети высоты тела, идёт вниз и
-        # наружу, с мягким изгибом наружу; толстая, к кисти чуть толще.
-        sh = np.array([s * 0.72, 0.0, 1.74])
-        el = np.array([s * 0.96, -0.02, 1.46])
-        wr = np.array([s * 0.98, -0.03, 1.2])
-        arm = smin(round_cone(px, py, pz, sh, el, 0.12, 0.125), round_cone(px, py, pz, el, wr, 0.125, 0.13), 0.06)
-        # Кисть — крупная варежка: широкая ладонь, три длинных пальца вниз (наружный короче,
-        # средний длиннее), большой палец — к телу и вниз. Наружный край ладони — продолжение руки.
-        hc = np.array([s * 0.95, -0.03, 1.04])
-        palm = ellipsoid(px, py, pz, tuple(hc), (0.18, 0.11, 0.15))
-        limbs = smin(arm, palm, 0.1)
-        for fx, ln in ((0.11, 0.14), (0.0, 0.19), (-0.11, 0.17)):
-            base = hc + np.array([s * (fx + 0.02), 0.0, -0.09])
-            tip = base + np.array([s * fx * 0.12, -0.01, -ln])
-            limbs = smin(limbs, capsule(px, py, pz, tuple(base), tuple(tip), 0.07), 0.008)
-        tb = hc + np.array([-s * 0.14, -0.01, 0.0])
-        thumb = capsule(px, py, pz, tuple(tb), tuple(tb + np.array([-s * 0.09, -0.01, -0.14])), 0.066)
-        limbs = smin(limbs, thumb, 0.012)
+        limbs = arm_sdf(px, py, pz, s)
         d = smin(d, smin(leg, foot, 0.08), 0.06)
         d = smin(d, limbs, 0.03)
     return d
@@ -364,7 +383,7 @@ def build(color_hex):
     bpy.context.object.is_shadow_catcher = True
     sc.render.engine = 'CYCLES'
     sc.cycles.device = 'CPU'
-    sc.cycles.samples = 128
+    sc.cycles.samples = int(os.environ.get('SAMPLES', '128'))
     sc.cycles.use_denoising = True
     sc.render.film_transparent = True
     # Обычная цветопередача (цвет насыщенный), объём — от контрастного света: сильный ключевой,
@@ -413,4 +432,4 @@ if __name__ == '__main__':
             shoot(os.path.join(OUT, 'tri_%s_%d.png' % (tag, yaw)), yaw)
         if os.environ.get('CLOSE'):
             shoot(os.path.join(OUT, 'tri_%s_face.png' % tag), -20, (700, 700), 2.4, 1.78, 60)
-            shoot(os.path.join(OUT, 'tri_%s_hand.png' % tag), -15, (700, 700), 1.7, 0.85, 60, -0.85)
+            shoot(os.path.join(OUT, 'tri_%s_hand.png' % tag), 0, (700, 700), 2.6, 0.95, 60, -0.85)
