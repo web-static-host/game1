@@ -253,11 +253,19 @@ def build(color_hex):
     up = np.array([0.0, 0.0, 1.0]) - fwd * fwd[2]
     up /= np.linalg.norm(up)
     right = np.cross(up, fwd)
-    phi = math.radians(64)
     def rim(t, extra=0.0):
-        d = fwd * math.cos(phi) + (right * math.sin(t) + up * math.cos(t)) * math.sin(phi)
+        # Точка, где шар глаза уходит в тело (стык белка и тела), — по этому стыку и идёт веко.
+        side = right * math.sin(t) + up * math.cos(t)
+        best = math.radians(70)
+        for k in range(200):
+            ph = math.radians(40 + k * 0.25)
+            q_ = p + (fwd * math.cos(ph) + side * math.sin(ph)) * ER
+            if body_sdf(np.array([q_[0]]), np.array([q_[1]]), np.array([q_[2]]))[0] < 0:
+                best = ph
+                break
+        d = fwd * math.cos(best) + side * math.sin(best)
         return p + d * (ER + extra), d
-    lid = [rim(math.radians(a), 0.004)[0] for a in range(-85, 71, 13)]
+    lid = [rim(math.radians(a), 0.01)[0] for a in range(-85, 71, 13)]
     tube('Lid', lid, 0.02, m_brow)
     for e in (lid[0], lid[-1]):
         blob('LidEnd', e, (0.02, 0.02, 0.02), m_brow)
@@ -265,7 +273,7 @@ def build(color_hex):
     lash_len = 0.07 if girl else 0.04
     for a in angs:
         t = math.radians(a)
-        root, d = rim(t, 0.004)
+        root, d = rim(t, 0.01)
         out = d * 0.5 + (right * math.sin(t) + up * math.cos(t)) * 0.9
         out /= np.linalg.norm(out)
         side = right * math.cos(t) - up * math.sin(t)
