@@ -63,7 +63,9 @@ def classify(rgb, c, front, recessed):
         return 'body'
     # Глаз — по геометрии: шар перед телом; зрачок и радужка — круги вокруг центра радужки.
     er = math.hypot(x - EYE_C[0], z - EYE_C[1])
-    if er < EYE_R and y < EYE_FRONT and not (0.08 < h < 0.16 and s > 0.5 and er > IRIS_R):
+    # Глаз — грани, лежащие на шаре глаза (стык с телом и наплывы краски — уже тело).
+    on_ball = abs(math.dist((x, y, z), BALL_C) - BALL_R) < 0.025
+    if er < EYE_R * 1.05 and on_ball:
         if er < PUPIL_R:
             return 'pupil'
         if er < IRIS_R:
@@ -134,6 +136,15 @@ white = (fc[:, 2] > 1.4) & (fhsv[:, 1] < 0.18) & (fhsv[:, 2] > 0.6) & (fc[:, 1] 
 wr = np.hypot(fc[white, 0] - EYE_C[0], fc[white, 2] - EYE_C[1])
 EYE_R = float(np.percentile(wr, 97))
 EYE_FRONT = float(np.percentile(fc[white, 1], 97)) + 0.01
+# Шар глаза: центр и радиус по белым граням середины глаза (наименьшие квадраты).
+sel = white & (np.hypot(fc[:, 0] - EYE_C[0], fc[:, 2] - EYE_C[1]) < EYE_R * 0.8)
+P = fc[sel]
+A = np.c_[2 * P, np.ones(len(P))]
+bsol = (P ** 2).sum(1)
+sol = np.linalg.lstsq(A, bsol, rcond=None)[0]
+BALL_C = tuple(sol[:3])
+BALL_R = float(np.sqrt(sol[3] + (sol[:3] ** 2).sum()))
+print('ball', np.round(BALL_C, 3), round(BALL_R, 3))
 print('eye', np.round(EYE_C, 3), 'R', round(EYE_R, 3), 'iris', round(IRIS_R, 3), 'front', round(EYE_FRONT, 3))
 for p in me.polygons:
     uvs = np.array([uv[li].uv[:] for li in p.loop_indices]).mean(0)
@@ -287,59 +298,60 @@ dec.ratio = float(os.environ.get('RATIO', '0.15'))
 bpy.ops.object.modifier_apply(modifier='Dec')
 for p in me.polygons:
     p.use_smooth = True
-# Верхнее веко — тёмная тонкая дуга точно по стыку глаза и тела (без ресниц).
-from mathutils.bvhtree import BVHTree
-bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
-lid = []
-for a in np.linspace(-1.2, 1.2, 25):
-    best = None
-    for k in range(80):
-        r = EYE_R * (0.85 + k * 0.004)
-        o = mathutils.Vector((EYE_C[0] + r * math.sin(a), -3.0, EYE_C[1] + r * math.cos(a)))
-        hit = bvh.ray_cast(o, mathutils.Vector((0, 1, 0)))
-        if hit[0] is None:
-            continue
-        if hit[2] is not None and hit[3] is not None:
-            m_i = me.polygons[hit[2]].material_index
-            if CLASSES[m_i] != 'white':
-                best = hit[0]
-                break
-    if best is not None:
-        lid.append((a, math.hypot(best.x - EYE_C[0], best.z - EYE_C[1]), best.y))
-# Ровная дуга: радиус — средний по стыку, глубина — сглаженная.
-la = np.array([q[0] for q in lid])
-lr = float(np.median([q[1] for q in lid]))
-ly = np.array([q[2] for q in lid])
-ly = np.convolve(np.pad(ly, 3, mode='edge'), np.ones(7) / 7, mode='valid')
-lid = [mathutils.Vector((EYE_C[0] + lr * math.sin(a), y - 0.012, EYE_C[1] + lr * math.cos(a))) for a, y in zip(la, ly)]
-cu = bpy.data.curves.new('Lid', 'CURVE')
-cu.dimensions = '3D'
-sp = cu.splines.new('NURBS')
-sp.use_endpoint_u = True
-sp.order_u = 4
-sp.points.add(len(lid) - 1)
-for pt, c in zip(sp.points, lid):
-    pt.co = (c.x, c.y, c.z, 1)
-cu.bevel_depth = 0.016
-cu.bevel_resolution = 4
-cu.use_fill_caps = True
-lid_ob = bpy.data.objects.new('Lid', cu)
-bpy.context.scene.collection.objects.link(lid_ob)
-lm = bpy.data.materials.new('lid')
-lm.use_nodes = True
-lm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.06, 0.03, 0.02, 1)
-cu.materials.append(lm)
-bpy.ops.object.select_all(action='DESELECT')
-lid_ob.select_set(True)
-bpy.context.view_layer.objects.active = lid_ob
-bpy.ops.object.convert(target='MESH')
-for p in lid_ob.data.polygons:
-    p.use_smooth = True
-lid_ob.select_set(True)
-ob.select_set(True)
-bpy.context.view_layer.objects.active = ob
-bpy.ops.object.join()
-print('lid points', len(lid))
+# Верхнее веко — тёмная тонкая дуга по стыку глаза и тела. По умолчанию выключено (LID=1 — включить).
+if os.environ.get('LID') == '1':
+    from mathutils.bvhtree import BVHTree
+    bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
+    lid = []
+    for a in np.linspace(-1.2, 1.2, 25):
+        best = None
+        for k in range(80):
+            r = EYE_R * (0.85 + k * 0.004)
+            o = mathutils.Vector((EYE_C[0] + r * math.sin(a), -3.0, EYE_C[1] + r * math.cos(a)))
+            hit = bvh.ray_cast(o, mathutils.Vector((0, 1, 0)))
+            if hit[0] is None:
+                continue
+            if hit[2] is not None and hit[3] is not None:
+                m_i = me.polygons[hit[2]].material_index
+                if CLASSES[m_i] != 'white':
+                    best = hit[0]
+                    break
+        if best is not None:
+            lid.append((a, math.hypot(best.x - EYE_C[0], best.z - EYE_C[1]), best.y))
+    # Ровная дуга: радиус — средний по стыку, глубина — сглаженная.
+    la = np.array([q[0] for q in lid])
+    lr = float(np.median([q[1] for q in lid]))
+    ly = np.array([q[2] for q in lid])
+    ly = np.convolve(np.pad(ly, 3, mode='edge'), np.ones(7) / 7, mode='valid')
+    lid = [mathutils.Vector((EYE_C[0] + lr * math.sin(a), y - 0.012, EYE_C[1] + lr * math.cos(a))) for a, y in zip(la, ly)]
+    cu = bpy.data.curves.new('Lid', 'CURVE')
+    cu.dimensions = '3D'
+    sp = cu.splines.new('NURBS')
+    sp.use_endpoint_u = True
+    sp.order_u = 4
+    sp.points.add(len(lid) - 1)
+    for pt, c in zip(sp.points, lid):
+        pt.co = (c.x, c.y, c.z, 1)
+    cu.bevel_depth = 0.016
+    cu.bevel_resolution = 4
+    cu.use_fill_caps = True
+    lid_ob = bpy.data.objects.new('Lid', cu)
+    bpy.context.scene.collection.objects.link(lid_ob)
+    lm = bpy.data.materials.new('lid')
+    lm.use_nodes = True
+    lm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.06, 0.03, 0.02, 1)
+    cu.materials.append(lm)
+    bpy.ops.object.select_all(action='DESELECT')
+    lid_ob.select_set(True)
+    bpy.context.view_layer.objects.active = lid_ob
+    bpy.ops.object.convert(target='MESH')
+    for p in lid_ob.data.polygons:
+        p.use_smooth = True
+    lid_ob.select_set(True)
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.join()
+    print('lid points', len(lid))
 
 # UV и текстуры больше не нужны.
 while me.uv_layers:
