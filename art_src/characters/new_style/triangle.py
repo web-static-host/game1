@@ -58,6 +58,26 @@ def ellipsoid(px, py, pz, c, r):
     return k0 * (k0 - 1.0) / np.maximum(k1, 1e-6)
 
 
+def round_cone(px, py, pz, a, b, r1, r2):
+    """Скруглённый конус от a (радиус r1) до b (радиус r2) — гладкая трубка с утолщением."""
+    ba = b - a
+    l2 = ba.dot(ba)
+    rr = r1 - r2
+    a2 = l2 - rr * rr
+    il2 = 1.0 / l2
+    pax, pay, paz = px - a[0], py - a[1], pz - a[2]
+    y = pax * ba[0] + pay * ba[1] + paz * ba[2]
+    z = y - l2
+    xx = (pax * l2 - ba[0] * y) ** 2 + (pay * l2 - ba[1] * y) ** 2 + (paz * l2 - ba[2] * y) ** 2
+    y2 = y * y * l2
+    z2 = z * z * l2
+    k = np.sign(rr) * rr * rr * xx
+    out = np.where(np.sign(z) * a2 * z2 > k, np.sqrt(xx + z2) * il2 - r2,
+        np.where(np.sign(y) * a2 * y2 < k, np.sqrt(xx + y2) * il2 - r1,
+            (np.sqrt(xx * a2 * il2) + y * rr) * il2 - r1))
+    return out
+
+
 def smin(a, b, k):
     h = np.clip(0.5 + 0.5 * (b - a) / k, 0, 1)
     return b + (a - b) * h - k * h * (1 - h)
@@ -81,24 +101,24 @@ def body_sdf(px, py, pz0):
         foot = ellipsoid(px, py, pz0, (s * 0.23, -0.07, 0.12), (0.2, 0.28, 0.13))
         foot = np.maximum(foot, -pz0)
         # Ручки — короткие, из боков, вниз и чуть вперёд; кисть — варежка с большим пальцем.
-        # Рука — толстая трубка из бока (чуть выше, чем на «Складе»), с локтем.
-        sh, el, wr = (s * 0.6, 0.0, 1.86), (s * 0.84, -0.03, 1.5), (s * 0.94, -0.05, 1.24)
-        arm = smin(capsule(px, py, pz, sh, el, 0.115), capsule(px, py, pz, el, wr, 0.105), 0.03)
-        # Кисть — раскрытая ладонь к зрителю: четыре длинных пальца врозь, большой — к телу.
-        hc = np.array([s * 0.97, -0.06, 1.1])
-        palm = ellipsoid(px, py, pz, tuple(hc), (0.15, 0.08, 0.14))
-        limbs = smin(arm, palm, 0.04)
-        for k, ang in enumerate((-34, -12, 10, 32)):
-            a = math.radians(ang) * s
-            ln = (0.15, 0.18, 0.17, 0.13)[k]
-            base = hc + np.array([math.sin(a) * 0.08, 0.0, -math.cos(a) * 0.08])
-            tip = base + np.array([math.sin(a) * ln, -0.02, -math.cos(a) * ln])
-            limbs = smin(limbs, capsule(px, py, pz, tuple(base), tuple(tip), 0.055), 0.015)
-        tb = hc + np.array([-s * 0.09, -0.01, 0.0])
-        thumb = capsule(px, py, pz, tuple(tb), tuple(tb + np.array([-s * 0.07, -0.03, 0.03])), 0.055)
+        # Рука — ровная гладкая трубка из бока у верхнего угла, прямо вниз и чуть в сторону,
+        # к запястью немного толще (как на листе ракурсов), без локтя.
+        sh, wr = np.array([s * 0.74, 0.02, 1.86]), np.array([s * 0.83, -0.01, 1.13])
+        arm = round_cone(px, py, pz, sh, wr, 0.1, 0.115)
+        # Кисть — варежка: широкая плоская ладонь (тыльной стороной к зрителю), три коротких
+        # толстых пальца вниз вплотную друг к другу и большой палец сбоку, к телу.
+        hc = np.array([s * 0.85, -0.02, 0.98])
+        palm = ellipsoid(px, py, pz, tuple(hc), (0.175, 0.1, 0.15))
+        limbs = smin(arm, palm, 0.06)
+        for fx in (-0.09, 0.0, 0.09):
+            base = hc + np.array([s * (fx + 0.035), 0.0, -0.07])
+            tip = base + np.array([s * fx * 0.25, -0.01, -0.15])
+            limbs = smin(limbs, capsule(px, py, pz, tuple(base), tuple(tip), 0.058), 0.008)
+        tb = hc + np.array([-s * 0.13, -0.01, 0.0])
+        thumb = capsule(px, py, pz, tuple(tb), tuple(tb + np.array([-s * 0.07, -0.01, -0.13])), 0.055)
         limbs = smin(limbs, thumb, 0.012)
         d = smin(d, smin(leg, foot, 0.08), 0.06)
-        d = smin(d, limbs, 0.07)
+        d = smin(d, limbs, 0.035)
     return d
 
 
@@ -389,4 +409,4 @@ if __name__ == '__main__':
             shoot(os.path.join(OUT, 'tri_%s_%d.png' % (tag, yaw)), yaw)
         if os.environ.get('CLOSE'):
             shoot(os.path.join(OUT, 'tri_%s_face.png' % tag), -20, (700, 700), 2.4, 1.78, 60)
-            shoot(os.path.join(OUT, 'tri_%s_hand.png' % tag), -40, (700, 700), 1.3, 1.08, 60, -1.03)
+            shoot(os.path.join(OUT, 'tri_%s_hand.png' % tag), -15, (700, 700), 1.7, 0.85, 60, -0.85)
