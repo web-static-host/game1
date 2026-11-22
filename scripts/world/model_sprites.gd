@@ -16,10 +16,16 @@ signal baked
 
 ## Форма тела -> модель.
 const MODELS := {
-	CreatureArt.Shape.TRIANGLE: "res://assets/models/blue_buddy.glb",
+	CreatureArt.Shape.TRIANGLE: "res://assets/models/buddy_triangle.glb",
 	CreatureArt.Shape.SQUARE: "res://assets/models/buddy_square.glb",
 	CreatureArt.Shape.ROUND: "res://assets/models/buddy_round.glb",
 }
+## Модели нового вида (Hunyuan): тело в текстуре вместе с лицом — лица слоем у них нет, тело
+## красится по маске текстуры (см. shaders/model_skin.gdshader). Скелет — с тем же именами костей,
+## но суставы в других местах: позы переносятся направлениями со старой модели (FACE_MODEL).
+const TEXTURED := [CreatureArt.Shape.TRIANGLE]
+## Старая модель: из неё лицо, волосы, рог, усики, панцирь (общие для всех форм) и позы.
+const FACE_MODEL := "res://assets/models/blue_buddy.glb"
 ## Клетка тела: SPAN метров, ступни — в FOOT от низа; BODY_PPM пикселей на метр.
 const SPAN := 5.0
 const FOOT := 0.45
@@ -186,6 +192,7 @@ var _error := ""
 var _uv_meshes := {}
 var _shaders := {}
 var _flats := {}
+var _skins := {}
 
 
 ## Слои гаврика по порядку отрисовки: [ключ листа, чем красить].
@@ -201,8 +208,9 @@ static func layers_of(looks: Dictionary, sad := false) -> Array:
 	if looks.get("gills", false):
 		out.append(["gills/%d" % shape, Tint.BODY])
 	var iris := 1 if looks.get("albino", false) else 2 if looks.get("melanist", false) else 0
-	out.append(["face/%d/%d/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris,
-		1 if looks.get("female", false) else 0, 1 if sad else 0], Tint.BODY])
+	if not shape in TEXTURED:
+		out.append(["face/%d/%d/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris,
+			1 if looks.get("female", false) else 0, 1 if sad else 0], Tint.BODY])
 	if looks.get("hair", false):
 		out.append(["hair", Tint.HAIR])
 	if looks.get("horn", false):
@@ -264,8 +272,8 @@ func _ready() -> void:
 	if DisplayServer.get_name() == "headless":
 		status = "нет видеокарты"
 		return
-	for s in MODELS:
-		if not ResourceLoader.exists(MODELS[s]):
+	for path in MODELS.values() + [FACE_MODEL]:
+		if not ResourceLoader.exists(path):
 			status = "нет файла модели"
 			return
 	material = ShaderMaterial.new()
@@ -346,7 +354,11 @@ func _bake(key: String, attempt: int):
 	# Инструмент — только в своих позах (лист маленький).
 	var names: Array = TOOL_POSES[p[1]] if kind == "tool" else POSES.keys()
 	var rows := ceili(names.size() / float(COLS))
-	var scene: PackedScene = load(MODELS[shape])
+	var path: String = MODELS[shape] if kind in ["body", "pattern", "gills", "tool"] else FACE_MODEL
+	var scene: PackedScene = load(path)
+	var skin: bool = shape in TEXTURED and path == MODELS[shape]
+	# Скелет старой модели — для переноса поз (стоит скрытым в первом окне).
+	var ref: Skeleton3D = null
 	var stages := []
 	var parts := []
 	var frames := {}
@@ -381,6 +393,11 @@ func _bake(key: String, attempt: int):
 		cam.position = Vector3(crop.get_center().x, crop.get_center().y, 20)
 		vp.add_child(cam)
 		cam.current = true
+		if skin and ref == null:
+			var rm: Node3D = (load(FACE_MODEL) as PackedScene).instantiate()
+			rm.visible = false
+			vp.add_child(rm)
+			ref = rm.find_children("*", "Skeleton3D", true, false)[0]
 		var model: Node3D = scene.instantiate()
 		vp.add_child(model)
 		model.rotation_degrees.y = YAW
@@ -390,8 +407,13 @@ func _bake(key: String, attempt: int):
 			meshes[String(mi.name)] = mi
 			mi.visible = false
 		var body: MeshInstance3D = meshes["Buddy_FinalBody"]
-		body.mesh = _uv_mesh(MODELS[shape], body.mesh)
-		pose_skeleton(skel, pose.get("bones", []))
+		if skin and not _skins.has(path):
+			var src := body.mesh.surface_get_material(0)
+			_skins[path] = [_skin_mat(src, false), _skin_mat(src, true)]
+		body.mesh = _uv_mesh(path, body.mesh)
+		if ref != null:
+			ref.reset_bone_poses()
+		pose_skeleton(skel, pose.get("bones", []), ref)
 		if kind == "body" or kind == "tool":
 			# Длинные руки — после позы: суставы повёрнуты как у обычных, руки просто длиннее.
 			_rig_arms(skel, p[2 if kind == "body" else 3] == "1")
@@ -406,14 +428,17 @@ func _bake(key: String, attempt: int):
 			parts.append([body, black, black])
 		match kind:
 			"body":
-				if int(p[3]) < 4:
+				if skin:
+					# Пальцы и шерсть у новых моделей пока не меняются.
+					parts.append([body, _skins[path][0], _skins[path][1]])
+				elif int(p[3]) < 4:
 					var prm := {"hide_fingers": _hidden_fingers(int(p[3]))}
 					parts.append([body, _fx(8, false, Color(0.92, 0.92, 0.92), prm), _fx(8, true, Color(1, 1, 0), prm)])
 				else:
 					parts.append([body, _white(), tinted])
-				if int(p[3]) > 4:
+				if int(p[3]) > 4 and not skin:
 					parts.append_array(_extra_fingers(skel, int(p[3])))
-				if p[4] == "1":
+				if p[4] == "1" and not skin:
 					for s in FUR_SHELLS:
 						var k := float(s + 1) / FUR_SHELLS
 						var prm := {"grow": FUR_LEN * k, "shell": k}
@@ -986,6 +1011,17 @@ func _uv_mesh(path: String, mesh: Mesh) -> Mesh:
 		return _uv_meshes[path]
 	var arr := mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var flags := 0
+	# Развёртка текстуры (у моделей с текстурой) — в CUSTOM0: UV заняты позой покоя.
+	var tex_uv = arr[Mesh.ARRAY_TEX_UV]
+	if tex_uv != null and (tex_uv as PackedVector2Array).size() == v.size():
+		var c0 := PackedFloat32Array()
+		c0.resize(v.size() * 2)
+		for i in v.size():
+			c0[i * 2] = tex_uv[i].x
+			c0[i * 2 + 1] = tex_uv[i].y
+		arr[Mesh.ARRAY_CUSTOM0] = c0
+		flags |= Mesh.ARRAY_CUSTOM_RG_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
 	var uv := PackedVector2Array()
 	var uv2 := PackedVector2Array()
 	uv.resize(v.size())
@@ -995,10 +1031,9 @@ func _uv_mesh(path: String, mesh: Mesh) -> Mesh:
 		uv2[i] = Vector2(v[i].z, 0.0)
 	arr[Mesh.ARRAY_TEX_UV] = uv
 	arr[Mesh.ARRAY_TEX_UV2] = uv2
-	var flags := 0
 	var bones = arr[Mesh.ARRAY_BONES]
 	if bones != null and bones.size() == v.size() * 8:
-		flags = Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
+		flags |= Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
 	var out := ArrayMesh.new()
 	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, flags)
 	_uv_meshes[path] = out
@@ -1014,6 +1049,17 @@ func _white() -> StandardMaterial3D:
 		m.cull_mode = BaseMaterial3D.CULL_DISABLED
 		_flats["white"] = m
 	return _flats["white"]
+
+
+## Тело с текстурой (модели TEXTURED): тело (жёлтое в текстуре) — белое со светотенью текстуры,
+## остальное (глаза, рот, подошвы) — как есть; для маски — G там, где тело.
+func _skin_mat(src: Material, mask: bool) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/model_skin.gdshader")
+	var tex: Texture2D = (src as BaseMaterial3D).albedo_texture if src is BaseMaterial3D else null
+	m.set_shader_parameter("tex", tex)
+	m.set_shader_parameter("mask", mask)
+	return m
 
 
 ## Ровный цвет без света — для маски.
@@ -1049,12 +1095,23 @@ func _fx(effect: int, mask: bool, albedo: Color, params := {}, cull := true) -> 
 
 ## Поставить скелет в позу: [кость, ось, градусы] или [кость, "to", точка] — направить кость
 ## так, чтобы следующий сустав (локоть, запястье, колено…) оказался у точки (м, оси модели).
-static func pose_skeleton(skel: Skeleton3D, groups: Array) -> void:
+## ref — скелет старой модели, под который написаны позы: тогда кость направляется так же, как
+## у него (от своего сустава в ту же сторону) — для моделей с суставами в других местах.
+static func pose_skeleton(skel: Skeleton3D, groups: Array, ref: Skeleton3D = null) -> void:
 	for group in groups:
 		for b in group:
 			if b[1] is String:
-				aim_bone(skel, b[0], b[2])
+				var target: Vector3 = b[2]
+				if ref != null:
+					ref.force_update_all_bone_transforms()
+					skel.force_update_all_bone_transforms()
+					var from := ref.get_bone_global_pose(ref.find_bone(b[0])).origin
+					aim_bone(ref, b[0], target)
+					target = skel.get_bone_global_pose(skel.find_bone(b[0])).origin + (target - from)
+				aim_bone(skel, b[0], target)
 			else:
+				if ref != null:
+					rotate_bone(ref, b[0], b[1], b[2])
 				rotate_bone(skel, b[0], b[1], b[2])
 	skel.force_update_all_bone_transforms()
 
