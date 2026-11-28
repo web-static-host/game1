@@ -1,7 +1,8 @@
 extends SceneTree
 ## Крупно несколько 3D-гавриков (как в игре, слоями ModelSprites) — разглядеть лицо и тело
 ## (нужен дисплей, напр. xvfb-run):
-##   xvfb-run godot --path . --resolution 1600x900 -s res://tests/model_closeup.gd -- <снимок.png> [форма] [поза]
+##   xvfb-run godot --path . --resolution 1600x900 -s res://tests/model_closeup.gd -- <снимок.png> [форма] [поза] [solo]
+## solo — один жёлтый, очень крупно.
 
 var _out := "user://closeup.png"
 var _shape := CreatureArt.Shape.TRIANGLE
@@ -10,6 +11,7 @@ var _models: ModelSprites
 var _list := []
 var _frame := 0
 var _shot_at := -1
+var _solo := false
 
 
 func _initialize() -> void:
@@ -20,6 +22,7 @@ func _initialize() -> void:
 		_shape = int(args[1])
 	if args.size() > 2:
 		_pose = args[2]
+	_solo = args.size() > 3 and args[3] == "solo"
 	# Листы чётче обычного: смотрим крупно.
 	ModelSprites.detail = 3.0
 	var base := {"color": Color(1.0, 0.8, 0.1), "shape": _shape, "eyes": 1, "fingers": 4, "size": 0, "pattern": 0}
@@ -28,6 +31,9 @@ func _initialize() -> void:
 		var g := base.duplicate()
 		g.merge(m, true)
 		_list.append(g)
+	if _solo:
+		_list = [_list[0]]
+		ModelSprites.detail = 6.0
 	_models = ModelSprites.new()
 	root.add_child(_models)
 
@@ -47,6 +53,9 @@ func _process(_delta: float) -> bool:
 			_shot_at = _frame + 4
 	if _shot_at > 0 and _frame == _shot_at:
 		root.get_texture().get_image().save_png(_out)
+		if _solo:
+			for key: String in _models.sheets:
+				(_models.sheets[key]["tex"] as Texture2D).get_image().save_png(_out.get_basename() + "_" + key.replace("/", "_") + ".png")
 		print("saved ", _out, " — ", ModelSprites.status)
 		return true
 	if _frame > 8000:
@@ -68,5 +77,8 @@ func _build() -> void:
 		for i in _list.size():
 			var g: Dictionary = _list[i]
 			var pose: String = _pose + ("|sad" if g.get("sad", false) else "")
-			ModelSprites.draw_creature(node, pose, Vector2(130 + i * 255, 700), 175.0, g))
+			if _solo:
+				ModelSprites.draw_creature(node, pose, Vector2(640, 712), 470.0, g)
+			else:
+				ModelSprites.draw_creature(node, pose, Vector2(130 + i * 255, 700), 175.0, g))
 	node.queue_redraw()
