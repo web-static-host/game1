@@ -43,6 +43,8 @@ bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 v = np.array([x.co[:] for x in ob.data.vertices])
 k = 2.4 / np.ptp(v[:, 2])
 c = np.array([(v[:, 0].max() + v[:, 0].min()) / 2, (v[:, 1].max() + v[:, 1].min()) / 2, v[:, 2].min()])
+if abs(k - 1) < 1e-3:
+    c[:] = 0      # уже в нужных осях (тело без лица из smooth_face.py: без глаза рамка по глубине другая)
 ob.data.vertices.foreach_set("co", ((v - c) * k).astype(np.float32).ravel())
 ob.data.update()
 
@@ -56,6 +58,8 @@ print("faces", len(ob.data.polygons))
 for mat in ob.data.materials:
     nt = mat.node_tree
     bsdf = nt.nodes["Principled BSDF"]
+    if not bsdf.inputs["Base Color"].links:
+        continue                  # тело без текстуры (smooth_face.py)
     base = bsdf.inputs["Base Color"].links[0].from_node
     for n in list(nt.nodes):
         if n not in (bsdf, base) and n.type != 'OUTPUT_MATERIAL':

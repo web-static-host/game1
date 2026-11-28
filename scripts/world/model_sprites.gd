@@ -20,12 +20,34 @@ const MODELS := {
 	CreatureArt.Shape.SQUARE: "res://assets/models/buddy_square.glb",
 	CreatureArt.Shape.ROUND: "res://assets/models/buddy_round.glb",
 }
-## Модели нового вида (Hunyuan): тело в текстуре вместе с лицом — лица слоем у них нет, тело
-## красится по маске текстуры (см. shaders/model_skin.gdshader). Скелет — с тем же именами костей,
-## но суставы в других местах: позы переносятся направлениями со старой модели (FACE_MODEL).
-const TEXTURED := [CreatureArt.Shape.TRIANGLE]
+## Модели нового вида (тело — по модели Hunyuan): скелет с теми же именами костей, но суставы в
+## других местах — позы переносятся направлениями со старой модели (FACE_MODEL); лицо — слоем
+## своего вида (FACE1), лишние пальцы-капсулы старой модели не ставятся.
+const NEW_RIG := [CreatureArt.Shape.TRIANGLE]
+## Модели с лицом в текстуре (тело красится по маске текстуры, shaders/model_skin.gdshader; лица
+## слоем нет — без мутаций глаз). Сейчас таких нет: прежняя такая модель — в art_src
+## (buddy_triangle_textured.glb).
+const TEXTURED := []
 ## Старая модель: из неё лицо, волосы, рог, усики, панцирь (общие для всех форм) и позы.
 const FACE_MODEL := "res://assets/models/blue_buddy.glb"
+## Лицо новых моделей (как на заставках): глаз — на 20% меньше, чем у модели Hunyuan, на выпуклой
+## лицевой стороне (z = FACE1_SURF − FACE1_CURVE·x²), голубая радужка, толстая коричневая
+## бровь-дугой, крупный открытый рот (зуб один, как у всех), круглый румянец по бокам.
+const FACE1_EYE := Vector3(0.0, 1.835, 0.473)
+const FACE1_ER := 0.245
+const FACE1_SURF := 0.424
+const FACE1_CURVE := 0.48
+const FACE1_IRIS := Color(0.16, 0.42, 0.86)
+const FACE1_BROW := Color(0.45, 0.27, 0.15)
+## Рот: от низа глаза до верха рта; во сколько раз крупнее старого (ширина, высота); насколько
+## ближе к зрителю (лицевая сторона новой модели впереди старой).
+const FACE1_MOUTH_GAP := 0.11
+const FACE1_MOUTH_SCALE := Vector2(1.35, 1.6)
+const FACE1_MOUTH_DZ := 0.064
+## Румянец: x центра, ниже верха рта на столько; во сколько раз крупнее старого.
+const FACE1_BLUSH_X := 0.42
+const FACE1_BLUSH_DROP := 0.02
+const FACE1_BLUSH_SCALE := Vector2(1.3, 2.2)
 ## Клетка тела: SPAN метров, ступни — в FOOT от низа; BODY_PPM пикселей на метр.
 const SPAN := 5.0
 const FOOT := 0.45
@@ -45,6 +67,8 @@ const FACE_PARTS := ["Approved_Iris", "Approved_Pupil", "Approved_Glint", "Appro
 const EYE_PARTS := ["Approved_EyeWhite", "Approved_Iris", "Approved_Pupil", "Approved_Glint", "Approved_GlintSmall", "Approved_Brow"]
 const MOUTH_PARTS := ["Approved_Smile", "Approved_Tongue", "Approved_Tooth"]
 const BLUSH_PARTS := ["Approved_Blush", "Approved_Blush_001"]
+## Середина правого румянца старой модели (у левого x наоборот).
+const BLUSH_AT := Vector3(0.385, 1.34, 0.353)
 ## Рот у одного глаза: его высота по раскладке рисованного (низ глаза + 0,06 ширины) и верхний
 ## край рта модели (по нему рот грустного переворачивается).
 const MOUTH_Y := 1.285
@@ -209,8 +233,8 @@ static func layers_of(looks: Dictionary, sad := false) -> Array:
 		out.append(["gills/%d" % shape, Tint.BODY])
 	var iris := 1 if looks.get("albino", false) else 2 if looks.get("melanist", false) else 0
 	if not shape in TEXTURED:
-		out.append(["face/%d/%d/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris,
-			1 if looks.get("female", false) else 0, 1 if sad else 0], Tint.BODY])
+		out.append(["face/%d/%d/%d/%d/%d" % [clampi(int(looks.get("eyes", 1)), 0, 9), iris,
+			1 if looks.get("female", false) else 0, 1 if shape in NEW_RIG else 0, 1 if sad else 0], Tint.BODY])
 	if looks.get("hair", false):
 		out.append(["hair", Tint.HAIR])
 	if looks.get("horn", false):
@@ -292,7 +316,9 @@ func _start() -> void:
 	var base: Array[String] = []
 	for s in MODELS:
 		base.append("body/%d/0/4/0" % s)
-	base.append("face/1/0/0/0")
+	base.append("face/1/0/0/0/0")
+	if not NEW_RIG.is_empty():
+		base.append("face/1/0/0/1/0")
 	for attempt in 3:
 		var ok := true
 		for key in base:
@@ -354,9 +380,15 @@ func _bake(key: String, attempt: int):
 	# Инструмент — только в своих позах (лист маленький).
 	var names: Array = TOOL_POSES[p[1]] if kind == "tool" else POSES.keys()
 	var rows := ceili(names.size() / float(COLS))
-	var path: String = MODELS[shape] if kind in ["body", "pattern", "gills", "tool"] else FACE_MODEL
+	# Лицо нового вида снимается на своём теле (оно закрывает лицо там, где впереди).
+	var face_style := int(p[4]) if kind == "face" else 0
+	var path: String = MODELS[shape] if kind in ["body", "pattern", "gills", "tool"] \
+		else MODELS[CreatureArt.Shape.TRIANGLE] if face_style == 1 else FACE_MODEL
 	var scene: PackedScene = load(path)
 	var skin: bool = shape in TEXTURED and path == MODELS[shape]
+	var new_rig := _is_new_rig(path)
+	# Части лица (Approved_*) — из старой модели.
+	var face_meshes := {}
 	# Скелет старой модели — для переноса поз (стоит скрытым в первом окне).
 	var ref: Skeleton3D = null
 	var stages := []
@@ -393,11 +425,13 @@ func _bake(key: String, attempt: int):
 		cam.position = Vector3(crop.get_center().x, crop.get_center().y, 20)
 		vp.add_child(cam)
 		cam.current = true
-		if skin and ref == null:
+		if new_rig and ref == null:
 			var rm: Node3D = (load(FACE_MODEL) as PackedScene).instantiate()
 			rm.visible = false
 			vp.add_child(rm)
 			ref = rm.find_children("*", "Skeleton3D", true, false)[0]
+			for mi: MeshInstance3D in rm.find_children("*", "MeshInstance3D", true, false):
+				face_meshes[String(mi.name)] = mi
 		var model: Node3D = scene.instantiate()
 		vp.add_child(model)
 		model.rotation_degrees.y = YAW
@@ -406,6 +440,8 @@ func _bake(key: String, attempt: int):
 		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 			meshes[String(mi.name)] = mi
 			mi.visible = false
+		if not new_rig:
+			face_meshes = meshes
 		var body: MeshInstance3D = meshes["Buddy_FinalBody"]
 		if skin and not _skins.has(path):
 			var src := body.mesh.surface_get_material(0)
@@ -431,12 +467,12 @@ func _bake(key: String, attempt: int):
 				if skin:
 					# Пальцы и шерсть у новых моделей пока не меняются.
 					parts.append([body, _skins[path][0], _skins[path][1]])
-				elif int(p[3]) < 4:
+				elif int(p[3]) < 4 and not new_rig:
 					var prm := {"hide_fingers": _hidden_fingers(int(p[3]))}
 					parts.append([body, _fx(8, false, Color(0.92, 0.92, 0.92), prm), _fx(8, true, Color(1, 1, 0), prm)])
 				else:
 					parts.append([body, _white(), tinted])
-				if int(p[3]) > 4 and not skin:
+				if int(p[3]) > 4 and not new_rig:
 					parts.append_array(_extra_fingers(skel, int(p[3])))
 				if p[4] == "1" and not skin:
 					for s in FUR_SHELLS:
@@ -444,7 +480,7 @@ func _bake(key: String, attempt: int):
 						var prm := {"grow": FUR_LEN * k, "shell": k}
 						parts.append([_dup(body), _fx(4, false, Color(0.92, 0.92, 0.92), prm), _fx(4, true, Color(1, 1, 0), prm)])
 			"face":
-				var face := _face_parts(model, meshes, int(p[1]), int(p[2]), closed, p[3] == "1", p[4] == "1")
+				var face := _face_parts(model, face_meshes, int(p[1]), int(p[2]), closed, p[3] == "1", p[5] == "1", face_style)
 				parts.append_array(face[0])
 				eye_pts = face[1]
 				eye_r = face[2]
@@ -645,18 +681,24 @@ func _extra_fingers(skel: Skeleton3D, fingers: int) -> Array:
 ## и выше), румянец у рта. Закрытые глаза — веки цвета тела. У самки — ресницы у внешних уголков,
 ## грустный — рот перевёрнут (без зуба) и брови наклонены наоборот, как у рисованного.
 ## -> [части, центры глаз, радиус глаза].
-func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: bool, female: bool, sad: bool) -> Array:
+## style 1 — лицо нового вида (FACE1): своё место и размер глаза, бровь-дуга, рот и румянец крупнее.
+func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: bool, female: bool, sad: bool, style := 0) -> Array:
 	var parts := []
-	var lay := CreatureArt.eye_layout(Vector2.ZERO, ART_W, n)
+	var f1 := style == 1
+	var eye := FACE1_EYE if f1 else EYE
+	var lay := CreatureArt.eye_layout(Vector2.ZERO, FACE1_ER / 0.12 if f1 else ART_W, n)
 	var spots: Array = lay[0]
 	var er: float = lay[1]
 	var pts := []
-	var low := EYE.y
+	var low := eye.y
 	for s: Vector2 in spots:
-		pts.append(Vector3(s.x, EYE.y - s.y, EYE.z))
-		low = minf(low, EYE.y - s.y)
+		# У нового вида лицевая сторона выпуклая: глаза сбоку — глубже.
+		pts.append(Vector3(s.x, eye.y - s.y, eye.z - (FACE1_CURVE * s.x * s.x if f1 else 0.0)))
+		low = minf(low, eye.y - s.y)
 	var iris_mat: StandardMaterial3D = null
 	var ic: Color = IRIS[iris]
+	if f1 and ic.a == 0.0:
+		ic = FACE1_IRIS
 	if ic.a > 0.0:
 		iris_mat = StandardMaterial3D.new()
 		iris_mat.albedo_color = ic
@@ -664,7 +706,7 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 	var sc := er / EYE_R
 	var keep := _flat(Color(1, 0, 0))
 	for part in EYE_PARTS:
-		if closed and part in FACE_PARTS:
+		if closed and part in FACE_PARTS or f1 and part == "Approved_Brow":
 			continue
 		var lid: bool = closed and part == "Approved_EyeWhite"
 		for pt: Vector3 in pts:
@@ -676,6 +718,9 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 			var mi := _copy(model, (meshes[part] as MeshInstance3D).mesh, xf)
 			var cm: Material = _white() if lid else iris_mat if part == "Approved_Iris" else null
 			parts.append([mi, cm, _flat(Color(1, 1, 0)) if lid else keep])
+	if f1:
+		for pt: Vector3 in pts:
+			parts.append([_copy(model, _brow_arc(pt, er, sad), Transform3D()), _brow_mat(), keep])
 	if female and not closed:
 		for p: Vector3 in pts:
 			var sides := [-1.0, 1.0]
@@ -690,15 +735,20 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 	var dy := my - MOUTH_Y
 	var ms := 1.0 if n > 0 else 1.47
 	var mc := Vector3(0.0, MOUTH_Y - 0.05, 0.0)
+	# Новый вид: рот крупнее, верх — на FACE1_MOUTH_GAP ниже нижнего глаза (без глаз — выше).
+	var top1 := (low - er * 1.033 - FACE1_MOUTH_GAP) if n > 0 else (eye.y - 0.12)
+	var ms1 := Vector3(FACE1_MOUTH_SCALE.x, FACE1_MOUTH_SCALE.y, 1.0) * (1.0 if n > 0 else 1.3)
 	for part in MOUTH_PARTS:
 		if sad and part == "Approved_Tooth":
 			continue
 		var mesh: Mesh = (meshes[part] as MeshInstance3D).mesh
 		var xf := Transform3D(Basis.from_scale(Vector3(ms, ms, 1.0)), mc - mc * ms + Vector3(0, dy, 0))
+		if f1:
+			xf = Transform3D(Basis.from_scale(ms1), Vector3(0, top1 - MOUTH_TOP * ms1.y, FACE1_MOUTH_DZ))
 		var cm: Material = null
 		if sad:
 			# Рот вверх дном: отражаем по верхнему краю (и мельче), опускаем — как у рисованного.
-			var top := mc.y + (MOUTH_TOP - mc.y) * ms + dy
+			var top := top1 if f1 else mc.y + (MOUTH_TOP - mc.y) * ms + dy
 			xf = Transform3D(Basis.from_scale(Vector3(1, -0.6, 1)), Vector3(0, top * 1.6 - 0.1, 0)) * xf
 			var src := mesh.surface_get_material(0)
 			if src is BaseMaterial3D:
@@ -706,8 +756,49 @@ func _face_parts(model: Node3D, meshes: Dictionary, n: int, iris: int, closed: b
 				(cm as BaseMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
 		parts.append([_copy(model, mesh, xf), cm, keep])
 	for part in BLUSH_PARTS:
-		parts.append([_copy(model, (meshes[part] as MeshInstance3D).mesh, Transform3D(Basis(), Vector3(0, dy, 0))), null, keep])
+		var xf := Transform3D(Basis(), Vector3(0, dy, 0))
+		if f1:
+			# Крупнее и круглее, по бокам у верха рта, повёрнут по выпуклой лицевой стороне.
+			var sx := -1.0 if part == "Approved_Blush" else 1.0
+			var x := sx * FACE1_BLUSH_X
+			var at := Vector3(x, top1 - FACE1_BLUSH_DROP, FACE1_SURF - FACE1_CURVE * x * x + 0.012)
+			var turn := Basis(Vector3.UP, atan(2.0 * FACE1_CURVE * FACE1_BLUSH_X) * sx)
+			xf = Transform3D(turn * Basis.from_scale(Vector3(FACE1_BLUSH_SCALE.x, FACE1_BLUSH_SCALE.y, 1.0)), at) \
+				* Transform3D(Basis(), -BLUSH_AT * Vector3(sx, 1, 1))
+		parts.append([_copy(model, (meshes[part] as MeshInstance3D).mesh, xf), null, keep])
 	return [parts, pts, er]
+
+
+## Бровь нового вида над глазом p (радиус er): толстая коричневая дуга шире глаза, к концам
+## тоньше и ниже, по выпуклой лицевой стороне; у грустного — наклонена (как у старой модели).
+static func _brow_arc(p: Vector3, er: float, sad: bool) -> ArrayMesh:
+	var pts := PackedVector3Array()
+	var rs := PackedFloat32Array()
+	for j in 15:
+		var t := j / 14.0 * 2.0 - 1.0
+		var x := p.x + t * er * 1.08
+		var y := p.y + er * (1.3 - 0.32 * t * t) + (t * er * 0.3 if sad else 0.0)
+		pts.append(Vector3(x, y, FACE1_SURF - FACE1_CURVE * x * x + 0.012))
+		rs.append(er * (0.24 - 0.1 * t * t))
+	return _tube_mesh(pts, rs, 0.55)
+
+
+func _brow_mat() -> StandardMaterial3D:
+	if not _flats.has("brow"):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = FACE1_BROW
+		m.roughness = 0.6
+		# Трубка (_tube_mesh) вывернута — без отсечения видна целиком и со светом.
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_flats["brow"] = m
+	return _flats["brow"]
+
+
+static func _is_new_rig(path: String) -> bool:
+	for s in NEW_RIG:
+		if MODELS[s] == path:
+			return true
+	return false
 
 
 ## Ресница у внешнего уголка глаза p (радиус er): короткая, загнута наружу, как у рисованной самки.
